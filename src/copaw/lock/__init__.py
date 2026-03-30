@@ -5,6 +5,7 @@ from .cluster_discovery import ClusterNodeDiscovery, RedisClusterError
 from .file_lock import file_lock, read_json_locked, write_json_locked
 from .lock_token import LockToken
 from .redlock import RedlockDistributedLock
+from .redlock_renewal import RedlockRenewalTask
 from .redis_lock import LockRenewalTask, RedisLock
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "LockToken",
     "read_json_locked",
     "RedlockDistributedLock",
+    "RedlockRenewalTask",
     "RedisClusterError",
     "RedisLock",
     "write_json_locked",

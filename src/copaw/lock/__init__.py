@@ -2,6 +2,7 @@
 from __future__ import annotations
 from .redis_lock import RedisLock, LockRenewalTask
 from .file_lock import file_lock, read_json_locked, write_json_locked
+from .lock_token import LockToken
 
 __all__ = [
     "RedisLock",
@@ -9,4 +10,5 @@ __all__ = [
     "file_lock",
     "read_json_locked",
     "write_json_locked",
+    "LockToken",
 ]

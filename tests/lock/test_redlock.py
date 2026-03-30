@@ -5,8 +5,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from src.copaw.lock.redlock import RedlockDistributedLock
-from src.copaw.lock.lock_token import LockToken
+from copaw.lock.redlock import RedlockDistributedLock
+from copaw.lock.lock_token import LockToken
 
 
 class TestRedlockDistributedLock:
@@ -30,7 +30,11 @@ class TestRedlockDistributedLock:
     @pytest.mark.asyncio
     async def test_acquire_lock_success(self, mock_discovery, mock_redis):
         """Test successful lock acquisition."""
-        mock_discovery.get_masters.return_value = [mock_redis, mock_redis, mock_redis]
+        mock_discovery.get_masters.return_value = [
+            mock_redis,
+            mock_redis,
+            mock_redis,
+        ]
         mock_redis.set.return_value = True
 
         redlock = RedlockDistributedLock(
@@ -77,7 +81,9 @@ class TestRedlockDistributedLock:
         assert time_diff < 0.005  # Should be nearly simultaneous
 
     @pytest.mark.asyncio
-    async def test_acquire_lock_fails_below_quorum(self, mock_discovery, mock_redis):
+    async def test_acquire_lock_fails_below_quorum(
+        self, mock_discovery, mock_redis
+    ):
         """Test lock acquisition fails when less than quorum nodes succeed."""
         # 3 nodes, need quorum=2, only 1 succeeds
         mock_redis_success = MagicMock()
@@ -86,7 +92,9 @@ class TestRedlockDistributedLock:
         mock_redis_fail.set = AsyncMock(return_value=False)
 
         mock_discovery.get_masters.return_value = [
-            mock_redis_success, mock_redis_fail, mock_redis_fail
+            mock_redis_success,
+            mock_redis_fail,
+            mock_redis_fail,
         ]
 
         redlock = RedlockDistributedLock(

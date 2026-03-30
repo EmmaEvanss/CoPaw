@@ -27,7 +27,7 @@ class RedlockDistributedLock:
     """
 
     CLOCK_DRIFT_FACTOR = 0.01  # 1% clock drift tolerance
-    DISCOVERY_MAX_AGE = 5.0    # Max discovery age in seconds
+    DISCOVERY_MAX_AGE = 5.0  # Max discovery age in seconds
 
     def __init__(
         self,
@@ -158,7 +158,7 @@ class RedlockDistributedLock:
                     resource,
                     value,
                     nx=True,  # Only if not exists
-                    px=ttl,   # Milliseconds expiration
+                    px=ttl,  # Milliseconds expiration
                 ),
                 timeout=self.single_node_timeout_ms / 1000,
             )

@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from src.copaw.lock.lock_token import LockToken
+from copaw.lock.lock_token import LockToken
 
 
 class TestLockToken:

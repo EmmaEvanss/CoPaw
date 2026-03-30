@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
-from src.copaw.lock.cluster_discovery import ClusterNodeDiscovery, RedisClusterError
+from copaw.lock.cluster_discovery import (
+    ClusterNodeDiscovery,
+    RedisClusterError,
+)
 
 
 class TestClusterNodeDiscovery:
@@ -31,7 +34,7 @@ class TestClusterNodeDiscovery:
             return mock_redis
 
         with patch(
-            "src.copaw.lock.cluster_discovery.redis_from_url",
+            "copaw.lock.cluster_discovery.redis_from_url",
             side_effect=mock_from_url,
         ):
             d = ClusterNodeDiscovery(
@@ -95,7 +98,9 @@ class TestClusterNodeDiscovery:
     @pytest.mark.asyncio
     async def test_all_seeds_fail_raises_error(self, discovery, mock_redis):
         """Test that error is raised when all seeds fail and no cache."""
-        mock_redis.execute_command.side_effect = Exception("Connection refused")
+        mock_redis.execute_command.side_effect = Exception(
+            "Connection refused"
+        )
 
         with pytest.raises(
             RedisClusterError,
@@ -121,7 +126,9 @@ class TestClusterNodeDiscovery:
         assert len(nodes) == 1
 
     @pytest.mark.asyncio
-    async def test_fallback_to_cached_nodes_on_failure(self, discovery, mock_redis):
+    async def test_fallback_to_cached_nodes_on_failure(
+        self, discovery, mock_redis
+    ):
         """Test that cached nodes are used when all discovery attempts fail."""
         # First, populate cache with successful discovery
         mock_redis.execute_command.return_value = (
@@ -132,8 +139,11 @@ class TestClusterNodeDiscovery:
 
         # Now make all discovery attempts fail (expire cache first)
         import time
+
         discovery._last_discovery = time.time() - 100  # Expire cache
-        mock_redis.execute_command.side_effect = Exception("Connection refused")
+        mock_redis.execute_command.side_effect = Exception(
+            "Connection refused"
+        )
 
         # Should return cached nodes instead of raising error
         nodes2 = await discovery.get_masters()

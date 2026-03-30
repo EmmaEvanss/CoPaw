@@ -60,7 +60,7 @@ class RedlockRenewalTask:
         """Start the background renewal task."""
         if self._task is not None and not self._task.done():
             logger.warning(
-                f"Redlock renewal task already running for {self.lock_token.resource}"
+                f"Redlock renewal task already running for {self.lock_token.resource}",
             )
             return
 
@@ -69,7 +69,7 @@ class RedlockRenewalTask:
         self._task = asyncio.create_task(self._renew_loop())
         logger.debug(
             f"Started Redlock renewal task for {self.lock_token.resource} "
-            f"(quorum: {self.lock_token.quorum}, interval: {self.interval}s)"
+            f"(quorum: {self.lock_token.quorum}, interval: {self.interval}s)",
         )
 
     async def stop(self) -> None:
@@ -84,7 +84,7 @@ class RedlockRenewalTask:
         except asyncio.TimeoutError:
             logger.warning(
                 f"Redlock renewal task did not stop gracefully for "
-                f"{self.lock_token.resource}, cancelling"
+                f"{self.lock_token.resource}, cancelling",
             )
             self._task.cancel()
             try:
@@ -94,7 +94,7 @@ class RedlockRenewalTask:
 
         logger.debug(
             f"Stopped Redlock renewal task for {self.lock_token.resource} "
-            f"(failed renewals: {self._failed_renewals})"
+            f"(failed renewals: {self._failed_renewals})",
         )
 
     async def _renew_loop(self) -> None:
@@ -123,26 +123,26 @@ class RedlockRenewalTask:
                     self._failed_renewals = 0
                     logger.debug(
                         f"Renewed Redlock {self.lock_token.resource} "
-                        f"(quorum: {self.lock_token.quorum})"
+                        f"(quorum: {self.lock_token.quorum})",
                     )
                 else:
                     self._failed_renewals += 1
                     logger.warning(
                         f"Failed to renew Redlock {self.lock_token.resource} "
                         f"(failure #{self._failed_renewals}, "
-                        f"quorum: {self.lock_token.quorum})"
+                        f"quorum: {self.lock_token.quorum})",
                     )
 
                     if self._failed_renewals >= self.max_failed_renewals:
                         logger.error(
                             f"Redlock renewal failed {self._failed_renewals} times, "
-                            f"stopping renewal for {self.lock_token.resource}"
+                            f"stopping renewal for {self.lock_token.resource}",
                         )
                         break
 
             except asyncio.CancelledError:
                 logger.debug(
-                    f"Redlock renewal task cancelled for {self.lock_token.resource}"
+                    f"Redlock renewal task cancelled for {self.lock_token.resource}",
                 )
                 break
             except Exception as e:
@@ -156,7 +156,7 @@ class RedlockRenewalTask:
                 if self._failed_renewals >= self.max_failed_renewals:
                     logger.error(
                         f"Too many failures, stopping Redlock renewal for "
-                        f"{self.lock_token.resource}"
+                        f"{self.lock_token.resource}",
                     )
                     break
 
@@ -172,29 +172,27 @@ class RedlockRenewalTask:
         try:
             # Extend lock on all acquired nodes in parallel
             tasks = [
-                self._extend_single(node)
-                for node in self.lock_token.nodes
+                self._extend_single(node) for node in self.lock_token.nodes
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Count successful extensions
             success_count = sum(
-                1 for result in results
-                if isinstance(result, bool) and result
+                1 for result in results if isinstance(result, bool) and result
             )
 
             # Use STORED QUORUM from lock token, not recalculated
             if success_count >= self.lock_token.quorum:
                 logger.debug(
                     f"Extended lock on {success_count}/{len(self.lock_token.nodes)} "
-                    f"nodes (quorum: {self.lock_token.quorum})"
+                    f"nodes (quorum: {self.lock_token.quorum})",
                 )
                 return True
             else:
                 logger.warning(
                     f"Failed to extend lock: only {success_count}/"
                     f"{len(self.lock_token.nodes)} nodes succeeded "
-                    f"(need quorum: {self.lock_token.quorum})"
+                    f"(need quorum: {self.lock_token.quorum})",
                 )
                 return False
 

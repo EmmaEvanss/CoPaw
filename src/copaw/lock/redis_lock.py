@@ -100,7 +100,7 @@ class LockRenewalTask:
         """Start the background renewal task."""
         if self._running:
             logger.warning(
-                f"Lock renewal task already running for {self.lock_key}"
+                f"Lock renewal task already running for {self.lock_key}",
             )
             return
 
@@ -122,7 +122,7 @@ class LockRenewalTask:
                 await asyncio.wait_for(self._task, timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"Lock renewal task did not stop gracefully for {self.lock_key}"
+                    f"Lock renewal task did not stop gracefully for {self.lock_key}",
                 )
                 self._task.cancel()
                 try:
@@ -183,7 +183,7 @@ class LockRenewalTask:
 
             except asyncio.CancelledError:
                 logger.debug(
-                    f"Lock renewal task cancelled for {self.lock_key}"
+                    f"Lock renewal task cancelled for {self.lock_key}",
                 )
                 break
             except Exception as e:

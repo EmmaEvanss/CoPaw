@@ -7,7 +7,7 @@ import os
 import random
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
@@ -18,21 +18,31 @@ from redis.asyncio import Redis, from_url as redis_from_url
 
 from ...config import get_heartbeat_config
 from ...lock import (
-    RedisLock,
+    ClusterNodeDiscovery,
     LockRenewalTask,
     read_json_locked,
+    RedlockDistributedLock,
+    RedlockRenewalTask,
+    RedisLock,
     write_json_locked,
 )
 from ...constant import (
     CRON_LOCK_ENABLED,
-    CRON_LOCK_TTL,
-    CRON_LOCK_PREFIX,
     CRON_LOCK_JITTER_MS,
+    CRON_LOCK_PREFIX,
+    CRON_LOCK_TTL,
     INSTANCE_ID,
-    REDIS_HOST,
-    REDIS_PORT,
     REDIS_DB,
+    REDIS_DISCOVERY_MAX_RETRIES,
+    REDIS_DISCOVERY_RETRY_DELAY,
+    REDIS_HOST,
+    REDIS_LOCK_RETRY_COUNT,
+    REDIS_LOCK_RETRY_DELAY,
+    REDIS_LOCK_SINGLE_TIMEOUT,
+    REDIS_MODE,
     REDIS_PASSWORD,
+    REDIS_PORT,
+    REDIS_SEEDS,
     REDIS_SSL,
 )
 
@@ -86,6 +96,8 @@ class CronManager:
         # Redis distributed locking
         self._redis: Optional[Redis] = None
         self._redis_lock: Optional[RedisLock] = None
+        self._node_discovery: Optional[ClusterNodeDiscovery] = None
+        self._redlock: Optional[RedlockDistributedLock] = None
         self._init_redis()
 
     def _get_repo_for_user(self, user_id: str) -> JsonJobRepository:
@@ -102,26 +114,68 @@ class CronManager:
         return JsonJobRepository(get_jobs_path(user_id))
 
     def _init_redis(self) -> None:
-        """Initialize Redis connection and lock client."""
+        """Initialize Redis connection and lock client.
+
+        Supports both single-node Redis and Redis Cluster modes.
+        Mode is determined by REDIS_MODE environment variable ("single" or "cluster").
+        """
         if not CRON_LOCK_ENABLED:
             return
+
         try:
-            redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-            if REDIS_SSL:
-                redis_url = redis_url.replace("redis://", "rediss://")
-            self._redis = redis_from_url(
-                redis_url, password=REDIS_PASSWORD or None
-            )
-            self._redis_lock = RedisLock(self._redis)
-            logger.info(
-                "Redis lock initialized: host=%s port=%s db=%s ssl=%s",
-                REDIS_HOST,
-                REDIS_PORT,
-                REDIS_DB,
-                REDIS_SSL,
-            )
+            if REDIS_MODE == "cluster":
+                # Redis Cluster mode with Redlock
+                self._init_redis_cluster()
+            else:
+                # Single-node Redis mode (backward compatible)
+                self._init_redis_single()
         except Exception as e:
             logger.exception("Failed to initialize Redis: %s", e)
+
+    def _init_redis_single(self) -> None:
+        """Initialize single-node Redis connection."""
+        redis_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+        if REDIS_SSL:
+            redis_url = redis_url.replace("redis://", "rediss://")
+        self._redis = redis_from_url(
+            redis_url,
+            password=REDIS_PASSWORD or None,
+        )
+        self._redis_lock = RedisLock(self._redis)
+        logger.info(
+            "Redis lock initialized (single): host=%s port=%s db=%s ssl=%s",
+            REDIS_HOST,
+            REDIS_PORT,
+            REDIS_DB,
+            REDIS_SSL,
+        )
+
+    def _init_redis_cluster(self) -> None:
+        """Initialize Redis Cluster with Redlock distributed locking."""
+        seeds = [s.strip() for s in REDIS_SEEDS.split(",") if s.strip()]
+        if not seeds:
+            raise ValueError("REDIS_SEEDS is empty for cluster mode")
+
+        self._node_discovery = ClusterNodeDiscovery(
+            seeds=seeds,
+            discovery_interval=60,
+            max_retries=REDIS_DISCOVERY_MAX_RETRIES,
+            retry_delay=REDIS_DISCOVERY_RETRY_DELAY,
+            password=REDIS_PASSWORD,
+            ssl=REDIS_SSL,
+        )
+        self._redlock = RedlockDistributedLock(
+            node_discovery=self._node_discovery,
+            single_node_timeout_ms=REDIS_LOCK_SINGLE_TIMEOUT,
+            retry_count=REDIS_LOCK_RETRY_COUNT,
+            retry_delay_ms=REDIS_LOCK_RETRY_DELAY,
+        )
+        logger.info(
+            "Redis lock initialized (cluster): seeds=%s timeout=%sms retries=%d",
+            seeds,
+            REDIS_LOCK_SINGLE_TIMEOUT,
+            REDIS_LOCK_RETRY_COUNT,
+        )
 
     def _get_state_path(self, user_id: str) -> Path:
         """Get jobs state file path for a user.
@@ -237,6 +291,17 @@ class CronManager:
                     logger.info("Redis connection closed")
                 except Exception as e:
                     logger.warning("Failed to close Redis connection: %s", e)
+
+            # Close cluster node discovery
+            if self._node_discovery:
+                try:
+                    await self._node_discovery.aclose()
+                    logger.info("Cluster node discovery closed")
+                except Exception as e:
+                    logger.warning(
+                        "Failed to close cluster node discovery: %s",
+                        e,
+                    )
 
     async def _scan_and_load_users(self) -> None:
         """Scan all user directories and load cron jobs for unloaded users.
@@ -623,65 +688,30 @@ class CronManager:
         from ...constant import set_request_user_id, reset_request_user_id
 
         # Redis distributed lock flow
-        if self._redis_lock and CRON_LOCK_ENABLED:
-            # Add random jitter before lock acquisition
-            jitter_ms = random.randint(0, CRON_LOCK_JITTER_MS)
-            await asyncio.sleep(jitter_ms / 1000.0)
-
-            # Acquire user-level lock
-            lock_key = f"{CRON_LOCK_PREFIX}{user_id}"
-            lock_value = f"{INSTANCE_ID}:{job_id}:{time.time()}"
-            acquired = await self._redis_lock.acquire(
-                lock_key,
-                lock_value,
-                ttl=CRON_LOCK_TTL,
-            )
-
-            if not acquired:
-                logger.debug(
-                    "cron job skipped (lock not acquired): job_id=%s user_id=%s",
-                    job_id,
+        if CRON_LOCK_ENABLED:
+            if REDIS_MODE == "cluster" and self._redlock:
+                await self._execute_with_redlock(
                     user_id,
+                    job_id,
+                    job,
+                    set_request_user_id,
+                    reset_request_user_id,
                 )
-                return
-
-            # Start lock renewal task
-            renewal_task = LockRenewalTask(
-                self._redis,
-                lock_key,
-                lock_value,
-                CRON_LOCK_TTL,
-            )
-            await renewal_task.start()
-
-            try:
-                # Load states from NAS
-                loaded_states = await self._load_user_states(user_id)
-                if user_id in self._states:
-                    # Merge loaded states with current states
-                    for jid, state in loaded_states.items():
-                        if jid not in self._states[user_id]:
-                            self._states[user_id][jid] = state
-
-                # Execute job
+            elif self._redis_lock:
+                await self._execute_with_redis_lock(
+                    user_id,
+                    job_id,
+                    job,
+                    set_request_user_id,
+                    reset_request_user_id,
+                )
+            else:
+                # Lock enabled but not initialized, execute without lock
                 token = set_request_user_id(user_id)
                 try:
                     await self._execute_once(user_id, job)
                 finally:
                     reset_request_user_id(token)
-
-                # Save states to NAS
-                await self._save_user_states(user_id)
-
-            finally:
-                # Stop renewal and release lock
-                await renewal_task.stop()
-                await self._redis_lock.release(lock_key, lock_value)
-                logger.debug(
-                    "Released lock for job_id=%s user_id=%s",
-                    job_id,
-                    user_id,
-                )
         else:
             # No Redis lock, execute directly
             token = set_request_user_id(user_id)
@@ -696,6 +726,154 @@ class CronManager:
             st = self._states[user_id].get(job_id, CronJobState())
             st.next_run_at = aps_job.next_run_time if aps_job else None
             self._states[user_id][job_id] = st
+
+    async def _execute_with_redlock(
+        self,
+        user_id: str,
+        job_id: str,
+        job: Any,
+        set_request_user_id: Any,
+        reset_request_user_id: Any,
+    ) -> None:
+        """Execute job with Redlock distributed locking (cluster mode).
+
+        Args:
+            user_id: User identifier
+            job_id: Job identifier
+            job: Job specification
+            set_request_user_id: Function to set request context
+            reset_request_user_id: Function to reset request context
+        """
+        # Add random jitter before lock acquisition
+        jitter_ms = random.randint(0, CRON_LOCK_JITTER_MS)
+        await asyncio.sleep(jitter_ms / 1000.0)
+
+        # Acquire distributed lock using Redlock
+        lock_key = f"{CRON_LOCK_PREFIX}{user_id}"
+        ttl_ms = CRON_LOCK_TTL * 1000  # Convert to milliseconds
+
+        lock_token = await self._redlock.acquire(lock_key, ttl_ms)
+
+        if not lock_token:
+            logger.debug(
+                "cron job skipped (redlock not acquired): job_id=%s user_id=%s",
+                job_id,
+                user_id,
+            )
+            return
+
+        # Start lock renewal task
+        renewal_task = RedlockRenewalTask(
+            node_discovery=self._node_discovery,
+            lock_token=lock_token,
+            ttl_ms=ttl_ms,
+        )
+        renewal_task.start()
+
+        try:
+            # Load states from NAS
+            loaded_states = await self._load_user_states(user_id)
+            if user_id in self._states:
+                # Merge loaded states with current states
+                for jid, state in loaded_states.items():
+                    if jid not in self._states[user_id]:
+                        self._states[user_id][jid] = state
+
+            # Execute job
+            token = set_request_user_id(user_id)
+            try:
+                await self._execute_once(user_id, job)
+            finally:
+                reset_request_user_id(token)
+
+            # Save states to NAS
+            await self._save_user_states(user_id)
+
+        finally:
+            # Stop renewal and release lock
+            await renewal_task.stop()
+            await self._redlock.release(lock_token)
+            logger.debug(
+                "Released redlock for job_id=%s user_id=%s",
+                job_id,
+                user_id,
+            )
+
+    async def _execute_with_redis_lock(
+        self,
+        user_id: str,
+        job_id: str,
+        job: Any,
+        set_request_user_id: Any,
+        reset_request_user_id: Any,
+    ) -> None:
+        """Execute job with single-node Redis locking (backward compatible).
+
+        Args:
+            user_id: User identifier
+            job_id: Job identifier
+            job: Job specification
+            set_request_user_id: Function to set request context
+            reset_request_user_id: Function to reset request context
+        """
+        # Add random jitter before lock acquisition
+        jitter_ms = random.randint(0, CRON_LOCK_JITTER_MS)
+        await asyncio.sleep(jitter_ms / 1000.0)
+
+        # Acquire user-level lock
+        lock_key = f"{CRON_LOCK_PREFIX}{user_id}"
+        lock_value = f"{INSTANCE_ID}:{job_id}:{time.time()}"
+        acquired = await self._redis_lock.acquire(
+            lock_key,
+            lock_value,
+            ttl=CRON_LOCK_TTL,
+        )
+
+        if not acquired:
+            logger.debug(
+                "cron job skipped (lock not acquired): job_id=%s user_id=%s",
+                job_id,
+                user_id,
+            )
+            return
+
+        # Start lock renewal task
+        renewal_task = LockRenewalTask(
+            self._redis,
+            lock_key,
+            lock_value,
+            CRON_LOCK_TTL,
+        )
+        await renewal_task.start()
+
+        try:
+            # Load states from NAS
+            loaded_states = await self._load_user_states(user_id)
+            if user_id in self._states:
+                # Merge loaded states with current states
+                for jid, state in loaded_states.items():
+                    if jid not in self._states[user_id]:
+                        self._states[user_id][jid] = state
+
+            # Execute job
+            token = set_request_user_id(user_id)
+            try:
+                await self._execute_once(user_id, job)
+            finally:
+                reset_request_user_id(token)
+
+            # Save states to NAS
+            await self._save_user_states(user_id)
+
+        finally:
+            # Stop renewal and release lock
+            await renewal_task.stop()
+            await self._redis_lock.release(lock_key, lock_value)
+            logger.debug(
+                "Released lock for job_id=%s user_id=%s",
+                job_id,
+                user_id,
+            )
 
     async def _start_user_heartbeat(self, user_id: str) -> None:
         """Start heartbeat for a specific user.

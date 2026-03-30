@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class RedisClusterError(Exception):
     """Raised when Redis cluster operations fail."""
+
     pass
 
 
@@ -94,7 +95,9 @@ class ClusterNodeDiscovery:
                             try:
                                 await old_client.aclose()
                             except Exception as e:
-                                logger.debug(f"Failed to close old connection: {e}")
+                                logger.debug(
+                                    f"Failed to close old connection: {e}"
+                                )
 
                         self._masters = nodes
                         self._last_discovery = time.time()
@@ -147,7 +150,9 @@ class ClusterNodeDiscovery:
         try:
             # Execute CLUSTER NODES command
             result = await client.execute_command("CLUSTER NODES")
-            cluster_info = result.decode() if isinstance(result, bytes) else result
+            cluster_info = (
+                result.decode() if isinstance(result, bytes) else result
+            )
 
             masters = []
             for line in cluster_info.strip().split("\n"):

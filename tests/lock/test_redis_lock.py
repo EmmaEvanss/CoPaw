@@ -12,7 +12,10 @@ from copaw.lock import RedisLock, LockRenewalTask
 async def redis_client():
     """Create a Redis client for testing."""
     client = redis.Redis(
-        host="localhost", port=6379, db=15, decode_responses=True
+        host="localhost",
+        port=6379,
+        db=15,
+        decode_responses=True,
     )
     yield client
     # Cleanup: flush test database

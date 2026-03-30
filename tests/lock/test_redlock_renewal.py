@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.copaw.lock.cluster_discovery import ClusterNodeDiscovery
-from src.copaw.lock.lock_token import LockToken
-from src.copaw.lock.redlock_renewal import RedlockRenewalTask
+from copaw.lock.cluster_discovery import ClusterNodeDiscovery
+from copaw.lock.lock_token import LockToken
+from copaw.lock.redlock_renewal import RedlockRenewalTask
 
 
 @pytest.fixture
@@ -48,7 +48,10 @@ class TestRedlockRenewalTask:
 
     @pytest.mark.asyncio
     async def test_renewal_uses_stored_quorum(
-        self, mock_node_discovery, mock_lock_token, mock_nodes
+        self,
+        mock_node_discovery,
+        mock_lock_token,
+        mock_nodes,
     ):
         """Verify that renewal uses stored quorum from LockToken, not recalculated."""
         renewal = RedlockRenewalTask(
@@ -83,7 +86,10 @@ class TestRedlockRenewalTask:
 
     @pytest.mark.asyncio
     async def test_renewal_success_with_quorum(
-        self, mock_node_discovery, mock_lock_token, mock_nodes
+        self,
+        mock_node_discovery,
+        mock_lock_token,
+        mock_nodes,
     ):
         """Renewal succeeds when quorum nodes extend successfully."""
         renewal = RedlockRenewalTask(
@@ -105,7 +111,10 @@ class TestRedlockRenewalTask:
 
     @pytest.mark.asyncio
     async def test_renewal_fails_below_quorum(
-        self, mock_node_discovery, mock_lock_token, mock_nodes
+        self,
+        mock_node_discovery,
+        mock_lock_token,
+        mock_nodes,
     ):
         """Renewal fails when fewer than quorum nodes extend."""
         renewal = RedlockRenewalTask(
@@ -127,7 +136,10 @@ class TestRedlockRenewalTask:
 
     @pytest.mark.asyncio
     async def test_max_failed_renewals_stops_renewal(
-        self, mock_node_discovery, mock_lock_token, mock_nodes
+        self,
+        mock_node_discovery,
+        mock_lock_token,
+        mock_nodes,
     ):
         """Renewal task stops after max_failed_renewals consecutive failures."""
         renewal = RedlockRenewalTask(
@@ -153,7 +165,9 @@ class TestRedlockRenewalTask:
 
         await renewal.stop()
 
-    def test_renewal_interval_is_half_ttl(self, mock_node_discovery, mock_lock_token):
+    def test_renewal_interval_is_half_ttl(
+        self, mock_node_discovery, mock_lock_token
+    ):
         """Verify renewal interval is TTL/2."""
         ttl_ms = 10000
         renewal = RedlockRenewalTask(
@@ -168,7 +182,10 @@ class TestRedlockRenewalTask:
 
     @pytest.mark.asyncio
     async def test_extend_uses_lua_script(
-        self, mock_node_discovery, mock_lock_token, mock_nodes
+        self,
+        mock_node_discovery,
+        mock_lock_token,
+        mock_nodes,
     ):
         """Verify _extend_single uses correct Lua script with pexpire."""
         renewal = RedlockRenewalTask(
@@ -197,7 +214,10 @@ class TestRedlockRenewalTask:
 
     @pytest.mark.asyncio
     async def test_renewal_resets_failed_count_on_success(
-        self, mock_node_discovery, mock_lock_token, mock_nodes
+        self,
+        mock_node_discovery,
+        mock_lock_token,
+        mock_nodes,
     ):
         """Failed renewal counter resets to 0 on successful renewal via _renew_loop."""
         renewal = RedlockRenewalTask(

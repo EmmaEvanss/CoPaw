@@ -32,13 +32,13 @@ async def file_lock(path: Path, mode: str = "r") -> AsyncGenerator:
     lock_mode = portalocker.LOCK_SH if mode == "r" else portalocker.LOCK_EX
     lock_mode |= portalocker.LOCK_NB  # Non-blocking
 
-    if mode == "w":
-        await asyncio.to_thread(_ensure_file_exists, path)
+    # Ensure lock file exists (needed for both read and write modes)
+    await asyncio.to_thread(_ensure_file_exists, path)
 
     fd = None
     locked = False
     try:
-        fd = await asyncio.to_thread(open, path, "r+" if mode == "w" else "r")
+        fd = await asyncio.to_thread(open, path, "r+")
         await asyncio.to_thread(portalocker.lock, fd, lock_mode)
         locked = True
         yield fd
@@ -53,21 +53,38 @@ async def file_lock(path: Path, mode: str = "r") -> AsyncGenerator:
 
 
 async def read_json_locked(path: Path) -> dict:
-    """Read JSON file with shared lock."""
-    async with file_lock(path, mode="r") as f:
-        import json
+    """Read JSON file with shared lock.
 
-        content = await asyncio.to_thread(f.read)
+    Uses the same .lock file as write_json_locked for coordination,
+    ensuring read-write mutual exclusion while allowing concurrent reads.
+    """
+    import json
+
+    # Use the same lock file as write_json_locked for coordination
+    lock_path = path.with_suffix(".lock")
+    async with file_lock(lock_path, mode="r"):
+        # Now safe to read the actual file
+        if not path.exists():
+            return {}
+        content = await asyncio.to_thread(path.read_text)
         return json.loads(content) if content else {}
 
 
 async def write_json_locked(path: Path, data: dict) -> None:
-    """Write JSON file with exclusive lock (atomic)."""
+    """Write JSON file with exclusive lock (atomic).
+
+    Uses a separate lock file to avoid the inode replacement problem:
+    when replacing a file with tmp_path.replace(path), the lock on the
+    original file descriptor stays on the old inode, leaving the new file
+    unprotected. By using a stable lock file, coordination is maintained.
+    """
     import json
 
     json_str = json.dumps(data, indent=2, ensure_ascii=False)
 
-    async with file_lock(path, mode="w") as f:
+    # Use a separate lock file that remains stable across replacements
+    lock_path = path.with_suffix(".lock")
+    async with file_lock(lock_path, mode="w"):
         tmp_path = path.with_suffix(".tmp")
         tmp_path.write_text(json_str, encoding="utf-8")
         tmp_path.replace(path)

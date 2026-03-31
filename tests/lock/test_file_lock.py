@@ -164,12 +164,13 @@ class TestJsonLocked:
 
     @pytest.mark.asyncio
     async def test_read_json_locked_missing_file(self) -> None:
-        """Read missing JSON file raises error."""
+        """Read missing JSON file returns empty dict."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             json_path = Path(tmp_dir) / "missing.json"
 
-            with pytest.raises(FileNotFoundError):
-                await read_json_locked(json_path)
+            # When JSON file doesn't exist, should return empty dict
+            result = await read_json_locked(json_path)
+            assert result == {}
 
     @pytest.mark.asyncio
     async def test_write_then_read_json(self) -> None:
@@ -210,8 +211,9 @@ class TestJsonLocked:
         """Write is blocked while another write holds the lock."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             json_path = Path(tmp_dir) / "test.json"
+            lock_path = json_path.with_suffix(".lock")
 
-            async with file_lock(json_path, mode="w"):
+            async with file_lock(lock_path, mode="w"):
                 # Try to write - should fail due to lock
                 with pytest.raises(AlreadyLocked):
                     await write_json_locked(json_path, {"key": "blocked"})

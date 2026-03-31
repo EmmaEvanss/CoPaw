@@ -189,11 +189,14 @@ class RedlockDistributedLock:
     ) -> None:
         """Release lock on single node."""
         try:
+            # Use positional arguments for redis.asyncio.Redis.eval()
+            # Format: eval(script, numkeys, *keys_and_args)
             await node.eval(
                 "if redis.call('get', KEYS[1]) == ARGV[1] then "
                 "return redis.call('del', KEYS[1]) else return 0 end",
-                keys=[resource],
-                args=[value],
+                1,  # numkeys: 1 key
+                resource,  # KEYS[1]
+                value,  # ARGV[1]
             )
         except Exception as e:
             logger.debug(f"Failed to release lock on node: {e}")

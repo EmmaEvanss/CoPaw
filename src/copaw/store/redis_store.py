@@ -197,20 +197,34 @@ class ConsolePushStore:
         # Get all messages
         raw_messages = await self._redis.lrange(key, 0, -1)
         if not raw_messages:
-            await self._redis.delete(key)
             return []
 
-        # Parse and filter by session_id
-        messages = []
+        # Parse and separate messages by session_id
+        session_messages = []
+        other_messages = []
         for raw in raw_messages:
             msg = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
             if msg.get("session_id") == session_id:
-                messages.append(msg)
+                session_messages.append(msg)
+            else:
+                other_messages.append(raw)
 
-        # Delete the entire key after reading (like the original implementation)
-        await self._redis.delete(key)
+        # Clear the list and re-add only messages from other sessions
+        if other_messages:
+            # Use pipeline to atomically replace the list content
+            async with self._redis.pipeline() as pipe:
+                pipe.delete(key)
+                # Re-add messages from other sessions (if any)
+                for msg_raw in other_messages:
+                    pipe.rpush(key, msg_raw)
+                # Restore TTL
+                pipe.expire(key, self._ttl)
+                await pipe.execute()
+        else:
+            # No messages from other sessions, delete the entire key
+            await self._redis.delete(key)
 
-        return messages
+        return session_messages
 
     async def take_all(
         self,

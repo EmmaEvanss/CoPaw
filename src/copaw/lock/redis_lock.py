@@ -237,6 +237,25 @@ class LockRenewalTask:
 class RedisLock:
     """Redis distributed lock with Lua script atomic operations."""
 
+    @staticmethod
+    def get_lock_key(user_id: str) -> str:
+        """Generate lock key with hash tag for same-slot placement.
+
+        Args:
+            user_id: User identifier.
+
+        Returns:
+            Lock key string with hash tag.
+
+        Raises:
+            ValueError: If user_id is empty after sanitization.
+        """
+        # Sanitize user_id to prevent hash tag injection
+        clean_id = user_id.replace("{", "").replace("}", "")
+        if not clean_id:
+            raise ValueError(f"Invalid user_id for hash tag: {user_id}")
+        return f"copaw:cron:user:{{{clean_id}}}"
+
     def __init__(self, redis_client: redis.Redis):
         """
         Initialize Redis lock.

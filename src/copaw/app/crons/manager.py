@@ -749,7 +749,7 @@ class CronManager:
         await asyncio.sleep(jitter_ms / 1000.0)
 
         # Acquire distributed lock using Redlock
-        lock_key = f"{CRON_LOCK_PREFIX}{user_id}"
+        lock_key = self._redlock.get_lock_key(user_id)
         ttl_ms = CRON_LOCK_TTL * 1000  # Convert to milliseconds
 
         lock_token = await self._redlock.acquire(lock_key, ttl_ms)
@@ -771,13 +771,14 @@ class CronManager:
         renewal_task.start()
 
         try:
-            # Load states from NAS
+            # Load states from NAS - OVERWRITE in-memory states with persisted data
+            # This ensures last_run_at, last_status, etc. are restored from disk
             loaded_states = await self._load_user_states(user_id)
-            if user_id in self._states:
-                # Merge loaded states with current states
-                for jid, state in loaded_states.items():
-                    if jid not in self._states[user_id]:
-                        self._states[user_id][jid] = state
+            if user_id not in self._states:
+                self._states[user_id] = {}
+            # Merge: persisted state takes precedence over in-memory defaults
+            for jid, state in loaded_states.items():
+                self._states[user_id][jid] = state
 
             # Execute job
             token = set_request_user_id(user_id)
@@ -821,7 +822,7 @@ class CronManager:
         await asyncio.sleep(jitter_ms / 1000.0)
 
         # Acquire user-level lock
-        lock_key = f"{CRON_LOCK_PREFIX}{user_id}"
+        lock_key = self._redis_lock.get_lock_key(user_id)
         lock_value = f"{INSTANCE_ID}:{job_id}:{time.time()}"
         acquired = await self._redis_lock.acquire(
             lock_key,
@@ -847,13 +848,14 @@ class CronManager:
         await renewal_task.start()
 
         try:
-            # Load states from NAS
+            # Load states from NAS - OVERWRITE in-memory states with persisted data
+            # This ensures last_run_at, last_status, etc. are restored from disk
             loaded_states = await self._load_user_states(user_id)
-            if user_id in self._states:
-                # Merge loaded states with current states
-                for jid, state in loaded_states.items():
-                    if jid not in self._states[user_id]:
-                        self._states[user_id][jid] = state
+            if user_id not in self._states:
+                self._states[user_id] = {}
+            # Merge: persisted state takes precedence over in-memory defaults
+            for jid, state in loaded_states.items():
+                self._states[user_id][jid] = state
 
             # Execute job
             token = set_request_user_id(user_id)

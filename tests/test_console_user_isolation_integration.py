@@ -8,13 +8,19 @@ from unittest.mock import AsyncMock, patch, MagicMock
 @pytest.fixture(autouse=True)
 async def cleanup_store():
     """Clean up store after each test."""
-    from copaw.app.console_push_store import _store, _lock
+    from copaw.app.console_push_store import _store, _get_store
 
-    async with _lock:
-        _store.clear()
+    # Ensure store is initialized
+    store = _get_store()
+    # Clear all test user data from Redis
+    await store._redis.delete(f"copaw:push:alice")
+    await store._redis.delete(f"copaw:push:bob")
+    await store._redis.delete(f"copaw:push:default")
     yield
-    async with _lock:
-        _store.clear()
+    # Cleanup after test
+    await store._redis.delete(f"copaw:push:alice")
+    await store._redis.delete(f"copaw:push:bob")
+    await store._redis.delete(f"copaw:push:default")
 
 
 @pytest.mark.asyncio

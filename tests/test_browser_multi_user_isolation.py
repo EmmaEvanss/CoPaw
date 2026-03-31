@@ -49,7 +49,7 @@ class TestMultiUserBrowserIsolation:
         # Cleanup: reset all tokens
         for token in tokens:
             try:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
             except Exception:
                 pass
 
@@ -72,7 +72,7 @@ class TestMultiUserBrowserIsolation:
             assert isinstance(state, browser_control.UserBrowserState)
             assert "new_user" in browser_control._state["users"]
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_user_state_returns_existing_state(self):
         """Test that _get_user_state returns existing state for existing user."""
@@ -87,7 +87,7 @@ class TestMultiUserBrowserIsolation:
             assert state2.page_counter == 42
             assert state1 is state2
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_user_state_isolation(self):
         """Test that different users have completely isolated state."""
@@ -98,7 +98,7 @@ class TestMultiUserBrowserIsolation:
             state_a.page_counter = 10
             state_a.pages["page1"] = MagicMock()
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
         # Set up user B
         token_b = set_request_user_id("user_b")
@@ -107,7 +107,7 @@ class TestMultiUserBrowserIsolation:
             state_b.page_counter = 20
             state_b.pages["page2"] = MagicMock()
         finally:
-            reset_request_user_id(token_b)
+            reset_request_user_id(*token_b)
 
         # Verify isolation: User A's state should not be affected
         token_a = set_request_user_id("user_a")
@@ -117,7 +117,7 @@ class TestMultiUserBrowserIsolation:
             assert "page1" in state_a_check.pages
             assert "page2" not in state_a_check.pages
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
         # Verify isolation: User B's state should not be affected
         token_b = set_request_user_id("user_b")
@@ -127,7 +127,7 @@ class TestMultiUserBrowserIsolation:
             assert "page2" in state_b_check.pages
             assert "page1" not in state_b_check.pages
         finally:
-            reset_request_user_id(token_b)
+            reset_request_user_id(*token_b)
 
     def test_get_page_with_user_isolation(self):
         """Test that _get_page returns correct page for specific user."""
@@ -140,7 +140,7 @@ class TestMultiUserBrowserIsolation:
             state_a = browser_control._get_user_state()
             state_a.pages["test_page"] = mock_page_a
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
         # Set up user B with same page ID but different page
         token_b = set_request_user_id("user_b")
@@ -148,7 +148,7 @@ class TestMultiUserBrowserIsolation:
             state_b = browser_control._get_user_state()
             state_b.pages["test_page"] = mock_page_b
         finally:
-            reset_request_user_id(token_b)
+            reset_request_user_id(*token_b)
 
         # Verify each user gets their own page
         page_a = browser_control._get_page("test_page", user_id="user_a")
@@ -166,7 +166,7 @@ class TestMultiUserBrowserIsolation:
             state_a = browser_control._get_user_state()
             state_a.refs["page1"] = {"ref1": {"role": "button"}}
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
         # Set up user B with different refs
         token_b = set_request_user_id("user_b")
@@ -174,7 +174,7 @@ class TestMultiUserBrowserIsolation:
             state_b = browser_control._get_user_state()
             state_b.refs["page1"] = {"ref2": {"role": "link"}}
         finally:
-            reset_request_user_id(token_b)
+            reset_request_user_id(*token_b)
 
         # Verify refs are isolated
         refs_a = browser_control._get_refs("page1", user_id="user_a")
@@ -201,7 +201,7 @@ class TestMultiUserBrowserIsolation:
             else:
                 state_a.browser = MagicMock()
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
         # User A should have running browser, User B should not
         assert browser_control._is_browser_running_for_user("user_a") is True
@@ -218,7 +218,7 @@ class TestMultiUserBrowserIsolation:
 
             assert state_a.last_activity_time > original_time
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
     def test_reset_browser_state_user(self):
         """Test _reset_browser_state_user clears only specified user's state."""
@@ -229,7 +229,7 @@ class TestMultiUserBrowserIsolation:
             state_a.page_counter = 10
             state_a.pages["page1"] = MagicMock()
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
         token_b = set_request_user_id("user_b")
         try:
@@ -237,7 +237,7 @@ class TestMultiUserBrowserIsolation:
             state_b.page_counter = 20
             state_b.pages["page2"] = MagicMock()
         finally:
-            reset_request_user_id(token_b)
+            reset_request_user_id(*token_b)
 
         # Reset only user A
         browser_control._reset_browser_state_user("user_a")
@@ -266,7 +266,7 @@ class TestMultiUserBrowserIsolation:
 
         # Reset all tokens
         for token in tokens:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
         # Verify each user's state is isolated
         for user in users:
@@ -275,7 +275,7 @@ class TestMultiUserBrowserIsolation:
                 state = browser_control._get_user_state()
                 assert state.page_counter == ord(user[0])
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
     def test_max_pages_per_user_constant(self):
         """Test that max pages per user constant is defined."""
@@ -309,7 +309,7 @@ class TestUserContextHelpers:
             user_id = browser_control._get_current_user_id()
             assert user_id == "default"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_user_state_lifecycle(self):
         """Test complete lifecycle of user state: create -> use -> cleanup."""
@@ -328,7 +328,7 @@ class TestUserContextHelpers:
             assert state2.headless is False
             assert state2.page_counter == 5
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
         # State should still exist in global storage
         assert "lifecycle_user" in browser_control._state["users"]
@@ -379,7 +379,7 @@ class TestBrowserUseUserIsolation:
                 or "error" in content_text.lower()
             )
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     @pytest.mark.asyncio
     async def test_browser_use_unknown_action(self):
@@ -406,7 +406,7 @@ class TestBrowserUseUserIsolation:
                 content_text = str(response)
             assert "unknown action" in content_text.lower()
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     @pytest.mark.asyncio
     async def test_browser_use_install_action(self):
@@ -422,7 +422,7 @@ class TestBrowserUseUserIsolation:
                 response = await browser_control.browser_use(action="install")
                 mock_install.assert_called_once()
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
 
 class TestBrowserIsolationIntegration:
@@ -451,7 +451,7 @@ class TestBrowserIsolationIntegration:
                 state.pages[page_id] = mock_page
                 state.page_counter += 1
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
         # Verify each user's page is isolated
         for user in users:
@@ -472,7 +472,7 @@ class TestBrowserIsolationIntegration:
                 ref_id: {"role": "button", "name": "Submit for User A"},
             }
         finally:
-            reset_request_user_id(token_a)
+            reset_request_user_id(*token_a)
 
         # User B creates a ref with same ID
         token_b = set_request_user_id("user_b")
@@ -482,7 +482,7 @@ class TestBrowserIsolationIntegration:
                 ref_id: {"role": "button", "name": "Submit for User B"},
             }
         finally:
-            reset_request_user_id(token_b)
+            reset_request_user_id(*token_b)
 
         # Verify refs are isolated
         refs_a = browser_control._get_refs(page_id, user_id="user_a")
@@ -500,7 +500,7 @@ class TestBrowserIsolationIntegration:
                 state = browser_control._get_user_state()
                 state.page_counter = ord(user[-1])  # Unique counter per user
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
         # Reset only user_y
         browser_control._reset_browser_state_user("user_y")
@@ -511,14 +511,14 @@ class TestBrowserIsolationIntegration:
             state_x = browser_control._get_user_state()
             assert state_x.page_counter == ord("x")
         finally:
-            reset_request_user_id(token_x)
+            reset_request_user_id(*token_x)
 
         token_z = set_request_user_id("user_z")
         try:
             state_z = browser_control._get_user_state()
             assert state_z.page_counter == ord("z")
         finally:
-            reset_request_user_id(token_z)
+            reset_request_user_id(*token_z)
 
         # Verify user_y was reset
         token_y = set_request_user_id("user_y")
@@ -526,7 +526,7 @@ class TestBrowserIsolationIntegration:
             state_y = browser_control._get_user_state()
             assert state_y.page_counter == 0
         finally:
-            reset_request_user_id(token_y)
+            reset_request_user_id(*token_y)
 
     def test_request_context_switching(self):
         """Test that request context switching correctly isolates users."""
@@ -534,22 +534,22 @@ class TestBrowserIsolationIntegration:
         token1 = set_request_user_id("user_1")
         state1 = browser_control._get_user_state()
         state1.headless = False
-        reset_request_user_id(token1)
+        reset_request_user_id(*token1)
 
         # Simulate request 2 for user_2
         token2 = set_request_user_id("user_2")
         state2 = browser_control._get_user_state()
         state2.headless = True
-        reset_request_user_id(token2)
+        reset_request_user_id(*token2)
 
         # Switch back to user_1
         token1 = set_request_user_id("user_1")
         current_state = browser_control._get_user_state()
         assert current_state.headless is False
-        reset_request_user_id(token1)
+        reset_request_user_id(*token1)
 
         # Switch to user_2 again
         token2 = set_request_user_id("user_2")
         current_state = browser_control._get_user_state()
         assert current_state.headless is True
-        reset_request_user_id(token2)
+        reset_request_user_id(*token2)

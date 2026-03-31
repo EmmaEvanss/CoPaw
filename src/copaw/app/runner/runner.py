@@ -201,7 +201,7 @@ class AgentRunner(Runner):
                 return
             finally:
                 # Always restore previous context
-                reset_request_user_id(user_token)
+                reset_request_user_id(*user_token)
 
         agent = None
         chat = None
@@ -379,7 +379,7 @@ class AgentRunner(Runner):
                     await self._chat_manager.update_chat(chat, user_id=user_id)
             finally:
                 # Always restore previous context
-                reset_request_user_id(user_token)
+                reset_request_user_id(*user_token)
 
     async def init_handler(self, *args, **kwargs):
         """

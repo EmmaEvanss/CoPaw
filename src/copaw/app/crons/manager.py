@@ -711,14 +711,14 @@ class CronManager:
                 try:
                     await self._execute_once(user_id, job)
                 finally:
-                    reset_request_user_id(token)
+                    reset_request_user_id(*token)
         else:
             # No Redis lock, execute directly
             token = set_request_user_id(user_id)
             try:
                 await self._execute_once(user_id, job)
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
         # Refresh next_run
         aps_job = self._scheduler.get_job(job_id)
@@ -784,7 +784,7 @@ class CronManager:
             try:
                 await self._execute_once(user_id, job)
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
             # Save states to NAS
             await self._save_user_states(user_id)
@@ -860,7 +860,7 @@ class CronManager:
             try:
                 await self._execute_once(user_id, job)
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
             # Save states to NAS
             await self._save_user_states(user_id)
@@ -932,7 +932,7 @@ class CronManager:
                     user_id=user_id,
                 )
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
         except Exception:  # pylint: disable=broad-except
             logger.exception("heartbeat run failed for user=%s", user_id)
 

@@ -81,29 +81,31 @@ def tmp_copaw_dirs(tmp_path, monkeypatch):
 class TestContextVariablesIsolation:
     """Test context variable isolation for multi-user support."""
 
-    def test_set_request_user_id_returns_token(self):
-        """Test that setting user_id returns a valid token."""
-        token = set_request_user_id("test_user")
-        assert token is not None
-        assert isinstance(token, contextvars.Token)
-        reset_request_user_id(token)
+    def test_set_request_user_id_returns_tokens(self):
+        """Test that setting user_id returns valid tokens (tuple of 3)."""
+        tokens = set_request_user_id("test_user")
+        assert tokens is not None
+        assert isinstance(tokens, tuple)
+        assert len(tokens) == 3
+        assert all(isinstance(t, contextvars.Token) for t in tokens)
+        reset_request_user_id(*tokens)
 
     def test_reset_request_user_id_restores_context(self):
         """Test that resetting context restores previous state."""
         # Set initial state
-        token1 = set_request_user_id("user1")
+        tokens1 = set_request_user_id("user1")
         assert get_request_user_id() == "user1"
 
         # Change to different user
-        token2 = set_request_user_id("user2")
+        tokens2 = set_request_user_id("user2")
         assert get_request_user_id() == "user2"
 
         # Restore to user1
-        reset_request_user_id(token2)
+        reset_request_user_id(*tokens2)
         assert get_request_user_id() == "user1"
 
         # Restore to initial state
-        reset_request_user_id(token1)
+        reset_request_user_id(*tokens1)
         assert get_request_user_id() is None
 
     def test_get_request_user_id_without_context(self):
@@ -131,7 +133,7 @@ class TestDirectoryAccessors:
             result = get_request_working_dir()
             assert result == working_dir / "alice"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_request_secret_dir_with_user_context(self, tmp_copaw_dirs):
         """Test that get_request_secret_dir returns correct directory."""
@@ -142,7 +144,7 @@ class TestDirectoryAccessors:
             result = get_request_secret_dir()
             assert result == secret_dir / "bob"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_active_skills_dir_with_user_context(self, tmp_copaw_dirs):
         """Test that active skills directory is user-isolated."""
@@ -154,7 +156,7 @@ class TestDirectoryAccessors:
             expected = working_dir / "charlie" / "active_skills"
             assert result == expected
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_customized_skills_dir_with_user_context(self, tmp_copaw_dirs):
         """Test that customized skills directory is user-isolated."""
@@ -166,7 +168,7 @@ class TestDirectoryAccessors:
             expected = working_dir / "david" / "customized_skills"
             assert result == expected
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_memory_dir_with_user_context(self, tmp_copaw_dirs):
         """Test that memory directory is user-isolated."""
@@ -178,7 +180,7 @@ class TestDirectoryAccessors:
             expected = working_dir / "eve" / "memory"
             assert result == expected
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_models_dir_with_user_context(self, tmp_copaw_dirs):
         """Test that models directory is user-isolated."""
@@ -190,7 +192,7 @@ class TestDirectoryAccessors:
             expected = working_dir / "frank" / "models"
             assert result == expected
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_custom_channels_dir_with_user_context(self, tmp_copaw_dirs):
         """Test that custom channels directory is user-isolated."""
@@ -202,7 +204,7 @@ class TestDirectoryAccessors:
             expected = working_dir / "grace" / "custom_channels"
             assert result == expected
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
 
 class TestConcurrentIsolation:
@@ -221,7 +223,7 @@ class TestConcurrentIsolation:
                 await asyncio.sleep(0.01)  # Simulate some async work
                 results[user_id] = str(get_request_working_dir())
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
         # Run concurrent requests
         await asyncio.gather(
@@ -249,7 +251,7 @@ class TestConcurrentIsolation:
                 await asyncio.sleep(0.001)
                 results[user_id] = get_request_working_dir()
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
         await asyncio.gather(*[handle_request(uid) for uid in user_ids])
 
@@ -266,7 +268,7 @@ class TestConcurrentIsolation:
             try:
                 return get_request_working_dir()
             finally:
-                reset_request_user_id(token)
+                reset_request_user_id(*token)
 
         # First request
         result1 = await handle_request_with_cleanup("user1")
@@ -306,7 +308,7 @@ class TestConfigIsolation:
             result = get_config_path()
             assert result == working_dir / "bob" / "config.json"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_get_providers_json_path_with_user_id(self, tmp_copaw_dirs):
         """Test that providers.json path is user-isolated."""
@@ -331,7 +333,7 @@ class TestConfigIsolation:
             result = get_providers_json_path()
             assert result == secret_dir / "bob" / "providers.json"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
 
 class TestFileOperations:
@@ -364,7 +366,7 @@ class TestFileOperations:
             assert resolved == expected, f"Expected {expected}, got {resolved}"
 
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     @pytest.mark.asyncio
     async def test_file_search_uses_user_directory(self, tmp_copaw_dirs):
@@ -398,7 +400,7 @@ class TestFileOperations:
             assert "test.txt" in result_text
 
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
 
 class TestAgentInitialization:
@@ -420,7 +422,7 @@ class TestAgentInitialization:
             # Hook's working_dir should be user's directory
             assert hook.working_dir == working_dir / "hookuser"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_prompt_builder_uses_user_directory(self, tmp_copaw_dirs):
         """Test that PromptBuilder uses user directory."""
@@ -436,7 +438,7 @@ class TestAgentInitialization:
 
             assert builder.working_dir == working_dir / "promptuser"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
 
 class TestBackwardCompatibility:
@@ -705,7 +707,7 @@ class TestMemoryManagerIsolation:
             # even though initialized with runtime directory
             assert get_request_working_dir() == working_dir / "testuser"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     def test_memory_manager_path_override_in_query_handler(
         self,
@@ -770,7 +772,7 @@ class TestMemoryManagerIsolation:
                 == working_dir / "original" / "tool_result"
             )
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
 
 class TestMemoryManagerLRUCache:
@@ -798,7 +800,7 @@ class TestMemoryManagerLRUCache:
             assert "cacheuser1" in runner._memory_manager_cache
             assert runner._memory_manager_cache["cacheuser1"] is mm
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
             # Cleanup
             await runner.shutdown_handler()
 
@@ -983,7 +985,7 @@ class TestChatsIsolation:
             result = get_chats_path()
             assert result == working_dir / "bob" / "chats.json"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     @pytest.mark.asyncio
     async def test_chat_manager_uses_user_isolated_repo(self, tmp_copaw_dirs):
@@ -1002,7 +1004,7 @@ class TestChatsIsolation:
             assert isinstance(repo, JsonChatRepository)
             assert repo.path == working_dir / "testuser" / "chats.json"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     @pytest.mark.asyncio
     async def test_list_chats_returns_only_user_chats(self, tmp_copaw_dirs):
@@ -1030,7 +1032,7 @@ class TestChatsIsolation:
             )
             await alice_repo.upsert_chat(alice_chat)
         finally:
-            reset_request_user_id(token_alice)
+            reset_request_user_id(*token_alice)
 
         # Create chats for Bob
         token_bob = set_request_user_id("bob")
@@ -1044,7 +1046,7 @@ class TestChatsIsolation:
             )
             await bob_repo.upsert_chat(bob_chat)
         finally:
-            reset_request_user_id(token_bob)
+            reset_request_user_id(*token_bob)
 
         # Alice should only see her own chats
         token_alice = set_request_user_id("alice")
@@ -1054,7 +1056,7 @@ class TestChatsIsolation:
             assert alice_chats[0].user_id == "alice"
             assert alice_chats[0].name == "Alice's Chat"
         finally:
-            reset_request_user_id(token_alice)
+            reset_request_user_id(*token_alice)
 
         # Bob should only see his own chats
         token_bob = set_request_user_id("bob")
@@ -1064,7 +1066,7 @@ class TestChatsIsolation:
             assert bob_chats[0].user_id == "bob"
             assert bob_chats[0].name == "Bob's Chat"
         finally:
-            reset_request_user_id(token_bob)
+            reset_request_user_id(*token_bob)
 
     @pytest.mark.asyncio
     async def test_create_chat_uses_user_directory(self, tmp_copaw_dirs):
@@ -1105,7 +1107,7 @@ class TestChatsIsolation:
             assert len(chats.chats) == 1
             assert chats.chats[0].user_id == "testuser"
         finally:
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
 
     @pytest.mark.asyncio
     async def test_get_chat_not_found_for_other_user(self, tmp_copaw_dirs):
@@ -1134,7 +1136,7 @@ class TestChatsIsolation:
             owner_repo = chat_manager._get_repo_for_user("owner")
             await owner_repo.upsert_chat(owner_chat)
         finally:
-            reset_request_user_id(token_owner)
+            reset_request_user_id(*token_owner)
 
         # Other user should not be able to access owner's chat
         # (different files, so chat won't exist in other's repo)
@@ -1147,7 +1149,7 @@ class TestChatsIsolation:
             # Should return None since the chat doesn't exist in other's file
             assert result is None
         finally:
-            reset_request_user_id(token_other)
+            reset_request_user_id(*token_other)
 
     @pytest.mark.asyncio
     async def test_delete_chat_only_affects_user_chats(self, tmp_copaw_dirs):
@@ -1182,14 +1184,14 @@ class TestChatsIsolation:
             user1_repo = chat_manager._get_repo_for_user("user1")
             await user1_repo.upsert_chat(user1_chat)
         finally:
-            reset_request_user_id(token_user1)
+            reset_request_user_id(*token_user1)
 
         token_user2 = set_request_user_id("user2")
         try:
             user2_repo = chat_manager._get_repo_for_user("user2")
             await user2_repo.upsert_chat(user2_chat)
         finally:
-            reset_request_user_id(token_user2)
+            reset_request_user_id(*token_user2)
 
         # Delete user1's chat
         token_user1 = set_request_user_id("user1")
@@ -1200,7 +1202,7 @@ class TestChatsIsolation:
             )
             assert deleted is True
         finally:
-            reset_request_user_id(token_user1)
+            reset_request_user_id(*token_user1)
 
         # Verify user1's chat is deleted
         token_user1 = set_request_user_id("user1")
@@ -1208,7 +1210,7 @@ class TestChatsIsolation:
             user1_chats = await chat_manager.list_chats(user_id="user1")
             assert len(user1_chats) == 0
         finally:
-            reset_request_user_id(token_user1)
+            reset_request_user_id(*token_user1)
 
         # Verify user2's chat is still there
         token_user2 = set_request_user_id("user2")
@@ -1217,7 +1219,7 @@ class TestChatsIsolation:
             assert len(user2_chats) == 1
             assert user2_chats[0].user_id == "user2"
         finally:
-            reset_request_user_id(token_user2)
+            reset_request_user_id(*token_user2)
 
 
 if __name__ == "__main__":

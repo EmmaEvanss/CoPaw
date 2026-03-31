@@ -528,7 +528,7 @@ async def user_context_middleware(request, call_next):
             return response
         finally:
             # 恢复上下文
-            reset_request_user_id(token)
+            reset_request_user_id(*token)
     else:
         return await call_next(request)
 

@@ -102,6 +102,11 @@ docker run -p 127.0.0.1:8088:8088 \
   agentscope/copaw:latest
 ```
 
+5. If using the Windows Desktop App (exe), currently you need to uninstall and reinstall:
+   - Uninstall CoPaw from your PC
+   - Download the latest version from: https://github.com/agentscope-ai/CoPaw/releases
+   - Reinstall
+
 After upgrading, restart the service with `copaw app`.
 
 ### How to initialize and start CoPaw service
@@ -122,6 +127,71 @@ The default Console URL is `http://127.0.0.1:8088/`. After quick init, you can
 open Console and customize settings. See
 [Quick Start](https://copaw.agentscope.io/docs/quickstart).
 
+### Port 8088 conflict on Windows
+
+On Windows, Hyper-V and WSL2 may reserve certain port ranges, which can conflict
+with CoPaw's default port **8088**. This affects all installation methods
+(pip, script, Docker, desktop app).
+
+**Symptoms:**
+
+- Error: `Address already in use` or `OSError: [Errno 98] Address already in use`
+- Error: `An attempt was made to access a socket in a way forbidden by its access permissions`
+- CoPaw fails to start, or browser cannot connect to `http://127.0.0.1:8088/`
+
+**Check if port 8088 is reserved on Windows:**
+
+Open PowerShell or CMD and run:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
+If 8088 appears in the excluded ranges, it's reserved by the system.
+
+**Solution: Use a different port**
+
+**For pip / script installation:**
+
+```bash
+copaw app --port 8090
+```
+
+Then open `http://127.0.0.1:8090/` in your browser.
+
+**For Docker:**
+
+```bash
+docker run -p 127.0.0.1:8090:8088 \
+  -v copaw-data:/app/working \
+  -v copaw-secrets:/app/working.secret \
+  agentscope/copaw:latest
+```
+
+Then open `http://127.0.0.1:8090/` in your browser.
+
+**For Windows Desktop App:**
+
+Currently, the desktop app uses port 8088 by default. If you encounter this
+issue, you can:
+
+1. Run `copaw app --port 8090` from a terminal instead
+2. Or exclude port 8088 from Windows reserved ranges (requires administrator
+   privileges and may affect other services)
+
+**Advanced: Prevent Windows from reserving port 8088**
+
+Run the following in an elevated PowerShell (run as Administrator):
+
+```powershell
+# Exclude port 8088 from the dynamic port range
+netsh int ipv4 set dynamicport tcp start=49152 num=16384
+# Restart Windows for changes to take effect
+```
+
+> ⚠️ **Warning**: This changes system-wide port configuration. Only do this if
+> you understand the implications.
+
 ### Open-source repository
 
 CoPaw is open source. Official repository:
@@ -129,28 +199,162 @@ CoPaw is open source. Official repository:
 
 ### Where to check latest version upgrade details
 
-You can check version changes in CoPaw GitHub
-[Releases](https://github.com/agentscope-ai/CoPaw/releases).
+See the site [Release notes](https://copaw.agentscope.io/release-notes/?lang=en)
+or CoPaw GitHub [Releases](https://github.com/agentscope-ai/CoPaw/releases).
 
 ### How to configure models
 
-In Console, go to **Settings -> Models** to configure. See the
+In Console, go to **Settings → Models** to configure. See the
 [Models](https://copaw.agentscope.io/docs/models) doc for details:
 
-- Cloud models: fill provider API key (e.g. ModelScope, DashScope, or custom),
-  then select the active model.
-- Local models: supports `llama.cpp`, `MLX`, and Ollama. After download, select
-  the active model on the same page.
+- Cloud models: enter the provider API key (e.g. ModelScope, DashScope, or a
+  custom provider).
+- Local models: supports `llama.cpp`, LM Studio and Ollama.
 
-You can also use `copaw models` CLI commands for configuration, download, and
-switching. See
-[CLI -> Models and environment variables -> copaw models](https://copaw.agentscope.io/docs/cli#copaw-models).
+After configuration, choose the target provider and model under **Default LLM**
+at the top of the Models page and **Save** — that becomes the global default.
+
+To use a different model per agent, switch the agent with the selector at the top-left of Console, then pick a model in the top-right of the **Chat** page for that
+agent.
+
+You can also use `copaw models` for setup, downloads, and switching. See
+[CLI → Models and environment variables → copaw models](https://copaw.agentscope.io/docs/cli#copaw-models).
+
+### How to use CoPaw-Flash series models
+
+CoPaw-Flash is a family of models tuned by the CoPaw team for CoPaw's core
+usage scenarios. It comes in 2B, 4B, and 9B sizes. In addition to the original
+models, each version also provides 4-bit and 8-bit quantized variants to suit
+different VRAM budgets and performance needs.
+
+CoPaw-Flash models are currently open-sourced on
+[ModelScope](https://www.modelscope.cn/organization/AgentScope?tab=model) and
+[Hugging Face](https://huggingface.co/agentscope-ai/models), and can be
+downloaded directly from either platform.
+
+All built-in local providers in CoPaw can be used with CoPaw-Flash models:
+
+#### CoPaw Local (llama.cpp)
+
+In the CoPaw Local model interface, simply choose a CoPaw-Flash model to
+download and start it.
+
+![Start Model](https://gw.alicdn.com/imgextra/i1/O1CN01NSNFUN1I21RynZwGy_!!6000000000834-2-tps-1224-1194.png)
+
+> CoPaw Local is still in beta. Compatibility across different devices and
+> runtime stability are still being improved. If you run into issues while
+> using it, please open an issue on GitHub.
+> If CoPaw Local does not work properly in your environment, we recommend
+> deploying CoPaw-Flash with Ollama or LM Studio first.
+
+#### Ollama
+
+1. Download a quantized CoPaw-Flash model from
+   [ModelScope](https://www.modelscope.cn/organization/AgentScope?tab=model)
+   or [Hugging Face](https://huggingface.co/agentscope-ai/models). These model
+   variants use suffixes such as `Q8_0` or `Q4_K_M`, for example
+   [CoPaw-Flash-4B-Q4_K_M](https://www.modelscope.cn/models/AgentScope/CoPaw-Flash-4B-Q4_K_M).
+
+   - Download with ModelScope CLI:
+
+     ```bash
+     modelscope download --model AgentScope/CoPaw-Flash-4B-Q4_K_M README.md --local_dir ./dir
+     ```
+
+   - Download with Hugging Face CLI:
+
+     ```bash
+     hf download agentscope-ai/CoPaw-Flash-4B-Q4_K_M --local_dir ./dir
+     ```
+
+1. Download and install Ollama from the [official site](https://ollama.com/download),
+   then start it.
+
+1. Import the downloaded model into Ollama with the `ollama create` command:
+
+Create a text file named `copaw-flash.txt` with the following contents. Replace
+`/path/to/your/copaw-xxx.gguf` with the absolute path to the `.gguf` file in
+the CoPaw-Flash model repository you downloaded:
+
+```text
+FROM /path/to/your/copaw-xxx.gguf
+TEMPLATE {{ .Prompt }}
+RENDERER qwen3.5
+PARSER qwen3.5
+PARAMETER presence_penalty 1.5
+PARAMETER temperature 1
+PARAMETER top_k 20
+PARAMETER top_p 0.95
+```
+
+Then run the following command in your terminal:
+
+```bash
+ollama create copaw-flash -f copaw-flash.txt
+```
+
+1. In CoPaw model settings, choose the Ollama provider, then automatically load
+   the model on the Models page.
+
+#### LM Studio
+
+1. Follow step 1 in the Ollama section above to download an appropriate
+   quantized CoPaw-Flash model.
+
+1. Download and install LM Studio from the [official site](https://lmstudio.ai/),
+   then start it.
+
+1. Import the downloaded model into LM Studio with the following command:
+
+```bash
+lms import /path/to/your/copaw-xxx.gguf -c -y --user-repo AgentScope/CoPaw-Flash
+```
+
+1. In CoPaw model settings, choose the LM Studio provider, then automatically
+   load the model on the Models page.
+
+### When using models deployed with Ollama / LM Studio, why can't CoPaw complete multi-turn interactions, complex tool calls, or remember earlier instructions?
+
+In most cases, this is not a CoPaw bug. The root cause is usually that the
+model's context length is configured too small.
+
+When you deploy a local model with Ollama or LM Studio, if the model's
+`context length` is too low, CoPaw may show problems such as:
+
+- failing to sustain multi-turn conversations reliably
+- losing context during complex tool calls
+- forgetting instructions given in earlier turns
+- drifting away from the task during long-running interactions
+
+**How to fix it:**
+
+- Before running CoPaw, set the model's `context length` to **at least 32K**
+- For more complex tasks, frequent tool calls, or longer conversations, you
+  may need a value **higher than 32K**
+
+> ⚠️ **Before running CoPaw, you must set the context length to 32K or higher**
+>
+> For local models deployed with Ollama or LM Studio, CoPaw typically needs a
+> context length of **32K or higher** to handle multi-turn interactions,
+> complex tool calls, and long-context tasks reliably. In more demanding
+> scenarios, an even larger context window may be required.
+>
+> Note that larger context windows can significantly increase VRAM / memory
+> usage and compute cost, so make sure your local machine can handle it.
+
+**Ollama configuration example:**
+
+![Ollama context length configuration](https://img.alicdn.com/imgextra/i3/O1CN01JrqRjE1l6FxuO3IMl_!!6000000004769-2-tps-699-656.png)
+
+**LM Studio configuration example:**
+
+![LM Studio context length configuration](https://img.alicdn.com/imgextra/i4/O1CN01LWyG6o21E4Zovqv4G_!!6000000006952-2-tps-923-618.png)
 
 ### Troubleshooting scheduled (cron) tasks
 
 In Console, go to **Control -> Cron Jobs** to create and manage scheduled tasks.
 
-![cron](https://img.alicdn.com/imgextra/i2/O1CN01sL8ZYj1QJtpXs9iKE_!!6000000001956-2-tps-3814-1954.png)
+![cron](https://img.alicdn.com/imgextra/i3/O1CN01duPPPB1R0x495tRdY_!!6000000002050-2-tps-3822-2064.png)
 
 The easiest way to create a cron job is to talk to CoPaw in the channel where you want the results. For example, say: “Create a scheduled task that reminds me to drink water every five minutes.” You can then see the enabled job in Console.
 
@@ -160,27 +364,27 @@ If a scheduled task does not run as expected, try the following:
 
 2. Check that the task **Status** is **Enabled**.
 
-   ![enable](https://img.alicdn.com/imgextra/i4/O1CN01oggNyG1yQwrWKCnN7_!!6000000006574-2-tps-3020-762.png)
+   ![enable](https://img.alicdn.com/imgextra/i3/O1CN01XsJiIH1bIUOD4j9sF_!!6000000003442-2-tps-3236-880.png)
 
 3. Check that **Dispatch Channel** is set to the channel where you want the result (e.g. console, dingtalk, feishu, discord, imessage).
 
-   ![channel](https://img.alicdn.com/imgextra/i1/O1CN01RnjX7z1MHpZvVpjJq_!!6000000001410-2-tps-3020-762.png)
+   ![channel](https://img.alicdn.com/imgextra/i2/O1CN01JN4bq61WKFpzXrIcZ_!!6000000002769-2-tps-3230-876.png)
 
 4. Check that **Dispatch Target User ID** and **Dispatch Target Session ID** are correct.
 
-   ![id](https://img.alicdn.com/imgextra/i4/O1CN01QgvEDv290o1p3oaTv_!!6000000008006-2-tps-3020-762.png)
+   ![id](https://img.alicdn.com/imgextra/i2/O1CN014BLaOC1YwO2onZK8U_!!6000000003123-2-tps-3236-874.png)
 
    In Console, go to **Control -> Sessions** and find the session you used when creating the task. To have the task reply in that session, the **User ID** and **Session ID** there must match the task’s **Dispatch Target User ID** and **Dispatch Target Session ID**.
 
-   ![id](https://img.alicdn.com/imgextra/i3/O1CN01aqsLLR1eRb6m6WaGl_!!6000000003868-2-tps-3020-928.png)
+   ![id](https://img.alicdn.com/imgextra/i2/O1CN01iZZhHZ1VeZnMzjlMm_!!6000000002678-2-tps-3236-1068.png)
 
 5. If the task runs at the wrong time, check the **Schedule (Cron)** for the task.
 
-   ![cron](https://img.alicdn.com/imgextra/i2/O1CN01iNoLp229bRiIdvJKK_!!6000000008086-2-tps-3020-778.png)
+   ![cron](https://img.alicdn.com/imgextra/i4/O1CN01TSodVd21msgJQvHkI_!!6000000007028-2-tps-3234-876.png)
 
 6. To verify that the task was created and can run, click **Execute Now**. If it works, you should see the reply in the target channel. You can also ask CoPaw: “Trigger the ‘drink water reminder’ task I just created.”
 
-   ![exec](https://img.alicdn.com/imgextra/i3/O1CN01nGtc3p1o5kN0d01mf_!!6000000005174-2-tps-3020-778.png)
+   ![exec](https://img.alicdn.com/imgextra/i4/O1CN01MkrSYn1mJpJshAO8n_!!6000000004934-2-tps-3224-878.png)
 
 ### How to manage Skills
 
@@ -193,7 +397,7 @@ custom Skills, and import Skills from Skills Hub. See
 Go to **Agent -> MCP** in Console. You can enable/disable/delete/create MCP
 clients there. See [MCP](https://copaw.agentscope.io/docs/mcp).
 
-### Common error
+### Common errors
 
 1. Error pattern: `You didn't provide an API key`
 

@@ -16,7 +16,7 @@ from agentscope.mcp._client_base import MCPClientBase
 from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import ToolResponse
 from mcp import ClientSession as _CS
-from swe.config.context import get_current_tenant_id
+from ...config.context import get_current_tenant_id
 
 from .manager import MCPClientManager
 from .stateful_client import HttpStatefulClient, StdIOStatefulClient

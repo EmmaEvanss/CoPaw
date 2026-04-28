@@ -144,6 +144,55 @@ class BackupContentResponse(BaseModel):
     original_file: str
 
 
+class OrphanFileInfo(BaseModel):
+    """Information about an orphan file."""
+
+    filename: str
+    size: int
+    created_at: str
+    modified_at: str
+    path: str
+
+
+class OrphanFilesResponse(BaseModel):
+    """Response for listing orphan files."""
+
+    files: list[OrphanFileInfo]
+    total_size: int
+    total_files: int
+
+
+class OrphanFileContentResponse(BaseModel):
+    """Response for orphan file content preview."""
+
+    filename: str
+    content: str
+    size: int
+
+
+# Keep list - files and directories that should NOT be listed as orphan
+KEEP_FILES = {
+    "MEMORY.md",
+    "AGENTS.md",
+    "SOUL.md",
+    "PROFILE.md",
+    "HEARTBEAT.md",
+    "BOOTSTRAP.md",
+    "agent.json",
+    "chats.json",
+    "jobs.json",
+    "token_usage.json",
+    "dream_logs.json",
+}
+
+KEEP_DIRS = {
+    "memory",
+    "sessions",
+    "backup",
+    "skills",
+}
+
+
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
@@ -737,4 +786,152 @@ async def get_backup_content(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to read backup file: {str(e)}",
+        )
+
+
+# ------------------------------------------------------------------
+# Orphan files endpoints
+# ------------------------------------------------------------------
+
+
+def _scan_orphan_files(workspace_dir: Path) -> list[OrphanFileInfo]:
+    """Scan workspace directory for orphan files.
+
+    Returns files that are NOT in the keep list.
+    """
+    orphan_files: list[OrphanFileInfo] = []
+
+    if not workspace_dir.exists():
+        return orphan_files
+
+    for item in workspace_dir.iterdir():
+        # Skip directories in keep list
+        if item.is_dir() and item.name in KEEP_DIRS:
+            continue
+
+        # Skip files in keep list
+        if item.is_file() and item.name in KEEP_FILES:
+            continue
+
+        # Only process files (not directories)
+        if item.is_file():
+            try:
+                stat = item.stat()
+                orphan_files.append(
+                    OrphanFileInfo(
+                        filename=item.name,
+                        size=stat.st_size,
+                        created_at=datetime.fromtimestamp(
+                            stat.st_ctime
+                        ).isoformat(),
+                        modified_at=datetime.fromtimestamp(
+                            stat.st_mtime
+                        ).isoformat(),
+                        path=item.name,  # Relative to workspace_dir
+                    ),
+                )
+            except Exception as e:
+                logger.error(f"Failed to read file {item}: {e}")
+
+    # Sort by modified time (most recent first)
+    orphan_files.sort(key=lambda x: x.modified_at, reverse=True)
+    return orphan_files
+
+
+@router.get("/orphan-files", response_model=OrphanFilesResponse)
+async def list_orphan_files(request: Request) -> OrphanFilesResponse:
+    """List orphan files in workspace directory.
+
+    Orphan files are files that are NOT in the standard keep list
+    (core config files, system data files, and standard directories).
+    """
+    workspace_dir = _get_workspace_dir(request)
+    orphan_files = _scan_orphan_files(workspace_dir)
+
+    total_size = sum(f.size for f in orphan_files)
+    return OrphanFilesResponse(
+        files=orphan_files,
+        total_size=total_size,
+        total_files=len(orphan_files),
+    )
+
+
+@router.get(
+    "/orphan-files/{filepath:path}/content",
+    response_model=OrphanFileContentResponse,
+)
+async def get_orphan_file_content(
+    request: Request,
+    filepath: str,
+) -> OrphanFileContentResponse:
+    """Get content of an orphan file for preview."""
+    workspace_dir = _get_workspace_dir(request)
+    file_path = workspace_dir / filepath
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Security check: ensure file is within workspace_dir
+    try:
+        file_path.resolve().relative_to(workspace_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+        stat = file_path.stat()
+        return OrphanFileContentResponse(
+            filename=filepath,
+            content=content,
+            size=stat.st_size,
+        )
+    except Exception as e:
+        logger.error(f"Failed to read orphan file {file_path}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to read file: {str(e)}",
+        )
+
+
+@router.delete(
+    "/orphan-files/{filepath:path}", response_model=DeleteBackupResponse
+)
+async def delete_orphan_file(
+    request: Request,
+    filepath: str,
+) -> DeleteBackupResponse:
+    """Delete an orphan file."""
+    workspace_dir = _get_workspace_dir(request)
+    file_path = workspace_dir / filepath
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Security check: ensure file is within workspace_dir
+    try:
+        file_path.resolve().relative_to(workspace_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Extra check: ensure file is NOT in keep list
+    if file_path.name in KEEP_FILES:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot delete protected file",
+        )
+
+    try:
+        file_path.unlink()
+        logger.info(f"Deleted orphan file: {file_path}")
+        return DeleteBackupResponse(
+            success=True,
+            message=f"Deleted file: {filepath}",
+            files_deleted=[filepath],
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete orphan file {file_path}: {e}")
+        return DeleteBackupResponse(
+            success=False,
+            message=f"Failed to delete file: {str(e)}",
+            files_deleted=[],
         )

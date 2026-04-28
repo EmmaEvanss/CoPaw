@@ -1425,6 +1425,22 @@
     },
     "viewDiff": "比較を見る",
     "noRecords": "記録なし",
-    "firstRecord": "初回夢最適化実行後に記録が表示されます"
+    "firstRecord": "初回夢最適化実行後に記録が表示されます",
+    "tabCleanup": "ファイル整理",
+    "orphanFiles": {
+      "title": "一時ファイル一覧",
+      "filename": "ファイル名",
+      "size": "ファイルサイズ",
+      "createdAt": "作成時間",
+      "modifiedAt": "更新時間",
+      "totalFiles": "ファイル総数",
+      "totalSize": "合計サイズ",
+      "deleteConfirm": "このファイルを削除しますか？",
+      "deleteSuccess": "削除成功",
+      "deleteFailed": "削除失敗",
+      "noFiles": "一時ファイルなし",
+      "previewTitle": "ファイルプレビュー",
+      "previewFailed": "ファイル内容の取得に失敗"
+    }
   }
 }

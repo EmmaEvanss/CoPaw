@@ -94,3 +94,24 @@ export interface BackupContentResponse {
   size: number;
   original_file: string;
 }
+
+// Orphan files types
+export interface OrphanFileInfo {
+  filename: string;
+  size: number;
+  created_at: string;
+  modified_at: string;
+  path: string;
+}
+
+export interface OrphanFilesResponse {
+  files: OrphanFileInfo[];
+  total_size: number;
+  total_files: number;
+}
+
+export interface OrphanFileContentResponse {
+  filename: string;
+  content: string;
+  size: number;
+}

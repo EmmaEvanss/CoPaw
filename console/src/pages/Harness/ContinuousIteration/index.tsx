@@ -31,6 +31,7 @@ import {
   SyncOutlined,
   DatabaseOutlined,
   FilterOutlined,
+  DeleteOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import ReactMarkdown from "react-markdown";
@@ -44,6 +45,7 @@ import type {
 import StatsCards from "./components/StatsCards";
 import FileDiffModal from "./components/FileDiffModal";
 import BackupFiles from "./components/BackupFiles";
+import OrphanFiles from "./components/OrphanFiles";
 import styles from "./index.module.less";
 
 const { Panel } = Collapse;
@@ -492,6 +494,16 @@ export default function ContinuousIterationPage() {
         </Space>
       ),
       children: <BackupFiles />,
+    },
+    {
+      key: "cleanup",
+      label: (
+        <Space>
+          <DeleteOutlined />
+          {t("dreamLogs.tabCleanup")}
+        </Space>
+      ),
+      children: <OrphanFiles />,
     },
   ];
 

@@ -1610,6 +1610,22 @@
       "status": "Status",
       "trigger": "Trigger",
       "clear": "Clear Filters"
+    },
+    "tabCleanup": "File Cleanup",
+    "orphanFiles": {
+      "title": "Orphan Files List",
+      "filename": "Filename",
+      "size": "File Size",
+      "createdAt": "Created At",
+      "modifiedAt": "Modified At",
+      "totalFiles": "Total Files",
+      "totalSize": "Total Size",
+      "deleteConfirm": "Are you sure to delete this file?",
+      "deleteSuccess": "Deleted successfully",
+      "deleteFailed": "Delete failed",
+      "noFiles": "No orphan files",
+      "previewTitle": "File Preview",
+      "previewFailed": "Failed to get file content"
     }
   }
 }

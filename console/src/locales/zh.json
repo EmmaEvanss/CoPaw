@@ -1616,6 +1616,22 @@
       "status": "状态筛选",
       "trigger": "触发方式",
       "clear": "清除筛选"
+    },
+    "tabCleanup": "文件清理",
+    "orphanFiles": {
+      "title": "临时文件列表",
+      "filename": "文件名",
+      "size": "文件大小",
+      "createdAt": "创建时间",
+      "modifiedAt": "修改时间",
+      "totalFiles": "文件总数",
+      "totalSize": "总大小",
+      "deleteConfirm": "确定要删除此文件吗？",
+      "deleteSuccess": "删除成功",
+      "deleteFailed": "删除失败",
+      "noFiles": "暂无临时文件",
+      "previewTitle": "文件预览",
+      "previewFailed": "获取文件内容失败"
     }
   }
 }

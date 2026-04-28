@@ -10,6 +10,8 @@ import type {
   BackupListResponse,
   DeleteBackupResponse,
   BackupContentResponse,
+  OrphanFilesResponse,
+  OrphanFileContentResponse,
 } from "../types/dreamLogs";
 
 export const dreamLogsApi = {
@@ -68,4 +70,23 @@ export const dreamLogsApi = {
    */
   getBackupContent: async (filename: string): Promise<BackupContentResponse> =>
     request(`/dream-logs/backups/${filename}/content`),
+
+  // Orphan files API
+  /**
+   * List orphan files in workspace directory
+   */
+  listOrphanFiles: async (): Promise<OrphanFilesResponse> =>
+    request("/dream-logs/orphan-files"),
+
+  /**
+   * Get orphan file content for preview
+   */
+  getOrphanFileContent: async (filepath: string): Promise<OrphanFileContentResponse> =>
+    request(`/dream-logs/orphan-files/${filepath}/content`),
+
+  /**
+   * Delete an orphan file
+   */
+  deleteOrphanFile: async (filepath: string): Promise<DeleteBackupResponse> =>
+    request(`/dream-logs/orphan-files/${filepath}`, { method: "DELETE" }),
 };

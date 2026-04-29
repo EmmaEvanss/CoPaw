@@ -24,8 +24,9 @@ def test_distribute_request_all():
 def test_distribute_request_rejects_invalid_type():
     from market.marketplace.schemas import DistributeRequest
     import pytest
+    from pydantic import ValidationError
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         DistributeRequest(target_type="invalid", target_values=[])
 
 

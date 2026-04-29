@@ -11,6 +11,8 @@ def _make_service(tmp_path, mock_db=None):
     if mock_db is None:
         mock_db = AsyncMock()
         mock_db.is_connected = True
+        mock_db.fetch_one = AsyncMock(return_value=None)
+        mock_db.fetch_all = AsyncMock(return_value=[])
     return MarketplaceService(
         db=mock_db,
         marketplace_root=tmp_path / "market",

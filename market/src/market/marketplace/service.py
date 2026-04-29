@@ -458,23 +458,24 @@ class MarketplaceService:
     ) -> list[dict]:
         if not self.db.is_connected:
             return []
-        if req.target_type == "all":
-            rows = await self.db.fetch_all(
-                _QUERY_USERS_BY_SOURCE_SQL,
-                (source_id,),
-            )
-        elif req.target_type == "bbk_id" and req.target_values:
-            placeholders = ",".join(["%s"] * len(req.target_values))
-            sql = _QUERY_USERS_BY_BBK_SQL.format(placeholders=placeholders)
-            rows = await self.db.fetch_all(
-                sql,
-                (source_id, *req.target_values),
-            )
-        elif req.target_type == "user_id" and req.target_values:
-            rows = [
-                {"tenant_id": uid, "tenant_name": "", "bbk_id": ""}
-                for uid in req.target_values
-            ]
-        else:
-            rows = []
-        return rows
+        try:
+            if req.target_type == "all":
+                return await self.db.fetch_all(
+                    _QUERY_USERS_BY_SOURCE_SQL,
+                    (source_id,),
+                )
+            if req.target_type == "bbk_id" and req.target_values:
+                placeholders = ",".join(["%s"] * len(req.target_values))
+                sql = _QUERY_USERS_BY_BBK_SQL.format(placeholders=placeholders)
+                return await self.db.fetch_all(
+                    sql,
+                    (source_id, *req.target_values),
+                )
+            if req.target_type == "user_id" and req.target_values:
+                return [
+                    {"tenant_id": uid, "tenant_name": "", "bbk_id": ""}
+                    for uid in req.target_values
+                ]
+        except Exception as e:
+            logger.warning("Failed to resolve target users: %s", e)
+        return []

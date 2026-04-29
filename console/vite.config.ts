@@ -36,13 +36,8 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       // ==================== 代理配置 (Kun He) ====================
       proxy: {
-        // 应用市场接口代理到独立的市场服务 (8090)
-        "/api/marketplace": {
-          target: "http://127.0.0.1:8090",
-          changeOrigin: true,
-        },
-        // 我的技能接口也代理到市场服务 (8090)
-        "/api/skills": {
+        // target 目录下的接口统一使用 /api/market 前缀代理到市场服务 (8090)
+        "/api/market": {
           target: "http://127.0.0.1:8090",
           changeOrigin: true,
         },

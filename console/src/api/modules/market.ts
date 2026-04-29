@@ -62,7 +62,7 @@ function mergeHeaders(extra?: Record<string, string>): RequestInit {
 export const marketApi = {
   listCategories: async (sourceId: string): Promise<Category[]> => {
     const opts = mergeHeaders({ "X-Source-Id": sourceId });
-    return request<Category[]>("/api/marketplace/categories", opts);
+    return request<Category[]>("/market/categories", opts);
   },
 
   listMarketSkills: async (
@@ -70,7 +70,7 @@ export const marketApi = {
     bbkId: string,
     categoryId?: number
   ): Promise<MarketSkill[]> => {
-    let url = "/api/marketplace/skills";
+    let url = "/market/skills";
     const params = new URLSearchParams();
     if (categoryId !== undefined) {
       params.append("category_id", String(categoryId));
@@ -95,7 +95,7 @@ export const marketApi = {
       "X-Bbk-Id": bbkId,
     });
     return request<MarketSkillDetail | null>(
-      `/api/marketplace/skills/${itemId}`,
+      `/market/skills/${itemId}`,
       opts
     );
   },
@@ -117,7 +117,7 @@ export const marketApi = {
       }),
       body: JSON.stringify(data),
     };
-    return request<MarketSkill>("/api/marketplace/skills", opts);
+    return request<MarketSkill>("/market/skills", opts);
   },
 
   unpublishSkill: async (
@@ -135,7 +135,7 @@ export const marketApi = {
         "X-Manager": "true",
       }),
     };
-    return request<void>(`/api/marketplace/skills/${itemId}`, opts);
+    return request<void>(`/market/skills/${itemId}`, opts);
   },
 
   distributeSkill: async (
@@ -157,7 +157,7 @@ export const marketApi = {
       body: JSON.stringify(data),
     };
     return request<DistributeResponse>(
-      `/api/marketplace/skills/${itemId}/distribute`,
+      `/market/skills/${itemId}/distribute`,
       opts
     );
   },

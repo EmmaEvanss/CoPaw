@@ -10,6 +10,8 @@ export interface MySkill {
   distributed_by: string | null;
   is_received: boolean;
   has_update: boolean;
+  category?: string;
+  creator_name?: string;
 }
 
 function mergeHeaders(extra?: Record<string, string>): RequestInit {
@@ -27,7 +29,7 @@ export const mySkillsApi = {
       "X-Source-Id": sourceId,
       "X-User-Id": userId,
     });
-    const all = await request<MySkill[]>("/api/skills/mine", opts);
+    const all = await request<MySkill[]>("/market/skills/mine", opts);
     return all.filter((s) => !s.is_received);
   },
 
@@ -39,7 +41,7 @@ export const mySkillsApi = {
       "X-Source-Id": sourceId,
       "X-User-Id": userId,
     });
-    const all = await request<MySkill[]>("/api/skills/received", opts);
+    const all = await request<MySkill[]>("/market/skills/received", opts);
     return all.filter((s) => s.is_received);
   },
 };

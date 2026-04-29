@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty } from "antd";
-import { PlusOutlined, UploadOutlined, ReloadOutlined, ShopOutlined, ChevronRightOutlined, ChevronDownOutlined, FolderOutlined, FileTextOutlined, SparklesOutlined, ShopFilled } from "@ant-design/icons";
+import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined } from "@ant-design/icons";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
@@ -82,16 +82,16 @@ export default function MySkillsPage() {
       onClick={() => handleSelectSkill(skill)}
       style={{
         padding: "8px 10px",
-        borderRadius: 8,
+        borderRadius: 6,
         cursor: "pointer",
         backgroundColor: isSelected ? "#e6f4ff" : "transparent",
-        border: isSelected ? "1px solid #1677ff" : "1px solid transparent",
+        border: isSelected ? "1px solid #1890ff" : "1px solid transparent",
         marginBottom: 4,
         transition: "all 0.15s ease",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-        <FileTextOutlined style={{ color: "#87867f", flexShrink: 0 }} />
+        <FileOutlined style={{ color: "#8c8c8c", flexShrink: 0 }} />
         <Text
           strong={isSelected}
           style={{
@@ -99,13 +99,13 @@ export default function MySkillsPage() {
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            color: isSelected ? "#1677ff" : "#141413",
+            color: isSelected ? "#1890ff" : "#262626",
           }}
         >
           {skill.skill_name}
         </Text>
         {skill.version && (
-          <Tag style={{ fontSize: 10, margin: 0, borderRadius: 999 }}>v{skill.version}</Tag>
+          <Tag style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>v{skill.version}</Tag>
         )}
       </div>
     </div>
@@ -128,34 +128,34 @@ export default function MySkillsPage() {
     const headerStyle = (() => {
       if (title.includes("创建")) {
         return {
-          borderColor: "#f5d9c4",
-          backgroundColor: "#fdf3e7",
-          color: "#8b623d",
-          dotColor: "#c4956a",
+          borderColor: "#d6e4ff",
+          backgroundColor: "#e6f4ff",
+          color: "#1d39c4",
+          dotColor: "#1890ff",
         };
       }
       if (title.includes("接收")) {
         return {
-          borderColor: "#c4e8d1",
-          backgroundColor: "#edf7f0",
-          color: "#2e7d4f",
-          dotColor: "#5db872",
+          borderColor: "#b7eb8f",
+          backgroundColor: "#f6ffed",
+          color: "#389e0d",
+          dotColor: "#52c41a",
         };
       }
       return {
-        borderColor: "#e8e6dc",
-        backgroundColor: "#f5f4ed",
-        color: "#5e5d59",
-        dotColor: "#87867f",
+        borderColor: "#d9d9d9",
+        backgroundColor: "#f5f5f5",
+        color: "#595959",
+        dotColor: "#8c8c8c",
       };
     })();
 
     return (
       <div
         style={{
-          borderRadius: 12,
-          border: "1px solid #e8e6dc",
-          backgroundColor: "rgba(255,255,255,0.4)",
+          borderRadius: 8,
+          border: "1px solid #f0f0f0",
+          backgroundColor: "#fff",
           padding: 6,
           ...style,
         }}
@@ -167,7 +167,7 @@ export default function MySkillsPage() {
             alignItems: "center",
             justifyContent: "space-between",
             padding: "6px 10px",
-            borderRadius: 8,
+            borderRadius: 6,
             cursor: "pointer",
             border: `1px solid ${headerStyle.borderColor}`,
             backgroundColor: headerStyle.backgroundColor,
@@ -176,9 +176,9 @@ export default function MySkillsPage() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             {isExpanded ? (
-              <ChevronDownOutlined style={{ fontSize: 12, color: "#87867f" }} />
+              <DownOutlined style={{ fontSize: 12, color: "#8c8c8c" }} />
             ) : (
-              <ChevronRightOutlined style={{ fontSize: 12, color: "#87867f" }} />
+              <RightOutlined style={{ fontSize: 12, color: "#8c8c8c" }} />
             )}
             <div
               style={{
@@ -189,7 +189,7 @@ export default function MySkillsPage() {
                 flexShrink: 0,
               }}
             />
-            <Text style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.02em", color: headerStyle.color }}>
+            <Text style={{ fontSize: 13, fontWeight: 500, color: headerStyle.color }}>
               {title}
             </Text>
           </div>
@@ -199,10 +199,10 @@ export default function MySkillsPage() {
               minWidth: 24,
               justifyContent: "center",
               padding: "0 6px",
-              fontSize: 10,
-              fontWeight: 600,
+              fontSize: 11,
+              fontWeight: 500,
               margin: 0,
-              borderRadius: 999,
+              borderRadius: 4,
               backgroundColor: "#fff",
               border: `1px solid ${headerStyle.borderColor}`,
               color: headerStyle.color,
@@ -214,7 +214,7 @@ export default function MySkillsPage() {
         {isExpanded && (
           <div style={{ padding: "8px 2px 2px 2px" }}>
             {skills.length === 0 ? (
-              <Text style={{ fontSize: 12, color: "#87867f", padding: "8px 10px", display: "block" }}>
+              <Text style={{ fontSize: 12, color: "#8c8c8c", padding: "8px 10px", display: "block" }}>
                 没有匹配的技能
               </Text>
             ) : (
@@ -237,24 +237,11 @@ export default function MySkillsPage() {
     if (!skill) {
       return (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, textAlign: "center" }}>
-          <div
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: 16,
-              backgroundColor: "#f5f4ed",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginBottom: 16,
-            }}
-          >
-            <SparklesOutlined style={{ fontSize: 28, color: "#c4956a" }} />
-          </div>
-          <Title level={5} style={{ margin: "0 0 8px 0", color: "#141413" }}>
+          <StarOutlined style={{ fontSize: 48, color: "#faad14", marginBottom: 16 }} />
+          <Title level={5} style={{ margin: "0 0 8px 0", color: "#262626" }}>
             技能详情
           </Title>
-          <Text style={{ fontSize: 14, color: "#87867f" }}>
+          <Text type="secondary" style={{ fontSize: 14 }}>
             选择左侧技能查看详情
           </Text>
         </div>
@@ -267,7 +254,7 @@ export default function MySkillsPage() {
         <div
           style={{
             padding: 16,
-            borderBottom: "1px solid #e8e6dc",
+            borderBottom: "1px solid #f0f0f0",
             display: "flex",
             alignItems: "flex-start",
             justifyContent: "space-between",
@@ -276,24 +263,24 @@ export default function MySkillsPage() {
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 16, color: "#141413" }}>
+              <Text strong style={{ fontSize: 16, color: "#262626" }}>
                 {skill.skill_name}
               </Text>
               {skill.version && (
-                <Tag style={{ fontSize: 11, borderRadius: 999 }}>v{skill.version}</Tag>
+                <Tag style={{ fontSize: 11, borderRadius: 4 }}>v{skill.version}</Tag>
               )}
               {skill.source === "customized" && (
-                <Tag color="green" style={{ fontSize: 11, borderRadius: 999 }}>自定义</Tag>
+                <Tag color="green" style={{ fontSize: 11, borderRadius: 4 }}>自定义</Tag>
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               {skill.category && (
-                <Tag style={{ fontSize: 11, borderRadius: 999, backgroundColor: "#f5f4ed", border: "1px solid #e8e6dc" }}>
+                <Tag style={{ fontSize: 11, borderRadius: 4, backgroundColor: "#f5f5f5", border: "1px solid #d9d9d9" }}>
                   {skill.category}
                 </Tag>
               )}
               {skill.creator_name && (
-                <Text style={{ fontSize: 12, color: "#87867f" }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
                   创建者: {skill.creator_name}
                 </Text>
               )}
@@ -302,8 +289,8 @@ export default function MySkillsPage() {
         </div>
 
         {/* Description */}
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #e8e6dc" }}>
-          <Text style={{ fontSize: 14, color: "#87867f", whiteSpace: "pre-wrap" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0" }}>
+          <Text type="secondary" style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>
             {skill.description || "暂无描述"}
           </Text>
         </div>
@@ -312,9 +299,9 @@ export default function MySkillsPage() {
         <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
           <div
             style={{
-              borderRadius: 12,
-              border: "1px solid #e8e6dc",
-              backgroundColor: "rgba(255,255,255,0.7)",
+              borderRadius: 8,
+              border: "1px solid #f0f0f0",
+              backgroundColor: "#f5f5f5",
               padding: 16,
               minHeight: 200,
             }}
@@ -329,73 +316,42 @@ export default function MySkillsPage() {
   };
 
   return (
-    <div style={{ display: "flex", height: "100%", backgroundColor: "#f5f4ed" }}>
+    <div style={{ display: "flex", height: "100%", backgroundColor: "#fff" }}>
       {/* Left sidebar */}
       <div
         style={{
           width: 300,
           flexShrink: 0,
-          borderRight: "1px solid #e8e6dc",
+          borderRight: "1px solid #f0f0f0",
           display: "flex",
           flexDirection: "column",
         }}
       >
         {/* Search and actions */}
-        <div style={{ padding: 12, borderBottom: "1px solid #e8e6dc" }}>
-          <div style={{ position: "relative", marginBottom: 8 }}>
-            <Input
-              placeholder="搜索技能"
-              value={searchText}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              allowClear
-              style={{
-                height: 28,
-                paddingLeft: 28,
-                fontSize: 12,
-                borderRadius: 8,
-                border: "1px solid #e8e6dc",
-              }}
-            />
-            <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "#87867f" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.35-4.35" />
-              </svg>
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ padding: 16, borderBottom: "1px solid #f0f0f0" }}>
+          <Input
+            placeholder="搜索技能"
+            prefix={<SearchOutlined />}
+            value={searchText}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            allowClear
+            style={{ marginBottom: 8 }}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
             <Button
-              size="small"
               icon={<UploadOutlined />}
               onClick={handleUploadClick}
-              style={{
-                flex: 1,
-                height: 28,
-                fontSize: 12,
-                borderRadius: 8,
-                border: "1px solid #d1cfc5",
-                backgroundColor: "#fdf3e7",
-                color: "#8b623d",
-              }}
+              style={{ flex: 1 }}
             >
               上传技能
             </Button>
             <Button
-              size="small"
               icon={<ShopOutlined />}
               onClick={goToMarketplace}
-              style={{
-                flex: 1,
-                height: 28,
-                fontSize: 12,
-                borderRadius: 8,
-                border: "1px solid #e8e6dc",
-                backgroundColor: "#f5f4ed",
-                color: "#5e5d59",
-              }}
+              style={{ flex: 1 }}
             >
               去应用市场
-              <ChevronRightOutlined style={{ fontSize: 10, marginLeft: 2 }} />
+              <RightOutlined style={{ fontSize: 10, marginLeft: 4 }} />
             </Button>
           </div>
         </div>
@@ -424,7 +380,7 @@ export default function MySkillsPage() {
       </div>
 
       {/* Right detail panel */}
-      <div style={{ flex: 1, backgroundColor: "#faf9f5", overflow: "hidden" }}>
+      <div style={{ flex: 1, backgroundColor: "#fff", overflow: "hidden" }}>
         <SkillDetailPanel skill={selectedSkill} />
       </div>
 

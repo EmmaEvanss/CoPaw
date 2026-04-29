@@ -17,6 +17,7 @@ export const DEFAULT_OPEN_KEYS = [
   "settings-group",
   "analytics-group",
   "instance-group",
+  "market-group",
 ];
 
 export const KEY_TO_PATH: Record<string, string> = {
@@ -50,6 +51,9 @@ export const KEY_TO_PATH: Record<string, string> = {
   "instance-instances": "/instance/instances",
   "instance-allocations": "/instance/allocations",
   "instance-operation-logs": "/instance/operation-logs",
+  market: "/market",
+  "my-skills": "/my-skills",
+  "my-mcp": "/my-mcp",
 };
 
 export const KEY_TO_LABEL: Record<string, string> = {

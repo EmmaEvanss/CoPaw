@@ -59,7 +59,11 @@
     "instanceOverview": "概览",
     "instanceInstances": "实例列表",
     "instanceAllocations": "用户分配",
-    "instanceOperationLogs": "操作日志"
+    "instanceOperationLogs": "操作日志",
+    "marketGroup": "应用市场",
+    "market": "应用市场",
+    "mySkills": "我的技能",
+    "myMcp": "我的 MCP"
   },
   "cases": {
     "title": "案例管理",

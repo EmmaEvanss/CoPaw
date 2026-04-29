@@ -20,6 +20,7 @@ import { ChatAnywhereSessionsContext } from '@/components/agentscope-chat';
 import { useAgentStore } from '@/stores/agentStore';
 import sessionApi from '../../sessionApi';
 import { getSessionAgentId } from '../../sessionApi/sessionAgent';
+import { resolveRequestedSessionId } from '../../sessionApi/resolvedSessionMapping';
 import { HistorySessionRow } from './HistorySessionRow';
 import { HistorySkeleton } from './HistorySkeleton';
 
@@ -174,7 +175,18 @@ export default function ChatSidebar(props: ChatSidebarProps) {
 
   const handleSessionClick = useCallback(
     (sessionId: string) => {
-      const targetSession = sessionsRef.current.find((session) => session.id === sessionId);
+      // 使用 resolveRequestedSessionId 解析 sessionId，处理临时时间戳ID到真实UUID的映射
+      const resolvedId = resolveRequestedSessionId({
+        requestedSessionId: sessionId,
+        sessionList: sessionsRef.current,
+      });
+      const effectiveSessionId = resolvedId || sessionId;
+
+      const targetSession = sessionsRef.current.find(
+        (session) =>
+          session.id === effectiveSessionId ||
+          (session as HistorySession).realId === effectiveSessionId,
+      );
       if (isHistorySessionActive(targetSession, currentChatIdRef.current)) return;
 
       const sessionAgentId = getSessionAgentId(targetSession?.meta);

@@ -6,6 +6,7 @@ type ResolvedSessionMapping = Record<string, string>;
 type SessionWithIdentity = IAgentScopeRuntimeWebUISession & {
   sessionId?: string;
   createdAt?: string | null;
+  realId?: string;
 };
 
 function readResolvedSessionMapping(): ResolvedSessionMapping {
@@ -128,8 +129,19 @@ export function resolveRequestedSessionId(options: {
     return undefined;
   }
 
-  if (sessionList.some((session) => session.id === requestedSessionId)) {
+  const matchedById = sessionList.find(
+    (session) => session.id === requestedSessionId,
+  );
+  if (matchedById) {
     return requestedSessionId;
+  }
+
+  const matchedByRealId = sessionList.find(
+    (session) =>
+      (session as SessionWithIdentity).realId === requestedSessionId,
+  );
+  if (matchedByRealId) {
+    return matchedByRealId.id;
   }
 
   const resolvedChatId = getResolvedChatId(requestedSessionId);

@@ -44,6 +44,38 @@
 | `console/src/api/` | 控制台 API 调用封装 |
 | `console/src/pages/` | 页面入口 |
 | `console/src/components/` | 通用 UI 组件 |
+
+### 主要前端组件
+
+| 组件 | 路径 | 说明 |
+|------|------|------|
+| ConversationQuickNav | `console/src/components/ConversationQuickNav/` | 会话快速导航，显示用户问题列表的侧边导航点，支持点击跳转和滚动追踪 |
+
+#### ConversationQuickNav 组件结构
+
+```text
+console/src/components/ConversationQuickNav/
+├── index.tsx           # 主组件入口
+├── types.ts            # 类型定义（QuestionInfo、Props）
+├── style.ts            # 样式（导航点、tooltip、高亮动画）
+├── components/
+│   ├── NavDot.tsx      # 导航点子组件
+│   └── QuestionTooltip.tsx  # 问题 tooltip
+├── hooks/
+│   ├── useQuestionMessages.ts   # 提取已加载的用户问题列表
+│   ├── useCurrentQuestion.ts    # 追踪滚动位置对应的当前问题
+│   └── useScrollToMessage.ts    # 滚动到指定消息并高亮
+```
+
+**核心功能**：
+- 从 ChatAnywhereMessagesContext 提取用户消息，过滤出已加载到 DOM 的消息
+- 通过 MutationObserver 监听 DOM 变化，动态更新问题列表
+- 滚动时自动追踪当前可见区域对应的问题（通过 getBoundingClientRect 计算）
+- 点击导航点时平滑滚动到目标消息，并添加高亮闪烁效果
+- 支持 `minQuestions` 参数控制最小显示数量（默认 1）
+
+**使用位置**：`console/src/pages/Chat/index.tsx` 第 1263 行
+
 | `console/src/stores/` | 状态管理 |
 | `console/src/contexts/`, `console/src/hooks/` | 运行时上下文与钩子 |
 

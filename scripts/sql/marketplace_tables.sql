@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS swe_user_item_operation_logs (
     INDEX idx_source_id (source_id),
     INDEX idx_user_id (user_id),
     INDEX idx_item_type (item_type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户技能/MCP操作日志';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户技能/MCP操作日志';
 
 CREATE TABLE IF NOT EXISTS swe_marketplace_operation_logs (
     id               BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS swe_marketplace_operation_logs (
     INDEX idx_source_id (source_id),
     INDEX idx_item_id (item_id),
     INDEX idx_target_user_id (target_user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场操作日志';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='市场操作日志';
 
 CREATE TABLE IF NOT EXISTS swe_marketplace_categories (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -44,5 +44,6 @@ CREATE TABLE IF NOT EXISTS swe_marketplace_categories (
     name        VARCHAR(128) NOT NULL COMMENT '分类名称',
     sort_order  INT          NOT NULL DEFAULT 0 COMMENT '排序权重，升序',
     created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY uk_source_name (source_id, name),
     INDEX idx_source_id (source_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场技能分类配置';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='市场技能分类配置';

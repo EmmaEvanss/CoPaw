@@ -30,7 +30,11 @@ from mcp.client.streamable_http import streamable_http_client
 
 from agentscope.mcp import StatefulClientBase
 
-from ...constant import MCP_CALL_TIMEOUT
+from ...constant import (
+    MCP_CALL_TIMEOUT,
+    MCP_MAX_TOTAL_TIMEOUT,
+    MCP_PER_NOTIFICATION_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,89 @@ async def _call_with_timeout(
             operation,
             timeout,
         )
+        raise
+
+
+async def _call_with_timeout_refresh(
+    coro,
+    per_notification_timeout: float,
+    max_total_timeout: float | None,
+    operation: str,
+    client_name: str,
+    progress_event: asyncio.Event | None = None,
+    on_progress_callback=None,
+):
+    """Execute an async coroutine with per-notification timeout refresh.
+
+    Instead of a single overall timeout, resets the countdown each time
+    *progress_event* is set (typically by a progress_callback from the
+    MCP SDK).  If no event arrives within *per_notification_timeout*
+    seconds, or if *max_total_timeout* elapses, the coroutine is
+    cancelled and asyncio.TimeoutError is raised.
+
+    When *progress_event* is None, falls back to _call_with_timeout.
+    """
+    if progress_event is None:
+        return await _call_with_timeout(
+            coro,
+            per_notification_timeout,
+            operation,
+            client_name,
+        )
+
+    task = asyncio.ensure_future(coro)
+    loop = asyncio.get_running_loop()
+
+    # When the task completes, set the event so that any in-progress
+    # wait_for(progress_event.wait(), ...) returns immediately instead of
+    # waiting for the full per_notification_timeout.
+    task.add_done_callback(lambda _t: progress_event.set())
+
+    deadline = loop.time() + max_total_timeout if max_total_timeout else None
+    try:
+        while not task.done():
+            try:
+                await asyncio.wait_for(
+                    progress_event.wait(),
+                    timeout=per_notification_timeout,
+                )
+                progress_event.clear()
+                if on_progress_callback is not None:
+                    on_progress_callback()
+                logger.debug(
+                    "MCP client '%s' %s: progress notification received, "
+                    "timeout refreshed",
+                    client_name,
+                    operation,
+                )
+            except asyncio.TimeoutError:
+                task.cancel()
+                logger.error(
+                    "MCP client '%s' %s timed out after %.0fs "
+                    "(no progress notification)",
+                    client_name,
+                    operation,
+                    per_notification_timeout,
+                )
+                raise
+            # Check hard ceiling
+            if deadline and loop.time() > deadline:
+                task.cancel()
+                logger.error(
+                    "MCP client '%s' %s exceeded max total timeout %.0fs",
+                    client_name,
+                    operation,
+                    max_total_timeout,
+                )
+                raise asyncio.TimeoutError()
+        return task.result()
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+    except asyncio.TimeoutError:
+        raise
+    except Exception:
+        task.cancel()
         raise
 
 
@@ -142,6 +229,10 @@ class StdIOStatefulClient(StatefulClientBase):
 
         # Tool cache
         self._cached_tools = None
+
+        # External callback invoked on each MCP progress notification.
+        # Set by the agent layer to reset its watchdog timer.
+        self.on_progress_callback = None
 
     async def _run_lifecycle(self) -> None:
         """Run MCP client lifecycle in a dedicated task.
@@ -331,7 +422,6 @@ class StdIOStatefulClient(StatefulClientBase):
         self,
         name: str,
         arguments: dict | None = None,
-        timeout: float = MCP_CALL_TIMEOUT,
         meta: dict[str, Any] | None = None,
     ):
         """Call a tool on the MCP server.
@@ -339,8 +429,6 @@ class StdIOStatefulClient(StatefulClientBase):
         Args:
             name: Tool name
             arguments: Tool arguments (optional)
-            timeout: Maximum seconds to wait for the server response
-                (default: ``MCP_CALL_TIMEOUT``).
             meta: Optional meta dict forwarded as _meta in JSON-RPC request
                 (e.g. {"progressToken": "..."})
 
@@ -349,16 +437,43 @@ class StdIOStatefulClient(StatefulClientBase):
 
         Raises:
             RuntimeError: If not connected
-            asyncio.TimeoutError: If the call exceeds *timeout*
+            asyncio.TimeoutError: If the call exceeds timeout
         """
         self._validate_connection()
 
-        return await _call_with_timeout(
-            self.session.call_tool(name, arguments or {}, meta=meta),
-            timeout=timeout,
-            operation=f"call_tool({name})",
-            client_name=self.name,
-        )
+        progress_event = asyncio.Event()
+        progress_token = None
+
+        if meta and "progressToken" in meta:
+            progress_token = meta["progressToken"]
+
+            async def _on_progress(_progress, _total, _message):
+                progress_event.set()
+                if self.on_progress_callback is not None:
+                    self.on_progress_callback()
+
+            # Inject into SDK's _progress_callbacks so _receive_loop
+            # can dispatch progress notifications to our handler.
+            # pylint: disable=protected-access
+            self.session._progress_callbacks[progress_token] = _on_progress
+
+        per_timeout = MCP_PER_NOTIFICATION_TIMEOUT
+        max_total = MCP_MAX_TOTAL_TIMEOUT or None
+
+        try:
+            return await _call_with_timeout_refresh(
+                self.session.call_tool(name, arguments or {}, meta=meta),
+                per_notification_timeout=per_timeout,
+                max_total_timeout=max_total,
+                operation=f"call_tool({name})",
+                client_name=self.name,
+                progress_event=progress_event if progress_token else None,
+                on_progress_callback=self.on_progress_callback,
+            )
+        finally:
+            if progress_token:
+                # pylint: disable=protected-access
+                self.session._progress_callbacks.pop(progress_token, None)
 
     def _validate_connection(self) -> None:
         """Validate the connection to the MCP server.
@@ -448,6 +563,10 @@ class HttpStatefulClient(StatefulClientBase):
 
         # Tool cache
         self._cached_tools = None
+
+        # External callback invoked on each MCP progress notification.
+        # Set by the agent layer to reset its watchdog timer.
+        self.on_progress_callback = None
 
     async def _run_lifecycle(self) -> None:
         """Run MCP client lifecycle in a dedicated task."""
@@ -637,7 +756,6 @@ class HttpStatefulClient(StatefulClientBase):
         self,
         name: str,
         arguments: dict | None = None,
-        timeout: float = MCP_CALL_TIMEOUT,
         meta: dict[str, Any] | None = None,
     ):
         """Call a tool on the MCP server.
@@ -645,8 +763,6 @@ class HttpStatefulClient(StatefulClientBase):
         Args:
             name: Tool name
             arguments: Tool arguments (optional)
-            timeout: Maximum seconds to wait for the server response
-                (default: ``MCP_CALL_TIMEOUT``).
             meta: Optional meta dict forwarded as _meta in JSON-RPC request
                 (e.g. {"progressToken": "..."})
 
@@ -655,16 +771,43 @@ class HttpStatefulClient(StatefulClientBase):
 
         Raises:
             RuntimeError: If not connected
-            asyncio.TimeoutError: If the call exceeds *timeout*
+            asyncio.TimeoutError: If the call exceeds timeout
         """
         self._validate_connection()
 
-        return await _call_with_timeout(
-            self.session.call_tool(name, arguments or {}, meta=meta),
-            timeout=timeout,
-            operation=f"call_tool({name})",
-            client_name=self.name,
-        )
+        progress_event = asyncio.Event()
+        progress_token = None
+
+        if meta and "progressToken" in meta:
+            progress_token = meta["progressToken"]
+
+            async def _on_progress(_progress, _total, _message):
+                progress_event.set()
+                if self.on_progress_callback is not None:
+                    self.on_progress_callback()
+
+            # Inject into SDK's _progress_callbacks so _receive_loop
+            # can dispatch progress notifications to our handler.
+            # pylint: disable=protected-access
+            self.session._progress_callbacks[progress_token] = _on_progress
+
+        per_timeout = MCP_PER_NOTIFICATION_TIMEOUT
+        max_total = MCP_MAX_TOTAL_TIMEOUT or None
+
+        try:
+            return await _call_with_timeout_refresh(
+                self.session.call_tool(name, arguments or {}, meta=meta),
+                per_notification_timeout=per_timeout,
+                max_total_timeout=max_total,
+                operation=f"call_tool({name})",
+                client_name=self.name,
+                progress_event=progress_event if progress_token else None,
+                on_progress_callback=self.on_progress_callback,
+            )
+        finally:
+            if progress_token:
+                # pylint: disable=protected-access
+                self.session._progress_callbacks.pop(progress_token, None)
 
     def _validate_connection(self) -> None:
         """Validate the connection to the MCP server.

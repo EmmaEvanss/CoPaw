@@ -14,6 +14,7 @@ from typing import Any, List, Literal, Optional, Type, TYPE_CHECKING
 from agentscope.agent import ReActAgent
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
+from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import Toolkit
 from anyio import ClosedResourceError
 from pydantic import BaseModel
@@ -554,11 +555,17 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         """
         for i, client in enumerate(self._mcp_clients):
             client_name = getattr(client, "name", repr(client))
+            # Set progress callback so MCP notifications reset the watchdog.
+            if hasattr(client, "on_progress_callback"):
+                client.on_progress_callback = self._reset_watchdog
             try:
                 await self.toolkit.register_mcp_client(
                     client,
                     namesake_strategy=namesake_strategy,
                 )
+                # Wire watchdog callback into MCPToolFunction instances
+                # registered by this client.
+                self._wire_mcp_progress_callbacks(client)
             except (ClosedResourceError, asyncio.CancelledError) as error:
                 if self._should_propagate_cancelled_error(error):
                     raise
@@ -570,11 +577,16 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 recovered_client = await self._recover_mcp_client(client)
                 if recovered_client is not None:
                     self._mcp_clients[i] = recovered_client
+                    if hasattr(recovered_client, "on_progress_callback"):
+                        recovered_client.on_progress_callback = (
+                            self._reset_watchdog
+                        )
                     try:
                         await self.toolkit.register_mcp_client(
                             recovered_client,
                             namesake_strategy=namesake_strategy,
                         )
+                        self._wire_mcp_progress_callbacks(recovered_client)
                         continue
                     except asyncio.CancelledError as recover_error:
                         if self._should_propagate_cancelled_error(
@@ -605,6 +617,25 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                     e,
                     exc_info=True,
                 )
+
+    def _wire_mcp_progress_callbacks(self, client: Any) -> None:
+        """Set on_progress_callback on MCPToolFunction instances registered
+        by *client* so that MCP progress notifications reset the watchdog.
+        """
+        cb = self._reset_watchdog
+        mcp_name = getattr(client, "name", None)
+        for tool_entry in self.toolkit.tools.values():
+            func = getattr(tool_entry, "original_func", None)
+            if func is None:
+                continue
+            # original_func stores tool_func.__call__ (a bound method);
+            # extract the MCPToolFunction instance via __self__.
+            mcp_func = getattr(func, "__self__", None) or func
+            if (
+                isinstance(mcp_func, MCPToolFunction)
+                and mcp_func.mcp_name == mcp_name
+            ):
+                mcp_func.on_progress_callback = cb  # type: ignore[attr-defined]
 
     async def _recover_mcp_client(self, client: Any) -> Any | None:
         """Recover MCP client from broken session and return healthy client."""

@@ -8,6 +8,7 @@ It also provides drop-in replacements for AgentScope's MCP clients
 that solve the CPU leak issue caused by cross-task context manager exits.
 """
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -16,10 +17,15 @@ from agentscope.mcp._client_base import MCPClientBase
 from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import ToolResponse
 from mcp import ClientSession as _CS
-from swe.config.context import get_current_tenant_id
+from ...config.context import get_current_tenant_id
+from ...constant import MCP_MAX_TOTAL_TIMEOUT, MCP_PER_NOTIFICATION_TIMEOUT
 
 from .manager import MCPClientManager
-from .stateful_client import HttpStatefulClient, StdIOStatefulClient
+from .stateful_client import (
+    HttpStatefulClient,
+    StdIOStatefulClient,
+    _call_with_timeout_refresh,
+)
 from .watcher import MCPConfigWatcher
 
 logger = logging.getLogger(__name__)
@@ -42,24 +48,67 @@ async def _patched_mcp_call(self: MCPToolFunction, **kwargs: Any) -> Any:
     progress_token = f"{tenant_id}@{uuid.uuid4()}"
     meta = {"progressToken": progress_token}
 
+    progress_event = asyncio.Event()
+    # Callback set by the agent layer to reset its watchdog on progress.
+    _watchdog_cb = getattr(self, "on_progress_callback", None)
+
+    async def _on_progress(_progress, _total, _message):
+        progress_event.set()
+        if _watchdog_cb is not None:
+            _watchdog_cb()
+
+    per_timeout = MCP_PER_NOTIFICATION_TIMEOUT
+    max_total = MCP_MAX_TOTAL_TIMEOUT or None
+
     if self.client_gen:
         async with self.client_gen() as cli:
             read_stream, write_stream = cli[0], cli[1]
             async with _CS(read_stream, write_stream) as session:
                 await session.initialize()
-                res = await session.call_tool(
-                    self.name,
-                    arguments=kwargs,
-                    read_timeout_seconds=self.timeout,
-                    meta=meta,
-                )
+                # Inject callback so _receive_loop dispatches progress
+                # notifications to our handler.
+                # pylint: disable=protected-access
+                session._progress_callbacks[progress_token] = _on_progress
+                try:
+                    coro = session.call_tool(
+                        self.name,
+                        arguments=kwargs,
+                        read_timeout_seconds=self.timeout,
+                        meta=meta,
+                    )
+                    res = await _call_with_timeout_refresh(
+                        coro,
+                        per_timeout,
+                        max_total,
+                        f"call_tool({self.name})",
+                        self.name,
+                        progress_event,
+                        on_progress_callback=_watchdog_cb,
+                    )
+                finally:
+                    session._progress_callbacks.pop(progress_token, None)
     else:
-        res = await self.session.call_tool(
-            self.name,
-            arguments=kwargs,
-            read_timeout_seconds=self.timeout,
-            meta=meta,
-        )
+        session = self.session
+        # pylint: disable=protected-access
+        session._progress_callbacks[progress_token] = _on_progress
+        try:
+            coro = session.call_tool(
+                self.name,
+                arguments=kwargs,
+                read_timeout_seconds=self.timeout,
+                meta=meta,
+            )
+            res = await _call_with_timeout_refresh(
+                coro,
+                per_timeout,
+                max_total,
+                f"call_tool({self.name})",
+                self.name,
+                progress_event,
+                on_progress_callback=_watchdog_cb,
+            )
+        finally:
+            session._progress_callbacks.pop(progress_token, None)
 
     if self.wrap_tool_result:
         # pylint: disable=protected-access

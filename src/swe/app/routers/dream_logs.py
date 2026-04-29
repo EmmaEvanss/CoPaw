@@ -6,6 +6,7 @@ Provides REST API endpoints for dream optimization records.
 import json
 import shutil
 import logging
+import base64
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -170,6 +171,9 @@ class OrphanFileContentResponse(BaseModel):
     filename: str
     content: str
     size: int
+    file_type: str  # "text", "image", "binary", "error"
+    is_loadable: bool
+    error_message: Optional[str] = None
 
 
 # Keep list - files and directories that should NOT be listed as orphan
@@ -203,6 +207,34 @@ KEEP_DIRS = {
 
 DREAM_LOGS_FILE = "dream_logs.json"
 BACKUP_DIR = "backup"
+
+# Image file extensions for preview
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
+
+
+def _get_file_type(filepath: Path) -> str:
+    """Determine file type based on extension."""
+    ext = filepath.suffix.lower()
+    if ext in IMAGE_EXTENSIONS:
+        return "image"
+    if ext in {
+        ".md",
+        ".txt",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".xml",
+        ".html",
+        ".css",
+        ".js",
+        ".ts",
+        ".py",
+        ".sh",
+        ".log",
+        ".toml",
+    }:
+        return "text"
+    return "binary"
 
 
 def _get_agent_id(request: Request) -> str:
@@ -802,45 +834,60 @@ def _scan_orphan_files(workspace_dir: Path) -> list[OrphanFileInfo]:
     """Scan workspace directory for orphan files.
 
     Returns files that are NOT in the keep list and NOT hidden files.
+    Also scans static directory which is considered cleanup target.
     """
     orphan_files: list[OrphanFileInfo] = []
 
     if not workspace_dir.exists():
         return orphan_files
 
-    for item in workspace_dir.iterdir():
-        # Skip hidden files (starting with .)
-        if item.name.startswith("."):
-            continue
+    def scan_directory(dir_path: Path, relative_base: Path) -> None:
+        """Recursively scan a directory for orphan files."""
+        try:
+            for item in dir_path.iterdir():
+                # Skip hidden files (starting with .)
+                if item.name.startswith("."):
+                    continue
 
-        # Skip directories in keep list
-        if item.is_dir() and item.name in KEEP_DIRS:
-            continue
+                # Skip directories in keep list (at root level only)
+                if item.is_dir():
+                    if item.name in KEEP_DIRS and dir_path == workspace_dir:
+                        continue
+                    # Recursively scan subdirectories (including static)
+                    scan_directory(item, relative_base)
+                    continue
 
-        # Skip files in keep list
-        if item.is_file() and item.name in KEEP_FILES:
-            continue
+                # Skip files in keep list (at root level only)
+                if item.is_file() and dir_path == workspace_dir:
+                    if item.name in KEEP_FILES:
+                        continue
 
-        # Only process files (not directories)
-        if item.is_file():
-            try:
-                stat = item.stat()
-                orphan_files.append(
-                    OrphanFileInfo(
-                        filename=item.name,
-                        size=stat.st_size,
-                        created_at=datetime.fromtimestamp(
-                            stat.st_ctime,
-                        ).isoformat(),
-                        modified_at=datetime.fromtimestamp(
-                            stat.st_mtime,
-                        ).isoformat(),
-                        path=item.name,  # Relative to workspace_dir
-                        full_path=str(item),  # Absolute path
-                    ),
-                )
-            except Exception as e:
-                logger.error(f"Failed to read file {item}: {e}")
+                # Process files
+                if item.is_file():
+                    try:
+                        stat = item.stat()
+                        relative_path = str(item.relative_to(relative_base))
+                        orphan_files.append(
+                            OrphanFileInfo(
+                                filename=item.name,
+                                size=stat.st_size,
+                                created_at=datetime.fromtimestamp(
+                                    stat.st_ctime,
+                                ).isoformat(),
+                                modified_at=datetime.fromtimestamp(
+                                    stat.st_mtime,
+                                ).isoformat(),
+                                path=relative_path,  # Relative to workspace_dir
+                                full_path=str(item),  # Absolute path
+                            ),
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to read file {item}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to scan directory {dir_path}: {e}")
+
+    # Start scanning from workspace root
+    scan_directory(workspace_dir, workspace_dir)
 
     # Sort by modified time (most recent first)
     orphan_files.sort(key=lambda x: x.modified_at, reverse=True)
@@ -887,19 +934,60 @@ async def get_orphan_file_content(
     except ValueError:
         raise HTTPException(status_code=403, detail="Access denied")
 
+    stat = file_path.stat()
+    file_type = _get_file_type(file_path)
+
     try:
-        content = file_path.read_text(encoding="utf-8")
-        stat = file_path.stat()
+        if file_type == "image":
+            # Read image as base64
+            content_bytes = file_path.read_bytes()
+            content = base64.b64encode(content_bytes).decode("utf-8")
+            return OrphanFileContentResponse(
+                filename=filepath,
+                content=content,
+                size=stat.st_size,
+                file_type="image",
+                is_loadable=True,
+            )
+        elif file_type == "text":
+            # Read text file
+            content = file_path.read_text(encoding="utf-8")
+            return OrphanFileContentResponse(
+                filename=filepath,
+                content=content,
+                size=stat.st_size,
+                file_type="text",
+                is_loadable=True,
+            )
+        else:
+            # Binary file - cannot preview
+            return OrphanFileContentResponse(
+                filename=filepath,
+                content="",
+                size=stat.st_size,
+                file_type="binary",
+                is_loadable=False,
+                error_message="Binary file cannot be previewed",
+            )
+    except UnicodeDecodeError:
+        # Text file with non-UTF8 encoding
         return OrphanFileContentResponse(
             filename=filepath,
-            content=content,
+            content="",
             size=stat.st_size,
+            file_type="text",
+            is_loadable=False,
+            error_message="File encoding is not UTF-8, cannot preview",
         )
     except Exception as e:
         logger.error(f"Failed to read orphan file {file_path}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to read file: {str(e)}",
+        return OrphanFileContentResponse(
+            filename=filepath,
+            content="",
+            size=stat.st_size,
+            file_type="error",
+            is_loadable=False,
+            error_message=f"Failed to read file: {str(e)}",
         )
 
 

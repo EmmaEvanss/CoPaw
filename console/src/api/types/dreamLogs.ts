@@ -116,4 +116,7 @@ export interface OrphanFileContentResponse {
   filename: string;
   content: string;
   size: number;
+  file_type: "text" | "image" | "binary" | "error";
+  is_loadable: boolean;
+  error_message?: string;
 }

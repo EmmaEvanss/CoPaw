@@ -16,6 +16,7 @@ import {
   Popconfirm,
   Typography,
   Alert,
+  Image,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
@@ -79,12 +80,20 @@ export default function OrphanFilesPage() {
   const handlePreview = async (filepath: string) => {
     setPreviewVisible(true);
     setPreviewLoading(true);
+    setPreviewContent(null);
     try {
       const content = await dreamLogsApi.getOrphanFileContent(filepath);
       setPreviewContent(content);
     } catch (error) {
-      message.error(t("dreamLogs.orphanFiles.previewFailed"));
-      setPreviewVisible(false);
+      // Keep modal open and show error
+      setPreviewContent({
+        filename: filepath,
+        content: "",
+        size: 0,
+        file_type: "error",
+        is_loadable: false,
+        error_message: t("dreamLogs.orphanFiles.previewFailed"),
+      });
     } finally {
       setPreviewLoading(false);
     }
@@ -99,8 +108,8 @@ export default function OrphanFilesPage() {
   const columns: ColumnsType<OrphanFileInfo> = [
     {
       title: t("dreamLogs.orphanFiles.filePath"),
-      dataIndex: "full_path",
-      key: "full_path",
+      dataIndex: "path",
+      key: "path",
       width: 350,
       render: (value: string) => (
         <Text copyable style={{ fontSize: 12 }}>
@@ -252,19 +261,52 @@ export default function OrphanFilesPage() {
                   {t("dreamLogs.orphanFiles.size")}: {formatSize(previewContent.size)}
                 </Text>
               </Space>
-              <div
-                className={styles.markdownContent}
-                style={{
-                  marginTop: 12,
-                  padding: 12,
-                  background: "#f5f5f5",
-                  borderRadius: 4,
-                }}
-              >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {previewContent.content}
-                </ReactMarkdown>
-              </div>
+
+              {/* Error message display */}
+              {!previewContent.is_loadable && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: 12 }}
+                  message={previewContent.error_message || t("dreamLogs.orphanFiles.previewFailed")}
+                />
+              )}
+
+              {/* Image preview */}
+              {previewContent.is_loadable && previewContent.file_type === "image" && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    background: "#f5f5f5",
+                    borderRadius: 4,
+                    textAlign: "center",
+                  }}
+                >
+                  <Image
+                    src={`data:image;base64,${previewContent.content}`}
+                    alt={previewContent.filename}
+                    style={{ maxWidth: "100%", maxHeight: 400 }}
+                  />
+                </div>
+              )}
+
+              {/* Text/Markdown preview */}
+              {previewContent.is_loadable && previewContent.file_type === "text" && (
+                <div
+                  className={styles.markdownContent}
+                  style={{
+                    marginTop: 12,
+                    padding: 12,
+                    background: "#f5f5f5",
+                    borderRadius: 4,
+                  }}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {previewContent.content}
+                  </ReactMarkdown>
+                </div>
+              )}
             </div>
           )}
         </Spin>

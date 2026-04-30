@@ -8,9 +8,17 @@ import re
 import asyncio
 import uuid
 from pathlib import Path
-from typing import AsyncGenerator, Union, List, Any, Optional, Dict
+from typing import AsyncGenerator, Union, Any, Optional, Dict
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, Body
+from fastapi import (
+    APIRouter,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    Body,
+)
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -25,6 +33,52 @@ router = APIRouter(prefix="/console", tags=["console"])
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 _RECONNECT_ATTACH_ATTEMPTS = 10
 _RECONNECT_ATTACH_RETRY_DELAY_SECONDS = 0.1
+_CONSOLE_SSE_HEARTBEAT_SECONDS = 15
+
+
+async def _stream_with_keepalive(
+    source: AsyncGenerator[str, None],
+    interval: float = _CONSOLE_SSE_HEARTBEAT_SECONDS,
+) -> AsyncGenerator[str, None]:
+    """Wrap an SSE generator with keepalive comment frames.
+
+    When no real event arrives within *interval* seconds, emits an SSE
+    comment line ``: keep-alive\\n\\n`` which is ignored by EventSource
+    but keeps reverse proxies (nginx, ALB) from closing the connection
+    due to idle timeout.
+    """
+
+    async def _next_item(
+        it: AsyncGenerator[str, None],
+    ) -> tuple[str, bool]:
+        """Return (event, True) or ('', False) when the iterator is done."""
+        try:
+            return await it.__anext__(), True
+        except StopAsyncIteration:
+            return "", False
+
+    pending = asyncio.ensure_future(_next_item(source))
+    try:
+        while True:
+            done, _ = await asyncio.wait(
+                (pending,),
+                timeout=interval,
+            )
+            if done:
+                event_data, has_more = pending.result()
+                if not has_more:
+                    return
+                yield event_data
+                pending = asyncio.ensure_future(_next_item(source))
+            else:
+                # No real event within interval — send keepalive
+                yield ": keep-alive\n\n"
+    finally:
+        pending.cancel()
+        try:
+            await pending
+        except (asyncio.CancelledError, StopAsyncIteration):
+            pass
 
 
 def _safe_filename(name: str) -> str:
@@ -45,14 +99,16 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         channel_id = getattr(request_data, "channel", None) or "console"
         sender_id = request_data.user_id or "default"
         session_id = request_data.session_id or "default"
-        content_parts = list(request_data.input[0].content) if request_data.input else []
+        content_parts = (
+            list(request_data.input[0].content) if request_data.input else []
+        )
     else:
         channel_id = request_data.get("channel", "console")
         sender_id = request_data.get("user_id", "default")
         session_id = request_data.get("session_id", "default")
         input_data = request_data.get("input", [])
 
-        content_parts: List[Any] = []
+        content_parts = []
         for content_part in input_data:
             # pydantic model (rare in this branch) or plain dict
             if hasattr(content_part, "content"):
@@ -214,11 +270,12 @@ async def post_console_chat(
             await stream_it.aclose()
 
     return StreamingResponse(
-        event_generator(),
+        _stream_with_keepalive(event_generator()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         },
     )
 

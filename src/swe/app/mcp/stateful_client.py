@@ -472,6 +472,10 @@ class StdIOStatefulClient(StatefulClientBase):
             )
         finally:
             if progress_token:
+                # Delay removal so _receive_loop can still dispatch
+                # in-flight progress notifications that arrive after
+                # the JSON-RPC response but before this finally runs.
+                await asyncio.sleep(0.1)
                 # pylint: disable=protected-access
                 self.session._progress_callbacks.pop(progress_token, None)
 
@@ -806,6 +810,10 @@ class HttpStatefulClient(StatefulClientBase):
             )
         finally:
             if progress_token:
+                # Delay removal so _receive_loop can still dispatch
+                # in-flight progress notifications that arrive after
+                # the JSON-RPC response but before this finally runs.
+                await asyncio.sleep(0.1)
                 # pylint: disable=protected-access
                 self.session._progress_callbacks.pop(progress_token, None)
 

@@ -16,9 +16,17 @@ from ...config.config import (
     MCPConfig,
     save_agent_config,
 )
-from .mcp import _mask_env_value
+from .mcp import _mask_env_value, _restore_original_values
 
 router = APIRouter(prefix="/my-mcp", tags=["my-mcp"])
+
+# 市场分发的 MCP 不允许修改的敏感字段
+SENSITIVE_FIELDS = ["transport", "url", "headers", "command", "args", "env", "cwd"]
+
+
+def _is_distributed_from_market(client: MCPClientConfig) -> bool:
+    """判断 MCP 是否来自市场分发."""
+    return client.source.startswith("marketplace:")
 
 
 def _get_tenant_id(request: Request) -> str | None:
@@ -265,4 +273,71 @@ async def create_my_mcp(
     # 返回详情（脱敏敏感值）
     detail = _mask_sensitive_values(new_client)
     detail.client_key = body.client_key
+    return detail
+
+
+@router.put("/{client_key}", response_model=MyMCPDetail)
+async def update_my_mcp(
+    request: Request,
+    client_key: str = FastAPIPath(...),
+    body: MyMCPUpdateRequest = Body(...),
+) -> MyMCPDetail:
+    """更新 MCP 配置.
+
+    注意：市场分发的 MCP（source 以 "marketplace:" 开头）不允许修改敏感字段
+    （transport, url, headers, command, args, env, cwd）。
+    """
+    workspace, agent_config = await get_agent_and_config_for_request(request)
+
+    if agent_config.mcp is None or client_key not in agent_config.mcp.clients:
+        raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
+
+    existing = agent_config.mcp.clients[client_key]
+
+    # 获取更新的数据（只包含实际设置的字段）
+    update_data = body.model_dump(exclude_unset=True)
+
+    # 市场分发的 MCP 不允许修改连接配置敏感字段
+    if _is_distributed_from_market(existing):
+        for field in SENSITIVE_FIELDS:
+            if field in update_data:
+                raise HTTPException(
+                    403,
+                    detail=f"Cannot modify '{field}' for distributed MCP",
+                )
+
+    # 合并更新数据
+    merged_data = existing.model_dump(mode="json")
+
+    # 处理 env/headers 脱敏值恢复（复用 mcp.py 逻辑）
+    if "env" in update_data and update_data["env"] is not None:
+        update_data["env"] = _restore_original_values(
+            update_data["env"],
+            existing.env or {},
+        )
+    if "headers" in update_data and update_data["headers"] is not None:
+        update_data["headers"] = _restore_original_values(
+            update_data["headers"],
+            existing.headers or {},
+        )
+
+    merged_data.update(update_data)
+    merged_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    updated_client = MCPClientConfig.model_validate(merged_data)
+    agent_config.mcp.clients[client_key] = updated_client
+
+    save_agent_config(
+        workspace.agent_id,
+        agent_config,
+        tenant_id=workspace.tenant_id,
+    )
+    schedule_agent_reload(
+        request,
+        workspace.agent_id,
+        tenant_id=workspace.tenant_id,
+    )
+
+    detail = _mask_sensitive_values(updated_client)
+    detail.client_key = client_key
     return detail

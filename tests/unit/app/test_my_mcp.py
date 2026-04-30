@@ -629,3 +629,209 @@ class TestCreateMyMCP:
                     assert data["name"] == "New Tool"
                     mock_save.assert_called_once()
                     mock_reload.assert_called_once()
+
+
+class TestUpdateMyMCP:
+    """Tests for PUT /my-mcp/{client_key} endpoint."""
+
+    def test_update_success(self, client):
+        """更新现有 MCP."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "weather": MCPClientConfig(
+                    name="Old Name",
+                    description="Old desc",
+                    command="npx",
+                    source="",
+                    created_at="2026-04-29T10:00:00Z",
+                    updated_at="2026-04-29T10:00:00Z",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    response = client.put(
+                        "/my-mcp/weather", json={
+                            "name": "New Name",
+                            "description": "New desc",
+                        },
+                    )
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["name"] == "New Name"
+                    assert data["description"] == "New desc"
+                    mock_save.assert_called_once()
+                    mock_reload.assert_called_once()
+
+    def test_update_not_found(self, client):
+        """更新不存在的 MCP 返回 404."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(clients={})
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client.put("/my-mcp/nonexistent", json={"name": "New"})
+            assert response.status_code == 404
+            assert "nonexistent" in response.json()["detail"]
+
+    def test_update_mcp_none(self, client):
+        """MCP 配置为 None 时返回 404."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = None
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            response = client.put("/my-mcp/weather", json={"name": "New"})
+            assert response.status_code == 404
+
+    def test_update_distributed_mcp_forbidden(self, client):
+        """市场分发的 MCP 不允许编辑敏感字段."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "distributed": MCPClientConfig(
+                    name="Distributed",
+                    command="npx",
+                    source="marketplace:item-123",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            # 尝试修改 command（敏感字段）
+            response = client.put(
+                "/my-mcp/distributed", json={
+                    "command": "new-command",
+                },
+            )
+            assert response.status_code == 403
+            assert "Cannot modify" in response.json()["detail"]
+
+    def test_update_distributed_mcp_non_sensitive_allowed(self, client):
+        """市场分发的 MCP 可以修改非敏感字段（如 name, description）."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "distributed": MCPClientConfig(
+                    name="Distributed",
+                    description="Old desc",
+                    command="npx",
+                    source="marketplace:item-123",
+                    created_at="2026-04-29T10:00:00Z",
+                    updated_at="2026-04-29T10:00:00Z",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    # 修改 name 和 description（非敏感字段）
+                    response = client.put(
+                        "/my-mcp/distributed", json={
+                            "name": "New Name",
+                            "description": "New desc",
+                        },
+                    )
+                    assert response.status_code == 200
+                    data = response.json()
+                    assert data["name"] == "New Name"
+                    assert data["description"] == "New desc"
+                    mock_save.assert_called_once()
+                    mock_reload.assert_called_once()
+
+    def test_update_with_env_restore(self, client):
+        """更新 env 时应恢复脱敏值."""
+        mock_workspace = MagicMock()
+        mock_workspace.agent_id = "test-agent"
+        mock_workspace.tenant_id = "test-tenant"
+
+        original_env = {"API_KEY": "secret-key-12345678"}
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "test-client": MCPClientConfig(
+                    name="Test",
+                    command="npx",
+                    env=original_env,
+                    source="",
+                    created_at="2026-04-29T10:00:00Z",
+                    updated_at="2026-04-29T10:00:00Z",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            with patch("swe.app.routers.my_mcp.save_agent_config") as mock_save:
+                with patch("swe.app.routers.my_mcp.schedule_agent_reload") as mock_reload:
+                    mock_get.return_value = (mock_workspace, mock_config)
+
+                    # 发送脱敏后的值（与原始值匹配）
+                    # secret-key-12345678 长度19，前2字符 + 13星号 + 后4字符
+                    masked_value = "se*************5678"
+                    response = client.put(
+                        "/my-mcp/test-client", json={
+                            "env": {"API_KEY": masked_value},
+                        },
+                    )
+                    assert response.status_code == 200
+                    # 验证保存了原始值（而非脱敏值）
+                    saved_client = mock_save.call_args[0][1].mcp.clients["test-client"]
+                    assert saved_client.env["API_KEY"] == original_env["API_KEY"]
+
+    def test_update_all_sensitive_fields_blocked(self, client):
+        """测试所有敏感字段对市场分发 MCP 都被禁止."""
+        mock_workspace = MagicMock()
+        mock_config = MagicMock()
+        mock_config.mcp = MCPConfig(
+            clients={
+                "distributed": MCPClientConfig(
+                    name="Distributed",
+                    command="npx",
+                    source="marketplace:item-123",
+                ),
+            },
+        )
+
+        with patch("swe.app.routers.my_mcp.get_agent_and_config_for_request") as mock_get:
+            mock_get.return_value = (mock_workspace, mock_config)
+
+            # 使用有效的字段值进行测试
+            test_values = {
+                "transport": "stdio",  # 有效值
+                "url": "https://test.com",
+                "headers": {"KEY": "value"},
+                "command": "test-command",
+                "args": ["arg1"],
+                "env": {"KEY": "value"},
+                "cwd": "/test/path",
+            }
+
+            for field, value in test_values.items():
+                response = client.put(
+                    "/my-mcp/distributed", json={field: value},
+                )
+                assert response.status_code == 403, f"{field} should be forbidden"
+                assert field in response.json()["detail"]

@@ -338,17 +338,28 @@ class TestMultipleMCPWorkflow:
 
         # 批量发布（需要管理员权限）
         # 直接使用 headers 设置 manager 标识
-        with patch(
-            "swe.app.routers.my_mcp.get_agent_and_config_for_request",
-            return_value=(mock_workspace, agent_config),
-        ):
-            publish_response = client.post(
-                "/my-mcp/publish",
-                json={"client_keys": ["weather", "search", "calendar"]},
-                headers={"X-Manager": "true"},
-            )
-            assert publish_response.status_code == 200
-            publish_data = publish_response.json()
-            assert len(publish_data["results"]) == 3
-            for result in publish_data["results"]:
-                assert result["success"] is True
+        # Mock httpx.AsyncClient for market service calls
+        mock_market_response = MagicMock()
+        mock_market_response.status_code = 201
+        mock_market_response.json.return_value = {"item_id": "test-market-item-uuid"}
+
+        mock_http_client = AsyncMock()
+        mock_http_client.post = AsyncMock(return_value=mock_market_response)
+        mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+        mock_http_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("httpx.AsyncClient", return_value=mock_http_client):
+            with patch(
+                "swe.app.routers.my_mcp.get_agent_and_config_for_request",
+                return_value=(mock_workspace, agent_config),
+            ):
+                publish_response = client.post(
+                    "/my-mcp/publish",
+                    json={"client_keys": ["weather", "search", "calendar"]},
+                    headers={"X-Manager": "true"},
+                )
+                assert publish_response.status_code == 200
+                publish_data = publish_response.json()
+                assert len(publish_data["results"]) == 3
+                for result in publish_data["results"]:
+                    assert result["success"] is True

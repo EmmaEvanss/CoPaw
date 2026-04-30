@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from typing import List, Dict, Optional, Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Path as FastAPIPath, Request
 from pydantic import BaseModel, Field
 
 from ..agent_context import get_agent_and_config_for_request
+from .mcp import _mask_env_value
 
 router = APIRouter(prefix="/my-mcp", tags=["my-mcp"])
 
@@ -141,3 +142,57 @@ async def list_my_mcp(request: Request) -> List[MyMCPListItem]:
     # 按更新时间降序排序（最新的在前）
     result.sort(key=lambda x: x.updated_at or "", reverse=True)
     return result
+
+
+def _mask_sensitive_values(client_key: str, client) -> MyMCPDetail:
+    """构建详情响应，脱敏 env 和 headers."""
+    from ...config.config import MCPClientConfig
+
+    masked_env = (
+        {k: _mask_env_value(v) for k, v in client.env.items()}
+        if client.env
+        else {}
+    )
+    masked_headers = (
+        {k: _mask_env_value(v) for k, v in client.headers.items()}
+        if client.headers
+        else {}
+    )
+
+    return MyMCPDetail(
+        client_key=client_key,
+        name=client.name,
+        description=client.description,
+        transport=client.transport,
+        enabled=client.enabled,
+        source=client.source,
+        market_client_key=client.market_client_key,
+        created_at=client.created_at,
+        updated_at=client.updated_at,
+        url=client.url,
+        headers=masked_headers,
+        command=client.command,
+        args=client.args,
+        env=masked_env,
+        cwd=client.cwd,
+        lazy_load=client.lazy_load,
+        distributed_by=client.distributed_by,
+    )
+
+
+@router.get("/{client_key}", response_model=MyMCPDetail)
+async def get_my_mcp_detail(
+    request: Request,
+    client_key: str = FastAPIPath(..., description="MCP client key"),
+) -> MyMCPDetail:
+    """获取单个 MCP 详情."""
+    _, agent_config = await get_agent_and_config_for_request(request)
+
+    if agent_config.mcp is None:
+        raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
+
+    client = agent_config.mcp.clients.get(client_key)
+    if client is None:
+        raise HTTPException(404, detail=f"MCP client '{client_key}' not found")
+
+    return _mask_sensitive_values(client_key, client)

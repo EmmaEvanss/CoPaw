@@ -7,14 +7,19 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
+import httpx
+
+from ..config.constant import SWE_INTERNAL_URL, SWE_INTERNAL_TOKEN
 from ..database.connection import DatabaseConnection
 from .fs import (
     copy_skill_to_user,
     get_skill_dir,
     get_user_skills_dir,
     load_index,
+    mutate_user_skill_manifest,
+    read_user_skill_manifest,
     save_index,
 )
 from .models import MarketItem
@@ -108,6 +113,35 @@ class MarketplaceService:
         self.db = db
         self.marketplace_root = marketplace_root
         self.swe_root = swe_root
+
+    async def _trigger_agent_reload(
+        self,
+        user_id: str,
+        agent_id: str = "default",
+    ) -> None:
+        """通过 HTTP 回调触发 src/swe 的 Agent 重载."""
+        url = f"{SWE_INTERNAL_URL}/api/internal/agents/{agent_id}/reload"
+        headers = {}
+        if SWE_INTERNAL_TOKEN:
+            headers["X-Internal-Token"] = f"Bearer {SWE_INTERNAL_TOKEN}"
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    url,
+                    params={"tenant_id": user_id},
+                    headers=headers,
+                )
+                if response.status_code == 200:
+                    logger.info(
+                        f"Agent reload triggered for '{agent_id}' (tenant={user_id})",
+                    )
+                else:
+                    logger.warning(
+                        f"Agent reload failed: {response.status_code} - {response.text}",
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to trigger agent reload: {e}")
 
     async def publish_skill(
         self,

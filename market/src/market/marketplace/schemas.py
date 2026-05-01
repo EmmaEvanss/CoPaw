@@ -2,7 +2,7 @@
 """API 请求/响应模型."""
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -69,6 +69,29 @@ class MySkillItem(BaseModel):
     distributed_by: Optional[str] = None
     is_received: bool = False
     has_update: bool = False
+    enabled: bool = True
+
+
+class BatchOperationRequest(BaseModel):
+    """批量操作请求."""
+
+    skills: list[str]
+
+
+class SkillOperationResult(BaseModel):
+    """单个技能操作结果."""
+
+    skill_name: str
+    success: bool
+    reason: str | None = None
+
+
+class BatchOperationResponse(BaseModel):
+    """批量操作响应."""
+
+    results: dict[str, Any]
+    success_count: int
+    failed_count: int
 
 
 class DistributeResponse(BaseModel):

@@ -13,6 +13,7 @@ import httpx
 
 from ..config.constant import SWE_INTERNAL_URL, SWE_INTERNAL_TOKEN
 from ..database.connection import DatabaseConnection
+from ..security import SkillScanError, scan_skill_directory
 from .fs import (
     copy_skill_to_user,
     get_skill_dir,
@@ -142,6 +143,164 @@ class MarketplaceService:
                     )
         except Exception as e:
             logger.warning(f"Failed to trigger agent reload: {e}")
+
+    def _scan_skill_or_raise(
+        self,
+        user_id: str,
+        skill_name: str,
+        agent_id: str = "default",
+    ) -> None:
+        """扫描技能目录，发现安全问题抛出异常."""
+        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skill_dir = skills_dir / skill_name
+        if skill_dir.exists():
+            scan_skill_directory(skill_dir, skill_name=skill_name)
+
+    async def enable_skill(
+        self,
+        user_id: str,
+        skill_name: str,
+        agent_id: str = "default",
+    ) -> dict[str, Any]:
+        """启用技能（含安全扫描 + 回调重载）."""
+        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skill_dir = skills_dir / skill_name
+        if not skill_dir.exists():
+            return {"success": False, "reason": "not_found"}
+
+        # 安全扫描
+        try:
+            self._scan_skill_or_raise(user_id, skill_name, agent_id)
+        except SkillScanError as e:
+            return {
+                "success": False,
+                "reason": "security_scan_failed",
+                "detail": str(e),
+            }
+
+        # 更新 manifest
+        def _update(payload: dict) -> bool:
+            entry = payload.setdefault("skills", {}).setdefault(skill_name, {})
+            entry["enabled"] = True
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+            return True
+
+        updated = mutate_user_skill_manifest(
+            self.swe_root,
+            user_id,
+            agent_id,
+            _update,
+        )
+
+        if updated:
+            await self._trigger_agent_reload(user_id, agent_id)
+
+        return {"success": updated}
+
+    async def disable_skill(
+        self,
+        user_id: str,
+        skill_name: str,
+        agent_id: str = "default",
+    ) -> dict[str, Any]:
+        """禁用技能（含回调重载）."""
+
+        def _update(payload: dict) -> bool:
+            entry = payload.get("skills", {}).get(skill_name)
+            if entry is None:
+                return False
+            entry["enabled"] = False
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+            return True
+
+        updated = mutate_user_skill_manifest(
+            self.swe_root,
+            user_id,
+            agent_id,
+            _update,
+        )
+
+        if updated:
+            await self._trigger_agent_reload(user_id, agent_id)
+
+        return {"success": updated}
+
+    async def batch_delete_skills(
+        self,
+        user_id: str,
+        skill_names: list[str],
+        agent_id: str = "default",
+    ) -> dict[str, Any]:
+        """批量删除技能."""
+        import shutil
+
+        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        results: dict[str, Any] = {}
+
+        for skill_name in skill_names:
+            skill_dir = skills_dir / skill_name
+            if not skill_dir.exists():
+                results[skill_name] = {"success": False, "reason": "not_found"}
+                continue
+
+            # 先禁用
+            await self.disable_skill(user_id, skill_name, agent_id)
+
+            # 删除目录
+            try:
+                shutil.rmtree(skill_dir)
+                results[skill_name] = {"success": True}
+            except Exception as e:
+                results[skill_name] = {"success": False, "reason": str(e)}
+                continue
+
+            # 从 manifest 移除
+            name_to_remove = skill_name
+
+            def _remove(payload: dict, _name: str = name_to_remove) -> bool:
+                payload.get("skills", {}).pop(_name, None)
+                return True
+
+            mutate_user_skill_manifest(
+                self.swe_root,
+                user_id,
+                agent_id,
+                _remove,
+            )
+
+        return results
+
+    async def batch_enable_skills(
+        self,
+        user_id: str,
+        skill_names: list[str],
+        agent_id: str = "default",
+    ) -> dict[str, Any]:
+        """批量启用技能."""
+        results: dict[str, Any] = {}
+        for skill_name in skill_names:
+            results[skill_name] = await self.enable_skill(
+                user_id,
+                skill_name,
+                agent_id,
+            )
+        return results
+
+    async def batch_disable_skills(
+        self,
+        user_id: str,
+        skill_names: list[str],
+        agent_id: str = "default",
+    ) -> dict[str, Any]:
+        """批量禁用技能."""
+        results: dict[str, Any] = {}
+        for skill_name in skill_names:
+            results[skill_name] = await self.disable_skill(
+                user_id,
+                skill_name,
+                agent_id,
+            )
+        return results
 
     async def publish_skill(
         self,
@@ -395,6 +554,10 @@ class MarketplaceService:
         if not skills_dir.exists():
             return []
 
+        # 读取 manifest 获取启用状态
+        manifest = read_user_skill_manifest(self.swe_root, user_id, agent_id)
+        manifest_skills = manifest.get("skills", {})
+
         market_index = load_index(self.marketplace_root, source_id)
         market_versions: dict[str, str] = {
             i.name: i.version for i in market_index if i.status == "active"
@@ -412,10 +575,11 @@ class MarketplaceService:
             except (json.JSONDecodeError, OSError):
                 continue
 
+            skill_name = skill_dir.name
             source = data.get("source", "customized")
             is_received = source.startswith("marketplace:")
             received_version = data.get("received_version")
-            market_version = market_versions.get(skill_dir.name)
+            market_version = market_versions.get(skill_name)
             has_update = (
                 is_received
                 and received_version is not None
@@ -423,9 +587,13 @@ class MarketplaceService:
                 and received_version != market_version
             )
 
+            # 从 manifest 获取启用状态
+            manifest_entry = manifest_skills.get(skill_name, {})
+            enabled = manifest_entry.get("enabled", True)
+
             result.append(
                 MySkillItem(
-                    skill_name=skill_dir.name,
+                    skill_name=skill_name,
                     source=source,
                     description=data.get("description", ""),
                     version=data.get("version"),
@@ -433,6 +601,7 @@ class MarketplaceService:
                     distributed_by=data.get("distributed_by"),
                     is_received=is_received,
                     has_update=has_update,
+                    enabled=enabled,
                 ),
             )
         return result

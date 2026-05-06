@@ -25,6 +25,8 @@ import { languageApi } from "./modules/language";
 import { instanceApi } from "./modules/instance";
 import { marketApi } from "./modules/market";
 import { mySkillsApi } from "./modules/mySkills";
+import { myMcpApi } from "./modules/myMcp";
+import { marketMcpApi } from "./modules/marketMcp";
 
 export const api = {
   // Root
@@ -86,8 +88,14 @@ export const api = {
   // Market
   ...marketApi,
 
-  // My Skills - 不合并到 api 对象，避免覆盖 skillApi 的方法
-  // mySkillsApi 应该直接从 "../../api/modules/mySkills" 导入使用
+  // My Skills
+  ...mySkillsApi,
+
+  // My MCP
+  ...myMcpApi,
+
+  // Market MCP
+  ...marketMcpApi,
 };
 
 export default api;
@@ -96,3 +104,5 @@ export default api;
 export { agentsApi };
 export * from "./modules/market";
 export * from "./modules/mySkills";
+export * from "./modules/myMcp";
+export * from "./modules/marketMcp";

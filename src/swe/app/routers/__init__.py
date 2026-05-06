@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """API routers."""
+
 from fastapi import APIRouter
 
 from .agent import router as agent_router

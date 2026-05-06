@@ -38,7 +38,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         // target 目录下的接口统一使用 /api/market 前缀代理到市场服务 (8090)
         "/api/market": {
-          target: "http://127.0.0.1:8090",
+          target: "http://127.0.0.1:8091",
           changeOrigin: true,
         },
         // 其他接口代理到主后端 (8088)

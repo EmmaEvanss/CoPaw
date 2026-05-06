@@ -24,6 +24,8 @@
     "help": "帮助",
     "close": "关闭",
     "actions": "操作",
+    "overwrite": "覆盖",
+    "rename": "重命名",
     "total": "共 {{count}} 条"
   },
   "nav": {

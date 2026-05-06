@@ -11,7 +11,6 @@ interface UploadSkillModalProps {
   sourceId: string;
   userId: string;
   userName: string;
-  bbkId: string;
 }
 
 const { Dragger } = Upload;
@@ -23,7 +22,6 @@ export default function UploadSkillModal({
   sourceId,
   userId,
   userName,
-  bbkId,
 }: UploadSkillModalProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -66,25 +64,39 @@ export default function UploadSkillModal({
     }
 
     setUploading(true);
+
     try {
-      const result = await marketApi.uploadSkillToWorkspace(
+      message.loading({ content: `正在上传 ${file.name}...`, key: "upload" });
+      const result = await marketApi.uploadSkillToMarket(
         sourceId,
         userId,
         userName,
-        bbkId,
         file,
         {
-          enable: true,
-          overwrite: false,
           category_id: selectedCategory,
         }
       );
-      message.success(`上传成功，导入 ${result.count} 个技能`);
+
+      // 检查冲突
+      const conflicts = Array.isArray(result.conflicts) ? result.conflicts : [];
+      if (conflicts.length > 0) {
+        message.destroy("upload");
+        const conflictNames = conflicts.map((c) => c.skill_name).join(", ");
+        message.warning(`以下技能已存在：${conflictNames}，请先下架同名技能后再上传`);
+        return;
+      }
+
+      // 成功
+      if (result.count > 0) {
+        message.success({ content: `上传成功，导入 ${result.count} 个技能`, key: "upload" });
+      } else {
+        message.info({ content: "未导入新技能，可能已存在", key: "upload" });
+      }
       onSuccess();
       onClose();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "上传失败";
-      message.error(errorMsg);
+      message.error({ content: errorMsg, key: "upload" });
     } finally {
       setUploading(false);
     }

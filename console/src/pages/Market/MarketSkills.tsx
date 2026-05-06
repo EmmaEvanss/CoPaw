@@ -22,8 +22,8 @@ import {
 } from "@ant-design/icons";
 import { SkillCard } from "./SkillCard";
 import { SkillDetailDrawer } from "./SkillDetailDrawer";
-import { PublishModal } from "./PublishModal";
 import { DistributeModal } from "./DistributeModal";
+import UploadSkillModal from "./components/UploadSkillModal";
 import { MCPCard } from "./MCPCard";
 import { MCPDetailDrawer } from "./MCPDetailDrawer";
 import { MCPUploadModal } from "./MCPUploadModal";
@@ -56,8 +56,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
     selectedSkill,
     detailDrawerOpen,
     setDetailDrawerOpen,
-    publishModalOpen,
-    setPublishModalOpen,
     distributeModalOpen,
     setDistributeModalOpen,
     distributeTargetSkill,
@@ -255,13 +253,8 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
               </Button>
             )}
             {activeResourceType === "skill" && (
-              <Button icon={<UploadOutlined />}>
+              <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadModalOpen(true)}>
                 上传技能
-              </Button>
-            )}
-            {isManager && activeResourceType === "skill" && (
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setPublishModalOpen(true)}>
-                上架技能
               </Button>
             )}
           </div>
@@ -522,27 +515,27 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
         onRefresh={refreshSkills}
       />
 
-      {/* 技能上架弹窗 */}
+      {/* 技能上传弹窗 */}
+      <UploadSkillModal
+        open={uploadModalOpen}
+        sourceId={sourceId}
+        userId={userId}
+        userName={userName}
+        onClose={() => setUploadModalOpen(false)}
+        onSuccess={refreshSkills}
+      />
+
+      {/* 技能分发弹窗 */}
       {isManager && (
-        <>
-          <PublishModal
-            open={publishModalOpen}
-            sourceId={sourceId}
-            userId={userId}
-            userName={userName}
-            onClose={() => setPublishModalOpen(false)}
-            onSuccess={refreshSkills}
-          />
-          <DistributeModal
-            open={distributeModalOpen}
-            skill={distributeTargetSkill}
-            sourceId={sourceId}
-            userId={userId}
-            userName={userName}
-            onClose={() => setDistributeModalOpen(false)}
-            onSuccess={refreshSkills}
-          />
-        </>
+        <DistributeModal
+          open={distributeModalOpen}
+          skill={distributeTargetSkill}
+          sourceId={sourceId}
+          userId={userId}
+          userName={userName}
+          onClose={() => setDistributeModalOpen(false)}
+          onSuccess={refreshSkills}
+        />
       )}
 
       {/* MCP 上传弹窗 */}

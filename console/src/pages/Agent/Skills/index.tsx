@@ -136,18 +136,15 @@ function SkillsPage() {
         : [];
       if (conflicts.length === 0) break;
 
-      const resolveResult = await showConflictRenameModal(
+      const newRenames = await showConflictRenameModal(
         conflicts.map((c) => ({
           key: c.skill_name || "",
           label: c.skill_name || "",
           suggested_name: c.suggested_name || "",
         })),
       );
-      if (!resolveResult) break;
-      if (resolveResult.action === "rename") {
-        renameMap = { ...renameMap, ...resolveResult.renameMap };
-      }
-      // overwrite 不支持工作区技能页面的上传（deprecated API）
+      if (!newRenames) break;
+      renameMap = { ...renameMap, ...newRenames };
     }
   };
 
@@ -179,15 +176,15 @@ function SkillsPage() {
           detail?.suggested_name || detail?.conflicts?.[0]?.suggested_name;
         if (suggested) {
           const skillName = detail?.conflicts?.[0]?.skill_name || "";
-          const resolveResult = await showConflictRenameModal([
+          const renameMap = await showConflictRenameModal([
             {
               key: skillName,
               label: skillName,
               suggested_name: String(suggested),
             },
           ]);
-          if (resolveResult && resolveResult.action === "rename") {
-            const newName = Object.values(resolveResult.renameMap)[0];
+          if (renameMap) {
+            const newName = Object.values(renameMap)[0];
             if (newName) {
               await handleConfirmImport(url, newName);
             }
@@ -254,15 +251,15 @@ function SkillsPage() {
       } catch (error) {
         const detail = parseErrorDetail(error);
         if (detail?.suggested_name) {
-          const resolveResult = await showConflictRenameModal([
+          const renameMap = await showConflictRenameModal([
             {
               key: targetName,
               label: targetName,
               suggested_name: detail.suggested_name,
             },
           ]);
-          if (resolveResult && resolveResult.action === "rename") {
-            const newName = Object.values(resolveResult.renameMap)[0];
+          if (renameMap) {
+            const newName = Object.values(renameMap)[0];
             if (newName) {
               await handleSubmit({ ...values, name: newName });
             }
@@ -292,15 +289,15 @@ function SkillsPage() {
         result as { success: false; conflict?: SkillConflictDetail }
       ).conflict;
       if (conflictDetail?.suggested_name) {
-        const resolveResult = await showConflictRenameModal([
+        const renameMap = await showConflictRenameModal([
           {
             key: submitName,
             label: submitName,
             suggested_name: conflictDetail.suggested_name,
           },
         ]);
-        if (resolveResult && resolveResult.action === "rename") {
-          const newName = Object.values(resolveResult.renameMap)[0];
+        if (renameMap) {
+          const newName = Object.values(renameMap)[0];
           if (newName) {
             await handleSubmit({ ...values, name: newName });
           }
@@ -325,17 +322,15 @@ function SkillsPage() {
           } catch (error) {
             const detail = parseErrorDetail(error);
             if (!detail?.suggested_name) throw error;
-            const resolveResult = await showConflictRenameModal([
+            const renameMap = await showConflictRenameModal([
               {
                 key: skillName,
                 label: skillName,
                 suggested_name: detail.suggested_name,
               },
             ]);
-            if (!resolveResult) return;
-            if (resolveResult.action === "rename") {
-              newName = Object.values(resolveResult.renameMap)[0] || undefined;
-            }
+            if (!renameMap) return;
+            newName = Object.values(renameMap)[0] || undefined;
           }
         }
       }
@@ -392,17 +387,15 @@ function SkillsPage() {
               continue;
             }
             if (!conflict?.suggested_name) throw error;
-            const resolveResult = await showConflictRenameModal([
+            const renameMap = await showConflictRenameModal([
               {
                 key: skillName,
                 label: skillName,
                 suggested_name: conflict.suggested_name,
               },
             ]);
-            if (!resolveResult) return;
-            if (resolveResult.action === "rename") {
-              targetName = Object.values(resolveResult.renameMap)[0] || undefined;
-            }
+            if (!renameMap) return;
+            targetName = Object.values(renameMap)[0] || undefined;
           }
         }
       }

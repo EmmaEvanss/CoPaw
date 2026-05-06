@@ -1,6 +1,6 @@
 import { Card, Tag, Typography, Button, Space, Popconfirm } from "antd";
 import { MarketSkill } from "../../api/modules/market";
-import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon, FileText, Trash2 } from "lucide-react";
+import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon, FileText, Trash2, Send } from "lucide-react";
 
 const { Text } = Typography;
 
@@ -222,6 +222,25 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
             <FileText size={12} />
             详情
           </Button>
+          {isManager && onDistribute && (
+            <Button
+              size="small"
+              type="primary"
+              onClick={onDistribute}
+              style={{
+                height: 28,
+                padding: "0 12px",
+                fontSize: 12,
+                borderRadius: 8,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <Send size={12} />
+              分发
+            </Button>
+          )}
           {isManager && onUnpublish && (
             <Popconfirm
               title="下架技能"

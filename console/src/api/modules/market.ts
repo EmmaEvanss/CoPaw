@@ -258,4 +258,43 @@ export const marketApi = {
       }>;
     }>;
   },
+
+  uploadSkillToMarket: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    file: File,
+    options?: {
+      category_id?: number;
+    }
+  ): Promise<{
+    imported: string[];
+    count: number;
+    enabled: boolean;
+    name?: string;
+    description?: string;
+    conflicts?: Array<{
+      skill_name: string;
+      suggested_name: string;
+    }>;
+  }> => {
+    const headers = {
+      ...buildAuthHeaders(),
+      "X-Source-Id": sourceId,
+      "X-User-Id": userId,
+      "X-User-Name": encodeURIComponent(userName),
+      "X-Manager": "true",
+    };
+    return _uploadZipToMarket("/market/skills/publish-upload", file, headers, options) as Promise<{
+      imported: string[];
+      count: number;
+      enabled: boolean;
+      name?: string;
+      description?: string;
+      conflicts?: Array<{
+        skill_name: string;
+        suggested_name: string;
+      }>;
+    }>;
+  },
 };

@@ -515,12 +515,34 @@ function SkillPoolPage() {
     }
 
     let renameMap: Record<string, string> | undefined;
+    let overwrite = false;
     while (true) {
       try {
         const result = await api.uploadSkillPoolZip(file, {
-          overwrite: false,
+          overwrite,
           rename_map: renameMap,
         });
+        // 检查冲突
+        const conflicts = Array.isArray(result?.conflicts)
+          ? result.conflicts
+          : [];
+        if (conflicts.length > 0) {
+          const resolveResult = await showConflictRenameModal(
+            conflicts.map((c: { skill_name?: string; suggested_name?: string }) => ({
+              key: c.skill_name || "",
+              label: c.skill_name || "",
+              suggested_name: c.suggested_name || "",
+            })),
+          );
+          if (!resolveResult) break;
+          if (resolveResult.action === "overwrite") {
+            overwrite = true;
+            continue;
+          }
+          renameMap = { ...renameMap, ...resolveResult.renameMap };
+          overwrite = false;
+          continue;
+        }
         if (result.count > 0) {
           message.success(
             t("skillPool.imported", { names: result.imported.join(", ") }),
@@ -542,28 +564,13 @@ function SkillPoolPage() {
         }
         break;
       } catch (error) {
-        const detail = parseErrorDetail(error);
-        const conflicts = Array.isArray(detail?.conflicts)
-          ? detail.conflicts
-          : [];
-        if (conflicts.length === 0) {
-          if (handleScanError(error, t)) break;
-          message.error(
-            error instanceof Error
-              ? error.message
-              : t("skillPool.zipImportFailed"),
-          );
-          break;
-        }
-        const newRenames = await showConflictRenameModal(
-          conflicts.map((c: { skill_name?: string; suggested_name?: string }) => ({
-            key: c.skill_name || "",
-            label: c.skill_name || "",
-            suggested_name: c.suggested_name || "",
-          })),
+        if (handleScanError(error, t)) break;
+        message.error(
+          error instanceof Error
+            ? error.message
+            : t("skillPool.zipImportFailed"),
         );
-        if (!newRenames) break;
-        renameMap = { ...renameMap, ...newRenames };
+        break;
       }
     }
   };

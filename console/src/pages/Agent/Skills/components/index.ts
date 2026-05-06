@@ -10,7 +10,10 @@ export {
   getPoolBuiltinStatusLabel,
   getPoolBuiltinStatusTone,
 } from "./skillMetadata";
-export { useConflictRenameModal } from "./useConflictRenameModal";
+export {
+  useConflictRenameModal,
+  type ConflictResolveResult,
+} from "./useConflictRenameModal";
 export { ImportHubModal } from "./ImportHubModal";
 export { PoolTransferModal } from "./PoolTransferModal";
 

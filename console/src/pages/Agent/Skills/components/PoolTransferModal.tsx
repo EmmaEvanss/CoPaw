@@ -2,27 +2,33 @@ import { useEffect, useState } from "react";
 import { Button, Modal } from "@agentscope-ai/design";
 import { CheckOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
-import type { PoolSkillSpec } from "../../../../api/types";
+import type { PoolSkillSpec, SkillSpec } from "../../../../api/types";
 import styles from "../index.module.less";
 
 interface PoolTransferModalProps {
-  mode: "download" | null;
+  mode: "upload" | "download" | null;
+  skills: SkillSpec[];
   poolSkills: PoolSkillSpec[];
   onCancel: () => void;
-  onDownload: (poolSkillNames: string[], overwrite?: boolean) => Promise<void>;
+  onUpload: (skillNames: string[]) => Promise<void>;
+  onDownload: (poolSkillNames: string[]) => Promise<void>;
 }
 
 export function PoolTransferModal({
   mode,
+  skills,
   poolSkills,
   onCancel,
+  onUpload,
   onDownload,
 }: PoolTransferModalProps) {
   const { t } = useTranslation();
+  const [workspaceSkillNames, setWorkspaceSkillNames] = useState<string[]>([]);
   const [poolSkillNames, setPoolSkillNames] = useState<string[]>([]);
 
   useEffect(() => {
     if (mode !== null) {
+      setWorkspaceSkillNames([]);
       setPoolSkillNames([]);
     }
   }, [mode]);
@@ -32,19 +38,26 @@ export function PoolTransferModal({
   };
 
   const handleOk = async () => {
-    await onDownload(poolSkillNames);
+    if (mode === "upload") {
+      await onUpload(workspaceSkillNames);
+    } else {
+      await onDownload(poolSkillNames);
+    }
   };
 
-  const selectedNames = poolSkillNames;
-  const setSelectedNames = setPoolSkillNames;
-  const items = poolSkills;
+  const isUpload = mode === "upload";
+  const selectedNames = isUpload ? workspaceSkillNames : poolSkillNames;
+  const setSelectedNames = isUpload
+    ? setWorkspaceSkillNames
+    : setPoolSkillNames;
+  const items = isUpload ? skills : poolSkills;
   const hasSelection = selectedNames.length > 0;
 
   return (
     <Modal
       open={mode !== null}
       onCancel={handleCancel}
-      title={t("skills.downloadFromPool")}
+      title={isUpload ? t("skills.uploadToPool") : t("skills.downloadFromPool")}
       footer={
         <div className={styles.modalFooter}>
           <Button onClick={handleCancel} className={styles.modalCancelButton}>
@@ -66,7 +79,9 @@ export function PoolTransferModal({
       <div className={styles.pickerSection}>
         <div className={styles.pickerHeader}>
           <div className={styles.pickerLabel}>
-            {t("skills.selectPoolItem")}
+            {isUpload
+              ? t("skills.selectWorkspaceSkill")
+              : t("skills.selectPoolItem")}
           </div>
           <div className={styles.bulkActions}>
             <Button

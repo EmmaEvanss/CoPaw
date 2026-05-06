@@ -60,14 +60,33 @@ def get_skill_dir(
     )
 
 
+def resolve_effective_user_id(
+    user_id: str,
+    source_id: str | None = None,
+) -> str:
+    """解析 effective user_id，default 用户需拼接 source_id.
+
+    - default 用户 + source_id: effective = ``default_{source_id}``
+    - default 用户 + 无 source_id: effective = ``default``
+    - 非 default 用户: effective = user_id (保持不变)
+    """
+    if user_id != "default" or not source_id:
+        return user_id
+    # 验证 source_id 只包含安全字符
+    _validate_path_segment(source_id, "source_id")
+    return f"default_{source_id}"
+
+
 def get_user_skills_dir(
     swe_root: Path,
     user_id: str,
     agent_id: str = DEFAULT_AGENT_ID,
+    source_id: str | None = None,
 ) -> Path:
-    _validate_path_segment(user_id, "user_id")
+    effective_user_id = resolve_effective_user_id(user_id, source_id)
+    _validate_path_segment(effective_user_id, "user_id")
     _validate_path_segment(agent_id, "agent_id")
-    return swe_root / user_id / "workspaces" / agent_id / "skills"
+    return swe_root / effective_user_id / "workspaces" / agent_id / "skills"
 
 
 def load_index(marketplace_root: Path, source_id: str) -> list[MarketItem]:
@@ -126,7 +145,10 @@ def copy_skill_to_user(
     """将市场技能复制到用户工作目录，并写入分发元数据."""
     _validate_path_segment(skill_name, "skill_name")
     src_dir = get_skill_dir(marketplace_root, source_id, item_id)
-    dst_dir = get_user_skills_dir(swe_root, user_id, agent_id) / skill_name
+    dst_dir = (
+        get_user_skills_dir(swe_root, user_id, agent_id, source_id)
+        / skill_name
+    )
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     src_skill_md = src_dir / "SKILL.md"
@@ -156,9 +178,11 @@ def get_user_skill_manifest_path(
     swe_root: Path,
     user_id: str,
     agent_id: str = DEFAULT_AGENT_ID,
+    source_id: str | None = None,
 ) -> Path:
     """获取用户工作空间的 skill.json 路径."""
-    workspace_dir = swe_root / user_id / "workspaces" / agent_id
+    effective_user_id = resolve_effective_user_id(user_id, source_id)
+    workspace_dir = swe_root / effective_user_id / "workspaces" / agent_id
     return workspace_dir / "skill.json"
 
 
@@ -166,9 +190,15 @@ def read_user_skill_manifest(
     swe_root: Path,
     user_id: str,
     agent_id: str = DEFAULT_AGENT_ID,
+    source_id: str | None = None,
 ) -> dict:
     """读取用户技能 manifest，不存在时返回默认结构."""
-    manifest_path = get_user_skill_manifest_path(swe_root, user_id, agent_id)
+    manifest_path = get_user_skill_manifest_path(
+        swe_root,
+        user_id,
+        agent_id,
+        source_id,
+    )
     if not manifest_path.exists():
         return {
             "schema_version": "workspace-skill-manifest.v1",
@@ -191,16 +221,22 @@ def mutate_user_skill_manifest(
     user_id: str,
     agent_id: str,
     mutation_fn,
+    source_id: str | None = None,
 ) -> bool:
     """原子修改用户技能 manifest.
 
     Args:
         mutation_fn: 接受 dict 参数，返回 bool 表示是否修改成功
     """
-    manifest_path = get_user_skill_manifest_path(swe_root, user_id, agent_id)
+    manifest_path = get_user_skill_manifest_path(
+        swe_root,
+        user_id,
+        agent_id,
+        source_id,
+    )
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    current = read_user_skill_manifest(swe_root, user_id, agent_id)
+    current = read_user_skill_manifest(swe_root, user_id, agent_id, source_id)
     if not mutation_fn(current):
         return False
 

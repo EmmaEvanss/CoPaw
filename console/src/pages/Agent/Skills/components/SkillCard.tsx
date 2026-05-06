@@ -28,9 +28,8 @@ interface SkillCardProps {
   onClick: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
-  onToggleEnabled?: (e: React.MouseEvent) => void;
+  onToggleEnabled: (e: React.MouseEvent) => void;
   onDelete?: (e?: React.MouseEvent) => void;
-  readOnly?: boolean;
 }
 
 const extractSkillEmoji = (content?: string) => {
@@ -143,7 +142,6 @@ export const SkillCard = React.memo(function SkillCard({
   onMouseLeave,
   onToggleEnabled,
   onDelete,
-  readOnly = false,
 }: SkillCardProps) {
   const { t } = useTranslation();
   const displaySource = getSkillDisplaySource(skill.source);
@@ -252,29 +250,25 @@ export const SkillCard = React.memo(function SkillCard({
         <p className={styles.descriptionText}>{skill.description || "-"}</p>
       </div>
 
-      {/* Footer with buttons - hidden in readOnly mode */}
-      {!readOnly && (
-        <div className={styles.cardFooter}>
-          {onToggleEnabled && (
-            <Button
-              className={styles.actionButton}
-              onClick={handleToggleClick}
-              icon={skill.enabled ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-            >
-              {skill.enabled ? t("common.disable") : t("common.enable")}
-            </Button>
-          )}
-          {onDelete && (
-            <Button
-              danger
-              className={styles.deleteButton}
-              onClick={handleDeleteClick}
-            >
-              {t("common.delete")}
-            </Button>
-          )}
-        </div>
-      )}
+      {/* Footer with buttons - always show */}
+      <div className={styles.cardFooter}>
+        <Button
+          className={styles.actionButton}
+          onClick={handleToggleClick}
+          icon={skill.enabled ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+        >
+          {skill.enabled ? t("common.disable") : t("common.enable")}
+        </Button>
+        {onDelete && (
+          <Button
+            danger
+            className={styles.deleteButton}
+            onClick={handleDeleteClick}
+          >
+            {t("common.delete")}
+          </Button>
+        )}
+      </div>
     </Card>
   );
 });

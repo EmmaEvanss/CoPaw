@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Input, Modal } from "@agentscope-ai/design";
+import { Button, Input, Modal } from "@agentscope-ai/design";
+import { Space } from "antd";
 import { useTranslation } from "react-i18next";
 
 export interface ConflictItem {
@@ -12,21 +13,26 @@ interface InternalItem extends ConflictItem {
   new_name: string;
 }
 
+export type ConflictResolveResult =
+  | { action: "rename"; renameMap: Record<string, string> }
+  | { action: "overwrite" }
+  | null;
+
 export function useConflictRenameModal(): {
   showConflictRenameModal: (
     items: ConflictItem[],
-  ) => Promise<Record<string, string> | null>;
+  ) => Promise<ConflictResolveResult>;
   conflictRenameModal: React.ReactNode;
 } {
   const { t } = useTranslation();
   const [items, setItems] = useState<InternalItem[]>([]);
   const [resolver, setResolver] = useState<
-    ((result: Record<string, string> | null) => void) | null
+    ((result: ConflictResolveResult) => void) | null
   >(null);
 
   const showConflictRenameModal = (
     incoming: ConflictItem[],
-  ): Promise<Record<string, string> | null> =>
+  ): Promise<ConflictResolveResult> =>
     new Promise((resolve) => {
       setItems(
         incoming.map((item) => ({ ...item, new_name: item.suggested_name })),
@@ -34,14 +40,20 @@ export function useConflictRenameModal(): {
       setResolver(() => resolve);
     });
 
-  const handleOk = () => {
+  const handleRename = () => {
     const renameMap: Record<string, string> = {};
     for (const item of items) {
       if (item.new_name.trim()) {
         renameMap[item.key] = item.new_name.trim();
       }
     }
-    resolver?.(renameMap);
+    resolver?.({ action: "rename", renameMap });
+    setItems([]);
+    setResolver(null);
+  };
+
+  const handleOverwrite = () => {
+    resolver?.({ action: "overwrite" });
     setItems([]);
     setResolver(null);
   };
@@ -56,9 +68,19 @@ export function useConflictRenameModal(): {
     <Modal
       open={items.length > 0}
       title={t("skillPool.multiConflictTitle")}
-      onOk={handleOk}
       onCancel={handleCancel}
       zIndex={2100}
+      footer={
+        <Space>
+          <Button onClick={handleCancel}>{t("common.cancel")}</Button>
+          <Button type="primary" danger onClick={handleOverwrite}>
+            {t("common.overwrite")}
+          </Button>
+          <Button type="primary" onClick={handleRename}>
+            {t("common.rename")}
+          </Button>
+        </Space>
+      }
     >
       <p>{t("skillPool.multiConflictDesc")}</p>
       {items.map((item, i) => (

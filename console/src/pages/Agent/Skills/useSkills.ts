@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { Modal } from "@agentscope-ai/design";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import api from "../../../api";
+import { skillApi } from "../../../api/modules/skill";
 import type { SecurityScanErrorResponse } from "../../../api/modules/security";
 import { invalidateSkillCache } from "../../../api/modules/skill";
 import type { SkillSpec } from "../../../api/types";
@@ -31,6 +33,7 @@ export function useSkills() {
   const { selectedAgent } = useAgentStore();
   const [skills, setSkills] = useState<SkillSpec[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [importing, setImporting] = useState(false);
   const importTaskIdRef = useRef<string | null>(null);
   const importCancelReasonRef = useRef<"manual" | "timeout" | null>(null);
@@ -91,6 +94,69 @@ export function useSkills() {
     invalidateSkillCache({ agentId: selectedAgent });
     void fetchSkills();
   }, [selectedAgent, fetchSkills]);
+
+  const createSkill = async (
+    name: string,
+    content: string,
+    config?: Record<string, unknown>,
+    enable?: boolean,
+  ): Promise<SkillActionResult> => {
+    try {
+      const result = await api.createSkill(name, content, config, enable);
+      message.success("Created successfully");
+      invalidateSkillCache({ agentId: selectedAgent }); // Clear cache after mutation
+      await fetchSkills();
+      await checkScanWarnings(result.name);
+      return { success: true, name: result.name };
+    } catch (error) {
+      const detail = parseErrorDetail(error);
+      if (detail?.suggested_name) {
+        return { success: false, conflict: detail };
+      }
+      handleError(error, "Failed to save");
+      return { success: false };
+    }
+  };
+
+  const uploadSkill = async (
+    file: File,
+    targetName?: string,
+    renameMap?: Record<string, string>,
+  ): Promise<SkillActionResult> => {
+    try {
+      setUploading(true);
+      const result = await api.uploadSkill(file, {
+        enable: true,
+        overwrite: false,
+        target_name: targetName,
+        rename_map: renameMap,
+      });
+      if (result?.count > 0) {
+        message.success(
+          t("skills.uploadSuccess") + `: ${result.imported.join(", ")}`,
+        );
+        invalidateSkillCache({ agentId: selectedAgent }); // Clear cache after mutation
+        await fetchSkills();
+        for (const name of result.imported) {
+          await checkScanWarnings(name);
+        }
+      }
+      if (!result?.count) {
+        message.warning(t("skills.uploadNoChange"));
+      }
+      await fetchSkills();
+      return { success: true, imported: result?.imported || [] };
+    } catch (error) {
+      const detail = parseErrorDetail(error);
+      if (Array.isArray(detail?.conflicts) && detail.conflicts.length > 0) {
+        return { success: false, conflict: detail };
+      }
+      handleError(error, t("skills.uploadFailed"));
+      return { success: false };
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const importFromHub = async (
     input: string,
@@ -194,12 +260,77 @@ export function useSkills() {
     void api.cancelHubSkillInstall(taskId);
   }, [importing]);
 
+  // 启用/禁用技能 - 直接使用 skillApi 避免与 mySkillsApi 冲突
+  const toggleEnabled = async (skill: SkillSpec) => {
+    try {
+      if (skill.enabled) {
+        await skillApi.disableSkill(skill.name);
+        setSkills((prev) =>
+          prev.map((s) =>
+            s.name === skill.name ? { ...s, enabled: false } : s,
+          ),
+        );
+        message.success("Disabled successfully");
+      } else {
+        await skillApi.enableSkill(skill.name);
+        setSkills((prev) =>
+          prev.map((s) =>
+            s.name === skill.name ? { ...s, enabled: true } : s,
+          ),
+        );
+        message.success("Enabled successfully");
+        await checkScanWarnings(skill.name);
+      }
+      invalidateSkillCache({ agentId: selectedAgent });
+      return true;
+    } catch (error) {
+      handleError(error, "Operation failed");
+      return false;
+    }
+  };
+
+  // 删除技能 - 直接使用 skillApi 避免与 mySkillsApi 冲突
+  const deleteSkill = async (skill: SkillSpec) => {
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: t("common.confirm"),
+        content: t("skills.deleteConfirm"),
+        okText: t("common.delete"),
+        okType: "danger",
+        cancelText: t("common.cancel"),
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+
+    if (!confirmed) return false;
+
+    try {
+      const result = await skillApi.deleteSkill(skill.name);
+      if (result.deleted) {
+        message.success(t("skills.deleteSuccess"));
+        invalidateSkillCache({ agentId: selectedAgent });
+        await fetchSkills();
+        return true;
+      }
+    } catch (error) {
+      console.error("Failed to delete skill", error);
+      message.error(t("skills.deleteFailed"));
+    }
+    return false;
+  };
+
   return {
     skills,
     loading,
+    uploading,
     importing,
+    createSkill,
+    uploadSkill,
     importFromHub,
     cancelImport,
+    toggleEnabled,
+    deleteSkill,
     refreshSkills: fetchSkills,
     hardRefresh,
   };

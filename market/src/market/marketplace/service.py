@@ -268,9 +268,15 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> None:
         """扫描技能目录，发现安全问题抛出异常."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         if skill_dir.exists():
             scan_skill_directory(skill_dir, skill_name=skill_name)
@@ -280,16 +286,22 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """启用技能（含安全扫描 + 回调重载）."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         if not skill_dir.exists():
             return {"success": False, "reason": "not_found"}
 
         # 安全扫描
         try:
-            self._scan_skill_or_raise(user_id, skill_name, agent_id)
+            self._scan_skill_or_raise(user_id, skill_name, agent_id, source_id)
         except SkillScanError as e:
             return {
                 "success": False,
@@ -309,6 +321,7 @@ class MarketplaceService:
             user_id,
             agent_id,
             _update,
+            source_id,
         )
 
         if updated:
@@ -321,6 +334,7 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """禁用技能（含回调重载）."""
 
@@ -337,6 +351,7 @@ class MarketplaceService:
             user_id,
             agent_id,
             _update,
+            source_id,
         )
 
         if updated:
@@ -349,11 +364,17 @@ class MarketplaceService:
         user_id: str,
         skill_names: list[str],
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """批量删除技能."""
         import shutil
 
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         results: dict[str, Any] = {}
 
         for skill_name in skill_names:
@@ -363,7 +384,7 @@ class MarketplaceService:
                 continue
 
             # 先禁用
-            await self.disable_skill(user_id, skill_name, agent_id)
+            await self.disable_skill(user_id, skill_name, agent_id, source_id)
 
             # 删除目录
             try:
@@ -385,6 +406,7 @@ class MarketplaceService:
                 user_id,
                 agent_id,
                 _remove,
+                source_id,
             )
 
         return results
@@ -394,6 +416,7 @@ class MarketplaceService:
         user_id: str,
         skill_names: list[str],
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """批量启用技能."""
         results: dict[str, Any] = {}
@@ -402,6 +425,7 @@ class MarketplaceService:
                 user_id,
                 skill_name,
                 agent_id,
+                source_id,
             )
         return results
 
@@ -410,6 +434,7 @@ class MarketplaceService:
         user_id: str,
         skill_names: list[str],
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """批量禁用技能."""
         results: dict[str, Any] = {}
@@ -418,6 +443,7 @@ class MarketplaceService:
                 user_id,
                 skill_name,
                 agent_id,
+                source_id,
             )
         return results
 
@@ -694,12 +720,22 @@ class MarketplaceService:
         agent_id: str = "default",
     ) -> list[MySkillItem]:
         """获取用户技能列表（我创建的 + 我接收的）。"""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         if not skills_dir.exists():
             return []
 
         # 读取 manifest 获取启用状态
-        manifest = read_user_skill_manifest(self.swe_root, user_id, agent_id)
+        manifest = read_user_skill_manifest(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         manifest_skills = manifest.get("skills", {})
 
         market_index = load_index(self.marketplace_root, source_id)
@@ -832,9 +868,15 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> list[dict]:
         """列出技能文件树（不包含 skill.json）."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         if not skill_dir.exists():
             return []
@@ -882,9 +924,15 @@ class MarketplaceService:
         skill_name: str,
         file_path: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> tuple[str | None, str]:
         """读取技能文件内容，返回 (content, file_type)."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         target = skill_dir / file_path
 
@@ -919,9 +967,15 @@ class MarketplaceService:
         file_path: str,
         content: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> bool:
         """保存技能文件内容."""
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
         target = skill_dir / file_path
 
@@ -944,11 +998,17 @@ class MarketplaceService:
         user_id: str,
         skill_name: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> bool:
         """删除用户技能."""
         import shutil
 
-        skills_dir = get_user_skills_dir(self.swe_root, user_id, agent_id)
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
         skill_dir = skills_dir / skill_name
 
         if not skill_dir.exists():

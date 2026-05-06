@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 _ALLOWED_ZIP_TYPES = {
     "application/zip",
     "application/x-zip-compressed",
@@ -428,8 +428,8 @@ async def upload_skill_to_workspace(
     bbk_id = x_bbk_id or "100"
     agent_id = "default"
 
-    # Get user skills directory
-    skills_dir = get_user_skills_dir(swe_root, x_user_id, agent_id)
+    # Get user skills directory (default user uses default_{source_id})
+    skills_dir = get_user_skills_dir(swe_root, x_user_id, agent_id, source_id)
     skills_dir.mkdir(parents=True, exist_ok=True)
 
     # Read and validate zip
@@ -491,14 +491,14 @@ async def list_skill_files(
     agent_id: str = "default",
 ):
     """获取技能文件树."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
             detail="X-User-Id header is required",
         )
     svc = request.app.state.marketplace
-    return svc.list_skill_files(x_user_id, skill_name, agent_id)
+    return svc.list_skill_files(x_user_id, skill_name, agent_id, source_id)
 
 
 @router.get(
@@ -514,7 +514,7 @@ async def read_skill_file(
     agent_id: str = "default",
 ):
     """读取技能文件内容."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
@@ -526,6 +526,7 @@ async def read_skill_file(
         skill_name,
         file_path,
         agent_id,
+        source_id,
     )
     if content is None:
         if file_type == "binary":
@@ -576,6 +577,7 @@ async def save_skill_file(
         file_path,
         content,
         agent_id,
+        source_id,
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to save file")
@@ -594,7 +596,7 @@ async def delete_my_skill(
     agent_id: str = "default",
 ):
     """删除技能."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
@@ -602,7 +604,7 @@ async def delete_my_skill(
         )
 
     svc = request.app.state.marketplace
-    ok = svc.delete_skill(x_user_id, skill_name, agent_id)
+    ok = svc.delete_skill(x_user_id, skill_name, agent_id, source_id)
     if not ok:
         raise HTTPException(
             status_code=404,
@@ -623,14 +625,14 @@ async def enable_my_skill(
     agent_id: str = "default",
 ):
     """启用技能（含安全扫描）."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
             detail="X-User-Id header is required",
         )
     svc = request.app.state.marketplace
-    result = await svc.enable_skill(x_user_id, skill_name, agent_id)
+    result = await svc.enable_skill(x_user_id, skill_name, agent_id, source_id)
     if not result.get("success"):
         if result.get("reason") == "security_scan_failed":
             raise HTTPException(
@@ -656,14 +658,19 @@ async def disable_my_skill(
     agent_id: str = "default",
 ):
     """禁用技能."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
             detail="X-User-Id header is required",
         )
     svc = request.app.state.marketplace
-    result = await svc.disable_skill(x_user_id, skill_name, agent_id)
+    result = await svc.disable_skill(
+        x_user_id,
+        skill_name,
+        agent_id,
+        source_id,
+    )
     if not result.get("success"):
         raise HTTPException(
             status_code=404,
@@ -684,14 +691,19 @@ async def batch_delete_my_skills(
     agent_id: str = "default",
 ):
     """批量删除技能."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
             detail="X-User-Id header is required",
         )
     svc = request.app.state.marketplace
-    results = await svc.batch_delete_skills(x_user_id, body.skills, agent_id)
+    results = await svc.batch_delete_skills(
+        x_user_id,
+        body.skills,
+        agent_id,
+        source_id,
+    )
     success_count = sum(1 for r in results.values() if r.get("success"))
     return BatchOperationResponse(
         results=results,
@@ -712,14 +724,19 @@ async def batch_enable_my_skills(
     agent_id: str = "default",
 ):
     """批量启用技能."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
             detail="X-User-Id header is required",
         )
     svc = request.app.state.marketplace
-    results = await svc.batch_enable_skills(x_user_id, body.skills, agent_id)
+    results = await svc.batch_enable_skills(
+        x_user_id,
+        body.skills,
+        agent_id,
+        source_id,
+    )
     success_count = sum(1 for r in results.values() if r.get("success"))
     return BatchOperationResponse(
         results=results,
@@ -740,14 +757,19 @@ async def batch_disable_my_skills(
     agent_id: str = "default",
 ):
     """批量禁用技能."""
-    require_source_id(x_source_id)
+    source_id = require_source_id(x_source_id)
     if not x_user_id:
         raise HTTPException(
             status_code=400,
             detail="X-User-Id header is required",
         )
     svc = request.app.state.marketplace
-    results = await svc.batch_disable_skills(x_user_id, body.skills, agent_id)
+    results = await svc.batch_disable_skills(
+        x_user_id,
+        body.skills,
+        agent_id,
+        source_id,
+    )
     success_count = sum(1 for r in results.values() if r.get("success"))
     return BatchOperationResponse(
         results=results,

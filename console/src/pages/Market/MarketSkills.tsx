@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Input, Button, Empty, Spin, Typography, Tag } from "antd";
+import { Input, Button, Empty, Spin, Typography, Tag, message } from "antd";
 import { PlusOutlined, SearchOutlined, ReloadOutlined, ShopOutlined, UploadOutlined, ThunderboltOutlined, ApiOutlined } from "@ant-design/icons";
 import { SkillCard } from "./SkillCard";
 import { SkillDetailDrawer } from "./SkillDetailDrawer";
@@ -7,7 +7,7 @@ import { PublishModal } from "./PublishModal";
 import { DistributeModal } from "./DistributeModal";
 import UploadSkillModal from "./components/UploadSkillModal";
 import { useMarket } from "./useMarket";
-import { MarketSkill } from "../../api/modules/market";
+import { MarketSkill, marketApi } from "../../api/modules/market";
 
 type ResourceType = "skill" | "mcp";
 
@@ -50,6 +50,17 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
     refreshCategories();
     refreshSkills();
   }, [refreshCategories, refreshSkills]);
+
+  // Handle unpublish skill
+  const handleUnpublish = async (skill: MarketSkill) => {
+    try {
+      await marketApi.unpublishSkill(sourceId, skill.item_id, userId, userName);
+      message.success("下架成功");
+      refreshSkills();
+    } catch (err) {
+      message.error("下架失败");
+    }
+  };
 
   // Filter skills by search query
   const filteredSkills = skills.filter((skill) => {
@@ -252,6 +263,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
                       skill={skill}
                       onClick={() => openSkillDetail(skill.item_id)}
                       onDistribute={isManager ? () => openDistributeModal(skill) : undefined}
+                      onUnpublish={isManager ? () => handleUnpublish(skill) : undefined}
                       isManager={isManager}
                     />
                   ))}
@@ -278,6 +290,11 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
         open={detailDrawerOpen}
         skill={selectedSkill}
         onClose={() => setDetailDrawerOpen(false)}
+        isManager={isManager}
+        sourceId={sourceId}
+        userId={userId}
+        userName={userName}
+        onRefresh={refreshSkills}
       />
       {isManager && (
         <>

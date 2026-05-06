@@ -21,8 +21,11 @@ import type {
   SkillScannerWhitelistEntry,
   SkillScannerMode,
 } from "../../../../api/modules/security";
-import { skillApi } from "../../../../api/modules/skill";
+import { mySkillsApi } from "../../../../api/modules/mySkills";
 import { useTheme } from "../../../../contexts/ThemeContext";
+import { useIframeStore } from "../../../../stores/iframeStore";
+import { getUserId } from "../../../../utils/identity";
+import { DEFAULT_SOURCE_ID } from "../../../../constants/identity";
 import styles from "../index.module.less";
 
 function FindingsModal({
@@ -85,6 +88,10 @@ export function SkillScannerSection() {
   const { t } = useTranslation();
   const { isDark } = useTheme();
   const darkBtnStyle = isDark ? { color: "rgba(255,255,255,0.75)" } : undefined;
+  const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
+  const bbkId = useIframeStore((state) => state.bbk) || "100";
+  const userId = getUserId();
+  const userName = useIframeStore((state) => state.clawName) || userId;
   const {
     config,
     blockedHistory,
@@ -157,7 +164,7 @@ export function SkillScannerSection() {
             return;
           }
           try {
-            await skillApi.disableSkill(skillName);
+            await mySkillsApi.disableSkill(sourceId, userId, userName, bbkId, skillName);
             message.success(
               t("security.skillScanner.whitelist.removeAndDisabled"),
             );
@@ -167,7 +174,7 @@ export function SkillScannerSection() {
         },
       });
     },
-    [removeFromWhitelist, t],
+    [removeFromWhitelist, t, sourceId, userId, userName, bbkId],
   );
 
   const handleClearHistory = useCallback(() => {

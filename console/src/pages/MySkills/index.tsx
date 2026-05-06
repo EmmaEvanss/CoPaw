@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox } from "antd";
-import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined } from "@ant-design/icons";
+import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
 import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 import { MySkill, mySkillsApi, FileTreeNode } from "../../api/modules/mySkills";
 import { marketApi } from "../../api/modules/market";
+import { PublishModal } from "../Market/PublishModal";
 
 const { Title, Text } = Typography;
 
@@ -35,6 +36,15 @@ export default function MySkillsPage() {
   // Batch operation state
   const [batchMode, setBatchMode] = useState<boolean>(false);
   const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set());
+
+  // Sync to market state
+  const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [publishInitialData, setPublishInitialData] = useState<{
+    skillName: string;
+    description: string;
+    skillJson: Record<string, unknown>;
+    skillMd: string;
+  } | null>(null);
 
   // Debounce search
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -249,6 +259,51 @@ export default function MySkillsPage() {
   const goToMarketplace = () => {
     message.info("跳转到应用市场功能开发中");
   };
+
+  // Sync skill to market
+  const handleSyncToMarket = useCallback(async (skill: MySkill) => {
+    if (!skill || skill.is_received) return;
+
+    try {
+      message.loading({ content: "读取技能文件...", key: "sync" });
+
+      // Read skill.json and SKILL.md
+      const files = await mySkillsApi.listSkillFiles(sourceId, userId, userName, bbkId, skill.skill_name);
+
+      let skillJson: Record<string, unknown> = {};
+      let skillMd = "";
+
+      // Find skill.json
+      const skillJsonFile = files.find((f) => f.name === "skill.json" && f.type === "file");
+      if (skillJsonFile) {
+        const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, "skill.json");
+        try {
+          skillJson = JSON.parse(res.content);
+        } catch {
+          // ignore parse error
+        }
+      }
+
+      // Find SKILL.md
+      const skillMdFile = files.find((f) => f.name === "SKILL.md" && f.type === "file");
+      if (skillMdFile) {
+        const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, "SKILL.md");
+        skillMd = res.content;
+      }
+
+      message.destroy("sync");
+
+      setPublishInitialData({
+        skillName: skill.skill_name,
+        description: skill.description || "",
+        skillJson,
+        skillMd,
+      });
+      setPublishModalOpen(true);
+    } catch (err) {
+      message.error({ content: "读取技能文件失败", key: "sync" });
+    }
+  }, [sourceId, userId, userName, bbkId]);
 
   // File tree component
   const FileTree = ({ nodes, level, skill }: { nodes: FileTreeNode[]; level: number; skill: MySkill }) => (
@@ -590,6 +645,15 @@ export default function MySkillsPage() {
                 编辑
               </Button>
             )}
+            {isManager && canEdit && (
+              <Button
+                size="small"
+                icon={<CloudUploadOutlined />}
+                onClick={() => handleSyncToMarket(skill)}
+              >
+                同步到市场
+              </Button>
+            )}
             {isEditing && (
               <>
                 <Button size="small" onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }} disabled={isSaving}>
@@ -793,6 +857,23 @@ export default function MySkillsPage() {
         accept=".zip"
         style={{ position: "absolute", left: -9999, opacity: 0 }}
         onChange={handleFileSelect}
+      />
+
+      {/* Sync to market modal */}
+      <PublishModal
+        open={publishModalOpen}
+        sourceId={sourceId}
+        userId={userId}
+        userName={userName}
+        onClose={() => {
+          setPublishModalOpen(false);
+          setPublishInitialData(null);
+        }}
+        onSuccess={() => {
+          message.success("上架成功");
+          refresh();
+        }}
+        initialData={publishInitialData}
       />
     </div>
   );

@@ -71,6 +71,20 @@ CLI / HTTP / Channel Request
 | 安全、审批与治理边界 | 覆盖 Tool Guard、技能扫描、路径边界、认证与审批服务 | [analysis/security-and-governance.md](analysis/security-and-governance.md) |
 | 观测能力与支撑系统 | 覆盖 Tracing、Token Usage、Cron、备份、Tunnel、Deploy、Scripts | [analysis/observability-and-supporting-systems.md](analysis/observability-and-supporting-systems.md) |
 
+### 技能管理服务边界
+
+技能管理功能由两个服务协作完成：
+
+| 功能 | API 端点 | 服务 | 说明 |
+|------|----------|------|------|
+| 用户技能 CRUD | `/market/skills/*` | market | 用户技能创建、删除、启用/禁用、文件编辑 |
+| 工作空间技能列表 | `/skills` | src/swe | Agent 运行时技能状态查询（只读） |
+| 技能池管理 | `/skills/pool/*` | src/swe | 管理员管理共享技能池 |
+| Hub 导入 | `/skills/hub/*` | src/swe | 从外部 Hub 导入技能 |
+| Agent 重载回调 | `/api/internal/agents/{id}/reload` | src/swe | Market 服务修改技能后回调通知 |
+
+**服务间通信：** Market 服务通过 HTTP 回调触发 SWE 服务的 Agent 重载，确保技能配置实时生效。
+
 ## 经验累积
 
 经验类文档统一放在 `analysis/playbook/`，用于沉淀排查入口和重复问题处理方式。

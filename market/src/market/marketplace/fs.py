@@ -149,3 +149,59 @@ def copy_skill_to_user(
     skill_data["received_version"] = version
 
     _atomic_write_json(dst_dir / "skill.json", skill_data)
+
+
+def get_user_skill_manifest_path(
+    swe_root: Path,
+    user_id: str,
+    agent_id: str = DEFAULT_AGENT_ID,
+) -> Path:
+    """获取用户工作空间的 skill.json 路径."""
+    workspace_dir = swe_root / user_id / "workspaces" / agent_id
+    return workspace_dir / "skill.json"
+
+
+def read_user_skill_manifest(
+    swe_root: Path,
+    user_id: str,
+    agent_id: str = DEFAULT_AGENT_ID,
+) -> dict:
+    """读取用户技能 manifest，不存在时返回默认结构."""
+    manifest_path = get_user_skill_manifest_path(swe_root, user_id, agent_id)
+    if not manifest_path.exists():
+        return {
+            "schema_version": "workspace-skill-manifest.v1",
+            "version": 0,
+            "skills": {},
+        }
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read manifest %s: %s", manifest_path, e)
+        return {
+            "schema_version": "workspace-skill-manifest.v1",
+            "version": 0,
+            "skills": {},
+        }
+
+
+def mutate_user_skill_manifest(
+    swe_root: Path,
+    user_id: str,
+    agent_id: str,
+    mutation_fn,
+) -> bool:
+    """原子修改用户技能 manifest.
+
+    Args:
+        mutation_fn: 接受 dict 参数，返回 bool 表示是否修改成功
+    """
+    manifest_path = get_user_skill_manifest_path(swe_root, user_id, agent_id)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    current = read_user_skill_manifest(swe_root, user_id, agent_id)
+    if not mutation_fn(current):
+        return False
+
+    _atomic_write_json(manifest_path, current)
+    return True

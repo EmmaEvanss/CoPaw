@@ -5,7 +5,7 @@ import {
   DownOutlined,
   RightOutlined,
 } from "@ant-design/icons";
-import { FileTreeNode } from "../../api/modules/mySkills";
+import { FileTreeNode } from "../../../api/modules/mySkills";
 
 const { Text } = Typography;
 

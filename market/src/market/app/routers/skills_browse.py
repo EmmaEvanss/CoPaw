@@ -69,20 +69,45 @@ async def _read_validated_zip_upload(file: UploadFile) -> bytes:
     return data
 
 
-def _decode_zip_filename(filename: str) -> str:
-    """Decode zip filename, handling GBK encoding from Windows."""
+def _decode_zip_filename(filename: str, info: zipfile.ZipInfo) -> str:
+    """Decode zip filename, handling GBK encoding from Windows.
+
+    ZIP file name encoding rules:
+    - If flag_bits & 0x800: UTF-8 encoded (Python decodes correctly)
+    - Otherwise: platform-specific encoding (often GBK on Chinese Windows)
+
+    Python's zipfile module decodes non-UTF-8 filenames using cp437 by default,
+    which causes Chinese characters to become garbled. We need to:
+    1. Check if UTF-8 flag is set (already correct)
+    2. Otherwise, reverse cp437 decoding and try GBK/UTF-8
+    """
+    # Check if UTF-8 flag is set (bit 11)
+    if info.flag_bits & 0x800:
+        return filename
+
+    # Try to recover from cp437 mis-decoding
     try:
         raw = filename.encode("cp437")
-        try:
-            return raw.decode("utf-8")
-        except UnicodeDecodeError:
-            pass
-        try:
-            return raw.decode("gbk")
-        except UnicodeDecodeError:
-            pass
     except (UnicodeDecodeError, UnicodeEncodeError):
+        return filename
+
+    # Try GBK first (common on Chinese Windows)
+    try:
+        decoded = raw.decode("gbk")
+        # Validate the result is printable
+        if decoded.isprintable() or all(
+            c.isprintable() or c in "\n\r\t" for c in decoded
+        ):
+            return decoded
+    except UnicodeDecodeError:
         pass
+
+    # Try UTF-8
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+
     return filename
 
 
@@ -105,7 +130,7 @@ def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
 
         # Security check for path traversal (use decoded filename)
         for info in zf.infolist():
-            decoded_name = _decode_zip_filename(info.filename)
+            decoded_name = _decode_zip_filename(info.filename, info)
             target = (tmp_dir / decoded_name).resolve()
             if not target.is_relative_to(root_path):
                 raise ValueError(f"Unsafe path in zip: {info.filename}")
@@ -113,7 +138,7 @@ def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
         # Extract files with corrected encoding for Chinese filenames
         for info in zf.infolist():
             # Decode filename correctly
-            decoded_name = _decode_zip_filename(info.filename)
+            decoded_name = _decode_zip_filename(info.filename, info)
             target = tmp_dir / decoded_name
 
             if info.is_dir():

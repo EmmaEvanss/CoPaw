@@ -39,3 +39,83 @@
   border-radius: 6px;
   padding: 12px;
 }
+
+// 会话列表
+.sessionList {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessionListTitle {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: #262626;
+}
+
+.sessionLoading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.sessionEmpty {
+  text-align: center;
+  color: #999;
+  padding: 40px 0;
+}
+
+.sessionCard {
+  padding: 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #1890ff;
+    background: #fafafa;
+  }
+
+  &.selected {
+    border-color: #1890ff;
+    background: #e6f7ff;
+  }
+}
+
+.sessionId {
+  font-family: monospace;
+  font-size: 12px;
+  color: #262626;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.sessionMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.sessionStats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.sessionTime {
+  font-size: 11px;
+  color: #999;
+}
+
+.sessionPagination {
+  margin-top: 12px;
+  text-align: center;
+}

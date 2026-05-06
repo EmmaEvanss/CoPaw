@@ -194,37 +194,6 @@ export const skillApi = {
       `/skills/hub/search?q=${encodeURIComponent(q)}&limit=${limit}`,
     ),
 
-  createSkill: (
-    skillName: string,
-    content: string,
-    config?: Record<string, unknown>,
-    enable?: boolean,
-  ) =>
-    request<{ created: boolean; name: string }>("/skills", {
-      method: "POST",
-      body: JSON.stringify({
-        name: skillName,
-        content,
-        config,
-        enable,
-      }),
-    }),
-
-  saveSkill: (payload: {
-    name: string;
-    content: string;
-    source_name?: string;
-    config?: Record<string, unknown>;
-  }) =>
-    request<{
-      success: boolean;
-      mode: "edit" | "rename" | "noop";
-      name: string;
-    }>("/skills/save", {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
-
   createSkillPoolSkill: (payload: {
     name: string;
     content: string;
@@ -250,41 +219,12 @@ export const skillApi = {
       body: JSON.stringify(payload),
     }),
 
-  enableSkill: (skillName: string) =>
-    request<void>(`/skills/${encodeURIComponent(skillName)}/enable`, {
-      method: "POST",
-    }),
-
-  disableSkill: (skillName: string) =>
-    request<void>(`/skills/${encodeURIComponent(skillName)}/disable`, {
-      method: "POST",
-    }),
-
-  batchEnableSkills: (skillNames: string[]) =>
-    request<void>("/skills/batch-enable", {
-      method: "POST",
-      body: JSON.stringify(skillNames),
-    }),
-
-  batchDeleteSkills: (skillNames: string[]) =>
-    request<{
-      results: Record<string, { success: boolean; reason?: string }>;
-    }>("/skills/batch-delete", {
-      method: "POST",
-      body: JSON.stringify(skillNames),
-    }),
-
   batchDeletePoolSkills: (skillNames: string[]) =>
     request<{
       results: Record<string, { success: boolean; reason?: string }>;
     }>("/skills/pool/batch-delete", {
       method: "POST",
       body: JSON.stringify(skillNames),
-    }),
-
-  deleteSkill: (skillName: string) =>
-    request<{ deleted: boolean }>(`/skills/${encodeURIComponent(skillName)}`, {
-      method: "DELETE",
     }),
 
   startHubSkillInstall: (payload: {
@@ -509,26 +449,6 @@ export const skillApi = {
       reader.releaseLock();
     }
   },
-
-  uploadSkill: (
-    file: File,
-    options?: {
-      enable?: boolean;
-      overwrite?: boolean;
-      target_name?: string;
-      rename_map?: Record<string, string>;
-    },
-  ) =>
-    _uploadZip("/skills/upload", file, options) as Promise<{
-      imported: string[];
-      count: number;
-      enabled: boolean;
-      conflicts?: Array<{
-        reason: string;
-        skill_name: string;
-        suggested_name: string;
-      }>;
-    }>,
 
   uploadSkillPoolZip: (
     file: File,

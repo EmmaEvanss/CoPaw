@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Chat management API."""
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -18,6 +19,7 @@ from ..approvals import get_approval_service
 
 
 router = APIRouter(prefix="/chats", tags=["chats"])
+TASK_MESSAGES_STATE_KEY = "task_messages"
 
 
 async def _annotate_approval_action_statuses(
@@ -50,6 +52,53 @@ async def _annotate_approval_action_statuses(
         approval_action["status"] = request.status
 
     return messages
+
+
+def _task_session_messages_from_state(state: dict) -> list[ChatMessage]:
+    raw_messages = state.get(TASK_MESSAGES_STATE_KEY, [])
+    if not isinstance(raw_messages, list):
+        return []
+
+    messages: list[ChatMessage] = []
+    for raw in raw_messages:
+        if not isinstance(raw, dict):
+            continue
+        content = raw.get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        if not isinstance(content, list):
+            continue
+        messages.append(
+            ChatMessage.model_validate(
+                {
+                    "id": raw.get("id") or str(uuid4()),
+                    "type": raw.get("type") or "message",
+                    "role": raw.get("role") or "assistant",
+                    "content": content,
+                    "metadata": raw.get("metadata") or {},
+                    "timestamp": raw.get("timestamp"),
+                },
+            ),
+        )
+    return messages
+
+
+def _message_sort_key(message: ChatMessage) -> tuple[int, datetime]:
+    timestamp = getattr(message, "timestamp", None)
+    if isinstance(timestamp, str) and timestamp:
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(
+                    tzinfo=datetime.now().astimezone().tzinfo,
+                )
+            return (
+                0,
+                parsed,
+            )
+        except ValueError:
+            pass
+    return (1, datetime.max.replace(tzinfo=timezone.utc))
 
 
 async def get_workspace(request: Request):
@@ -197,14 +246,19 @@ async def get_chat(
         chat_spec.user_id,
     )
     status = await workspace.task_tracker.get_status(chat_id)
+    task_messages = _task_session_messages_from_state(state)
     if not state:
-        return ChatHistory(messages=[], status=status)
+        return ChatHistory(messages=task_messages, status=status)
     memory_state = state.get("agent", {}).get("memory", {})
-    memory = InMemoryMemory()
-    memory.load_state_dict(memory_state, strict=False)
+    messages: list[ChatMessage] = []
+    if memory_state:
+        memory = InMemoryMemory()
+        memory.load_state_dict(memory_state, strict=False)
 
-    memories = await memory.get_memory(prepend_summary=False)
-    messages = agentscope_msg_to_message(memories)
+        memories = await memory.get_memory(prepend_summary=False)
+        messages = agentscope_msg_to_message(memories)
+    messages.extend(task_messages)
+    messages.sort(key=_message_sort_key)
     messages = await _annotate_approval_action_statuses(messages)
     return ChatHistory(messages=messages, status=status)
 

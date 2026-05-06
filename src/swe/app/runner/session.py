@@ -75,11 +75,34 @@ class SafeJSONSession(SessionBase):
         **state_modules_mapping,
     ) -> None:
         """Save state modules to a JSON file using async I/O."""
+        session_save_path = self._get_save_path(session_id, user_id=user_id)
+        existing_state = {}
+        if os.path.exists(session_save_path):
+            async with aiofiles.open(
+                session_save_path,
+                "r",
+                encoding="utf-8",
+                errors="surrogatepass",
+            ) as f:
+                content = await f.read()
+                if content.strip():
+                    try:
+                        loaded_state = json.loads(content)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Failed to parse existing session state at %s; "
+                            "overwriting with current state.",
+                            session_save_path,
+                        )
+                    else:
+                        if isinstance(loaded_state, dict):
+                            existing_state = loaded_state
+
         state_dicts = {
             name: state_module.state_dict()
             for name, state_module in state_modules_mapping.items()
         }
-        session_save_path = self._get_save_path(session_id, user_id=user_id)
+        state_dicts = {**existing_state, **state_dicts}
         with open(
             session_save_path,
             "w",

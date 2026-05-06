@@ -895,6 +895,33 @@ class MCPClientConfig(BaseModel):
     args: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     cwd: str = ""
+    # 市场分发相关字段
+    source: str = Field(
+        default="",
+        description="来源标识：空=我创建的；marketplace:{item_id}=市场分发的",
+    )
+    market_client_key: str = Field(
+        default="",
+        description="市场来源的 client_key",
+    )
+    distributed_by: str = Field(
+        default="",
+        description="分发者 user_id",
+    )
+    # 懒加载预留字段
+    lazy_load: bool = Field(
+        default=False,
+        description="是否延迟加载 MCP 客户端",
+    )
+    # 时间戳字段
+    created_at: str = Field(
+        default="",
+        description="创建时间 ISO8601",
+    )
+    updated_at: str = Field(
+        default="",
+        description="更新时间 ISO8601",
+    )
 
     @model_validator(mode="before")
     @classmethod

@@ -25,6 +25,8 @@ import { languageApi } from "./modules/language";
 import { instanceApi } from "./modules/instance";
 import { marketApi } from "./modules/market";
 import { mySkillsApi } from "./modules/mySkills";
+import { myMcpApi } from "./modules/myMcp";
+import { marketMcpApi } from "./modules/marketMcp";
 
 export const api = {
   // Root
@@ -88,6 +90,12 @@ export const api = {
 
   // My Skills
   ...mySkillsApi,
+
+  // My MCP
+  ...myMcpApi,
+
+  // Market MCP
+  ...marketMcpApi,
 };
 
 export default api;
@@ -96,3 +104,5 @@ export default api;
 export { agentsApi };
 export * from "./modules/market";
 export * from "./modules/mySkills";
+export * from "./modules/myMcp";
+export * from "./modules/marketMcp";

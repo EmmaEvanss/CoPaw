@@ -1,5 +1,5 @@
 import { Modal, Form, Input, Select, Button } from "antd";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { marketApi, PublishSkillRequest } from "../../api/modules/market";
 import { BBK_ID_MAP } from "../../constants/bbk";
 
@@ -12,11 +12,31 @@ interface PublishModalProps {
   userName: string;
   onClose: () => void;
   onSuccess: () => void;
+  // 同步模式：预填技能数据
+  initialData?: {
+    skillName: string;
+    description: string;
+    skillJson: Record<string, unknown>;
+    skillMd: string;
+  };
 }
 
-export function PublishModal({ open, sourceId, userId, userName, onClose, onSuccess }: PublishModalProps) {
+export function PublishModal({ open, sourceId, userId, userName, onClose, onSuccess, initialData }: PublishModalProps) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+
+  // 当 initialData 变化时预填表单
+  useEffect(() => {
+    if (open && initialData) {
+      form.setFieldsValue({
+        name: initialData.skillName,
+        description: initialData.description,
+        skill_md: initialData.skillMd,
+      });
+    } else if (open) {
+      form.resetFields();
+    }
+  }, [open, initialData, form]);
 
   const handleSubmit = async () => {
     try {
@@ -29,7 +49,7 @@ export function PublishModal({ open, sourceId, userId, userName, onClose, onSucc
         creator_name: userName,
         category_id: values.category_id,
         bbk_ids: values.bbk_ids,
-        skill_json: {},
+        skill_json: initialData?.skillJson || {},
         skill_md: values.skill_md,
       };
       await marketApi.publishSkill(sourceId, userId, userName, payload);
@@ -47,7 +67,7 @@ export function PublishModal({ open, sourceId, userId, userName, onClose, onSucc
     <Modal
       open={open}
       onCancel={onClose}
-      title="上架技能"
+      title={initialData ? "同步到市场" : "上架技能"}
       footer={[
         <Button key="cancel" onClick={onClose}>
           取消
@@ -59,7 +79,7 @@ export function PublishModal({ open, sourceId, userId, userName, onClose, onSucc
     >
       <Form form={form} layout="vertical">
         <Form.Item name="name" label="技能名称" rules={[{ required: true }]}>
-          <Input />
+          <Input disabled={!!initialData} />
         </Form.Item>
         <Form.Item name="description" label="描述">
           <TextArea rows={2} />

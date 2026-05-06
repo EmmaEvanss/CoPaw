@@ -8,6 +8,7 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, TypeVar, Union
@@ -38,6 +39,7 @@ AUTO_PAUSE_REASON = "auto_unread_threshold"
 MANUAL_PAUSE_REASON = "manual"
 PREFETCH_JOB_PREFIX = "_prefetch:"
 PREFETCH_WINDOW = timedelta(hours=1)
+TASK_MESSAGES_STATE_KEY = "task_messages"
 
 logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -969,6 +971,17 @@ class CronManager:  # pylint: disable=too-many-public-methods
         if self._monitor_sync_client is not None:
             await self._monitor_sync_client.sync_job(spec)
 
+    async def _ensure_persisted_task_binding(
+        self,
+        spec: CronJobSpec,
+    ) -> CronJobSpec:
+        bound = await self._ensure_task_binding(spec)
+        if bound == spec:
+            return spec
+        await self.create_or_replace_job(bound)
+        saved = await self.get_job(spec.id)
+        return saved or bound
+
     async def delete_job(self, job_id: str) -> bool:
         async with self._lock:
             changed, deleted_job, _ = await self._mutate_jobs_file_locked(
@@ -1099,6 +1112,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         job = await self._repo.get_job(job_id)
         if not job:
             raise KeyError(f"Job not found: {job_id}")
+        job = await self._ensure_persisted_task_binding(job)
         logger.info(
             "cron run_job (manual, outside scheduler ownership semantics): "
             "job_id=%s channel=%s task_type=%s "
@@ -1141,7 +1155,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         creator_user_id = meta.get("creator_user_id")
         return CronTaskView(
             visible_in_my_tasks=bool(
-                spec.task_type == "agent"
+                spec.task_type in {"agent", "text"}
                 and creator_user_id
                 and creator_user_id == user_id,
             ),
@@ -1580,7 +1594,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
     async def _ensure_task_binding(self, spec: CronJobSpec) -> CronJobSpec:
         creator_user_id = (spec.meta or {}).get("creator_user_id")
         if (
-            spec.task_type != "agent"
+            spec.task_type not in {"agent", "text"}
             or not creator_user_id
             or self._chat_manager is None
         ):
@@ -1646,17 +1660,26 @@ class CronManager:  # pylint: disable=too-many-public-methods
         creator_user_id = (job.meta or {}).get("creator_user_id")
         task_session_id = (job.meta or {}).get("task_session_id")
         if (
-            job.task_type != "agent"
+            job.task_type not in {"agent", "text"}
             or not creator_user_id
             or not task_session_id
-            or not getattr(self._runner, "session", None)
         ):
             return
 
-        preview = await self._load_task_preview_text(
-            task_session_id,
-            creator_user_id,
-        )
+        if job.task_type == "text":
+            preview = (job.text or "").strip()
+            await self._append_text_task_message(
+                task_session_id,
+                creator_user_id,
+                preview,
+            )
+        else:
+            if not getattr(self._runner, "session", None):
+                return
+            preview = await self._load_task_preview_text(
+                task_session_id,
+                creator_user_id,
+            )
         async with self._lock:
             _, auto_paused, _ = await self._mutate_jobs_file_locked(
                 lambda jobs_file: self._apply_task_execution_success(
@@ -1672,6 +1695,54 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 and self._scheduler.get_job(job.id)
             ):
                 self._scheduler.pause_job(job.id)
+
+    async def _append_text_task_message(
+        self,
+        session_id: str,
+        user_id: str,
+        text: str,
+    ) -> None:
+        if not text or not getattr(self._runner, "session", None):
+            return
+
+        existing_state = await self._runner.session.get_session_state_dict(
+            session_id,
+            user_id,
+            allow_not_exist=True,
+        )
+        task_messages = list(existing_state.get(TASK_MESSAGES_STATE_KEY, []))
+        timestamp = (
+            datetime.now(timezone.utc)
+            .isoformat()
+            .replace(
+                "+00:00",
+                "Z",
+            )
+        )
+        task_messages.append(
+            {
+                "id": f"cron-text-{uuid4()}",
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": text,
+                    },
+                ],
+                "metadata": {
+                    "cron_task": True,
+                },
+                "timestamp": timestamp,
+            },
+        )
+        merged_state = dict(existing_state)
+        merged_state[TASK_MESSAGES_STATE_KEY] = task_messages
+        await self._runner.session.save_merged_state(
+            session_id=session_id,
+            user_id=user_id,
+            state=merged_state,
+        )
 
     async def _load_task_preview_text(
         self,
@@ -2266,6 +2337,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         )
 
     async def _execute_once(self, job: CronJobSpec) -> None:
+        job = await self._ensure_persisted_task_binding(job)
         rt = self._rt.get(job.id)
         if not rt:
             rt = _Runtime(sem=asyncio.Semaphore(job.runtime.max_concurrency))

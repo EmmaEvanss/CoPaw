@@ -1,11 +1,13 @@
-import { useEffect, useState, useRef } from "react";
-import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty } from "antd";
-import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined } from "@ant-design/icons";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox } from "antd";
+import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, DeleteOutlined, CheckCircleOutlined, StopOutlined, EditOutlined, CloudUploadOutlined } from "@ant-design/icons";
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
 import { DEFAULT_SOURCE_ID } from "../../constants/identity";
-import { MySkill } from "../../api/modules/mySkills";
+import { MySkill, mySkillsApi, FileTreeNode } from "../../api/modules/mySkills";
+import { marketApi } from "../../api/modules/market";
+import { PublishModal } from "../Market/PublishModal";
 
 const { Title, Text } = Typography;
 
@@ -14,12 +16,35 @@ export default function MySkillsPage() {
   const bbkId = useIframeStore((state) => state.bbk) || "100";
   const isManager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
+  const userName = useIframeStore((state) => state.clawName) || userId;
   const { createdSkills, receivedSkills, loading, refresh } = useMySkills(sourceId, userId);
   const [searchText, setSearchText] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<MySkill | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["created", "received"]));
+  const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [fileType, setFileType] = useState<string | null>(null);
+  const [skillFiles, setSkillFiles] = useState<Record<string, FileTreeNode[]>>({});
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Batch operation state
+  const [batchMode, setBatchMode] = useState<boolean>(false);
+  const [selectedForBatch, setSelectedForBatch] = useState<Set<string>>(new Set());
+
+  // Sync to market state
+  const [publishModalOpen, setPublishModalOpen] = useState(false);
+  const [publishInitialData, setPublishInitialData] = useState<{
+    skillName: string;
+    description: string;
+    skillJson: Record<string, unknown>;
+    skillMd: string;
+  } | null>(null);
 
   // Debounce search
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -41,8 +66,24 @@ export default function MySkillsPage() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    message.info(`上传功能开发中: ${file.name}`);
     e.target.value = "";
+
+    try {
+      message.loading({ content: `正在上传 ${file.name}...`, key: "upload" });
+      const result = await marketApi.uploadSkillToWorkspace(
+        sourceId,
+        userId,
+        userName,
+        bbkId,
+        file,
+        { enable: true, overwrite: false }
+      );
+      message.success({ content: `上传成功，导入 ${result.count} 个技能`, key: "upload" });
+      refresh();
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "上传失败";
+      message.error({ content: errorMsg, key: "upload" });
+    }
   };
 
   // Filter skills
@@ -67,49 +108,351 @@ export default function MySkillsPage() {
     });
   };
 
-  const handleSelectSkill = (skill: MySkill) => {
+  const toggleSkillExpand = useCallback(async (skill: MySkill) => {
+    const skillName = skill.skill_name;
+    setExpandedSkills((prev) => {
+      const next = new Set(prev);
+      if (next.has(skillName)) {
+        next.delete(skillName);
+      } else {
+        next.clear();
+        next.add(skillName);
+      }
+      return next;
+    });
     setSelectedSkill(skill);
-  };
+    setSelectedFile(null);
+    setFileContent(null);
+    setIsEditing(false);
 
-  // Navigate to marketplace (would need to be implemented with routing)
+    // Load skill files if not cached
+    if (!skillFiles[skillName]) {
+      try {
+        const files = await mySkillsApi.listSkillFiles(sourceId, userId, userName, bbkId, skillName);
+        setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
+      } catch (err) {
+        console.error("Failed to load skill files:", err);
+      }
+    }
+  }, [sourceId, userId, userName, bbkId, skillFiles]);
+
+  const toggleDir = useCallback((path: string) => {
+    setExpandedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const selectFile = useCallback(async (skill: MySkill, filePath: string) => {
+    setSelectedFile(filePath);
+    setFileContent(null);
+    setIsEditing(false);
+    try {
+      const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, filePath);
+      setFileContent(res.content);
+      setFileType(res.file_type);
+    } catch (err) {
+      message.error("加载文件失败");
+      setFileContent("");
+    }
+  }, [sourceId, userId, userName, bbkId]);
+
+  const handleToggleEnabled = useCallback(async (skill: MySkill) => {
+    const action = skill.enabled ? "disable" : "enable";
+    try {
+      if (skill.enabled) {
+        await mySkillsApi.disableSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+      } else {
+        await mySkillsApi.enableSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+      }
+      message.success(`${action === "enable" ? "启用" : "禁用"}成功`);
+      refresh();
+    } catch (err) {
+      message.error(`${action === "enable" ? "启用" : "禁用"}失败`);
+    }
+  }, [sourceId, userId, userName, bbkId, refresh]);
+
+  const handleDelete = useCallback(async (skill: MySkill) => {
+    try {
+      await mySkillsApi.deleteSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+      message.success("删除成功");
+      refresh();
+      setSelectedSkill(null);
+      setSelectedFile(null);
+      setFileContent(null);
+      setSkillFiles((prev) => {
+        const next = { ...prev };
+        delete next[skill.skill_name];
+        return next;
+      });
+    } catch (err) {
+      message.error("删除失败");
+    }
+  }, [sourceId, userId, userName, bbkId, refresh]);
+
+  const handleBatchDelete = useCallback(async () => {
+    if (selectedForBatch.size === 0) return;
+    const names = [...selectedForBatch];
+    try {
+      const result = await mySkillsApi.batchDeleteSkills(
+        sourceId, userId, userName, bbkId, names
+      );
+      message.success(`成功删除 ${result.success_count} 个技能`);
+      setSelectedForBatch(new Set());
+      setBatchMode(false);
+      refresh();
+    } catch (err) {
+      message.error("批量删除失败");
+    }
+  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+
+  const handleBatchEnable = useCallback(async () => {
+    if (selectedForBatch.size === 0) return;
+    const names = [...selectedForBatch];
+    try {
+      const result = await mySkillsApi.batchEnableSkills(
+        sourceId, userId, userName, bbkId, names
+      );
+      message.success(`成功启用 ${result.success_count} 个技能`);
+      setSelectedForBatch(new Set());
+      setBatchMode(false);
+      refresh();
+    } catch (err) {
+      message.error("批量启用失败");
+    }
+  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+
+  const handleBatchDisable = useCallback(async () => {
+    if (selectedForBatch.size === 0) return;
+    const names = [...selectedForBatch];
+    try {
+      const result = await mySkillsApi.batchDisableSkills(
+        sourceId, userId, userName, bbkId, names
+      );
+      message.success(`成功禁用 ${result.success_count} 个技能`);
+      setSelectedForBatch(new Set());
+      setBatchMode(false);
+      refresh();
+    } catch (err) {
+      message.error("批量禁用失败");
+    }
+  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+
+  const handleSaveContent = useCallback(async () => {
+    if (!selectedSkill || !selectedFile || !isEditing) return;
+    setIsSaving(true);
+    try {
+      await mySkillsApi.saveSkillFile(sourceId, userId, userName, bbkId, selectedSkill.skill_name, selectedFile, draftContent);
+      setFileContent(draftContent);
+      setIsEditing(false);
+      message.success("保存成功");
+    } catch (err) {
+      message.error("保存失败");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [selectedSkill, selectedFile, isEditing, draftContent, sourceId, userId, userName, bbkId]);
+
+  // Navigate to marketplace
   const goToMarketplace = () => {
     message.info("跳转到应用市场功能开发中");
   };
 
-  // Skill list item component
-  const SkillListItem = ({ skill, isSelected }: { skill: MySkill; isSelected: boolean }) => (
-    <div
-      onClick={() => handleSelectSkill(skill)}
-      style={{
-        padding: "8px 10px",
-        borderRadius: 6,
-        cursor: "pointer",
-        backgroundColor: isSelected ? "#e6f4ff" : "transparent",
-        border: isSelected ? "1px solid #1890ff" : "1px solid transparent",
-        marginBottom: 4,
-        transition: "all 0.15s ease",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-        <FileOutlined style={{ color: "#8c8c8c", flexShrink: 0 }} />
-        <Text
-          strong={isSelected}
-          style={{
-            flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            color: isSelected ? "#1890ff" : "#262626",
-          }}
-        >
-          {skill.skill_name}
-        </Text>
-        {skill.version && (
-          <Tag style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>v{skill.version}</Tag>
-        )}
-      </div>
+  // Sync skill to market
+  const handleSyncToMarket = useCallback(async (skill: MySkill) => {
+    if (!skill || skill.is_received) return;
+
+    try {
+      message.loading({ content: "读取技能文件...", key: "sync" });
+
+      // Read skill.json and SKILL.md
+      const files = await mySkillsApi.listSkillFiles(sourceId, userId, userName, bbkId, skill.skill_name);
+
+      let skillJson: Record<string, unknown> = {};
+      let skillMd = "";
+
+      // Find skill.json
+      const skillJsonFile = files.find((f) => f.name === "skill.json" && f.type === "file");
+      if (skillJsonFile) {
+        const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, "skill.json");
+        try {
+          skillJson = JSON.parse(res.content);
+        } catch {
+          // ignore parse error
+        }
+      }
+
+      // Find SKILL.md
+      const skillMdFile = files.find((f) => f.name === "SKILL.md" && f.type === "file");
+      if (skillMdFile) {
+        const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, "SKILL.md");
+        skillMd = res.content;
+      }
+
+      message.destroy("sync");
+
+      setPublishInitialData({
+        skillName: skill.skill_name,
+        description: skill.description || "",
+        skillJson,
+        skillMd,
+      });
+      setPublishModalOpen(true);
+    } catch (err) {
+      message.error({ content: "读取技能文件失败", key: "sync" });
+    }
+  }, [sourceId, userId, userName, bbkId]);
+
+  // File tree component
+  const FileTree = ({ nodes, level, skill }: { nodes: FileTreeNode[]; level: number; skill: MySkill }) => (
+    <div>
+      {nodes.map((node) => {
+        const paddingLeft = 24 + level * 16;
+        const isExpanded = expandedDirs.has(node.path);
+        const isSelected = selectedFile === node.path;
+
+        if (node.type === "directory") {
+          return (
+            <div key={node.path}>
+              <div
+                onClick={() => toggleDir(node.path)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "4px 8px",
+                  paddingLeft,
+                  cursor: "pointer",
+                  borderRadius: 4,
+                  marginBottom: 2,
+                  backgroundColor: isExpanded ? "#f5f5f5" : "transparent",
+                }}
+              >
+                {isExpanded ? (
+                  <DownOutlined style={{ fontSize: 10, marginRight: 6, color: "#8c8c8c" }} />
+                ) : (
+                  <RightOutlined style={{ fontSize: 10, marginRight: 6, color: "#8c8c8c" }} />
+                )}
+                <FolderOutlined style={{ fontSize: 14, marginRight: 6, color: "#faad14" }} />
+                <Text style={{ fontSize: 12 }}>{node.name}</Text>
+              </div>
+              {isExpanded && node.children && (
+                <FileTree nodes={node.children} level={level + 1} skill={skill} />
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div
+            key={node.path}
+            onClick={() => selectFile(skill, node.path)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "4px 8px",
+              paddingLeft: paddingLeft + 16,
+              cursor: "pointer",
+              borderRadius: 4,
+              marginBottom: 2,
+              backgroundColor: isSelected ? "#e6f4ff" : "transparent",
+              border: isSelected ? "1px solid #1890ff" : "1px solid transparent",
+            }}
+          >
+            <FileOutlined style={{ fontSize: 14, marginRight: 6, color: "#8c8c8c" }} />
+            <Text style={{ fontSize: 12, color: isSelected ? "#1890ff" : "#262626" }}>
+              {node.name}
+            </Text>
+          </div>
+        );
+      })}
     </div>
   );
+
+  // Skill list item component
+  const SkillListItem = ({ skill, isSelected }: { skill: MySkill; isSelected: boolean }) => {
+    const isExpanded = expandedSkills.has(skill.skill_name);
+    const files = skillFiles[skill.skill_name] || [];
+    const isDisabled = !skill.enabled;
+
+    return (
+      <div
+        style={{
+          borderRadius: 8,
+          border: "1px solid #f0f0f0",
+          marginBottom: 4,
+          overflow: "hidden",
+          backgroundColor: isSelected ? "#e6f4ff" : "#fff",
+        }}
+      >
+        <div
+          onClick={() => !batchMode && toggleSkillExpand(skill)}
+          style={{
+            padding: "8px 10px",
+            cursor: batchMode ? "default" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+            borderBottom: isExpanded ? "1px solid #f0f0f0" : "none",
+          }}
+        >
+          {batchMode && (
+            <Checkbox
+              style={{ marginRight: 8 }}
+              checked={selectedForBatch.has(skill.skill_name)}
+              onChange={(e) => {
+                setSelectedForBatch((prev) => {
+                  const next = new Set(prev);
+                  if (e.target.checked) next.add(skill.skill_name);
+                  else next.delete(skill.skill_name);
+                  return next;
+                });
+              }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          )}
+          {!batchMode && (isExpanded ? (
+            <DownOutlined style={{ fontSize: 10, color: "#8c8c8c", flexShrink: 0 }} />
+          ) : (
+            <RightOutlined style={{ fontSize: 10, color: "#8c8c8c", flexShrink: 0 }} />
+          ))}
+          <Text
+            strong={isSelected}
+            style={{
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: isDisabled ? "#8c8c8c" : isSelected ? "#1890ff" : "#262626",
+              textDecoration: isDisabled ? "line-through" : "none",
+            }}
+          >
+            {skill.skill_name}
+          </Text>
+          {skill.version && (
+            <Tag style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>v{skill.version}</Tag>
+          )}
+          {skill.is_received && (
+            <Tag color="orange" style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>接收的</Tag>
+          )}
+          {skill.has_update && (
+            <Tag color="red" style={{ fontSize: 10, margin: 0, borderRadius: 4 }}>有更新</Tag>
+          )}
+        </div>
+        {isExpanded && (
+          <div style={{ padding: "4px 0" }}>
+            {files.length === 0 ? (
+              <Text type="secondary" style={{ padding: "0 16px", fontSize: 12 }}>没有文件</Text>
+            ) : (
+              <FileTree nodes={files} level={0} skill={skill} />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Skill group section
   const SkillGroup = ({
@@ -248,6 +591,10 @@ export default function MySkillsPage() {
       );
     }
 
+    const isDisabled = !skill.enabled;
+    const canEdit = !skill.is_received;
+    const isLoading = selectedFile && fileContent === null;
+
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
         {/* Header */}
@@ -272,6 +619,12 @@ export default function MySkillsPage() {
               {skill.source === "customized" && (
                 <Tag color="green" style={{ fontSize: 11, borderRadius: 4 }}>自定义</Tag>
               )}
+              {skill.is_received && (
+                <Tag color="orange" style={{ fontSize: 11, borderRadius: 4 }}>接收的</Tag>
+              )}
+              {isDisabled && (
+                <Tag color="red" style={{ fontSize: 11, borderRadius: 4 }}>已禁用</Tag>
+              )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               {skill.category && (
@@ -286,6 +639,51 @@ export default function MySkillsPage() {
               )}
             </div>
           </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            {canEdit && fileContent !== null && !isEditing && (
+              <Button size="small" icon={<EditOutlined />} onClick={() => { setIsEditing(true); setDraftContent(fileContent || ""); }}>
+                编辑
+              </Button>
+            )}
+            {isManager && canEdit && (
+              <Button
+                size="small"
+                icon={<CloudUploadOutlined />}
+                onClick={() => handleSyncToMarket(skill)}
+              >
+                同步到市场
+              </Button>
+            )}
+            {isEditing && (
+              <>
+                <Button size="small" onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }} disabled={isSaving}>
+                  取消
+                </Button>
+                <Button size="small" type="primary" onClick={handleSaveContent} loading={isSaving}>
+                  保存
+                </Button>
+              </>
+            )}
+            <Button
+              size="small"
+              icon={isDisabled ? <CheckCircleOutlined /> : <StopOutlined />}
+              onClick={() => handleToggleEnabled(skill)}
+            >
+              {isDisabled ? "启用" : "禁用"}
+            </Button>
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => {
+                if (window.confirm(`确定删除「${skill.skill_name}」？`)) {
+                  handleDelete(skill);
+                }
+              }}
+            >
+              删除
+            </Button>
+          </div>
         </div>
 
         {/* Description */}
@@ -295,21 +693,60 @@ export default function MySkillsPage() {
           </Text>
         </div>
 
-        {/* Content placeholder */}
+        {/* Content */}
         <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
-          <div
-            style={{
-              borderRadius: 8,
-              border: "1px solid #f0f0f0",
-              backgroundColor: "#f5f5f5",
-              padding: 16,
-              minHeight: 200,
-            }}
-          >
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              技能内容预览功能开发中…
-            </Text>
-          </div>
+          {isLoading ? (
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 100 }}>
+              <Spin />
+            </div>
+          ) : isEditing ? (
+            <textarea
+              value={draftContent}
+              onChange={(e) => setDraftContent(e.target.value)}
+              style={{
+                width: "100%",
+                height: "100%",
+                minHeight: 300,
+                fontFamily: "monospace",
+                fontSize: 13,
+                padding: 12,
+                borderRadius: 8,
+                border: "1px solid #d9d9d9",
+                resize: "none",
+              }}
+            />
+          ) : fileContent === null ? (
+            <div
+              style={{
+                borderRadius: 8,
+                border: "1px solid #f0f0f0",
+                backgroundColor: "#f5f5f5",
+                padding: 16,
+                minHeight: 200,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text type="secondary">选择文件查看内容</Text>
+            </div>
+          ) : (
+            <pre
+              style={{
+                borderRadius: 8,
+                border: "1px solid #f0f0f0",
+                backgroundColor: "#fafafa",
+                padding: 16,
+                margin: 0,
+                overflow: "auto",
+                fontSize: 12,
+                fontFamily: "monospace",
+                maxHeight: "calc(100vh - 300px)",
+              }}
+            >
+              {fileContent}
+            </pre>
+          )}
         </div>
       </div>
     );
@@ -356,6 +793,35 @@ export default function MySkillsPage() {
           </div>
         </div>
 
+        {/* Batch operation bar */}
+        <div style={{ padding: "8px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", gap: 8, alignItems: "center" }}>
+          <Button
+            size="small"
+            onClick={() => {
+              setBatchMode(!batchMode);
+              setSelectedForBatch(new Set());
+            }}
+          >
+            {batchMode ? "取消批量" : "批量管理"}
+          </Button>
+          {batchMode && (
+            <>
+              <Button size="small" type="primary" onClick={handleBatchEnable} disabled={selectedForBatch.size === 0}>
+                批量启用 ({selectedForBatch.size})
+              </Button>
+              <Button size="small" onClick={handleBatchDisable} disabled={selectedForBatch.size === 0}>
+                批量禁用
+              </Button>
+              <Button size="small" danger onClick={handleBatchDelete} disabled={selectedForBatch.size === 0}>
+                批量删除
+              </Button>
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                已选择 {selectedForBatch.size} 个
+              </Text>
+            </>
+          )}
+        </div>
+
         {/* Skill groups */}
         <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
           {loading ? (
@@ -389,8 +855,25 @@ export default function MySkillsPage() {
         ref={fileInputRef}
         type="file"
         accept=".zip"
-        style={{ display: "none" }}
+        style={{ position: "absolute", left: -9999, opacity: 0 }}
         onChange={handleFileSelect}
+      />
+
+      {/* Sync to market modal */}
+      <PublishModal
+        open={publishModalOpen}
+        sourceId={sourceId}
+        userId={userId}
+        userName={userName}
+        onClose={() => {
+          setPublishModalOpen(false);
+          setPublishInitialData(null);
+        }}
+        onSuccess={() => {
+          message.success("上架成功");
+          refresh();
+        }}
+        initialData={publishInitialData}
       />
     </div>
   );

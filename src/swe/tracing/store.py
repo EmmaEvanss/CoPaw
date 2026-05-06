@@ -1000,11 +1000,13 @@ class TraceStore:
         return UserStats(
             user_id=user_id,
             model_usage=model_usage,
-            total_tokens=stats_row["total_tokens"] if stats_row else 0,
-            input_tokens=stats_row["input_tokens"] if stats_row else 0,
-            output_tokens=stats_row["output_tokens"] if stats_row else 0,
-            total_sessions=stats_row["total_sessions"] if stats_row else 0,
-            total_conversations=stats_row["total_conversations"]
+            total_tokens=stats_row["total_tokens"] or 0 if stats_row else 0,
+            input_tokens=stats_row["input_tokens"] or 0 if stats_row else 0,
+            output_tokens=stats_row["output_tokens"] or 0 if stats_row else 0,
+            total_sessions=stats_row["total_sessions"] or 0
+            if stats_row
+            else 0,
+            total_conversations=stats_row["total_conversations"] or 0
             if stats_row
             else 0,
             avg_duration_ms=int(stats_row["avg_duration"] or 0)

@@ -171,3 +171,66 @@ def test_get_received_skills_returns_only_received(tmp_path):
     assert len(data) == 1
     assert data[0]["skill_name"] == "received_skill"
     assert data[0]["is_received"] is True
+
+
+def test_decode_zip_filename_with_gbk_encoding():
+    """Test that GBK-encoded Chinese filenames are correctly decoded."""
+    from market.app.routers.skills_browse import _decode_zip_filename
+    import zipfile
+
+    # Simulate a ZipInfo object
+    class MockInfo:
+        def __init__(self, filename, flag_bits=0):
+            self.filename = filename
+            self.flag_bits = flag_bits
+
+    # Test 1: UTF-8 flagged filename (should pass through unchanged)
+    utf8_name = "测试技能/SKILL.md"
+    info_utf8 = MockInfo(utf8_name, flag_bits=0x800)
+    result = _decode_zip_filename(info_utf8.filename, info_utf8)
+    assert result == utf8_name
+
+    # Test 2: GBK encoded filename (simulating cp437 mis-decoding)
+    original = "测试技能"
+    gbk_bytes = original.encode("gbk")
+    # Python's zipfile decodes non-UTF-8 filenames using cp437
+    mis_decoded = gbk_bytes.decode("cp437")
+    info_gbk = MockInfo(mis_decoded + "/SKILL.md", flag_bits=0)
+    result = _decode_zip_filename(info_gbk.filename, info_gbk)
+    assert result == original + "/SKILL.md"
+
+    # Test 3: ASCII filename (should work normally)
+    info_ascii = MockInfo("my_skill/SKILL.md", flag_bits=0)
+    result = _decode_zip_filename(info_ascii.filename, info_ascii)
+    assert result == "my_skill/SKILL.md"
+
+
+def test_extract_zip_with_chinese_filename(tmp_path):
+    """Test extracting a ZIP with Chinese filenames."""
+    import zipfile
+    import io
+    from market.app.routers.skills_browse import _extract_zip_skills
+
+    # Create a ZIP with Chinese filename (GBK encoded, no UTF-8 flag)
+    skill_content = "---\nname: 中文技能\n---\n# 中文技能\n"
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        # Create entry with GBK-encoded filename (no UTF-8 flag)
+        info = zipfile.ZipInfo("中文技能/SKILL.md")
+        info.flag_bits = 0  # No UTF-8 flag
+        info.compress_type = zipfile.ZIP_STORED
+        # Write with GBK filename in the ZIP
+        zf.writestr(info, skill_content.encode("utf-8"))
+
+    zip_data = zip_buffer.getvalue()
+    tmp_dir, found_skills = _extract_zip_skills(zip_data)
+    assert len(found_skills) == 1
+    skill_dir, skill_name = found_skills[0]
+    # The skill name should be correctly decoded
+    assert skill_name == "中文技能"
+    assert (skill_dir / "SKILL.md").exists()
+
+    # Cleanup
+    import shutil
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)

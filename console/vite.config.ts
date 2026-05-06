@@ -36,7 +36,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         "/api/market": {
-          target: "http://127.0.0.1:8090",
+          target: "http://127.0.0.1:8091",
           changeOrigin: true,
         },
         "/api": {
@@ -44,9 +44,6 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         },
       },
-    },
-    optimizeDeps: {
-      include: ["diff"],
     },
     // build: {
     //   // Output to CoPaw's console directory,

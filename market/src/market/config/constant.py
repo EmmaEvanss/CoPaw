@@ -162,3 +162,19 @@ API_CALL_TIMEOUT = EnvVarLoader.get_float(
     30.0,
     min_value=5.0,
 )
+
+# ============================================================
+# 技能安全扫描配置
+# ============================================================
+
+SKILL_SCAN_MODE = EnvVarLoader.get_str("MARKET_SKILL_SCAN_MODE", "block")
+
+# ============================================================
+# src/swe 内部服务配置（用于 Agent reload 回调）
+# ============================================================
+
+SWE_INTERNAL_URL = EnvVarLoader.get_str(
+    "SWE_INTERNAL_URL",
+    "http://localhost:8000",
+)
+SWE_INTERNAL_TOKEN = EnvVarLoader.get_str("SWE_INTERNAL_TOKEN", "")

@@ -208,6 +208,14 @@ const toOutputMessage = (msg: Message): OutputMessage => ({
   metadata: msg.metadata ?? null,
 });
 
+function isStandaloneOutputMessage(message: Message | OutputMessage): boolean {
+  const metadata =
+    message.metadata && typeof message.metadata === "object"
+      ? (message.metadata as Record<string, unknown>)
+      : null;
+  return Boolean(metadata?.cron_task);
+}
+
 /** Build a user card (AgentScopeRuntimeRequestCard) from a user message. */
 function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
   const contentParts = contentToRequestParts(msg.content);
@@ -319,8 +327,16 @@ export const convertMessages = (
     if (messages[i].role === ROLE_USER) {
       result.push(buildUserCard(messages[i++]));
     } else {
+      if (isStandaloneOutputMessage(messages[i])) {
+        result.push(buildResponseCard([toOutputMessage(messages[i++])]));
+        continue;
+      }
+
       const outputMsgs: OutputMessage[] = [];
       while (i < messages.length && messages[i].role !== ROLE_USER) {
+        if (isStandaloneOutputMessage(messages[i])) {
+          break;
+        }
         outputMsgs.push(toOutputMessage(messages[i++]));
       }
       if (outputMsgs.length) result.push(buildResponseCard(outputMsgs));
@@ -842,7 +858,10 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
             ? null
             : new Set<string>(
                 jobsResult
-                  .filter((job) => job.task_type === "agent")
+                  .filter(
+                    (job) =>
+                      job.task_type === "agent" || job.task_type === "text",
+                  )
                   .map((job) => String(job.id)),
               );
         const newList = chats

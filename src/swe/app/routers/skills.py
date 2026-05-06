@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import uuid
+import warnings
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -880,11 +881,20 @@ async def list_pool_builtin_sources(
     ]
 
 
-@router.post("")
+@router.post(
+    "",
+    deprecated=True,
+    description="Deprecated: Use Market API POST /market/skills/upload instead.",
+)
 async def create_skill(
     request: Request,
     body: CreateSkillRequest,
 ) -> dict[str, Any]:
+    warnings.warn(
+        "POST /skills is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     from ..agent_context import get_agent_for_request
 
     workspace = await get_agent_for_request(request)
@@ -916,7 +926,11 @@ async def create_skill(
     return {"created": True, "name": created}
 
 
-@router.post("/upload")
+@router.post(
+    "/upload",
+    deprecated=True,
+    description="Deprecated: Use Market API POST /market/skills/upload instead.",
+)
 async def upload_skill_zip(
     request: Request,
     file: UploadFile = File(...),
@@ -925,6 +939,11 @@ async def upload_skill_zip(
     target_name: str = "",
     rename_map: str = "",
 ) -> dict[str, Any]:
+    warnings.warn(
+        "POST /skills/upload is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     from ..agent_context import get_agent_for_request
 
     workspace = await get_agent_for_request(request)
@@ -1447,12 +1466,21 @@ async def delete_pool_skill_config(
     return {"cleared": True}
 
 
-@router.post("/batch-delete")
+@router.post(
+    "/batch-delete",
+    deprecated=True,
+    description="Deprecated: Use Market API POST /market/skills/batch-delete instead.",
+)
 async def batch_delete_skills(
     request: Request,
     skills: list[str],
 ) -> dict[str, Any]:
     """Auto-disable then delete each skill. Per-skill results."""
+    warnings.warn(
+        "POST /skills/batch-delete is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     workspace_dir = await _request_workspace_dir(request)
     service = SkillService(workspace_dir)
     results: dict[str, Any] = {}
@@ -1497,11 +1525,20 @@ async def batch_delete_pool_skills(
     return {"results": results}
 
 
-@router.post("/batch-disable")
+@router.post(
+    "/batch-disable",
+    deprecated=True,
+    description="Deprecated: Use Market API POST /market/skills/batch-disable instead.",
+)
 async def batch_disable_skills(
     request: Request,
     skills: list[str],
 ) -> dict[str, Any]:
+    warnings.warn(
+        "POST /skills/batch-disable is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     workspace = await _request_workspace(request)
     workspace_dir = Path(workspace.workspace_dir)
     service = SkillService(workspace_dir)
@@ -1511,7 +1548,11 @@ async def batch_disable_skills(
     return {"results": results}
 
 
-@router.post("/batch-enable")
+@router.post(
+    "/batch-enable",
+    deprecated=True,
+    description="Deprecated: Use Market API POST /market/skills/batch-enable instead.",
+)
 async def batch_enable_skills(
     request: Request,
     skills: list[str],
@@ -1523,6 +1564,11 @@ async def batch_enable_skills(
         first item and ``reason="security_scan_failed"`` for the second,
         rather than aborting the entire batch.
     """
+    warnings.warn(
+        "POST /skills/batch-enable is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     workspace = await _request_workspace(request)
     workspace_dir = Path(workspace.workspace_dir)
     service = SkillService(workspace_dir)
@@ -1541,11 +1587,20 @@ async def batch_enable_skills(
     return {"results": results}
 
 
-@router.post("/{skill_name}/disable")
+@router.post(
+    "/{skill_name}/disable",
+    deprecated=True,
+    description="Deprecated: Use Market API POST /market/skills/{skill_name}/disable instead.",
+)
 async def disable_skill(
     request: Request,
     skill_name: str,
 ) -> dict[str, Any]:
+    warnings.warn(
+        "POST /skills/{skill_name}/disable is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     workspace = await _request_workspace(request)
     workspace_dir = Path(workspace.workspace_dir)
     result = SkillService(workspace_dir).disable_skill(skill_name)
@@ -1555,12 +1610,21 @@ async def disable_skill(
     return {"disabled": True, **result}
 
 
-@router.post("/{skill_name}/enable")
+@router.post(
+    "/{skill_name}/enable",
+    deprecated=True,
+    description="Deprecated: Use Market API POST /market/skills/{skill_name}/enable instead.",
+)
 async def enable_skill(
     request: Request,
     skill_name: str,
 ) -> dict[str, Any]:
     """Enable one workspace skill after a fresh scan."""
+    warnings.warn(
+        "POST /skills/{skill_name}/enable is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     workspace = await _request_workspace(request)
     workspace_dir = Path(workspace.workspace_dir)
     try:
@@ -1576,11 +1640,20 @@ async def enable_skill(
     return {"enabled": True, **result}
 
 
-@router.delete("/{skill_name}")
+@router.delete(
+    "/{skill_name}",
+    deprecated=True,
+    description="Deprecated: Use Market API DELETE /market/skills/{skill_name} instead.",
+)
 async def delete_skill(
     request: Request,
     skill_name: str,
 ) -> dict[str, Any]:
+    warnings.warn(
+        "DELETE /skills/{skill_name} is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     workspace_dir = await _request_workspace_dir(request)
     service = SkillService(workspace_dir)
     service.disable_skill(skill_name)
@@ -1611,11 +1684,20 @@ async def load_skill_file(
     return {"content": content}
 
 
-@router.put("/save")
+@router.put(
+    "/save",
+    deprecated=True,
+    description="Deprecated: Use Market API PUT /market/skills/{skill_name} instead.",
+)
 async def save_workspace_skill(
     request: Request,
     body: SaveSkillRequest,
 ) -> dict[str, Any]:
+    warnings.warn(
+        "PUT /skills/save is deprecated. Use Market API instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     from ..agent_context import get_agent_for_request
 
     workspace = await get_agent_for_request(request)

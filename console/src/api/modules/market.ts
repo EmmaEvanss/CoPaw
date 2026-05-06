@@ -1,5 +1,6 @@
 import { request } from "../request";
 import { buildAuthHeaders } from "../authHeaders";
+import { getApiUrl } from "../config";
 
 export interface MarketSkill {
   item_id: string;
@@ -57,6 +58,56 @@ function mergeHeaders(extra?: Record<string, string>): RequestInit {
   const base = buildAuthHeaders();
   const merged: Record<string, string> = { ...base, ...(extra || {}) };
   return { headers: new Headers(merged) };
+}
+
+/**
+ * Upload a skill zip file to workspace (market service)
+ */
+async function _uploadZipToMarket(
+  endpoint: string,
+  file: File,
+  headers: Record<string, string>,
+  options?: {
+    enable?: boolean;
+    overwrite?: boolean;
+    target_name?: string;
+    rename_map?: Record<string, string>;
+    category_id?: number;
+  }
+): Promise<Record<string, unknown>> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const params = new URLSearchParams();
+  if (options?.enable !== undefined) {
+    params.set("enable", String(options.enable));
+  }
+  if (options?.overwrite !== undefined) {
+    params.set("overwrite", String(options.overwrite));
+  }
+  if (options?.target_name) {
+    params.set("target_name", options.target_name);
+  }
+  if (options?.rename_map && Object.keys(options.rename_map).length) {
+    params.set("rename_map", JSON.stringify(options.rename_map));
+  }
+  if (options?.category_id !== undefined) {
+    params.set("category_id", String(options.category_id));
+  }
+  const qs = params.toString();
+  const url = getApiUrl(`${endpoint}${qs ? `?${qs}` : ""}`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: new Headers(headers),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  return await response.json();
 }
 
 export const marketApi = {
@@ -160,5 +211,51 @@ export const marketApi = {
       `/market/skills/${itemId}/distribute`,
       opts
     );
+  },
+
+  uploadSkillToWorkspace: async (
+    sourceId: string,
+    userId: string,
+    userName: string,
+    bbkId: string,
+    file: File,
+    options?: {
+      enable?: boolean;
+      overwrite?: boolean;
+      target_name?: string;
+      rename_map?: Record<string, string>;
+      category_id?: number;
+    }
+  ): Promise<{
+    imported: string[];
+    count: number;
+    enabled: boolean;
+    name?: string;
+    description?: string;
+    conflicts?: Array<{
+      reason: string;
+      skill_name: string;
+      suggested_name: string;
+    }>;
+  }> => {
+    const headers = {
+      ...buildAuthHeaders(),
+      "X-Source-Id": sourceId,
+      "X-User-Id": userId,
+      "X-User-Name": encodeURIComponent(userName),
+      "X-Bbk-Id": bbkId,
+    };
+    return _uploadZipToMarket("/market/skills/upload", file, headers, options) as Promise<{
+      imported: string[];
+      count: number;
+      enabled: boolean;
+      name?: string;
+      description?: string;
+      conflicts?: Array<{
+        reason: string;
+        skill_name: string;
+        suggested_name: string;
+      }>;
+    }>;
   },
 };

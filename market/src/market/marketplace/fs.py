@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -149,3 +150,225 @@ def copy_skill_to_user(
     skill_data["received_version"] = version
 
     _atomic_write_json(dst_dir / "skill.json", skill_data)
+
+
+def get_user_skill_manifest_path(
+    swe_root: Path,
+    user_id: str,
+    agent_id: str = DEFAULT_AGENT_ID,
+) -> Path:
+    """获取用户工作空间的 skill.json 路径."""
+    workspace_dir = swe_root / user_id / "workspaces" / agent_id
+    return workspace_dir / "skill.json"
+
+
+def read_user_skill_manifest(
+    swe_root: Path,
+    user_id: str,
+    agent_id: str = DEFAULT_AGENT_ID,
+) -> dict:
+    """读取用户技能 manifest，不存在时返回默认结构."""
+    manifest_path = get_user_skill_manifest_path(swe_root, user_id, agent_id)
+    if not manifest_path.exists():
+        return {
+            "schema_version": "workspace-skill-manifest.v1",
+            "version": 0,
+            "skills": {},
+        }
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read manifest %s: %s", manifest_path, e)
+        return {
+            "schema_version": "workspace-skill-manifest.v1",
+            "version": 0,
+            "skills": {},
+        }
+
+
+def mutate_user_skill_manifest(
+    swe_root: Path,
+    user_id: str,
+    agent_id: str,
+    mutation_fn,
+) -> bool:
+    """原子修改用户技能 manifest.
+
+    Args:
+        mutation_fn: 接受 dict 参数，返回 bool 表示是否修改成功
+    """
+    manifest_path = get_user_skill_manifest_path(swe_root, user_id, agent_id)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    current = read_user_skill_manifest(swe_root, user_id, agent_id)
+    if not mutation_fn(current):
+        return False
+
+    _atomic_write_json(manifest_path, current)
+    return True
+
+
+def _mask_env_value(value: Optional[str]) -> Optional[str]:
+    """脱敏环境变量值。
+
+    Args:
+        value: 原始值。
+
+    Returns:
+        脱敏后的值，短值全部遮盖，长值显示前2-3字符和后4字符。
+    """
+    if value is None or value == "":
+        return value
+    length = len(value)
+    if length <= 8:
+        return "*" * length
+    # 如果第3位是 "-"，前缀取3字符（如 "sk-"），否则取2字符
+    prefix_len = 3 if length > 2 and value[2] == "-" else 2
+    prefix = value[:prefix_len]
+    suffix = value[-4:]
+    masked_len = max(length - prefix_len - 4, 4)
+    return f"{prefix}{'*' * masked_len}{suffix}"
+
+
+def get_mcp_dir(
+    marketplace_root: Path,
+    source_id: str,
+    item_id: str,
+) -> Path:
+    """获取 MCP 条目目录路径。
+
+    Args:
+        marketplace_root: 市场根目录。
+        source_id: 来源 ID。
+        item_id: 条目 ID。
+
+    Returns:
+        MCP 条目目录路径。
+    """
+    _validate_path_segment(source_id, "source_id")
+    _validate_path_segment(item_id, "item_id")
+    return marketplace_root / source_id / "mcp" / item_id
+
+
+def get_mcp_config_path(
+    marketplace_root: Path,
+    source_id: str,
+    item_id: str,
+) -> Path:
+    """获取 MCP 配置文件路径。
+
+    Args:
+        marketplace_root: 市场根目录。
+        source_id: 来源 ID。
+        item_id: 条目 ID。
+
+    Returns:
+        MCP 配置文件路径 (mcp.json)。
+    """
+    return get_mcp_dir(marketplace_root, source_id, item_id) / "mcp.json"
+
+
+def load_mcp_config(
+    marketplace_root: Path,
+    source_id: str,
+    item_id: str,
+) -> Optional[dict]:
+    """读取 MCP 配置文件。
+
+    Args:
+        marketplace_root: 市场根目录。
+        source_id: 来源 ID。
+        item_id: 条目 ID。
+
+    Returns:
+        MCP 配置字典，不存在或解析失败返回 None。
+    """
+    path = get_mcp_config_path(marketplace_root, source_id, item_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("Failed to load MCP config %s: %s", path, e)
+        return None
+
+
+def save_mcp_config(
+    marketplace_root: Path,
+    source_id: str,
+    item_id: str,
+    config: dict,
+) -> None:
+    """保存 MCP 配置文件。
+
+    Args:
+        marketplace_root: 市场根目录。
+        source_id: 来源 ID。
+        item_id: 条目 ID。
+        config: MCP 配置字典。
+    """
+    mcp_dir = get_mcp_dir(marketplace_root, source_id, item_id)
+    mcp_dir.mkdir(parents=True, exist_ok=True)
+    path = mcp_dir / "mcp.json"
+    _atomic_write_json(path, config)
+
+
+def copy_mcp_to_user(
+    marketplace_root: Path,
+    source_id: str,
+    item_id: str,
+    swe_root: Path,
+    user_id: str,
+    client_key: str,
+    distributed_by: str,
+    agent_id: str = DEFAULT_AGENT_ID,
+) -> None:
+    """将市场 MCP 复制到用户本地配置。
+
+    Args:
+        marketplace_root: 市场根目录。
+        source_id: 来源 ID。
+        item_id: 条目 ID。
+        swe_root: SWE 用户根目录。
+        user_id: 用户 ID。
+        client_key: MCP 客户端标识。
+        distributed_by: 分发者标识。
+        agent_id: Agent ID，默认为 "default"。
+    """
+    _validate_path_segment(client_key, "client_key")
+
+    mcp_config = load_mcp_config(marketplace_root, source_id, item_id)
+    if mcp_config is None:
+        raise ValueError(f"MCP config not found for item {item_id}")
+
+    # 加载用户 agent.json
+    user_config_path = (
+        swe_root / user_id / "workspaces" / agent_id / "agent.json"
+    )
+    user_config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    user_config: dict = {}
+    if user_config_path.exists():
+        try:
+            user_config = json.loads(
+                user_config_path.read_text(encoding="utf-8"),
+            )
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # 确保结构存在
+    if "mcp" not in user_config:
+        user_config["mcp"] = {"clients": {}}
+    if "clients" not in user_config["mcp"]:
+        user_config["mcp"]["clients"] = {}
+
+    # 合并 MCP 配置
+    config_data = mcp_config.get("config", {})
+    config_data["source"] = f"marketplace:{item_id}"
+    config_data["market_client_key"] = client_key
+    config_data["distributed_by"] = distributed_by
+    config_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    user_config["mcp"]["clients"][client_key] = config_data
+
+    _atomic_write_json(user_config_path, user_config)

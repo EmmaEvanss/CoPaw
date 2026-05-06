@@ -1,6 +1,6 @@
-import { Card, Tag, Typography, Button, Space } from "antd";
+import { Card, Tag, Typography, Button, Space, Popconfirm } from "antd";
 import { MarketSkill } from "../../api/modules/market";
-import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon } from "lucide-react";
+import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon, FileText, Trash2 } from "lucide-react";
 
 const { Text } = Typography;
 
@@ -8,12 +8,13 @@ interface SkillCardProps {
   skill: MarketSkill;
   onClick: () => void;
   onDistribute?: () => void;
+  onUnpublish?: () => void;
   isManager: boolean;
   isInstalled?: boolean;
   isFeatured?: boolean;
 }
 
-export function SkillCard({ skill, onClick, onDistribute, isManager, isInstalled, isFeatured }: SkillCardProps) {
+export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager, isInstalled, isFeatured }: SkillCardProps) {
   const formatMetricValue = (value: number | null): string => {
     if (value === null) return "0";
     if (value >= 100000000) return `${(value / 100000000).toFixed(1)}亿`;
@@ -213,10 +214,40 @@ export function SkillCard({ skill, onClick, onDistribute, isManager, isInstalled
               border: "1px solid #e8e6dc",
               backgroundColor: "#f5f4ed",
               borderRadius: 8,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
             }}
           >
+            <FileText size={12} />
             详情
           </Button>
+          {isManager && onUnpublish && (
+            <Popconfirm
+              title="下架技能"
+              description={`确定下架技能「${skill.name}」？下架后用户将无法查看。`}
+              onConfirm={onUnpublish}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button
+                size="small"
+                danger
+                style={{
+                  height: 28,
+                  padding: "0 12px",
+                  fontSize: 12,
+                  borderRadius: 8,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <Trash2 size={12} />
+                下架
+              </Button>
+            </Popconfirm>
+          )}
         </div>
       </div>
     </div>

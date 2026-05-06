@@ -142,3 +142,66 @@ def get_stats() -> Dict[str, Any]:
             for session_id, suggestions in _session_suggestions.items()
         },
     }
+
+
+async def store_qa_content(
+    chat_id: str,
+    user_message: str,
+    assistant_response: str,
+    tenant_id: Optional[str] = None,
+) -> None:
+    """存储 Q&A 内容供后续建议生成使用.
+
+    Args:
+        chat_id: Chat/conversation identifier.
+        user_message: 用户问题内容.
+        assistant_response: 助手回答内容.
+        tenant_id: Tenant identifier for isolation.
+    """
+    if not chat_id or not user_message:
+        return
+
+    user_message_hash = hashlib.sha256(user_message.encode()).hexdigest()
+
+    async with _lock:
+        if chat_id not in _qa_content_store:
+            _qa_content_store[chat_id] = {}
+
+        _qa_content_store[chat_id][user_message_hash] = QAContentEntry(
+            user_message=user_message,
+            user_message_hash=user_message_hash,
+            assistant_response=assistant_response,
+            ts=time.time(),
+            tenant_id=tenant_id or "default",
+        )
+
+
+async def get_qa_content(
+    chat_id: str,
+    tenant_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """获取 chat_id 对应的 Q&A 内容.
+
+    Args:
+        chat_id: Chat/conversation identifier.
+        tenant_id: Tenant identifier for isolation.
+
+    Returns:
+        Q&A 内容列表，每个条目包含 user_message 和 assistant_response。
+    """
+    if not chat_id:
+        return []
+
+    async with _lock:
+        qa_entries = _qa_content_store.get(chat_id, {})
+        # 清理过期内容
+        cutoff = time.time() - _QA_MAX_AGE_SECONDS
+        valid_entries = [
+            {
+                "user_message": entry.user_message,
+                "assistant_response": entry.assistant_response,
+            }
+            for entry in qa_entries.values()
+            if entry.ts >= cutoff
+        ]
+        return valid_entries

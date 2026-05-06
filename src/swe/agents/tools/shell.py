@@ -730,7 +730,9 @@ def _format_shell_response(
 ) -> str:
     """Format shell execution output for a tool response."""
     if returncode == 0:
-        response_text = stdout_str or "Command executed successfully (no output)."
+        response_text = (
+            stdout_str or "Command executed successfully (no output)."
+        )
         if stderr_str:
             response_text += f"\n[stderr]\n{stderr_str}"
         return response_text
@@ -902,7 +904,11 @@ async def execute_shell_command(
 
     try:
         with python_runtime_guard:
-            returncode, stdout_str, stderr_str = await _execute_platform_subprocess(
+            (
+                returncode,
+                stdout_str,
+                stderr_str,
+            ) = await _execute_platform_subprocess(
                 cmd,
                 working_dir,
                 timeout,

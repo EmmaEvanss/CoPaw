@@ -8,8 +8,10 @@ Tests cover:
 - Denied relative traversal
 - Denied absolute-path access
 """
+
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from typing import Generator
@@ -29,7 +31,6 @@ from swe.security.tenant_path_boundary import (
     TenantPathBoundaryError,
     TenantContextMissingError,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -293,6 +294,137 @@ class TestValidateShellPaths:
         with tenant_context(tenant_id="test_tenant"):
             result = _validate_shell_paths("cat file.txt", base_dir=tenant_dir)
             assert result is None
+
+    def test_python_script_content_outside_path_denied(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Should reject tenant-local Python scripts that read outside paths."""
+        tenant_dir = mock_working_dir / "test_tenant"
+        script = tenant_dir / "script.py"
+        script.write_text('open("/etc/passwd").read()\n')
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = _validate_shell_paths(
+                "python script.py",
+                base_dir=tenant_dir,
+            )
+            assert result is not None
+            assert "Python script contains path outside" in result
+            assert "/etc/passwd" in result
+
+    def test_python_script_pathlib_outside_path_denied(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Should reject pathlib literals that point outside the tenant."""
+        tenant_dir = mock_working_dir / "test_tenant"
+        script = tenant_dir / "script.py"
+        script.write_text(
+            "from pathlib import Path\n" 'Path("/etc/passwd").read_text()\n',
+        )
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = _validate_shell_paths(
+                "python script.py",
+                base_dir=tenant_dir,
+            )
+            assert result is not None
+            assert "Python script contains path outside" in result
+            assert "/etc/passwd" in result
+
+    def test_python_code_string_outside_path_denied(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Should reject static outside paths in python -c code."""
+        tenant_dir = mock_working_dir / "test_tenant"
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = _validate_shell_paths(
+                'python -c "open(\\"/etc/passwd\\").read()"',
+                base_dir=tenant_dir,
+            )
+            assert result is not None
+            assert "Python code contains path outside" in result
+            assert "/etc/passwd" in result
+
+    def test_python_directory_content_outside_path_denied(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Should scan Python directory execution targets."""
+        tenant_dir = mock_working_dir / "test_tenant"
+        package_dir = tenant_dir / "package"
+        package_dir.mkdir()
+        (package_dir / "__main__.py").write_text(
+            'open("/etc/passwd").read()\n',
+        )
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = _validate_shell_paths(
+                "python package",
+                base_dir=tenant_dir,
+            )
+            assert result is not None
+            assert "Python script contains path outside" in result
+            assert "/etc/passwd" in result
+
+    def test_python_script_tenant_local_path_allowed(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Should allow Python scripts that use tenant-local paths."""
+        tenant_dir = mock_working_dir / "test_tenant"
+        (tenant_dir / "allowed.txt").write_text("ok")
+        script = tenant_dir / "script.py"
+        script.write_text('open("allowed.txt").read()\n')
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = _validate_shell_paths(
+                "python script.py",
+                base_dir=tenant_dir,
+            )
+            assert result is None
+
+    def test_python_script_symlink_outside_tenant_denied(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Should reject Python script paths resolving outside the tenant."""
+        tenant_dir = mock_working_dir / "test_tenant"
+        outside_script = mock_working_dir / "other_tenant" / "script.py"
+        outside_script.write_text('print("outside")\n')
+        (tenant_dir / "evil.py").symlink_to(outside_script)
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = _validate_shell_paths(
+                "python evil.py",
+                base_dir=tenant_dir,
+            )
+            assert result is not None
+            assert "Python script path outside" in result
+
+    def test_python_directory_symlinked_source_outside_tenant_denied(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Should reject scanned Python files resolving outside the tenant."""
+        tenant_dir = mock_working_dir / "test_tenant"
+        package_dir = tenant_dir / "package"
+        package_dir.mkdir()
+        outside_script = mock_working_dir / "other_tenant" / "module.py"
+        outside_script.write_text('print("outside")\n')
+        (package_dir / "__main__.py").write_text("import module\n")
+        (package_dir / "module.py").symlink_to(outside_script)
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = _validate_shell_paths(
+                "python package",
+                base_dir=tenant_dir,
+            )
+            assert result is not None
+            assert "Python script path outside" in result
 
     def test_absolute_path_outside_tenant_denied(self, mock_working_dir: Path):
         """Should reject absolute paths outside tenant."""
@@ -610,6 +742,70 @@ class TestExecuteShellCommand:
             assert "code execution flags" in result.content[0]["text"]
 
     @pytest.mark.asyncio
+    async def test_python_runtime_guard_rejects_dynamic_open_outside_tenant(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Runtime guard should catch dynamic paths static scanning misses."""
+        from swe.agents.tools.shell import execute_shell_command
+
+        code = (
+            "import os; "
+            "path = os.path.join('..', 'other_tenant', 'secret.txt'); "
+            "print(open(path).read())"
+        )
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = await execute_shell_command(
+                f"python -c {shlex.quote(code)}",
+            )
+
+        assert "outside the allowed workspace" in result.content[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_python_runtime_guard_allows_dynamic_open_inside_tenant(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Runtime guard should allow dynamic paths that stay in the tenant."""
+        from swe.agents.tools.shell import execute_shell_command
+
+        tenant_dir = mock_working_dir / "test_tenant"
+        (tenant_dir / "dynamic.txt").write_text("dynamic ok")
+        code = (
+            "import os; "
+            "path = os.path.join('subdir', '..', 'dynamic.txt'); "
+            "print(open(path).read())"
+        )
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = await execute_shell_command(
+                f"python -c {shlex.quote(code)}",
+            )
+
+        assert result.content[0]["text"] == "dynamic ok"
+
+    @pytest.mark.asyncio
+    async def test_python_runtime_guard_rejects_subprocess_path_escape(
+        self,
+        mock_working_dir: Path,
+    ):
+        """Runtime guard should block Python subprocess calls with outside paths."""
+        from swe.agents.tools.shell import execute_shell_command
+
+        code = (
+            "import subprocess; "
+            "subprocess.run(['cat', '../other_tenant/secret.txt'], check=True)"
+        )
+
+        with tenant_context(tenant_id="test_tenant"):
+            result = await execute_shell_command(
+                f"python -c {shlex.quote(code)}",
+            )
+
+        assert "outside the allowed workspace" in result.content[0]["text"]
+
+    @pytest.mark.asyncio
     async def test_disabled_process_limit_policy_does_not_inject_preexec(
         self,
         mock_working_dir: Path,
@@ -724,12 +920,16 @@ class TestExecuteShellCommand:
             captured["preexec_fn"] = kwargs.get("preexec_fn")
             return _FakeProcess()
 
-        with patch("swe.agents.tools.shell.sys.platform", "darwin"), patch(
-            "swe.security.process_limits.sys.platform",
-            "darwin",
-        ), patch(
-            "swe.agents.tools.shell.asyncio.create_subprocess_shell",
-            side_effect=_fake_create_subprocess_shell,
+        with (
+            patch("swe.agents.tools.shell.sys.platform", "darwin"),
+            patch(
+                "swe.security.process_limits.sys.platform",
+                "darwin",
+            ),
+            patch(
+                "swe.agents.tools.shell.asyncio.create_subprocess_shell",
+                side_effect=_fake_create_subprocess_shell,
+            ),
         ):
             with tenant_context(tenant_id="test_tenant"):
                 result = await execute_shell_command("echo ok")

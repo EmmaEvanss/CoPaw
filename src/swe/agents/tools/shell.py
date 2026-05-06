@@ -4,6 +4,7 @@
 """The shell command tool with tenant path boundary enforcement."""
 
 import asyncio
+import ast
 import locale
 import os
 import shlex
@@ -23,7 +24,9 @@ from ...security.tenant_path_boundary import (
     get_current_tool_base_dir,
     TenantPathBoundaryError,
 )
-
+from ...security.python_runtime_path_guard import (
+    prepare_python_runtime_path_guard_env,
+)
 
 # Commands that take string arguments which may look like paths
 # but should NOT be treated as file paths
@@ -73,6 +76,46 @@ _INTERPRETER_COMMANDS = frozenset(
         "/usr/bin/dash",
     },
 )
+
+_PYTHON_COMMAND_BASENAMES = frozenset(
+    {
+        "python",
+        "python2",
+        "python3",
+        "pypy",
+        "pypy3",
+    },
+)
+
+_PYTHON_OPTIONS_WITH_VALUE = frozenset({"-W", "-X"})
+
+_PYTHON_PATH_CALL_ARG_INDICES = {
+    "open": (0,),
+    "io.open": (0,),
+    "os.open": (0,),
+    "os.stat": (0,),
+    "os.listdir": (0,),
+    "os.remove": (0,),
+    "os.unlink": (0,),
+    "os.rmdir": (0,),
+    "os.mkdir": (0,),
+    "os.makedirs": (0,),
+    "os.scandir": (0,),
+    "os.rename": (0, 1),
+    "os.replace": (0, 1),
+    "shutil.copy": (0, 1),
+    "shutil.copy2": (0, 1),
+    "shutil.copyfile": (0, 1),
+    "shutil.copytree": (0, 1),
+    "shutil.move": (0, 1),
+    "Path": (0,),
+    "pathlib.Path": (0,),
+    "PurePath": (0,),
+    "pathlib.PurePath": (0,),
+}
+
+_PYTHON_SCAN_MAX_FILES = 128
+_PYTHON_SCAN_MAX_BYTES = 512 * 1024
 
 
 def _is_path_like(token: str) -> bool:
@@ -182,6 +225,220 @@ def _extract_path_tokens(command: str) -> tuple[list[str], bool]:
     return file_paths, has_code_exec
 
 
+def _is_python_command(command_name: str) -> bool:
+    """Return True when the command token names a Python interpreter."""
+    basename = Path(command_name).name
+    return (
+        basename in _PYTHON_COMMAND_BASENAMES
+        or basename.startswith("python3.")
+        or basename.startswith("python2.")
+    )
+
+
+def _call_name(node: ast.AST) -> Optional[str]:
+    """Return dotted call name for simple name/attribute calls."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _call_name(node.value)
+        if parent:
+            return f"{parent}.{node.attr}"
+        return node.attr
+    return None
+
+
+def _collect_string_constants(tree: ast.AST) -> dict[str, str]:
+    """Collect simple string assignments for static path checks."""
+    constants: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not isinstance(node.value, ast.Constant) or not isinstance(
+            node.value.value,
+            str,
+        ):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                constants[target.id] = node.value.value
+    return constants
+
+
+def _static_string_value(
+    node: ast.AST,
+    constants: dict[str, str],
+) -> Optional[str]:
+    """Resolve literal strings and simple string constants."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return constants.get(node.id)
+    return None
+
+
+def _scan_python_source_for_outside_path(
+    source: str,
+    base_dir: Path,
+) -> Optional[str]:
+    """Find static Python file-access paths that escape tenant boundary."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+
+    constants = _collect_string_constants(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+
+        call_name = _call_name(node.func)
+        if call_name not in _PYTHON_PATH_CALL_ARG_INDICES:
+            continue
+
+        for arg_index in _PYTHON_PATH_CALL_ARG_INDICES[call_name]:
+            if arg_index >= len(node.args):
+                continue
+            path_value = _static_string_value(node.args[arg_index], constants)
+            if path_value is None:
+                continue
+            if not is_path_within_tenant_with_base(
+                path_value,
+                base_dir=base_dir,
+            ):
+                return path_value
+
+    return None
+
+
+def _resolve_command_path(token: str, base_dir: Path) -> Path:
+    """Resolve a command path token the same way the shell runtime cwd would."""
+    path_obj = Path(os.path.expanduser(token))
+    if not path_obj.is_absolute():
+        path_obj = base_dir / path_obj
+    return path_obj.resolve()
+
+
+def _iter_python_source_files(script_path: Path) -> list[Path]:
+    """Return Python source files to scan for a script or package directory."""
+    if script_path.is_file():
+        return [script_path]
+    if not script_path.is_dir():
+        return []
+
+    files: list[Path] = []
+    for path in script_path.rglob("*.py"):
+        files.append(path)
+        if len(files) >= _PYTHON_SCAN_MAX_FILES:
+            break
+    return files
+
+
+def _find_python_code_source(
+    tokens: list[str],
+    base_dir: Path,
+) -> tuple[str, Optional[str | Path]]:
+    """Extract Python source mode from command tokens.
+
+    Returns ("code", source) for ``python -c``, ("path", path) for script or
+    directory execution, ("path_outside", token) for a script path that resolves
+    outside the tenant, and ("none", None) when there is nothing static to scan.
+    """
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+
+        if token == "-c":
+            if i + 1 < len(tokens):
+                return "code", tokens[i + 1]
+            return "none", None
+        if token.startswith("-c") and len(token) > 2:
+            return "code", token[2:]
+        if token == "-m" or token.startswith("-m"):
+            return "none", None
+        if token == "--":
+            i += 1
+            break
+        if token in _PYTHON_OPTIONS_WITH_VALUE:
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        break
+
+    if i >= len(tokens):
+        return "none", None
+
+    script_token = tokens[i]
+    if script_token == "-":
+        return "none", None
+    if not is_path_within_tenant_with_base(script_token, base_dir=base_dir):
+        return "path_outside", script_token
+    return "path", _resolve_command_path(script_token, base_dir)
+
+
+def _validate_python_script_contents(
+    command: str,
+    base_dir: Path,
+) -> Optional[str]:
+    """Validate static Python script/code paths before running Python."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    if not tokens or not _is_python_command(tokens[0]):
+        return None
+
+    source_type, source = _find_python_code_source(tokens, base_dir)
+    if source_type == "code" and isinstance(source, str):
+        outside_path = _scan_python_source_for_outside_path(source, base_dir)
+        if outside_path:
+            return (
+                "Error: Python code contains path outside the allowed workspace: "
+                f"'{outside_path}'"
+            )
+        return None
+
+    if source_type == "path_outside":
+        return (
+            "Error: Python script path outside the allowed workspace: "
+            f"'{source}'"
+        )
+
+    if source_type != "path" or not isinstance(source, Path):
+        return None
+
+    for script_path in _iter_python_source_files(source):
+        if not is_path_within_tenant_with_base(script_path, base_dir=base_dir):
+            return (
+                "Error: Python script path outside the allowed workspace: "
+                f"'{script_path}'"
+            )
+
+        try:
+            if script_path.stat().st_size > _PYTHON_SCAN_MAX_BYTES:
+                continue
+            script_source = script_path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+        except OSError:
+            continue
+
+        outside_path = _scan_python_source_for_outside_path(
+            script_source,
+            base_dir,
+        )
+        if outside_path:
+            return (
+                "Error: Python script contains path outside the allowed workspace: "
+                f"'{outside_path}'"
+            )
+
+    return None
+
+
 def _validate_shell_paths(command: str, base_dir: Path) -> Optional[str]:
     """Validate that all explicit file paths in the command are within tenant boundary.
 
@@ -212,6 +469,10 @@ def _validate_shell_paths(command: str, base_dir: Path) -> Optional[str]:
                 f"Error: Shell command contains path outside the allowed workspace: "
                 f"'{token}'"
             )
+
+    python_error = _validate_python_script_contents(command, base_dir)
+    if python_error:
+        return python_error
 
     return None
 
@@ -437,6 +698,155 @@ def _execute_subprocess_sync(
                     pass
 
 
+def _tool_text_response(text: str) -> ToolResponse:
+    """Build a plain-text tool response."""
+    return ToolResponse(
+        content=[
+            TextBlock(
+                type="text",
+                text=text,
+            ),
+        ],
+    )
+
+
+def _prepare_subprocess_env() -> dict[str, str]:
+    """Prepare subprocess environment with the active Python on PATH."""
+    env = os.environ.copy()
+    python_bin_dir = str(Path(sys.executable).parent)
+    existing_path = env.get("PATH", "")
+    env["PATH"] = (
+        python_bin_dir + os.pathsep + existing_path
+        if existing_path
+        else python_bin_dir
+    )
+    return env
+
+
+def _format_shell_response(
+    returncode: int,
+    stdout_str: str,
+    stderr_str: str,
+) -> str:
+    """Format shell execution output for a tool response."""
+    if returncode == 0:
+        response_text = (
+            stdout_str or "Command executed successfully (no output)."
+        )
+        if stderr_str:
+            response_text += f"\n[stderr]\n{stderr_str}"
+        return response_text
+
+    response_parts = [f"Command failed with exit code {returncode}."]
+    if stdout_str:
+        response_parts.append(f"\n[stdout]\n{stdout_str}")
+    if stderr_str:
+        response_parts.append(f"\n[stderr]\n{stderr_str}")
+    return "".join(response_parts)
+
+
+async def _terminate_unix_process_group(
+    proc: asyncio.subprocess.Process,
+) -> None:
+    """Terminate a Unix subprocess group, escalating to SIGKILL if needed."""
+    pgid = os.getpgid(proc.pid)
+    os.killpg(pgid, signal.SIGTERM)
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=2)
+    except asyncio.TimeoutError:
+        os.killpg(pgid, signal.SIGKILL)
+        await asyncio.wait_for(proc.wait(), timeout=2)
+
+
+async def _drain_unix_subprocess_output(
+    proc: asyncio.subprocess.Process,
+) -> tuple[bytes, bytes]:
+    """Drain any remaining subprocess output after termination."""
+    try:
+        return await asyncio.wait_for(proc.communicate(), timeout=1)
+    except asyncio.TimeoutError:
+        return b"", b""
+
+
+async def _handle_unix_subprocess_timeout(
+    proc: asyncio.subprocess.Process,
+    timeout: int,
+) -> tuple[int, str, str]:
+    """Handle Unix subprocess timeout and collect best-effort output."""
+    stderr_suffix = (
+        f"⚠️ TimeoutError: The command execution exceeded "
+        f"the timeout of {timeout} seconds. "
+        f"Please consider increasing the timeout value if this command "
+        f"requires more time to complete."
+    )
+    try:
+        await _terminate_unix_process_group(proc)
+        stdout, stderr = await _drain_unix_subprocess_output(proc)
+        stdout_str = smart_decode(stdout)
+        stderr_str = smart_decode(stderr)
+        if stderr_str:
+            stderr_str += f"\n{stderr_suffix}"
+        else:
+            stderr_str = stderr_suffix
+        return -1, stdout_str, stderr_str
+    except (ProcessLookupError, OSError):
+        try:
+            proc.kill()
+            await proc.wait()
+        except (ProcessLookupError, OSError):
+            pass
+        return -1, "", stderr_suffix
+
+
+async def _execute_unix_subprocess(
+    cmd: str,
+    working_dir: Path,
+    timeout: int,
+    env: dict[str, str],
+) -> tuple[int, str, str]:
+    """Execute a shell command on Unix-like platforms."""
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        bufsize=0,
+        cwd=str(working_dir),
+        env=env,
+        start_new_session=True,
+    )
+
+    try:
+        # Apply timeout to communicate directly; wait()+communicate()
+        # can hang if descendants keep stdout/stderr pipes open.
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout,
+        )
+        returncode = proc.returncode if proc.returncode is not None else -1
+        return returncode, smart_decode(stdout), smart_decode(stderr)
+    except asyncio.TimeoutError:
+        return await _handle_unix_subprocess_timeout(proc, timeout)
+
+
+async def _execute_platform_subprocess(
+    cmd: str,
+    working_dir: Path,
+    timeout: int,
+    env: dict[str, str],
+) -> tuple[int, str, str]:
+    """Execute a shell command on the active platform."""
+    if sys.platform == "win32":
+        # Windows: use thread pool to avoid asyncio subprocess limitations
+        return await asyncio.to_thread(
+            _execute_subprocess_sync,
+            cmd,
+            str(working_dir),
+            timeout,
+            env,
+        )
+    return await _execute_unix_subprocess(cmd, working_dir, timeout, env)
+
+
 # pylint: disable=too-many-branches, too-many-statements
 async def execute_shell_command(
     command: str,
@@ -478,144 +888,44 @@ async def execute_shell_command(
     try:
         working_dir = _resolve_cwd(cwd)
     except TenantPathBoundaryError as e:
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Error: {e}",
-                ),
-            ],
-        )
+        return _tool_text_response(f"Error: {e}")
 
     # Validate explicit path tokens in the command, using working_dir as base for relative paths
     path_error = _validate_shell_paths(cmd, base_dir=working_dir)
     if path_error:
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=path_error,
-                ),
-            ],
-        )
+        return _tool_text_response(path_error)
 
-    # Ensure the venv Python is on PATH for subprocesses
-    env = os.environ.copy()
-    python_bin_dir = str(Path(sys.executable).parent)
-    existing_path = env.get("PATH", "")
-    if existing_path:
-        env["PATH"] = python_bin_dir + os.pathsep + existing_path
-    else:
-        env["PATH"] = python_bin_dir
+    env = _prepare_subprocess_env()
+    python_runtime_guard = prepare_python_runtime_path_guard_env(
+        env,
+        tenant_root=get_current_tenant_root(),
+        base_dir=working_dir,
+    )
 
     try:
-        if sys.platform == "win32":
-            # Windows: use thread pool to avoid asyncio subprocess limitations
-            returncode, stdout_str, stderr_str = await asyncio.to_thread(
-                _execute_subprocess_sync,
+        with python_runtime_guard:
+            (
+                returncode,
+                stdout_str,
+                stderr_str,
+            ) = await _execute_platform_subprocess(
                 cmd,
-                str(working_dir),
+                working_dir,
                 timeout,
                 env,
             )
-        else:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                bufsize=0,
-                cwd=str(working_dir),
-                env=env,
-                start_new_session=True,
-            )
 
-            try:
-                # Apply timeout to communicate directly; wait()+communicate()
-                # can hang if descendants keep stdout/stderr pipes open.
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout,
-                )
-                stdout_str = smart_decode(stdout)
-                stderr_str = smart_decode(stderr)
-                returncode = proc.returncode
-
-            except asyncio.TimeoutError:
-                stderr_suffix = (
-                    f"⚠️ TimeoutError: The command execution exceeded "
-                    f"the timeout of {timeout} seconds. "
-                    f"Please consider increasing the timeout value if this command "
-                    f"requires more time to complete."
-                )
-                returncode = -1
-                try:
-                    # Kill the entire process group so that child processes
-                    # spawned by the shell are also terminated.
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGTERM)
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=2)
-                    except asyncio.TimeoutError:
-                        os.killpg(pgid, signal.SIGKILL)
-                        await asyncio.wait_for(proc.wait(), timeout=2)
-
-                    # Drain remaining output.
-                    try:
-                        stdout, stderr = await asyncio.wait_for(
-                            proc.communicate(),
-                            timeout=1,
-                        )
-                    except asyncio.TimeoutError:
-                        stdout, stderr = b"", b""
-                    stdout_str = smart_decode(stdout)
-                    stderr_str = smart_decode(stderr)
-                    if stderr_str:
-                        stderr_str += f"\n{stderr_suffix}"
-                    else:
-                        stderr_str = stderr_suffix
-                except (ProcessLookupError, OSError):
-                    # Process already gone or pgid lookup failed — fall back
-                    # to direct kill on the process itself.
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except (ProcessLookupError, OSError):
-                        pass
-                    stdout_str = ""
-                    stderr_str = stderr_suffix
-
-        if returncode == 0:
-            if stdout_str:
-                response_text = stdout_str
-            else:
-                response_text = "Command executed successfully (no output)."
-            if stderr_str:
-                response_text += f"\n[stderr]\n{stderr_str}"
-        else:
-            response_parts = [f"Command failed with exit code {returncode}."]
-            if stdout_str:
-                response_parts.append(f"\n[stdout]\n{stdout_str}")
-            if stderr_str:
-                response_parts.append(f"\n[stderr]\n{stderr_str}")
-            response_text = "".join(response_parts)
-
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=response_text,
-                ),
-            ],
+        response_text = _format_shell_response(
+            returncode,
+            stdout_str,
+            stderr_str,
         )
 
+        return _tool_text_response(response_text)
+
     except Exception as e:
-        return ToolResponse(
-            content=[
-                TextBlock(
-                    type="text",
-                    text=f"Error: Shell command execution failed due to \n{e}",
-                ),
-            ],
+        return _tool_text_response(
+            f"Error: Shell command execution failed due to \n{e}",
         )
 
 

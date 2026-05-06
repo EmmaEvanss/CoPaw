@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Workspace API – download / upload the entire WORKING_DIR as a zip."""
+"""Workspace API – download / upload the entire WORKING_DIR as a zip,
+and broadcast workspace files to selected tenants."""
 
 from __future__ import annotations
 
@@ -13,21 +14,29 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from .skills import BroadcastTenantListResponse
+from ..agent_context import get_current_agent_id
+from ...config.context import resolve_effective_tenant_id
+from ...config.utils import (
+    get_tenant_working_dir_strict,
+    list_logical_tenant_ids,
+)
+
+from ..workspace.file_broadcast import (
+    BROADCASTABLE_FILES,
+    BroadcastFilesResponse,
+    FileBroadcastService,
+)
 
 
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
 
-def _dir_stats(root: Path) -> tuple[int, int]:
-    """Return (file_count, total_size) for *root* recursively."""
-    count = 0
-    size = 0
-    if root.is_dir():
-        for p in root.rglob("*"):
-            if p.is_file():
-                count += 1
-                size += p.stat().st_size
-    return count, size
+class BroadcastFilesRequest(BaseModel):
+    file_names: list[str] = Field(default_factory=list)
+    target_tenant_ids: list[str] = Field(default_factory=list)
+    overwrite: bool = False
 
 
 def _zip_directory(root: Path) -> io.BytesIO:
@@ -210,3 +219,107 @@ async def upload_workspace(
             status_code=500,
             detail=f"Failed to merge workspace: {exc}",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Broadcast endpoints
+# ---------------------------------------------------------------------------
+
+
+# @router.get(
+#     "/broadcast/tenants",
+#     response_model=dict[str, Any],
+#     summary="List tenants available for file broadcast",
+# )
+# async def list_workspace_broadcast_tenants(
+#     request: Request,
+# ) -> dict[str, Any]:
+#     """Return tenant IDs that can receive broadcast files."""
+#     from ...config.utils import list_logical_tenant_ids
+#
+#     source_id = getattr(request.state, "source_id", None)
+#     tenant_ids = await list_logical_tenant_ids(
+#         source_id,
+#         source_filter=True,
+#     )
+#     return {"tenant_ids": tenant_ids}
+
+
+@router.get(
+    "/broadcast/tenants",
+    response_model=BroadcastTenantListResponse,
+)
+async def list_broadcast_tenants(
+    request: Request,
+) -> BroadcastTenantListResponse:
+    return BroadcastTenantListResponse(
+        tenant_ids=await list_logical_tenant_ids(
+            getattr(request.state, "source_id", None),
+            source_filter=True,
+        ),
+    )
+
+
+@router.post(
+    "/broadcast/files",
+    response_model=BroadcastFilesResponse,
+    summary="Broadcast workspace files to selected tenants",
+)
+async def broadcast_workspace_files(
+    request: Request,
+    body: BroadcastFilesRequest,
+) -> BroadcastFilesResponse:
+    """Copy selected workspace MD files to target tenants' default workspace."""
+    if not body.overwrite:
+        raise HTTPException(
+            status_code=400,
+            detail="overwrite=true is required for file broadcast",
+        )
+    if not body.target_tenant_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No target tenant IDs provided",
+        )
+    if not body.file_names:
+        raise HTTPException(
+            status_code=400,
+            detail="No file names provided",
+        )
+
+    invalid_names = [
+        n for n in body.file_names if n not in BROADCASTABLE_FILES
+    ]
+    if invalid_names:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Files not broadcastable: {', '.join(invalid_names)}",
+        )
+
+    # Resolve tenant working dir the same way as skill broadcast:
+    # use effective_tenant_id (handles source_id → default_{source_id})
+    # and get_tenant_working_dir_strict to get the tenant root.
+    tenant_id = getattr(request.state, "tenant_id", None)
+    source_id = getattr(request.state, "source_id", None)
+    effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
+    source_working_dir = get_tenant_working_dir_strict(effective_tenant_id)
+
+    # MD files live in the default agent workspace, not the tenant root.
+    default_ws_dir = source_working_dir / "workspaces" / get_current_agent_id()
+
+    # Verify source files exist before starting broadcast
+    for name in body.file_names:
+        if not (default_ws_dir / name).exists():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source file not found: {name}",
+            )
+
+    service = FileBroadcastService(
+        default_ws_dir,
+        source_id=source_id,
+    )
+    return await service.broadcast(
+        file_names=body.file_names,
+        target_tenant_ids=body.target_tenant_ids,
+        overwrite=body.overwrite,
+    )

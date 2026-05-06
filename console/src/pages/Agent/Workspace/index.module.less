@@ -302,6 +302,11 @@
   &.selected {
     border: 1px solid #3769fc;
   }
+
+  &.broadcastSelected {
+    border: 1px solid #1677ff;
+    box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+  }
 }
 
 .fileItemHeader {
@@ -415,6 +420,31 @@
   color: #999;
 }
 
+.selectButton {
+  font-size: 12px;
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.04);
+  border-color: rgba(22, 119, 255, 0.35);
+}
+
+.selectButtonActive {
+  background: rgba(22, 119, 255, 0.12);
+  border-color: #1677ff;
+}
+
+.selectionSummary {
+  color: rgba(20, 20, 19, 0.65);
+  font-size: 13px;
+}
+
+.distributionWarning {
+  padding: 12px;
+  border-radius: 8px;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  color: #8c5a00;
+}
+
 .attribution {
   height: 20px;
   font-size: 11px;
@@ -462,6 +492,12 @@
     &.selected {
       border-color: #3769fc;
       background-color: rgba(97, 92, 237, 0.15);
+    }
+
+    &.broadcastSelected {
+      border-color: #1677ff;
+      box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.25);
+      background-color: rgba(22, 119, 255, 0.08);
     }
   }
 
@@ -548,6 +584,23 @@
 
   .attribution {
     color: rgba(255, 255, 255, 0.2);
+  }
+
+  .distributionWarning {
+    background: rgba(255, 213, 145, 0.15);
+    border-color: rgba(255, 213, 145, 0.4);
+    color: #ffc069;
+  }
+
+  .selectButton {
+    color: #4096ff;
+    background: rgba(22, 119, 255, 0.08);
+    border-color: rgba(22, 119, 255, 0.35);
+  }
+
+  .selectButtonActive {
+    background: rgba(22, 119, 255, 0.2);
+    border-color: #4096ff;
   }
 
   /* Textarea inside editor */

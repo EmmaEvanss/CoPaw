@@ -1,12 +1,24 @@
 import { useAgentsData, FileListPanel, FileEditor } from "./components";
 import styles from "./index.module.less";
-import { UploadOutlined, DownloadOutlined } from "@ant-design/icons";
-import { Button, Tooltip } from "@agentscope-ai/design";
+import { UploadOutlined, DownloadOutlined, SendOutlined } from "@ant-design/icons";
+import { Button, Modal, Tooltip } from "@agentscope-ai/design";
 import { workspaceApi } from "../../../api/modules/workspace";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import { getUserId, DEFAULT_USER_ID } from "../../../utils/identity";
+import { useIframeStore } from "../../../stores/iframeStore";
+import { TenantTargetPicker } from "../../../components/TenantTargetPicker";
+
+const BROADCASTABLE_FILES = [
+  "AGENTS.md",
+  "BOOTSTRAP.md",
+  "HEARTBEAT.md",
+  "MEMORY.md",
+  "PROFILE.md",
+  "SOUL.md",
+];
 
 export default function WorkspacePage() {
   const { t } = useTranslation();
@@ -32,6 +44,132 @@ export default function WorkspacePage() {
   } = useAgentsData();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const currentTenantId = getUserId();
+  const manager = useIframeStore((state) => state.manager);
+  const isDefaultUser = currentTenantId === DEFAULT_USER_ID;
+
+  // --- File broadcast state ---
+  const [selectedFileNames, setSelectedFileNames] = useState<string[]>([]);
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [broadcastLoading, setBroadcastLoading] = useState(false);
+  const [broadcastSubmitting, setBroadcastSubmitting] = useState(false);
+  const [broadcastTenantIds, setBroadcastTenantIds] = useState<string[]>([]);
+  const [selectedTenantIds, setSelectedTenantIds] = useState<string[]>([]);
+
+  const sanitizedSelectedTenantIds = selectedTenantIds.filter(
+    (id) => id !== currentTenantId,
+  );
+
+  const handleToggleSelectedFile = (filename: string) => {
+    setSelectedFileNames((current) =>
+      current.includes(filename)
+        ? current.filter((n) => n !== filename)
+        : [...current, filename],
+    );
+  };
+
+  const openBroadcastModal = async () => {
+    if (!selectedFileNames.length) return;
+    setBroadcastOpen(true);
+    setSelectedTenantIds([]);
+    setBroadcastLoading(true);
+    try {
+      const result = await workspaceApi.listBroadcastTenants();
+      setBroadcastTenantIds(
+        (result.tenant_ids || []).filter(
+          (id) => id !== currentTenantId,
+        ),
+      );
+    } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : t("workspace.broadcastFailed");
+      message.error(errMsg);
+    } finally {
+      setBroadcastLoading(false);
+    }
+  };
+
+  const closeBroadcastModal = () => {
+    if (broadcastSubmitting) return;
+    setBroadcastOpen(false);
+    setSelectedTenantIds([]);
+  };
+
+  const handleBroadcastConfirm = async () => {
+    if (!selectedFileNames.length || !sanitizedSelectedTenantIds.length) return;
+
+    setBroadcastSubmitting(true);
+    try {
+      const result = await workspaceApi.broadcastFiles({
+        file_names: selectedFileNames,
+        target_tenant_ids: sanitizedSelectedTenantIds,
+        overwrite: true,
+      });
+
+      const items = Array.isArray(result.results) ? result.results : [];
+      const succeeded = items.filter((item) => item.success);
+      const failed = items.filter((item) => !item.success);
+
+      if (succeeded.length > 0) {
+        const lines = succeeded.map((item) => {
+          const suffix = item.bootstrapped
+            ? ` (${t("workspace.broadcastBootstrapped")})`
+            : "";
+          return `• ${item.tenant_id}${suffix}`;
+        });
+        message.success(
+          t("workspace.broadcastSuccess", { count: succeeded.length }),
+        );
+        Modal.confirm({
+          title: t("workspace.broadcastResultTitle"),
+          content: (
+            <div style={{ display: "grid", gap: 8 }}>
+              <div>{t("workspace.broadcastSuccessList")}</div>
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                {lines.join("\n")}
+              </pre>
+              {failed.length > 0 ? (
+                <div>{t("workspace.broadcastFailureHint")}</div>
+              ) : null}
+            </div>
+          ),
+          okText: t("common.close"),
+          cancelButtonProps: { style: { display: "none" } },
+        });
+      }
+
+      if (failed.length > 0) {
+        const failureLines = failed.map(
+          (item) =>
+            `• ${item.tenant_id}: ${item.error || t("workspace.broadcastFailed")}`,
+        );
+        if (succeeded.length === 0) {
+          message.error(t("workspace.broadcastFailed"));
+        }
+        Modal.confirm({
+          title: t("workspace.broadcastPartialFailureTitle"),
+          content: (
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+              {failureLines.join("\n")}
+            </pre>
+          ),
+          okText: t("common.close"),
+          cancelButtonProps: { style: { display: "none" } },
+        });
+      }
+
+      setBroadcastOpen(false);
+      setSelectedTenantIds([]);
+      setSelectedFileNames([]);
+      await fetchFiles();
+    } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : t("workspace.broadcastFailed");
+      message.error(errMsg);
+    } finally {
+      setBroadcastSubmitting(false);
+    }
+  };
 
   const handleDownload = async () => {
     try {
@@ -59,7 +197,6 @@ export default function WorkspacePage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Check if file is zip format
     if (!file.name.toLowerCase().endsWith(".zip")) {
       message.error(t("workspace.zipOnly"));
       if (fileInputRef.current) {
@@ -96,7 +233,6 @@ export default function WorkspacePage() {
         t("workspace.uploadFailed") + ": " + (error as Error).message,
       );
     } finally {
-      // Clear input value to allow re-uploading the same file
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -106,6 +242,13 @@ export default function WorkspacePage() {
   const handleUploadClick = () => {
     fileInputRef.current?.click();
   };
+
+  // Build enhanced files list with broadcast-selectable props
+  const enhancedFiles = files.map((f) => ({
+    ...f,
+    selectable: BROADCASTABLE_FILES.includes(f.filename),
+    broadcastSelected: selectedFileNames.includes(f.filename),
+  }));
 
   return (
     <div className={styles.workspacePage}>
@@ -150,6 +293,21 @@ export default function WorkspacePage() {
               >
                 {t("common.download")}
               </Button>
+              {selectedFileNames.length > 0 && (
+                <span className={styles.selectionSummary}>
+                  {t("workspace.selectedCount", {
+                    count: selectedFileNames.length,
+                  })}
+                </span>
+              )}
+              <Button
+                size="small"
+                disabled={(!isDefaultUser && !manager) || !selectedFileNames.length}
+                icon={<SendOutlined />}
+                onClick={openBroadcastModal}
+              >
+                {t("workspace.broadcast")}
+              </Button>
             </div>
           </div>
         }
@@ -157,7 +315,7 @@ export default function WorkspacePage() {
 
       <div className={styles.content}>
         <FileListPanel
-          files={files}
+          files={enhancedFiles}
           selectedFile={selectedFile}
           dailyMemories={dailyMemories}
           expandedMemory={expandedMemory}
@@ -168,6 +326,7 @@ export default function WorkspacePage() {
           onDailyMemoryClick={handleDailyMemoryClick}
           onToggleEnabled={handleToggleFileEnabled}
           onReorder={handleReorderFiles}
+          onSelectToggle={handleToggleSelectedFile}
         />
 
         <FileEditor
@@ -180,6 +339,46 @@ export default function WorkspacePage() {
           onReset={handleReset}
         />
       </div>
+
+      <Modal
+        open={broadcastOpen}
+        title={t("workspace.broadcastTitle")}
+        onCancel={closeBroadcastModal}
+        onOk={handleBroadcastConfirm}
+        okButtonProps={{
+          disabled: !sanitizedSelectedTenantIds.length,
+          loading: broadcastSubmitting,
+        }}
+        width={640}
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ color: "#666", fontSize: 12 }}>
+            {t("workspace.broadcastHint")}
+          </div>
+          <div style={{ fontWeight: 500 }}>
+            {t("workspace.broadcastCurrentSource", {
+              count: selectedFileNames.length,
+            })}
+          </div>
+          <div className={styles.distributionWarning}>
+            <div>{t("workspace.broadcastDefaultAgentWarning")}</div>
+            <div>{t("workspace.broadcastOverwriteWarning")}</div>
+          </div>
+          {broadcastLoading ? (
+            <div>{t("common.loading")}</div>
+          ) : (
+            <TenantTargetPicker
+              tenantIds={broadcastTenantIds}
+              selectedTenantIds={selectedTenantIds}
+              onChange={(ids) =>
+                setSelectedTenantIds(
+                  ids.filter((id) => id !== currentTenantId),
+                )
+              }
+            />
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }

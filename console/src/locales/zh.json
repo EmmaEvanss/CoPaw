@@ -56,7 +56,7 @@
     "analyticsSessions": "会话分析",
     "analyticsMessages": "用户消息",
     "analyticsTraces": "对话分析",
-    "analyticsBusinessOverview": "业务概览",
+    "analyticsBusinessOverview": "运营看板",
     "instance": "实例管理",
     "instanceOverview": "概览",
     "instanceInstances": "实例列表",
@@ -373,7 +373,10 @@
     "statusConflict": "冲突",
     "renameEntry": "\"{{name}}\" 的新名称：",
     "builtin": "内置",
-    "custom": "自定义"
+    "custom": "自定义",
+    "resolveModeRename": "重命名为新名称",
+    "resolveModeOverwrite": "覆盖现有技能",
+    "overwriteWarning": "将覆盖 {{count}} 个现有技能，此操作不可恢复。"
   },
   "mcp": {
     "title": "MCP 客户端",

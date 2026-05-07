@@ -20,7 +20,7 @@ export default function MyMCPPage() {
   const userName = useIframeStore((state) => state.clawName) || "Unknown";
   const manager = useIframeStore((state) => state.manager);
   const isSuperManager = useIframeStore((state) => state.isSuperManager);
-  const canManage = manager || isSuperManager;
+  const canManage = manager || isSuperManager || userId === "default";
 
   const {
     mcpList,

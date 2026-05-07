@@ -64,6 +64,7 @@ function MCPPage() {
   const { selectedAgent } = useAgentStore();
   const currentTenantId = getUserId();
   const manager = useIframeStore((state) => state.manager);
+  const canManage = manager || currentTenantId === "default";
   const {
     clients,
     loading,
@@ -309,7 +310,7 @@ function MCPPage() {
               </span>
             ) : null}
             <Button
-              disabled={!manager || !selectedClientKeys.length}
+              disabled={!canManage || !selectedClientKeys.length}
               icon={<SendOutlined />}
               onClick={openDistributionModal}
             >

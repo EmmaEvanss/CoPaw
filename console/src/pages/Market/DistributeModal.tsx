@@ -1,4 +1,4 @@
-import { Modal, Form, Radio, Select, Button, Space } from "antd";
+import { Modal, Form, Radio, Select, Button } from "antd";
 import { useState } from "react";
 import { marketApi, DistributeRequest } from "../../api/modules/market";
 import { MarketSkill } from "../../api/modules/market";

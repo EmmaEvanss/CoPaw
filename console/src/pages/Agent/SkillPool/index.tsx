@@ -45,6 +45,7 @@ import { BroadcastModal } from "./components/BroadcastModal";
 import { ImportBuiltinModal } from "./components/ImportBuiltinModal";
 import { PageHeader } from "@/components/PageHeader";
 import { useIframeStore } from "../../../stores/iframeStore";
+import { getUserId } from "../../../utils/identity";
 import styles from "./index.module.less";
 
 type PoolMode = "broadcast" | "create" | "edit";
@@ -54,6 +55,8 @@ const SKILL_POOL_ZIP_MAX_MB = 100;
 function SkillPoolPage() {
   const { t } = useTranslation();
   const manager = useIframeStore((state) => state.manager);
+  const userId = getUserId();
+  const canManage = manager || userId === "default";
   const [skills, setSkills] = useState<PoolSkillSpec[]>([]);
   const [broadcastTenantIds, setBroadcastTenantIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -453,15 +456,15 @@ function SkillPoolPage() {
       if (handleScanError(error, t)) return;
       const detail = parseErrorDetail(error);
       if (detail?.suggested_name) {
-        const renameMap = await showConflictRenameModal([
+        const renameResult = await showConflictRenameModal([
           {
             key: skillName,
             label: skillName,
             suggested_name: detail.suggested_name,
           },
         ]);
-        if (renameMap) {
-          const newName = Object.values(renameMap)[0];
+        if (renameResult?.renameMap) {
+          const newName = Object.values(renameResult.renameMap)[0];
           if (newName) {
             form.setFieldsValue({ name: newName });
             await handleSavePoolSkill();
@@ -534,8 +537,8 @@ function SkillPoolPage() {
               suggested_name: c.suggested_name || "",
             })),
           );
-          if (!resolveResult) break;
-          renameMap = { ...renameMap, ...resolveResult };
+          if (!resolveResult?.renameMap) break;
+          renameMap = { ...renameMap, ...resolveResult.renameMap };
           overwrite = false;
           continue;
         }
@@ -594,15 +597,15 @@ function SkillPoolPage() {
       const detail = parseErrorDetail(error);
       if (detail?.suggested_name) {
         const skillName = detail?.skill_name || "";
-        const renameMap = await showConflictRenameModal([
+        const renameResult2 = await showConflictRenameModal([
           {
             key: skillName,
             label: skillName,
             suggested_name: String(detail.suggested_name),
           },
         ]);
-        if (renameMap) {
-          const newName = Object.values(renameMap)[0];
+        if (renameResult2?.renameMap) {
+          const newName = Object.values(renameResult2.renameMap)[0];
           if (newName) {
             await handleConfirmImport(url, newName);
           }
@@ -709,7 +712,7 @@ function SkillPoolPage() {
                     type="default"
                     className={styles.primaryTransferButton}
                     icon={<SendOutlined />}
-                    disabled={!manager}
+                    disabled={!canManage}
                     onClick={handleBatchBroadcast}
                   >
                     {t("skillPool.broadcast")}
@@ -740,7 +743,7 @@ function SkillPoolPage() {
                       type="default"
                       className={styles.primaryTransferButton}
                       icon={<SendOutlined />}
-                      disabled={!manager}
+                      disabled={!canManage}
                       onClick={() => openBroadcast()}
                     >
                       {t("skillPool.broadcast")}
@@ -872,7 +875,7 @@ function SkillPoolPage() {
                   <div className={styles.cardFooter}>
                     <Button
                       className={styles.actionButton}
-                      disabled={!manager}
+                      disabled={!canManage}
                       onClick={(e) => {
                         e.stopPropagation();
                         openBroadcast(skill);

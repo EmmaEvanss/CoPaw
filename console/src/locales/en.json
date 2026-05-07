@@ -403,7 +403,10 @@
     "statusConflict": "Conflict",
     "renameEntry": "New name for \"{{name}}\":",
     "builtin": "Built-in",
-    "custom": "Custom"
+    "custom": "Custom",
+    "resolveModeRename": "Rename to new name",
+    "resolveModeOverwrite": "Overwrite existing skills",
+    "overwriteWarning": "Will overwrite {{count}} existing skill(s). This action cannot be undone."
   },
   "mcp": {
     "title": "MCP Clients",

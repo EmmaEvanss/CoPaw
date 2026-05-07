@@ -8,7 +8,8 @@ export default function MarketPage() {
   const bbkId = useIframeStore((state) => state.bbk) || DEFAULT_BBK_ID;
   const userId = getUserId();
   const userName = useIframeStore((state) => state.clawName) || "Unknown";
-  const isManager = useIframeStore((state) => state.manager);
+  const manager = useIframeStore((state) => state.manager);
+  const canManage = manager || userId === "default";
 
   return (
     <MarketSkills
@@ -16,7 +17,7 @@ export default function MarketPage() {
       bbkId={bbkId}
       userId={userId}
       userName={userName}
-      isManager={isManager}
+      isManager={canManage}
     />
   );
 }

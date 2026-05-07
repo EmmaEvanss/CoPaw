@@ -15,9 +15,10 @@ const { Title, Text } = Typography;
 export default function MySkillsPage() {
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const bbkId = useIframeStore((state) => state.bbk) || "100";
-  const isManager = useIframeStore((state) => state.manager) || false;
+  const manager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
   const userName = useIframeStore((state) => state.clawName) || userId;
+  const isManager = manager || userId === "default";
   const { createdSkills, receivedSkills, loading, refresh } = useMySkills(sourceId, userId);
   const [searchText, setSearchText] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -48,7 +49,8 @@ export default function MySkillsPage() {
   } | null>(null);
 
   // Conflict rename modal for upload
-  const { showConflictRenameModal, conflictRenameModal } = useConflictRenameModal();
+  // 冲突处理：显示覆盖选项（我的技能支持覆盖现有技能）
+  const { showConflictRenameModal, conflictRenameModal } = useConflictRenameModal({ showOverwriteOption: true });
 
   // Debounce search
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -57,6 +59,17 @@ export default function MySkillsPage() {
     clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => setDebouncedQuery(value), 200);
   };
+
+  // 同步 selectedSkill 与技能列表的状态（启用/禁用状态实时更新）
+  useEffect(() => {
+    if (selectedSkill) {
+      const allSkills = [...createdSkills, ...receivedSkills];
+      const updated = allSkills.find(s => s.skill_name === selectedSkill.skill_name);
+      if (updated && updated.enabled !== selectedSkill.enabled) {
+        setSelectedSkill(updated);
+      }
+    }
+  }, [createdSkills, receivedSkills, selectedSkill]);
 
   useEffect(() => {
     refresh();
@@ -101,9 +114,15 @@ export default function MySkillsPage() {
             // 用户取消
             break;
           }
-          // 重命名
-          renameMap = { ...renameMap, ...resolveResult };
-          overwrite = false;
+          if (resolveResult.mode === "overwrite") {
+            // 用户选择覆盖
+            overwrite = true;
+            renameMap = undefined;
+          } else {
+            // 用户选择重命名
+            renameMap = { ...renameMap, ...resolveResult.renameMap };
+            overwrite = false;
+          }
           continue;  // 重新上传
         }
 

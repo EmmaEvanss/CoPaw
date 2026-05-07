@@ -166,7 +166,7 @@ class MonitorSyncClient:
         """
         client = await self._get_client()
         logger.debug("Syncing job to monitor: data=%s", sync_data)
-        response = await client.post("/sync/job", json=sync_data)
+        response = await client.post("/monitor/sync/job", json=sync_data)
 
         if response.status_code == 200:
             logger.debug("Synced job to monitor: id=%s", sync_data.get("id"))
@@ -199,7 +199,7 @@ class MonitorSyncClient:
             job_id: Job ID to delete
         """
         client = await self._get_client()
-        response = await client.delete(f"/sync/job/{job_id}")
+        response = await client.delete(f"/monitor/sync/job/{job_id}")
 
         if response.status_code == 200:
             logger.debug("Deleted job from monitor: id=%s", job_id)
@@ -284,7 +284,7 @@ class MonitorSyncClient:
             exec_data: Execution sync request body
         """
         client = await self._get_client()
-        response = await client.post("/sync/execution", json=exec_data)
+        response = await client.post("/monitor/sync/execution", json=exec_data)
 
         if response.status_code == 200:
             logger.debug(

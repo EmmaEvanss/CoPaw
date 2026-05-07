@@ -229,6 +229,7 @@ class QueryService:
 
     async def get_executions_for_export(
         self,
+        job_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
         status: Optional[str] = None,
         start_time: Optional[datetime] = None,
@@ -238,6 +239,7 @@ class QueryService:
         """Get executions for export without pagination.
 
         Args:
+            job_id: Job ID filter
             tenant_id: Tenant ID filter
             status: Status filter
             start_time: Start time filter
@@ -252,6 +254,10 @@ class QueryService:
         # Build WHERE clause
         conditions: List[str] = []
         sql_params: List = []
+
+        if job_id:
+            conditions.append("job_id = %s")
+            sql_params.append(job_id)
 
         if tenant_id:
             conditions.append("tenant_id = %s")
@@ -288,6 +294,7 @@ class QueryService:
         tenant_id: Optional[str] = None,
         bbk_id: Optional[str] = None,
         source_id: Optional[str] = None,
+        enabled: Optional[bool] = None,
         status: Optional[str] = None,
         limit: int = 10000,
     ) -> List[CronJobModel]:
@@ -297,6 +304,7 @@ class QueryService:
             tenant_id: Tenant ID filter
             bbk_id: BBK ID filter (分行号)
             source_id: Source ID filter (来源标识)
+            enabled: Enabled filter (是否启用)
             status: Status filter
             limit: Max records to return
 
@@ -320,6 +328,10 @@ class QueryService:
         if source_id:
             conditions.append("source_id = %s")
             sql_params.append(source_id)
+
+        if enabled is not None:
+            conditions.append("enabled = %s")
+            sql_params.append(enabled)
 
         if status:
             conditions.append("status = %s")

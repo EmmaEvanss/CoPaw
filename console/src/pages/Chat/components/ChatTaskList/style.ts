@@ -24,8 +24,8 @@ export default createGlobalStyle`
   }
 
   &-toggle {
-    width: 16px;
-    height: 16px;
+    width: 10px;
+    height: 10px;
     display: flex;
     align-items: center;
     justify-content: center;

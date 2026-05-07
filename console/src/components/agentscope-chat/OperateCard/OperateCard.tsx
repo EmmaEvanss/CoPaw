@@ -76,11 +76,6 @@ function OperateCard(props: IOperateCardProps) {
               {props.header.description}
             </div>
           )}
-          {props.header.extra && (
-            <div className={`${prefixCls}-header-extra`}>
-              {props.header.extra}
-            </div>
-          )}
           {props.body && (
             <IconButton
               size="small"
@@ -88,6 +83,11 @@ function OperateCard(props: IOperateCardProps) {
               className={`${prefixCls}-header-arrow`}
               icon={open ? <SparkUpLine /> : <SparkDownLine />}
             />
+          )}
+          {props.header.extra && (
+            <div className={`${prefixCls}-header-extra`}>
+              {props.header.extra}
+            </div>
           )}
         </div>
         {props.body && open && (

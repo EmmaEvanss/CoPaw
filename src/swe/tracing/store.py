@@ -3,6 +3,7 @@
 
 Provides database storage operations for traces and spans.
 """
+
 import json
 import logging
 from datetime import datetime, timedelta
@@ -124,8 +125,8 @@ class TraceStore:
                 trace_id, source_id, user_id, session_id, channel, start_time,
                 end_time, duration_ms, model_name, total_input_tokens,
                 total_output_tokens, total_tokens, tools_used, skills_used,
-                status, error, user_message
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                status, error, user_message, user_name, bbk_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             trace.trace_id,
@@ -142,11 +143,15 @@ class TraceStore:
             trace.total_input_tokens + trace.total_output_tokens,
             json.dumps(trace.tools_used),
             json.dumps(trace.skills_used),
-            trace.status.value
-            if isinstance(trace.status, TraceStatus)
-            else trace.status,
+            (
+                trace.status.value
+                if isinstance(trace.status, TraceStatus)
+                else trace.status
+            ),
             trace.error,
             trace.user_message,
+            trace.user_name,
+            trace.bbk_id,
         )
         await self.db.execute(query, params)
 
@@ -182,9 +187,11 @@ class TraceStore:
             trace.total_input_tokens + trace.total_output_tokens,
             json.dumps(trace.tools_used),
             json.dumps(trace.skills_used),
-            trace.status.value
-            if isinstance(trace.status, TraceStatus)
-            else trace.status,
+            (
+                trace.status.value
+                if isinstance(trace.status, TraceStatus)
+                else trace.status
+            ),
             trace.error,
             trace.trace_id,
         )
@@ -236,17 +243,19 @@ class TraceStore:
                 span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                tool_input, tool_output, error, user_name, bbk_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             span.span_id,
             span.trace_id,
             span.source_id,
             span.name,
-            span.event_type.value
-            if isinstance(span.event_type, EventType)
-            else span.event_type,
+            (
+                span.event_type.value
+                if isinstance(span.event_type, EventType)
+                else span.event_type
+            ),
             span.start_time,
             span.end_time,
             span.duration_ms,
@@ -262,6 +271,8 @@ class TraceStore:
             json.dumps(span.tool_input) if span.tool_input else None,
             span.tool_output,
             span.error,
+            span.user_name,
+            span.bbk_id,
         )
         await self.db.execute(query, params)
 
@@ -292,9 +303,11 @@ class TraceStore:
             span.output_tokens,
             span.tool_output,
             span.error,
-            span.event_type.value
-            if hasattr(span.event_type, "value")
-            else span.event_type,
+            (
+                span.event_type.value
+                if hasattr(span.event_type, "value")
+                else span.event_type
+            ),
             span.span_id,
         )
         await self.db.execute(query, params)
@@ -334,8 +347,8 @@ class TraceStore:
                 span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                tool_input, tool_output, error, user_name, bbk_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params_list = []
         for span in spans:
@@ -345,9 +358,11 @@ class TraceStore:
                     span.trace_id,
                     span.source_id,
                     span.name,
-                    span.event_type.value
-                    if isinstance(span.event_type, EventType)
-                    else span.event_type,
+                    (
+                        span.event_type.value
+                        if isinstance(span.event_type, EventType)
+                        else span.event_type
+                    ),
                     span.start_time,
                     span.end_time,
                     span.duration_ms,
@@ -363,6 +378,8 @@ class TraceStore:
                     json.dumps(span.tool_input) if span.tool_input else None,
                     span.tool_output,
                     span.error,
+                    span.user_name,
+                    span.bbk_id,
                 ),
             )
         await self.db.execute_many(query, params_list)
@@ -390,12 +407,12 @@ class TraceStore:
             total_tokens=token_row["total_tokens"] or 0 if token_row else 0,
             input_tokens=token_row["input_tokens"] or 0 if token_row else 0,
             output_tokens=token_row["output_tokens"] or 0 if token_row else 0,
-            total_sessions=token_row["total_sessions"] or 0
-            if token_row
-            else 0,
-            total_conversations=token_row["total_traces"] or 0
-            if token_row
-            else 0,
+            total_sessions=(
+                token_row["total_sessions"] or 0 if token_row else 0
+            ),
+            total_conversations=(
+                token_row["total_traces"] or 0 if token_row else 0
+            ),
             avg_duration_ms=(
                 int(token_row["avg_duration"] or 0)
                 if token_row and token_row["avg_duration"]
@@ -766,9 +783,9 @@ class TraceStore:
 
         return [
             {
-                "date": row["date"].strftime("%Y-%m-%d")
-                if row["date"]
-                else "",
+                "date": (
+                    row["date"].strftime("%Y-%m-%d") if row["date"] else ""
+                ),
                 "calls": row["calls"] or 0,
                 "tokens": row["tokens"] or 0,
                 "users": row["users"] or 0,
@@ -1003,15 +1020,15 @@ class TraceStore:
             total_tokens=stats_row["total_tokens"] or 0 if stats_row else 0,
             input_tokens=stats_row["input_tokens"] or 0 if stats_row else 0,
             output_tokens=stats_row["output_tokens"] or 0 if stats_row else 0,
-            total_sessions=stats_row["total_sessions"] or 0
-            if stats_row
-            else 0,
-            total_conversations=stats_row["total_conversations"] or 0
-            if stats_row
-            else 0,
-            avg_duration_ms=int(stats_row["avg_duration"] or 0)
-            if stats_row
-            else 0,
+            total_sessions=(
+                stats_row["total_sessions"] or 0 if stats_row else 0
+            ),
+            total_conversations=(
+                stats_row["total_conversations"] or 0 if stats_row else 0
+            ),
+            avg_duration_ms=(
+                int(stats_row["avg_duration"] or 0) if stats_row else 0
+            ),
             tools_used=tools_used,
             skills_used=skills_used,
         )
@@ -1303,9 +1320,9 @@ class TraceStore:
         spans = sorted(spans, key=lambda s: s.start_time)
 
         timeline: list[TimelineEvent] = []
-        skill_stack: list[
-            TimelineEvent
-        ] = []  # Track active skills for nesting
+        skill_stack: list[TimelineEvent] = (
+            []
+        )  # Track active skills for nesting
 
         for span in spans:
             if span.event_type == EventType.SKILL_INVOCATION:
@@ -1597,9 +1614,11 @@ class TraceStore:
             input_tokens=stats_row["input_tokens"] or 0,
             output_tokens=stats_row["output_tokens"] or 0,
             total_traces=stats_row["total_traces"] or 0,
-            avg_duration_ms=int(stats_row["avg_duration"] or 0)
-            if stats_row and stats_row["avg_duration"]
-            else 0,
+            avg_duration_ms=(
+                int(stats_row["avg_duration"] or 0)
+                if stats_row and stats_row["avg_duration"]
+                else 0
+            ),
             tools_used=tools_used,
             skills_used=skills_used,
             mcp_tools_used=mcp_tools_used,
@@ -2422,17 +2441,21 @@ class TraceStore:
             model_name=row["model_name"],
             total_input_tokens=row["total_input_tokens"] or 0,
             total_output_tokens=row["total_output_tokens"] or 0,
-            tools_used=json.loads(row["tools_used"])
-            if row["tools_used"]
-            else [],
-            skills_used=json.loads(row["skills_used"])
-            if row["skills_used"]
-            else [],
-            status=TraceStatus(row["status"])
-            if row["status"]
-            else TraceStatus.RUNNING,
+            tools_used=(
+                json.loads(row["tools_used"]) if row["tools_used"] else []
+            ),
+            skills_used=(
+                json.loads(row["skills_used"]) if row["skills_used"] else []
+            ),
+            status=(
+                TraceStatus(row["status"])
+                if row["status"]
+                else TraceStatus.RUNNING
+            ),
             error=row["error"],
             user_message=row.get("user_message"),
+            user_name=row.get("user_name"),
+            bbk_id=row.get("bbk_id"),
         )
 
     def _row_to_span(self, row: dict) -> Span:
@@ -2455,9 +2478,11 @@ class TraceStore:
             tool_name=row["tool_name"],
             skill_name=row["skill_name"],
             mcp_server=row.get("mcp_server"),
-            tool_input=json.loads(row["tool_input"])
-            if row["tool_input"]
-            else None,
+            tool_input=(
+                json.loads(row["tool_input"]) if row["tool_input"] else None
+            ),
             tool_output=row["tool_output"],
             error=row["error"],
+            user_name=row.get("user_name"),
+            bbk_id=row.get("bbk_id"),
         )

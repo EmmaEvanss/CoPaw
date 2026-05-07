@@ -81,6 +81,8 @@ export interface UserStats {
 
 export interface UserListItem {
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   total_sessions: number;
   total_conversations: number;
   total_tokens: number;
@@ -90,6 +92,8 @@ export interface UserListItem {
 export interface TraceListItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -141,6 +145,8 @@ export interface TraceDetail {
 export interface Trace {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -173,6 +179,8 @@ export interface Span {
   tool_input: Record<string, unknown> | null;
   tool_output: string | null;
   error: string | null;
+  user_name?: string;
+  bbk_id?: string;
 }
 
 export interface ToolCall {
@@ -242,6 +250,8 @@ export interface TraceDetailWithTimeline {
 export interface UserMessageItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   user_message: string | null;

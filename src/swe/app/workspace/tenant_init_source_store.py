@@ -4,6 +4,7 @@
 Records which default_{source} template directory was used to initialize
 each tenant, enabling source-based template isolation.
 """
+
 import logging
 from typing import Any, Optional
 
@@ -44,6 +45,8 @@ class TenantInitSourceStore:
         tenant_id: str,
         source_id: str,
         init_source: str,
+        tenant_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Get existing or create a new mapping record.
 
@@ -56,6 +59,8 @@ class TenantInitSourceStore:
             tenant_id: The tenant identifier.
             source_id: The source identifier from X-Source-Id header.
             init_source: The template directory name used for initialization.
+            tenant_name: The tenant/user name (optional).
+            bbk_id: The BBK identifier (optional).
 
         Returns:
             The init_source value for this tenant-source combination.
@@ -78,17 +83,18 @@ class TenantInitSourceStore:
 
             insert_query = (
                 "INSERT INTO swe_tenant_init_source "
-                "(tenant_id, source_id, init_source) "
-                "VALUES (%s, %s, %s)"
+                "(tenant_id, source_id, tenant_name, bbk_id, init_source) "
+                "VALUES (%s, %s, %s, %s, %s)"
             )
             try:
                 await self.db.execute(
                     insert_query,
-                    (tenant_id, source_id, init_source),
+                    (tenant_id, source_id, tenant_name, bbk_id, init_source),
                 )
                 logger.info(
                     f"Created init_source mapping: tenant={tenant_id}, "
-                    f"source={source_id}, init_source={init_source}",
+                    f"source={source_id}, tenant_name={tenant_name}, "
+                    f"bbk_id={bbk_id}, init_source={init_source}",
                 )
             except Exception as e:
                 logger.warning(
@@ -105,12 +111,12 @@ class TenantInitSourceStore:
             tenant_id: The tenant identifier.
 
         Returns:
-            List of dicts with source_id, init_source, created_at.
+            List of dicts with source_id, tenant_name, bbk_id, init_source, created_at.
         """
         if not self._use_db:
             return []
         query = (
-            "SELECT source_id, init_source, created_at "
+            "SELECT source_id, tenant_name, bbk_id, init_source, created_at "
             "FROM swe_tenant_init_source WHERE tenant_id = %s "
             "ORDER BY created_at"
         )
@@ -130,12 +136,12 @@ class TenantInitSourceStore:
             source_id: The source identifier to filter by.
 
         Returns:
-            List of dicts with tenant_id, source_id, init_source, created_at.
+            List of dicts with tenant_id, source_id, tenant_name, bbk_id, init_source, created_at.
         """
         if not self._use_db:
             return []
         query = (
-            "SELECT tenant_id, source_id, init_source, created_at "
+            "SELECT tenant_id, source_id, tenant_name, bbk_id, init_source, created_at "
             "FROM swe_tenant_init_source WHERE source_id = %s "
             "ORDER BY created_at"
         )
@@ -174,7 +180,7 @@ class TenantInitSourceStore:
 
             offset = (page - 1) * page_size
             query = (
-                "SELECT tenant_id, source_id, init_source, created_at "
+                "SELECT tenant_id, source_id, tenant_name, bbk_id, init_source, created_at "
                 "FROM swe_tenant_init_source "
                 "ORDER BY created_at DESC LIMIT %s OFFSET %s"
             )

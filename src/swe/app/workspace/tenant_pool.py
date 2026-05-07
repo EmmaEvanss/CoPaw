@@ -7,6 +7,7 @@ Ensures thread-safe access and prevents duplicate concurrent bootstrap.
 Note: This pool tracks tenant bootstrap/registry state only. Workspace runtime
 creation and startup is handled by MultiAgentManager.get_agent() on demand.
 """
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -119,6 +120,8 @@ class TenantWorkspacePool:
         self,
         tenant_id: str,
         source_id: str | None = None,
+        tenant_name: str | None = None,
+        bbk_id: str | None = None,
     ) -> None:
         """Ensure tenant directory is bootstrapped (minimal).
 
@@ -128,6 +131,8 @@ class TenantWorkspacePool:
             tenant_id: The tenant identifier.
             source_id: Optional source identifier from X-Source-Id header.
                 Used to select the appropriate default_{source} template.
+            tenant_name: Optional tenant/user name for database record.
+            bbk_id: Optional BBK identifier for database record.
 
         Raises:
             RuntimeError: If bootstrap fails.
@@ -203,6 +208,8 @@ class TenantWorkspacePool:
                     tenant_id,
                     source_id,
                     init_source,
+                    tenant_name=tenant_name,
+                    bbk_id=bbk_id,
                 )
 
                 # Register in pool (no workspace runtime created)
@@ -232,6 +239,8 @@ class TenantWorkspacePool:
         tenant_id: str,
         source_id: str | None,
         init_source: str,
+        tenant_name: str | None = None,
+        bbk_id: str | None = None,
     ) -> None:
         """Record tenant init source mapping to database.
 
@@ -239,6 +248,8 @@ class TenantWorkspacePool:
             tenant_id: The tenant identifier.
             source_id: The source identifier (from X-Source-Id).
             init_source: The template directory name used for initialization.
+            tenant_name: The tenant/user name (optional).
+            bbk_id: The BBK identifier (optional).
         """
         try:
             from .tenant_init_source_store import get_tenant_init_source_store
@@ -250,6 +261,8 @@ class TenantWorkspacePool:
                 tenant_id=tenant_id,
                 source_id=source_id or "default",
                 init_source=init_source,
+                tenant_name=tenant_name,
+                bbk_id=bbk_id,
             )
         except Exception as e:
             # Non-fatal: log warning but don't fail bootstrap

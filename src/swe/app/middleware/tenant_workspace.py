@@ -8,6 +8,7 @@ and binds workspace context for the duration of the request.
 Middleware ordering: Must come after TenantIdentityMiddleware and before
 AgentContextMiddleware.
 """
+
 import logging
 from pathlib import Path
 from typing import Callable, Awaitable, Optional
@@ -200,9 +201,17 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         try:
             # Get source_id from request state (set by TenantIdentityMiddleware)
             source_id = getattr(request.state, "source_id", None)
+            # Get user_name and bbk_id from request state for database record
+            user_name = getattr(request.state, "user_name", None)
+            bbk_id = getattr(request.state, "bbk_id", None)
 
             # Ensure tenant is bootstrapped (minimal - directories only)
-            await pool.ensure_bootstrap(tenant_id, source_id=source_id)
+            await pool.ensure_bootstrap(
+                tenant_id,
+                source_id=source_id,
+                tenant_name=user_name,
+                bbk_id=bbk_id,
+            )
 
             # Create lightweight context without starting workspace runtime
             # The full Workspace runtime is lazy-loaded via MultiAgentManager.get_agent()

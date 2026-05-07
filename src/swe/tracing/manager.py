@@ -3,6 +3,7 @@
 
 Provides the TraceManager for event collection, batching, and storage.
 """
+
 import asyncio
 import logging
 import uuid
@@ -35,9 +36,13 @@ class TraceContext:
         session_id: str,
         channel: str,
         source_id: str,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ):
         self.trace_id = trace_id
         self.user_id = user_id
+        self.user_name = user_name
+        self.bbk_id = bbk_id
         self.session_id = session_id
         self.channel = channel
         self.source_id = source_id
@@ -251,6 +256,8 @@ class TraceManager:
         source_id: str,
         trace_id: Optional[str] = None,
         user_message: Optional[str] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Start a new trace.
 
@@ -261,6 +268,8 @@ class TraceManager:
             source_id: Source identifier for data isolation
             trace_id: Optional trace ID (generated if not provided)
             user_message: Optional user's input message
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Trace ID
@@ -281,6 +290,8 @@ class TraceManager:
             trace_id=trace_id,
             source_id=source_id,
             user_id=user_id,
+            user_name=user_name,
+            bbk_id=bbk_id,
             session_id=session_id,
             channel=channel,
             start_time=datetime.now(),
@@ -292,7 +303,15 @@ class TraceManager:
         self._active_traces[trace_id] = trace
 
         # Create context
-        ctx = TraceContext(trace_id, user_id, session_id, channel, source_id)
+        ctx = TraceContext(
+            trace_id,
+            user_id,
+            session_id,
+            channel,
+            source_id,
+            user_name=user_name,
+            bbk_id=bbk_id,
+        )
         ctx.trace = trace
         set_current_trace(ctx)
 
@@ -444,6 +463,8 @@ class TraceManager:
         tool_input: Optional[dict[str, Any]] = None,
         start_time: Optional[datetime] = None,
         mcp_server: Optional[str] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit a new span event.
 
@@ -462,6 +483,8 @@ class TraceManager:
             tool_input: Optional tool input (will be sanitized)
             start_time: Optional start time
             mcp_server: Optional MCP server name if this is an MCP tool
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -486,6 +509,8 @@ class TraceManager:
             event_type=event_type,
             start_time=start_time or datetime.now(),
             user_id=user_id,
+            user_name=user_name,
+            bbk_id=bbk_id,
             session_id=session_id,
             channel=channel,
             model_name=model_name,
@@ -629,6 +654,8 @@ class TraceManager:
         user_id: str = "",
         session_id: str = "",
         channel: str = "",
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit LLM input event.
 
@@ -640,6 +667,8 @@ class TraceManager:
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -654,6 +683,8 @@ class TraceManager:
             channel=channel,
             model_name=model_name,
             input_tokens=input_tokens,
+            user_name=user_name,
+            bbk_id=bbk_id,
         )
 
     async def emit_llm_output(
@@ -688,6 +719,8 @@ class TraceManager:
         session_id: str = "",
         channel: str = "",
         mcp_server: Optional[str] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit tool call start event with multi-skill attribution.
 
@@ -704,6 +737,8 @@ class TraceManager:
             session_id: Session identifier
             channel: Channel identifier
             mcp_server: Optional MCP server name if this is an MCP tool
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -751,6 +786,8 @@ class TraceManager:
             tool_input=tool_input,
             mcp_server=mcp_server,
             skill_name=primary_skill,
+            user_name=user_name,
+            bbk_id=bbk_id,
         )
 
     async def emit_tool_call_end(
@@ -802,6 +839,8 @@ class TraceManager:
         session_id: str = "",
         channel: str = "",
         skill_input: Optional[dict[str, Any]] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit skill invocation event.
 
@@ -813,6 +852,8 @@ class TraceManager:
             session_id: Session identifier
             channel: Channel identifier
             skill_input: Optional skill input parameters
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -827,6 +868,8 @@ class TraceManager:
             channel=channel,
             skill_name=skill_name,
             tool_input=skill_input,
+            user_name=user_name,
+            bbk_id=bbk_id,
         )
 
     async def end_skill_invocation(
@@ -884,9 +927,11 @@ class TraceManager:
                             logger.info(
                                 "[SKILL SPAN] skill='%s', type=%s",
                                 span.skill_name,
-                                span.event_type.value
-                                if hasattr(span.event_type, "value")
-                                else span.event_type,
+                                (
+                                    span.event_type.value
+                                    if hasattr(span.event_type, "value")
+                                    else span.event_type
+                                ),
                             )
                 else:
                     await self.store.batch_create_spans(spans)

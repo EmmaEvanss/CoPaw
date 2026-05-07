@@ -1049,6 +1049,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     self._scheduler.pause_job(job_id)
                 self._remove_prefetch_job(job_id)
 
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.sync_job(job)
+
             return True
 
     async def resume_job(self, job_id: str) -> bool:
@@ -1077,6 +1081,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     aps_job = self._scheduler.get_job(job_id)
                     next_run_at = aps_job.next_run_time if aps_job else None
                     self._schedule_prefetch_job(job, next_run_at)
+
+            # Sync to Monitor (async, non-blocking)
+            if self._monitor_sync_client is not None:
+                await self._monitor_sync_client.sync_job(job)
 
             return True
 
@@ -1129,7 +1137,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self._states[job_id] = st
         with bind_llm_workload(LLM_WORKLOAD_CRON):
             task = asyncio.create_task(
-                self._execute_once(job),
+                self._execute_once(job, is_manual=True),
                 name=f"cron-run-{job_id}",
             )
         task.add_done_callback(lambda t: self._task_done_cb(t, job))
@@ -2308,6 +2316,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         duration_ms: int,
         error_message: str,
         output_preview: str,
+        is_manual: bool = False,
     ) -> None:
         """Sync execution record to Monitor service (non-blocking)."""
         if self._monitor_sync_client is None:
@@ -2331,12 +2340,17 @@ class CronManager:  # pylint: disable=too-many-public-methods
             end_time=end_time,
             duration_ms=duration_ms,
             error_message=error_message,
+            is_manual=is_manual,
             trace_id=trace_id,
             session_id=session_id,
             output_preview=output_preview,
         )
 
-    async def _execute_once(self, job: CronJobSpec) -> None:
+    async def _execute_once(
+        self,
+        job: CronJobSpec,
+        is_manual: bool = False,
+    ) -> None:
         job = await self._ensure_persisted_task_binding(job)
         rt = self._rt.get(job.id)
         if not rt:
@@ -2428,6 +2442,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     duration_ms=duration_ms,
                     error_message=error_message,
                     output_preview=output_preview,
+                    is_manual=is_manual,
                 )
 
     # ----- Legacy API compatibility -----

@@ -24,7 +24,7 @@ DEFAULT_ENV = "prd"
 
 def _get_package_dir() -> Path:
     """Get the monitor package directory."""
-    return Path(__file__).resolve().parent.parent
+    return Path(__file__).resolve().parent
 
 
 def _load_env_json(env: str) -> dict[str, str]:

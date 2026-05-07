@@ -11,12 +11,11 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
 
-from ..constant import WORKING_DIR
 from .models import CronJobSpec
 
 logger = logging.getLogger(__name__)
@@ -129,31 +128,31 @@ class MonitorSyncClient:
         request = spec_dict.get("request", {})
 
         sync_data = {
-            "id": spec_dict.get("id", ""),
-            "name": spec_dict.get("name", ""),
-            "tenant_id": spec_dict.get("tenant_id", ""),
-            "bbk_id": spec_dict.get("bbk_id", ""),
-            "source_id": spec_dict.get("source_id", ""),
+            "id": spec_dict.get("id") or "",
+            "name": spec_dict.get("name") or "",
+            "tenant_id": spec_dict.get("tenant_id") or "",
+            "bbk_id": spec_dict.get("bbk_id") or "",
+            "source_id": spec_dict.get("source_id") or "",
             "enabled": spec_dict.get("enabled", True),
-            "task_type": spec_dict.get("task_type", "agent"),
-            "cron_expr": schedule.get("cron", ""),
-            "timezone": schedule.get("timezone", "UTC"),
-            "channel": dispatch.get("channel", ""),
-            "target_user_id": target.get("user_id", ""),
-            "target_session_id": target.get("session_id", ""),
+            "task_type": spec_dict.get("task_type") or "agent",
+            "cron_expr": schedule.get("cron") or "",
+            "timezone": schedule.get("timezone") or "UTC",
+            "channel": dispatch.get("channel") or "",
+            "target_user_id": target.get("user_id") or "",
+            "target_session_id": target.get("session_id") or "",
             "timeout_seconds": runtime.get("timeout_seconds", 7200),
             "max_concurrency": runtime.get("max_concurrency", 1),
             "misfire_grace_seconds": runtime.get("misfire_grace_seconds", 300),
-            "text_content": spec_dict.get("text", ""),
+            "text_content": spec_dict.get("text") or "",
             "request_input": json.dumps(request, ensure_ascii=False)
             if request
             else "",
-            "creator_user_id": meta.get("creator_user_id", ""),
-            "task_chat_id": meta.get("task_chat_id", ""),
-            "task_session_id": meta.get("task_session_id", ""),
+            "creator_user_id": meta.get("creator_user_id") or "",
+            "task_chat_id": meta.get("task_chat_id") or "",
+            "task_session_id": meta.get("task_session_id") or "",
             "meta": json.dumps(meta, ensure_ascii=False) if meta else "",
             "status": "paused" if meta.get("pause_reason") else "active",
-            "pause_reason": meta.get("pause_reason", ""),
+            "pause_reason": meta.get("pause_reason") or "",
         }
 
         # Fire and forget
@@ -166,15 +165,17 @@ class MonitorSyncClient:
             sync_data: Sync request body
         """
         client = await self._get_client()
-        response = await client.post("/sync/job", json=sync_data)
+        logger.debug("Syncing job to monitor: data=%s", sync_data)
+        response = await client.post("/monitor/sync/job", json=sync_data)
 
         if response.status_code == 200:
             logger.debug("Synced job to monitor: id=%s", sync_data.get("id"))
         else:
             logger.warning(
-                "Failed to sync job to monitor: id=%s status=%d",
+                "Failed to sync job to monitor: id=%s status=%d response=%s",
                 sync_data.get("id"),
                 response.status_code,
+                response.text,
             )
 
     async def delete_job(self, job_id: str) -> None:
@@ -198,7 +199,7 @@ class MonitorSyncClient:
             job_id: Job ID to delete
         """
         client = await self._get_client()
-        response = await client.delete(f"/sync/job/{job_id}")
+        response = await client.delete(f"/monitor/sync/job/{job_id}")
 
         if response.status_code == 200:
             logger.debug("Deleted job from monitor: id=%s", job_id)
@@ -283,7 +284,7 @@ class MonitorSyncClient:
             exec_data: Execution sync request body
         """
         client = await self._get_client()
-        response = await client.post("/sync/execution", json=exec_data)
+        response = await client.post("/monitor/sync/execution", json=exec_data)
 
         if response.status_code == 200:
             logger.debug(

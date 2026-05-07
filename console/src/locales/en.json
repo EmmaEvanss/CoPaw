@@ -55,6 +55,8 @@
     "analyticsMessages": "User Messages",
     "analyticsTraces": "Conversation Analytics",
     "analyticsBusinessOverview": "Business Overview",
+    "monitorCronOverview": "Cron Overview",
+    "monitor": "Monitor",
     "instance": "Instance",
     "instanceOverview": "Overview",
     "instanceInstances": "Instances",

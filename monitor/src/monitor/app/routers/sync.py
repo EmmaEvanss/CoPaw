@@ -18,7 +18,7 @@ from ..services.cron import SyncService, get_sync_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/sync", tags=["sync"])
+router = APIRouter(prefix="/monitor/sync", tags=["sync"])
 
 
 @router.post("/job", response_model=SyncJobResponse)

@@ -56,6 +56,8 @@
     "analyticsSessions": "会话分析",
     "analyticsMessages": "用户消息",
     "analyticsTraces": "对话分析",
+    "monitorCronOverview": "定时任务概览",
+    "monitor": "监控",
     "analyticsBusinessOverview": "运营看板",
     "instance": "实例管理",
     "instanceOverview": "概览",

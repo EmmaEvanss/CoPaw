@@ -38,7 +38,7 @@ class SyncService:
 
         # Check if job exists and was deleted
         existing = await db.fetch_one(
-            "SELECT id, deleted_at FROM cron_jobs WHERE id = ?",
+            "SELECT id, deleted_at FROM swe_cron_jobs WHERE id = %s",
             (request.id,),
         )
 
@@ -54,32 +54,32 @@ class SyncService:
 
             await db.execute(
                 """
-                UPDATE cron_jobs SET
-                    name = ?,
-                    tenant_id = ?,
-                    bbk_id = ?,
-                    source_id = ?,
-                    enabled = ?,
-                    task_type = ?,
-                    cron_expr = ?,
-                    timezone = ?,
-                    channel = ?,
-                    target_user_id = ?,
-                    target_session_id = ?,
-                    timeout_seconds = ?,
-                    max_concurrency = ?,
-                    misfire_grace_seconds = ?,
-                    text_content = ?,
-                    request_input = ?,
-                    creator_user_id = ?,
-                    task_chat_id = ?,
-                    task_session_id = ?,
-                    meta = ?,
-                    status = ?,
-                    pause_reason = ?,
-                    updated_at = ?,
-                    deleted_at = ?
-                WHERE id = ?
+                UPDATE swe_cron_jobs SET
+                    name = %s,
+                    tenant_id = %s,
+                    bbk_id = %s,
+                    source_id = %s,
+                    enabled = %s,
+                    task_type = %s,
+                    cron_expr = %s,
+                    timezone = %s,
+                    channel = %s,
+                    target_user_id = %s,
+                    target_session_id = %s,
+                    timeout_seconds = %s,
+                    max_concurrency = %s,
+                    misfire_grace_seconds = %s,
+                    text_content = %s,
+                    request_input = %s,
+                    creator_user_id = %s,
+                    task_chat_id = %s,
+                    task_session_id = %s,
+                    meta = %s,
+                    status = %s,
+                    pause_reason = %s,
+                    updated_at = %s,
+                    deleted_at = %s
+                WHERE id = %s
                 """,
                 (
                     request.name,
@@ -118,7 +118,7 @@ class SyncService:
             # Insert new job
             await db.execute(
                 """
-                INSERT INTO cron_jobs (
+                INSERT INTO swe_cron_jobs (
                     id, name, tenant_id, bbk_id, source_id, enabled, task_type,
                     cron_expr, timezone, channel, target_user_id, target_session_id,
                     timeout_seconds, max_concurrency, misfire_grace_seconds,
@@ -126,7 +126,7 @@ class SyncService:
                     creator_user_id, task_chat_id, task_session_id, meta,
                     status, pause_reason, created_at, updated_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -181,7 +181,7 @@ class SyncService:
 
         # Check if job exists and is not already deleted
         existing = await db.fetch_one(
-            "SELECT id, deleted_at FROM cron_jobs WHERE id = ?",
+            "SELECT id, deleted_at FROM swe_cron_jobs WHERE id = %s",
             (job_id,),
         )
 
@@ -197,12 +197,12 @@ class SyncService:
         now = datetime.utcnow()
         await db.execute(
             """
-            UPDATE cron_jobs SET
+            UPDATE swe_cron_jobs SET
                 status = 'deleted',
                 enabled = 0,
-                deleted_at = ?,
-                updated_at = ?
-            WHERE id = ?
+                deleted_at = %s,
+                updated_at = %s
+            WHERE id = %s
             """,
             (now, now, job_id),
         )
@@ -228,7 +228,7 @@ class SyncService:
 
         await db.execute(
             """
-            INSERT INTO cron_executions (
+            INSERT INTO swe_cron_executions (
                 job_id, job_name, tenant_id,
                 scheduled_time, actual_time, end_time, duration_ms,
                 status, error_message,
@@ -237,7 +237,7 @@ class SyncService:
                 input_snapshot, output_preview, meta,
                 created_at
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
             (

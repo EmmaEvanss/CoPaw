@@ -39,6 +39,10 @@ export default defineConfig(({ mode }) => {
           target: "http://127.0.0.1:8091",
           changeOrigin: true,
         },
+        "/api/monitor": {
+          target: "http://127.0.0.1:9090",
+          changeOrigin: true,
+        },
         "/api": {
           target: "http://127.0.0.1:8088",
           changeOrigin: true,

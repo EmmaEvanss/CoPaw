@@ -71,6 +71,7 @@ const Tool = React.memo(function ({
     node = (
       <ToolCall
         loading={loading}
+        msgStatus={data.status}
         defaultOpen={false}
         title={title === "undefined" ? defaultTitle : title}
         subTitle={defaultTitle}

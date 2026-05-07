@@ -264,7 +264,8 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
 
             logger.debug(
                 f"TenantIdentityMiddleware: tenant_id={tenant_id}, "
-                f"user_id={user_id}, path={request.url.path}, exempt={is_exempt}",
+                f"user_id={user_id}, bbk_id={bbk_id}, source_id={source_id}, "
+                f"path={request.url.path}, exempt={is_exempt}",
             )
 
             response = await call_next(request)

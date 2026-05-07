@@ -17,6 +17,7 @@ export interface IOperateCardProps {
     icon: React.ReactNode;
     title: React.ReactNode | string;
     description?: React.ReactNode | string;
+    extra?: React.ReactNode;
   };
   /**
    * @description 内容配置
@@ -75,7 +76,6 @@ function OperateCard(props: IOperateCardProps) {
               {props.header.description}
             </div>
           )}
-
           {props.body && (
             <IconButton
               size="small"
@@ -83,6 +83,11 @@ function OperateCard(props: IOperateCardProps) {
               className={`${prefixCls}-header-arrow`}
               icon={open ? <SparkUpLine /> : <SparkDownLine />}
             />
+          )}
+          {props.header.extra && (
+            <div className={`${prefixCls}-header-extra`}>
+              {props.header.extra}
+            </div>
           )}
         </div>
         {props.body && open && (

@@ -1,7 +1,12 @@
 import { request } from "../request";
 import { getApiUrl } from "../config";
 import { buildAuthHeaders } from "../authHeaders";
-import type { MdFileInfo, MdFileContent, DailyMemoryFile } from "../types";
+import type {
+  MdFileInfo,
+  MdFileContent,
+  DailyMemoryFile,
+  BroadcastFilesResponse,
+} from "../types";
 
 function getSelectedAgentId(): string {
   try {
@@ -144,5 +149,19 @@ export const workspaceApi = {
     request<string[]>("/agent/system-prompt-files", {
       method: "PUT",
       body: JSON.stringify(files),
+    }),
+
+  // File broadcast to tenants
+  listBroadcastTenants: () =>
+    request<{ tenant_ids: string[] }>("/workspace/broadcast/tenants"),
+
+  broadcastFiles: (payload: {
+    file_names: string[];
+    target_tenant_ids: string[];
+    overwrite: boolean;
+  }) =>
+    request<BroadcastFilesResponse>("/workspace/broadcast/files", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
 };

@@ -1,5 +1,5 @@
 import React from "react";
-import { Switch, Tooltip } from "@agentscope-ai/design";
+import { Button, Switch, Tooltip } from "@agentscope-ai/design";
 import {
   CaretDownOutlined,
   CaretRightOutlined,
@@ -18,9 +18,12 @@ interface FileItemProps {
   expandedMemory: boolean;
   dailyMemories: DailyMemoryFile[];
   enabled?: boolean;
+  selectable?: boolean;
+  broadcastSelected?: boolean;
   onFileClick: (file: MarkdownFile) => void;
   onDailyMemoryClick: (daily: DailyMemoryFile) => void;
   onToggleEnabled: (filename: string) => void;
+  onSelectToggle?: (filename: string) => void;
 }
 
 export const FileItem: React.FC<FileItemProps> = ({
@@ -29,9 +32,12 @@ export const FileItem: React.FC<FileItemProps> = ({
   expandedMemory,
   dailyMemories,
   enabled = false,
+  selectable = false,
+  broadcastSelected = false,
   onFileClick,
   onDailyMemoryClick,
   onToggleEnabled,
+  onSelectToggle,
 }) => {
   const { t } = useTranslation();
   const isSelected = selectedFile?.filename === file.filename;
@@ -73,7 +79,7 @@ export const FileItem: React.FC<FileItemProps> = ({
         onClick={() => onFileClick(file)}
         className={`${styles.fileItem} ${isSelected ? styles.selected : ""} ${
           isDragging ? styles.dragging : ""
-        }`}
+        } ${broadcastSelected ? styles.broadcastSelected : ""}`}
       >
         <div className={styles.fileItemHeader}>
           {enabled && (
@@ -111,6 +117,22 @@ export const FileItem: React.FC<FileItemProps> = ({
                   <CaretRightOutlined />
                 )}
               </span>
+            )}
+            {selectable && onSelectToggle && (
+              <Button
+                size="small"
+                className={`${styles.selectButton} ${
+                  broadcastSelected ? styles.selectButtonActive : ""
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectToggle(file.filename);
+                }}
+              >
+                {broadcastSelected
+                  ? t("workspace.selected")
+                  : t("workspace.select")}
+              </Button>
             )}
           </div>
         </div>

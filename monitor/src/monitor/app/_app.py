@@ -24,10 +24,9 @@ async def lifespan(
     # Initialize database connection if configured
     if DB_HOST:
         try:
-            from .database import init_db_connection, init_database_tables
+            from .database import init_db_connection
 
             await init_db_connection()
-            await init_database_tables()
             logger.info("Database initialized successfully")
         except Exception as e:
             logger.warning("Database initialization failed: %s", e)

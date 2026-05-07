@@ -1,9 +1,13 @@
 import { OperateCard, useProviderContext } from "@/components/agentscope-chat";
 import {
+  SparkCheckCircleFill,
   SparkCopyLine,
+  SparkErrorCircleFill,
   SparkLoadingLine,
+  SparkStopCircleLine,
   SparkToolLine,
   SparkTrueLine,
+  SparkWarningCircleFill,
 } from "@agentscope-ai/icons";
 import { CodeBlock, IconButton } from "@agentscope-ai/design";
 import { copy } from "../../Util/copy";
@@ -181,7 +185,11 @@ export interface IToolCallProps {
    * @default false
    */
   loading?: boolean;
-
+  /**
+   * @description 消息状态
+   * @descriptionEn Message status
+   */
+  msgStatus?: string;
   outputBlock?: { language?: "json" | "text" };
   inputBlock?: { language?: "json" | "text" };
 }
@@ -192,8 +200,82 @@ export default function (props: IToolCallProps) {
     subTitle,
     defaultOpen = true,
     loading = false,
+    msgStatus,
     outputSummary,
   } = props;
+
+  const badgeStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+    padding: "1px 6px",
+    fontSize: 11,
+    lineHeight: "16px",
+    borderRadius: 99,
+    whiteSpace: "nowrap",
+  };
+
+  let statusBadge: React.ReactNode = null;
+  if (!loading) {
+    switch (msgStatus) {
+      case "completed":
+        statusBadge = (
+          <span
+            style={{
+              ...badgeStyle,
+              color: "#52c41a",
+              border: "1px solid #52c41a",
+            }}
+          >
+            <SparkCheckCircleFill />
+            完成
+          </span>
+        );
+        break;
+      case "failed":
+        statusBadge = (
+          <span
+            style={{
+              ...badgeStyle,
+              color: "#ff4d4f",
+              border: "1px solid #ff4d4f",
+            }}
+          >
+            <SparkErrorCircleFill />
+            失败
+          </span>
+        );
+        break;
+      case "canceled":
+        statusBadge = (
+          <span
+            style={{
+              ...badgeStyle,
+              color: "#8c8c8c",
+              border: "1px solid #8c8c8c",
+            }}
+          >
+            <SparkStopCircleLine />
+            已取消
+          </span>
+        );
+        break;
+      case "rejected":
+        statusBadge = (
+          <span
+            style={{
+              ...badgeStyle,
+              color: "#fa8c16",
+              border: "1px solid #fa8c16",
+            }}
+          >
+            <SparkWarningCircleFill />
+            已拒绝
+          </span>
+        );
+        break;
+    }
+  }
 
   return (
     <OperateCard
@@ -201,6 +283,7 @@ export default function (props: IToolCallProps) {
         icon: loading ? <SparkLoadingLine spin /> : <SparkToolLine />,
         title: title,
         description: subTitle,
+        extra: statusBadge,
       }}
       body={{
         defaultOpen: defaultOpen,

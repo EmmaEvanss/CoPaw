@@ -29,3 +29,6 @@ export const DEFAULT_SOURCE_ID = "";
 
 /** 默认 BBK ID （非iframe模式时，X-Bbk-Id header使用，空表示不传） */
 export const DEFAULT_BBK_ID = "";
+
+/** 默认用户名（非 iframe模式时，X-Username header使用，空表示不传） */
+export const DEFAULT_USER_NAME = "";

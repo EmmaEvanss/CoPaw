@@ -26,9 +26,17 @@ async def get_cron_manager(
 
 
 def _inject_request_tenant(spec: CronJobSpec, request: Request) -> CronJobSpec:
-    """Force cron job tenant_id to follow request tenant context."""
+    """Force cron job tenant_id, bbk_id, source_id to follow request context."""
     tenant_id = getattr(request.state, "tenant_id", None)
-    return spec.model_copy(update={"tenant_id": tenant_id})
+    bbk_id = getattr(request.state, "bbk_id", None)
+    source_id = getattr(request.state, "source_id", None)
+    return spec.model_copy(
+        update={
+            "tenant_id": tenant_id,
+            "bbk_id": bbk_id,
+            "source_id": source_id,
+        },
+    )
 
 
 def _get_request_user_id(request: Request) -> str | None:

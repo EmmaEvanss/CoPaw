@@ -78,10 +78,12 @@ import RuntimeRequestCard from "./components/RuntimeRequestCard";
 import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
 import ApprovalActionCard from "./components/ApprovalActionCard";
+import TaskRunGroupCard from "./components/TaskRunGroupCard";
 import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
   ChatRuntimeResponseCardData,
+  ChatTaskRunGroupCardData,
 } from "./messageMeta";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
@@ -1194,6 +1196,9 @@ export default function ChatPage() {
         }) => <RuntimeResponseCard {...props} />,
         ApprovalAction: (props: { data: ChatApprovalActionCardData }) => (
           <ApprovalActionCard {...props} />
+        ),
+        TaskRunGroupCard: (props: { data: ChatTaskRunGroupCardData }) => (
+          <TaskRunGroupCard {...props} />
         ),
       },
       api: {

@@ -20,7 +20,12 @@ import { useTranslation } from "react-i18next";
 import styles from "../index.module.less";
 
 interface FileListPanelProps {
-  files: MarkdownFile[];
+  files: Array<
+    MarkdownFile & {
+      selectable?: boolean;
+      broadcastSelected?: boolean;
+    }
+  >;
   selectedFile: MarkdownFile | null;
   dailyMemories: DailyMemoryFile[];
   expandedMemory: boolean;
@@ -31,6 +36,7 @@ interface FileListPanelProps {
   onDailyMemoryClick: (daily: DailyMemoryFile) => void;
   onToggleEnabled: (filename: string) => void;
   onReorder: (newOrder: string[]) => void;
+  onSelectToggle?: (filename: string) => void;
 }
 
 export const FileListPanel: React.FC<FileListPanelProps> = ({
@@ -44,6 +50,7 @@ export const FileListPanel: React.FC<FileListPanelProps> = ({
   onDailyMemoryClick,
   onToggleEnabled,
   onReorder,
+  onSelectToggle,
 }) => {
   const { t } = useTranslation();
 
@@ -108,9 +115,12 @@ export const FileListPanel: React.FC<FileListPanelProps> = ({
                       expandedMemory={expandedMemory}
                       dailyMemories={dailyMemories}
                       enabled={isEnabled}
+                      selectable={file.selectable}
+                      broadcastSelected={file.broadcastSelected}
                       onFileClick={onFileClick}
                       onDailyMemoryClick={onDailyMemoryClick}
                       onToggleEnabled={onToggleEnabled}
+                      onSelectToggle={onSelectToggle}
                     />
                   );
                 })}

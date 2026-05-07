@@ -17,7 +17,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { DownloadOutlined, EyeOutlined } from "@ant-design/icons";
+import { DownloadOutlined, EyeOutlined, SearchOutlined } from "@ant-design/icons";
 import { PageHeader } from "@/components/PageHeader";
 import { monitorApi, CronJobItem, ExecutionItem } from "../../../api/modules/monitor";
 import styles from "./index.module.less";
@@ -68,7 +68,7 @@ export default function CronOverviewPage() {
   const [jobsTenantFilter, setJobsTenantFilter] = useState<string>("");
   const [jobsBbkFilter, setJobsBbkFilter] = useState<string>("");
   const [jobsSourceFilter, setJobsSourceFilter] = useState<string>("");
-  const [jobsStatusFilter, setJobsStatusFilter] = useState<string>("");
+  const [jobsEnabledFilter, setJobsEnabledFilter] = useState<string>("");
 
   // Executions state
   const [execsLoading, setExecsLoading] = useState(false);
@@ -76,6 +76,7 @@ export default function CronOverviewPage() {
   const [execsTotal, setExecsTotal] = useState(0);
   const [execsPage, setExecsPage] = useState(1);
   const [execsPageSize, setExecsPageSize] = useState(20);
+  const [execsJobIdFilter, setExecsJobIdFilter] = useState<string>("");
   const [execsTenantFilter, setExecsTenantFilter] = useState<string>("");
   const [execsStatusFilter, setExecsStatusFilter] = useState<string>("");
   const [execsTimeRange, setExecsTimeRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([
@@ -95,7 +96,7 @@ export default function CronOverviewPage() {
         tenant_id: jobsTenantFilter || undefined,
         bbk_id: jobsBbkFilter || undefined,
         source_id: jobsSourceFilter || undefined,
-        status: jobsStatusFilter || undefined,
+        enabled: jobsEnabledFilter === "" ? undefined : jobsEnabledFilter === "true",
       });
       setJobs(result.items);
       setJobsTotal(result.total);
@@ -112,6 +113,7 @@ export default function CronOverviewPage() {
     setExecsLoading(true);
     try {
       const result = await monitorApi.getExecutions(execsPage, execsPageSize, {
+        job_id: execsJobIdFilter || undefined,
         tenant_id: execsTenantFilter || undefined,
         status: execsStatusFilter || undefined,
         start_time: execsTimeRange[0]?.toISOString() || undefined,
@@ -127,14 +129,35 @@ export default function CronOverviewPage() {
     }
   };
 
-  // Initial load
+  // Handler for jobs search button - reset page and fetch
+  const handleJobsSearch = () => {
+    if (jobsPage !== 1) {
+      setJobsPage(1);
+    } else {
+      fetchJobs();
+    }
+  };
+
+  // Handler for executions search button - reset page and fetch
+  const handleExecsSearch = () => {
+    if (execsPage !== 1) {
+      setExecsPage(1);
+    } else {
+      fetchExecutions();
+    }
+  };
+
+  // Jobs query effect - fetch on mount and when page changes
   useEffect(() => {
     fetchJobs();
-  }, [jobsPage, jobsPageSize, jobsTenantFilter, jobsBbkFilter, jobsSourceFilter, jobsStatusFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobsPage, jobsPageSize]);
 
+  // Executions query effect - fetch on mount and when page changes
   useEffect(() => {
     fetchExecutions();
-  }, [execsPage, execsPageSize, execsTenantFilter, execsStatusFilter, execsTimeRange]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [execsPage, execsPageSize]);
 
   // Export jobs
   const handleExportJobs = async () => {
@@ -144,7 +167,7 @@ export default function CronOverviewPage() {
         tenant_id: jobsTenantFilter || undefined,
         bbk_id: jobsBbkFilter || undefined,
         source_id: jobsSourceFilter || undefined,
-        status: jobsStatusFilter || undefined,
+        enabled: jobsEnabledFilter === "" ? undefined : jobsEnabledFilter === "true",
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -164,6 +187,7 @@ export default function CronOverviewPage() {
     try {
       message.loading("正在导出...");
       const blob = await monitorApi.exportExecutions({
+        job_id: execsJobIdFilter || undefined,
         tenant_id: execsTenantFilter || undefined,
         status: execsStatusFilter || undefined,
         start_time: execsTimeRange[0]?.toISOString() || undefined,
@@ -222,17 +246,6 @@ export default function CronOverviewPage() {
       width: 120,
     },
     {
-      title: "状态",
-      dataIndex: "status",
-      key: "status",
-      width: 100,
-      render: (status: string) => (
-        <Tag color={JOB_STATUS_COLORS[status] || "default"}>
-          {JOB_STATUS_LABELS[status] || status}
-        </Tag>
-      ),
-    },
-    {
       title: "启用",
       dataIndex: "enabled",
       key: "enabled",
@@ -286,6 +299,13 @@ export default function CronOverviewPage() {
       dataIndex: "id",
       key: "id",
       width: 80,
+    },
+    {
+      title: "任务ID",
+      dataIndex: "job_id",
+      key: "job_id",
+      width: 280,
+      ellipsis: true,
     },
     {
       title: "任务名称",
@@ -366,73 +386,8 @@ export default function CronOverviewPage() {
 
       <Card className={styles.tableCard}>
         <Tabs
-          defaultActiveKey="executions"
+          defaultActiveKey="jobs"
           items={[
-            {
-              key: "executions",
-              label: "执行历史",
-              children: (
-                <>
-                  <div className={styles.filterBar}>
-                    <Space size="middle" wrap>
-                      <Input
-                        placeholder="租户ID"
-                        value={execsTenantFilter}
-                        onChange={(e) => setExecsTenantFilter(e.target.value)}
-                        style={{ width: 150 }}
-                        allowClear
-                      />
-                      <Select
-                        placeholder="执行状态"
-                        value={execsStatusFilter}
-                        onChange={setExecsStatusFilter}
-                        style={{ width: 120 }}
-                        allowClear
-                        options={[
-                          { value: "success", label: "成功" },
-                          { value: "error", label: "失败" },
-                          { value: "cancelled", label: "取消" },
-                          { value: "timeout", label: "超时" },
-                          { value: "skipped", label: "跳过" },
-                        ]}
-                      />
-                      <RangePicker
-                        value={execsTimeRange as [dayjs.Dayjs, dayjs.Dayjs]}
-                        onChange={(dates) =>
-                          setExecsTimeRange(dates as [dayjs.Dayjs | null, dayjs.Dayjs | null])
-                        }
-                      />
-                      <Button
-                        type="primary"
-                        icon={<DownloadOutlined />}
-                        onClick={handleExportExecutions}
-                      >
-                        导出 Excel
-                      </Button>
-                    </Space>
-                  </div>
-
-                  <Table
-                    columns={execsColumns}
-                    dataSource={executions}
-                    rowKey="id"
-                    loading={execsLoading}
-                    pagination={{
-                      current: execsPage,
-                      pageSize: execsPageSize,
-                      total: execsTotal,
-                      showSizeChanger: true,
-                      showTotal: (total) => `共 ${total} 条`,
-                      onChange: (page, pageSize) => {
-                        setExecsPage(page);
-                        setExecsPageSize(pageSize);
-                      },
-                    }}
-                    scroll={{ x: 1200 }}
-                  />
-                </>
-              ),
-            },
             {
               key: "jobs",
               label: "任务定义",
@@ -462,19 +417,24 @@ export default function CronOverviewPage() {
                         allowClear
                       />
                       <Select
-                        placeholder="状态"
-                        value={jobsStatusFilter}
-                        onChange={setJobsStatusFilter}
+                        placeholder="是否启用"
+                        value={jobsEnabledFilter || undefined}
+                        onChange={(value) => setJobsEnabledFilter(value || "")}
                         style={{ width: 120 }}
                         allowClear
                         options={[
-                          { value: "active", label: "运行中" },
-                          { value: "paused", label: "已暂停" },
-                          { value: "deleted", label: "已删除" },
+                          { value: "true", label: "已启用" },
+                          { value: "false", label: "未启用" },
                         ]}
                       />
                       <Button
                         type="primary"
+                        icon={<SearchOutlined />}
+                        onClick={handleJobsSearch}
+                      >
+                        查询
+                      </Button>
+                      <Button
                         icon={<DownloadOutlined />}
                         onClick={handleExportJobs}
                       >
@@ -499,7 +459,85 @@ export default function CronOverviewPage() {
                         setJobsPageSize(pageSize);
                       },
                     }}
-                    scroll={{ x: 1800 }}
+                    scroll={{ x: 1700 }}
+                  />
+                </>
+              ),
+            },
+            {
+              key: "executions",
+              label: "执行历史",
+              children: (
+                <>
+                  <div className={styles.filterBar}>
+                    <Space size="middle" wrap>
+                      <Input
+                        placeholder="任务ID"
+                        value={execsJobIdFilter}
+                        onChange={(e) => setExecsJobIdFilter(e.target.value)}
+                        style={{ width: 280 }}
+                        allowClear
+                      />
+                      <Input
+                        placeholder="租户ID"
+                        value={execsTenantFilter}
+                        onChange={(e) => setExecsTenantFilter(e.target.value)}
+                        style={{ width: 150 }}
+                        allowClear
+                      />
+                      <Select
+                        placeholder="执行状态"
+                        value={execsStatusFilter || undefined}
+                        onChange={(value) => setExecsStatusFilter(value || "")}
+                        style={{ width: 120 }}
+                        allowClear
+                        options={[
+                          { value: "success", label: "成功" },
+                          { value: "error", label: "失败" },
+                          { value: "cancelled", label: "取消" },
+                          { value: "timeout", label: "超时" },
+                          { value: "skipped", label: "跳过" },
+                        ]}
+                      />
+                      <RangePicker
+                        value={execsTimeRange as [dayjs.Dayjs, dayjs.Dayjs]}
+                        onChange={(dates) =>
+                          setExecsTimeRange(dates as [dayjs.Dayjs | null, dayjs.Dayjs | null])
+                        }
+                      />
+                      <Button
+                        type="primary"
+                        icon={<SearchOutlined />}
+                        onClick={handleExecsSearch}
+                      >
+                        查询
+                      </Button>
+                      <Button
+                        icon={<DownloadOutlined />}
+                        onClick={handleExportExecutions}
+                      >
+                        导出 Excel
+                      </Button>
+                    </Space>
+                  </div>
+
+                  <Table
+                    columns={execsColumns}
+                    dataSource={executions}
+                    rowKey="id"
+                    loading={execsLoading}
+                    pagination={{
+                      current: execsPage,
+                      pageSize: execsPageSize,
+                      total: execsTotal,
+                      showSizeChanger: true,
+                      showTotal: (total) => `共 ${total} 条`,
+                      onChange: (page, pageSize) => {
+                        setExecsPage(page);
+                        setExecsPageSize(pageSize);
+                      },
+                    }}
+                    scroll={{ x: 1480 }}
                   />
                 </>
               ),

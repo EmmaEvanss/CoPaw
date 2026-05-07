@@ -88,12 +88,12 @@ export const monitorApi = {
         }
       });
     }
-    return request(`/cron/jobs?${params.toString()}`);
+    return request(`/monitor/cron/jobs?${params.toString()}`);
   },
 
   // Get single job
   getJob: async (jobId: string): Promise<CronJobItem> => {
-    return request(`/cron/jobs/${jobId}`);
+    return request(`/monitor/cron/jobs/${jobId}`);
   },
 
   // Get executions list
@@ -116,12 +116,12 @@ export const monitorApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/cron/executions?${params.toString()}`);
+    return request(`/monitor/cron/executions?${params.toString()}`);
   },
 
   // Get single execution
   getExecution: async (executionId: number): Promise<ExecutionItem> => {
-    return request(`/cron/executions/${executionId}`);
+    return request(`/monitor/cron/executions/${executionId}`);
   },
 
   // Export jobs to Excel
@@ -130,17 +130,17 @@ export const monitorApi = {
       tenant_id?: string;
       bbk_id?: string;
       source_id?: string;
-      status?: string;
+      enabled?: boolean;
     },
   ): Promise<Blob> => {
     const params = new URLSearchParams();
     params.append("export_type", "jobs");
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== null) params.append(key, value.toString());
       });
     }
-    const url = getApiUrl(`/cron/export?${params.toString()}`);
+    const url = getApiUrl(`/monitor/cron/export?${params.toString()}`);
     const headers = new Headers(buildAuthHeaders());
     const response = await fetch(url, { headers });
     if (!response.ok) {
@@ -161,6 +161,7 @@ export const monitorApi = {
   // Export executions to Excel
   exportExecutions: async (
     filters?: {
+      job_id?: string;
       tenant_id?: string;
       status?: string;
       start_time?: string;
@@ -174,7 +175,7 @@ export const monitorApi = {
         if (value) params.append(key, value);
       });
     }
-    const url = getApiUrl(`/cron/export?${params.toString()}`);
+    const url = getApiUrl(`/monitor/cron/export?${params.toString()}`);
     const headers = new Headers(buildAuthHeaders());
     const response = await fetch(url, { headers });
     if (!response.ok) {

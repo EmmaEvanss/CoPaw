@@ -6,6 +6,7 @@ Provides endpoints for frontend to query job definitions and execution history.
 import logging
 from datetime import datetime
 from io import BytesIO
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -23,7 +24,7 @@ from ..services.cron.export_service import ExportService, get_export_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/cron", tags=["cron"])
+router = APIRouter(prefix="/monitor/cron", tags=["cron"])
 
 
 @router.get("/jobs", response_model=PaginatedResponse[CronJobModel])
@@ -156,9 +157,11 @@ async def get_execution(
 
 @router.get("/export")
 async def export_data(
+    job_id: str | None = Query(default=None, description="任务ID筛选"),
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
     bbk_id: str | None = Query(default=None, description="分行号筛选"),
     source_id: str | None = Query(default=None, description="来源标识筛选"),
+    enabled: bool | None = Query(default=None, description="是否启用筛选"),
     status: str | None = Query(default=None, description="状态筛选"),
     start_time: datetime | None = Query(default=None, description="开始时间范围"),
     end_time: datetime | None = Query(default=None, description="结束时间范围"),
@@ -172,9 +175,11 @@ async def export_data(
     """Export cron data to Excel.
 
     Args:
+        job_id: Job ID filter (for executions)
         tenant_id: Tenant ID filter
         bbk_id: BBK ID filter (分行号)
         source_id: Source ID filter (来源标识)
+        enabled: Enabled filter (是否启用)
         status: Status filter
         start_time: Start time filter (for executions)
         end_time: End time filter (for executions)
@@ -191,25 +196,29 @@ async def export_data(
                 tenant_id=tenant_id,
                 bbk_id=bbk_id,
                 source_id=source_id,
+                enabled=enabled,
                 status=status,
             )
             excel_bytes = export_service.export_jobs(jobs)
-            filename = "cron_jobs.xlsx"
+            filename = "定时任务.xlsx"
         else:
             executions = await query_service.get_executions_for_export(
+                job_id=job_id,
                 tenant_id=tenant_id,
                 status=status,
                 start_time=start_time,
                 end_time=end_time,
             )
             excel_bytes = export_service.export_executions(executions)
-            filename = "cron_executions.xlsx"
+            filename = "定时任务执行情况.xlsx"
 
+        # RFC 5987: 使用filename*参数支持中文文件名
+        encoded_filename = quote(filename)
         return StreamingResponse(
             BytesIO(excel_bytes),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
-                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
             },
         )
     except Exception as e:

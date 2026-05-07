@@ -294,6 +294,12 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       label: t("nav.analyticsBusinessOverview", "运营看板"),
     },
     {
+      key: "monitor-cron-overview",
+      icon: <SparkAdvancedMonitoringLine size={18} />,
+      path: "/monitor/cron-overview",
+      label: t("nav.monitorCronOverview", "定时任务概览"),
+    },
+    {
       key: "instance-overview",
       icon: <SparkAdvancedMonitoringLine size={18} />,
       path: "/instance/overview",
@@ -494,6 +500,11 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-traces",
           label: collapsed ? null : t("nav.analyticsTraces", "Traces"),
           icon: <SparkFileTxtLine size={16} />,
+        },
+        {
+          key: "monitor-cron-overview",
+          label: collapsed ? null : t("nav.monitorCronOverview", "定时任务概览"),
+          icon: <SparkAdvancedMonitoringLine size={16} />,
         },
       ],
     },

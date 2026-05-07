@@ -6,7 +6,6 @@ import { IconButton } from "@agentscope-ai/design";
 import { Attachments } from "@/components/agentscope-chat";
 import { chatApi } from "@/api/modules/chat";
 import Style from "./style";
-import KnowledgeTabs from "../KnowledgeTabs";
 import FeaturedCases from "../FeaturedCases";
 import CaseDetailDrawer from "../CaseDetailDrawer";
 import { featuredCasesApi } from "@/api/modules/featuredCases";
@@ -31,7 +30,7 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
   const uploadRef = useRef<any>(null);
   // 随机placeholder文案数组
   const placeholderOptions = [
-    '告诉我你要做什么，我将召唤对应专家，为你执行...',
+    '告诉我你要做什么，我将召唤相应专家，为你执行...',
     '有什么要求都告诉我，我会越用越懂你...',
     '你可以给我取个名字，甚至设定我的人设...'
   ];
@@ -45,10 +44,10 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
   const handleSend = useCallback(() => {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-    
+
     // Filter files that have been successfully uploaded (have response.url)
     const uploadedFiles = fileList.filter((f) => f.response?.url);
-    
+
     // Submit with file list
     onSubmit({ query: trimmed, fileList: uploadedFiles });
     setInputValue("");
@@ -169,7 +168,7 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
               />
             </div>
           )}
-          
+
           <Input.TextArea
             className="welcome-input-placeholder"
             value={inputValue}
@@ -207,11 +206,6 @@ export default function WelcomeCenterLayout(props: WelcomeCenterLayoutProps) {
             </button>
           </div>
         </div>
-
-        {/* Knowledge Tabs */}
-        {/* <div className="welcome-tabs-area">
-          <KnowledgeTabs />
-        </div> */}
 
         {/* Featured Cases */}
         <div className="welcome-cases-area">

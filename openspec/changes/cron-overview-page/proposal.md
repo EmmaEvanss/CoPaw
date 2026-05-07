@@ -9,7 +9,7 @@
 
 ## What Changes
 
-- 在 Monitor 模块中创建定时任务数据库表（`cron_jobs` + `cron_executions`）
+- 在 Monitor 模块中创建定时任务数据库表（`swe_cron_jobs` + `swe_cron_executions`）
 - 在 Monitor 中实现任务定义同步 API（供 SWE 双写调用）和查询 API（供前端调用）
 - 在 SWE 的 `CronManager` 中集成异步双写逻辑，任务创建/编辑/删除/执行后同步到 Monitor
 - 在 Console 前端新增定时任务概览页面，支持查询、筛选、导出功能
@@ -30,4 +30,4 @@
 - 新增路由：`monitor/src/monitor/app/routers/cron.py`
 - 修改模块：`src/swe/app/crons/manager.py`（集成 MonitorSyncClient）
 - 新增前端页面：`console/src/pages/Monitor/CronOverview/`
-- 新增数据库表：`cron_jobs`、`cron_executions`
+- 新增数据库表：`swe_cron_jobs`、`swe_cron_executions`

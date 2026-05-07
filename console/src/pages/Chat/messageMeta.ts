@@ -3,6 +3,7 @@ import type {
   IAgentScopeRuntimeRequest,
   IAgentScopeRuntimeResponse,
 } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/types";
+import type { IAgentScopeRuntimeWebUIMessage } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/types/IMessages";
 
 export interface ChatMessageHeaderMeta {
   timestamp?: number;
@@ -26,6 +27,15 @@ export interface ChatApprovalActionCardData {
   approveCommand: string;
   denyCommand: string;
   status?: "pending" | "approved" | "denied" | "timeout" | "superseded";
+}
+
+export interface ChatTaskRunGroupCardData {
+  runId: string;
+  runIndex: number;
+  taskName?: string;
+  finalMessages: IAgentScopeRuntimeWebUIMessage[];
+  stepMessages: IAgentScopeRuntimeWebUIMessage[];
+  headerMeta?: ChatMessageHeaderMeta;
 }
 
 type TimestampSource = {

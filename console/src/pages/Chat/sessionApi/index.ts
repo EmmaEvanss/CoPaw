@@ -16,6 +16,7 @@ import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
   ChatRuntimeResponseCardData,
+  ChatTaskRunGroupCardData,
 } from "../messageMeta";
 import { resolveGroupTimestamp, resolveMessageTimestamp } from "../messageMeta";
 import { toDisplayUrl } from "../utils";
@@ -51,6 +52,10 @@ const TYPE_PLUGIN_CALL_OUTPUT = "plugin_call_output";
 // const CARD_REQUEST = "AgentScopeRuntimeRequestCard";
 const CARD_RESPONSE = "AgentScopeRuntimeResponseCard";
 const CARD_APPROVAL_ACTION = "ApprovalAction";
+const CARD_TASK_RUN = "TaskRunGroupCard";
+const TASK_SESSION_KIND = "task";
+const TASK_RUN_SECTION_STEP = "step";
+const TASK_RUN_SECTION_FINAL = "final";
 
 // ---------------------------------------------------------------------------
 // Window globals
@@ -80,6 +85,12 @@ interface OutputMessage extends Omit<Message, "role"> {
   role: string;
   metadata: unknown;
   sequence_number?: number;
+}
+
+interface TaskRunMetadata {
+  runId: string;
+  runIndex: number;
+  section: string;
 }
 
 function extractApprovalAction(
@@ -216,6 +227,32 @@ function isStandaloneOutputMessage(message: Message | OutputMessage): boolean {
   return Boolean(metadata?.cron_task);
 }
 
+function getTaskRunMetadata(message: Message): TaskRunMetadata | null {
+  const metadata =
+    message.metadata && typeof message.metadata === "object"
+      ? (message.metadata as Record<string, unknown>)
+      : null;
+  if (!metadata) return null;
+
+  const runId = metadata.task_run_id;
+  const runIndex = metadata.task_run_index;
+  const section = metadata.task_run_section;
+  if (
+    typeof runId !== "string" ||
+    !runId ||
+    typeof runIndex !== "number" ||
+    typeof section !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    runId,
+    runIndex,
+    section,
+  };
+}
+
 /** Build a user card (AgentScopeRuntimeRequestCard) from a user message. */
 function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
   const contentParts = contentToRequestParts(msg.content);
@@ -345,6 +382,106 @@ export const convertMessages = (
 
   return result;
 };
+
+function buildTaskRunCard(
+  runId: string,
+  runIndex: number,
+  runMessages: Message[],
+  taskName?: string,
+): IAgentScopeRuntimeWebUIMessage[] {
+  const finalMessages = runMessages.filter((message) => {
+    const metadata = getTaskRunMetadata(message);
+    return metadata?.section === TASK_RUN_SECTION_FINAL;
+  });
+  const stepMessages = runMessages.filter((message) => {
+    const metadata = getTaskRunMetadata(message);
+    return metadata?.section === TASK_RUN_SECTION_STEP;
+  });
+
+  if (finalMessages.length === 0) {
+    return convertMessages(runMessages);
+  }
+
+  return [
+    {
+      id: `task-run-${runId}-${runIndex}`,
+      role: ROLE_ASSISTANT,
+      msgStatus: "finished",
+      cards: [
+        {
+          code: CARD_TASK_RUN,
+          data: {
+            runId,
+            runIndex,
+            taskName,
+            finalMessages: convertMessages(finalMessages),
+            stepMessages: convertMessages(stepMessages),
+            headerMeta: {
+              timestamp: resolveGroupTimestamp(
+                runMessages.map((message) => ({
+                  timestamp: message.timestamp,
+                })),
+              ),
+            },
+          } as ChatTaskRunGroupCardData,
+        },
+      ],
+    },
+  ];
+}
+
+function convertMessagesForSession(
+  messages: Message[],
+  sessionMeta?: Record<string, unknown>,
+  sessionName?: string,
+): IAgentScopeRuntimeWebUIMessage[] {
+  if (sessionMeta?.session_kind !== TASK_SESSION_KIND) {
+    return convertMessages(messages);
+  }
+
+  if (!messages.some((message) => getTaskRunMetadata(message) !== null)) {
+    return convertMessages(messages);
+  }
+
+  const result: IAgentScopeRuntimeWebUIMessage[] = [];
+  let index = 0;
+
+  while (index < messages.length) {
+    const metadata = getTaskRunMetadata(messages[index]);
+    if (!metadata) {
+      const gap: Message[] = [];
+      while (
+        index < messages.length
+        && getTaskRunMetadata(messages[index]) === null
+      ) {
+        gap.push(messages[index]);
+        index += 1;
+      }
+      result.push(...convertMessages(gap));
+      continue;
+    }
+
+    const runMessages: Message[] = [];
+    while (index < messages.length) {
+      const candidateMetadata = getTaskRunMetadata(messages[index]);
+      if (!candidateMetadata || candidateMetadata.runId !== metadata.runId) {
+        break;
+      }
+      runMessages.push(messages[index]);
+      index += 1;
+    }
+    result.push(
+      ...buildTaskRunCard(
+        metadata.runId,
+        metadata.runIndex,
+        runMessages,
+        sessionName,
+      ),
+    );
+  }
+
+  return result;
+}
 
 const chatSpecToSession = (chat: ChatSpec): ExtendedSession =>
   ({
@@ -1019,7 +1156,11 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
 
     const chatHistory = await api.getChat(realId);
     const backendGenerating = isGenerating(chatHistory);
-    const backendMessages = convertMessages(chatHistory.messages || []);
+    const backendMessages = convertMessagesForSession(
+      chatHistory.messages || [],
+      fromList?.meta || {},
+      fromList?.name,
+    );
     const messages =
       backendMessages.length > 0 ? backendMessages : fromList.messages || [];
     const generating = mergeGeneratingState(
@@ -1091,7 +1232,11 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
 
     const chatHistory = await api.getChat(sessionId);
     const generating = isGenerating(chatHistory);
-    const messages = convertMessages(chatHistory.messages || []);
+    const messages = convertMessagesForSession(
+      chatHistory.messages || [],
+      fromList?.meta || {},
+      fromList?.name,
+    );
     this.patchLastUserMessage(messages, generating, sessionId, [
       fromList?.sessionId,
       fromList?.realId,

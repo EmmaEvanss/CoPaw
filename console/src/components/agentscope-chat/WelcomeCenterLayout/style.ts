@@ -28,10 +28,10 @@ export default createGlobalStyle`
   max-width: 100%;
   background-color: ${DESIGN_TOKENS.colorBgCard};
   border-radius: ${DESIGN_TOKENS.radiusCard}px;
-  padding: 8px 20px;
+  padding: 16px 20px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 28px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   margin-bottom: 28px;
 }
@@ -48,12 +48,14 @@ export default createGlobalStyle`
   min-height: 24px;
   max-height: 120px;
   font-family: inherit;
+  padding: 4px 0;
 }
 
 .welcome-input-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-left: -6px;
 }
 
 .welcome-input-actions-left {

@@ -190,7 +190,7 @@ POST /api/sync/execution
 
 详见 proposal 中的表设计，关键点：
 
-- `cron_jobs`: 任务定义表，VARCHAR 字段存储元数据
-- `cron_executions`: 执行历史表，支持追溯 trace_id/session_id
+- `swe_cron_jobs`: 任务定义表，VARCHAR 字段存储元数据
+- `swe_cron_executions`: 执行历史表，支持追溯 trace_id/session_id
 - 软删除使用 `deleted_at` 字段
 - 索引覆盖常用查询路径（tenant_id, status, actual_time）

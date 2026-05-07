@@ -6,7 +6,7 @@ for the frontend overview page.
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from ...database import get_db_connection
 from ...models.cron import (
@@ -46,34 +46,34 @@ class QueryService:
         sql_params: List = []
 
         if params.tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(params.tenant_id)
 
         if params.bbk_id:
-            conditions.append("bbk_id = ?")
+            conditions.append("bbk_id = %s")
             sql_params.append(params.bbk_id)
 
         if params.source_id:
-            conditions.append("source_id = ?")
+            conditions.append("source_id = %s")
             sql_params.append(params.source_id)
 
         if params.creator_user_id:
-            conditions.append("creator_user_id = ?")
+            conditions.append("creator_user_id = %s")
             sql_params.append(params.creator_user_id)
 
         if params.status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(params.status)
 
         if params.enabled is not None:
-            conditions.append("enabled = ?")
+            conditions.append("enabled = %s")
             sql_params.append(params.enabled)
 
         where_clause = " AND ".join(conditions)
 
         # Count total
         count_sql = (
-            f"SELECT COUNT(*) as count FROM cron_jobs WHERE {where_clause}"
+            f"SELECT COUNT(*) as count FROM swe_cron_jobs WHERE {where_clause}"
         )
         count_result = await db.fetch_one(count_sql, tuple(sql_params))
         total = count_result.get("count", 0) if count_result else 0
@@ -81,10 +81,10 @@ class QueryService:
         # Query with pagination
         offset = (params.page - 1) * params.page_size
         query_sql = f"""
-            SELECT * FROM cron_jobs
+            SELECT * FROM swe_cron_jobs
             WHERE {where_clause}
             ORDER BY created_at DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         """
         query_params = tuple(sql_params) + (params.page_size, offset)
 
@@ -95,10 +95,10 @@ class QueryService:
         # Query execution count for each job
         if items:
             job_ids = [job.id for job in items]
-            placeholders = ",".join("?" * len(job_ids))
+            placeholders = ",".join("%s" for _ in job_ids)
             count_sql = f"""
                 SELECT job_id, COUNT(*) as count
-                FROM cron_executions
+                FROM swe_cron_executions
                 WHERE job_id IN ({placeholders})
                 GROUP BY job_id
             """
@@ -128,7 +128,7 @@ class QueryService:
         db = get_db_connection()
 
         row = await db.fetch_one(
-            "SELECT * FROM cron_jobs WHERE id = ? AND deleted_at IS NULL",
+            "SELECT * FROM swe_cron_jobs WHERE id = %s AND deleted_at IS NULL",
             (job_id,),
         )
 
@@ -156,39 +156,39 @@ class QueryService:
         sql_params: List = []
 
         if params.job_id:
-            conditions.append("job_id = ?")
+            conditions.append("job_id = %s")
             sql_params.append(params.job_id)
 
         if params.tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(params.tenant_id)
 
         if params.status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(params.status)
 
         if params.start_time:
-            conditions.append("actual_time >= ?")
+            conditions.append("actual_time >= %s")
             sql_params.append(params.start_time)
 
         if params.end_time:
-            conditions.append("actual_time <= ?")
+            conditions.append("actual_time <= %s")
             sql_params.append(params.end_time)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         # Count total
-        count_sql = f"SELECT COUNT(*) as count FROM cron_executions WHERE {where_clause}"
+        count_sql = f"SELECT COUNT(*) as count FROM swe_cron_executions WHERE {where_clause}"
         count_result = await db.fetch_one(count_sql, tuple(sql_params))
         total = count_result.get("count", 0) if count_result else 0
 
         # Query with pagination
         offset = (params.page - 1) * params.page_size
         query_sql = f"""
-            SELECT * FROM cron_executions
+            SELECT * FROM swe_cron_executions
             WHERE {where_clause}
             ORDER BY actual_time DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
         """
         query_params = tuple(sql_params) + (params.page_size, offset)
 
@@ -218,7 +218,7 @@ class QueryService:
         db = get_db_connection()
 
         row = await db.fetch_one(
-            "SELECT * FROM cron_executions WHERE id = ?",
+            "SELECT * FROM swe_cron_executions WHERE id = %s",
             (execution_id,),
         )
 
@@ -229,6 +229,7 @@ class QueryService:
 
     async def get_executions_for_export(
         self,
+        job_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
         status: Optional[str] = None,
         start_time: Optional[datetime] = None,
@@ -238,6 +239,7 @@ class QueryService:
         """Get executions for export without pagination.
 
         Args:
+            job_id: Job ID filter
             tenant_id: Tenant ID filter
             status: Status filter
             start_time: Start time filter
@@ -253,29 +255,33 @@ class QueryService:
         conditions: List[str] = []
         sql_params: List = []
 
+        if job_id:
+            conditions.append("job_id = %s")
+            sql_params.append(job_id)
+
         if tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(tenant_id)
 
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(status)
 
         if start_time:
-            conditions.append("actual_time >= ?")
+            conditions.append("actual_time >= %s")
             sql_params.append(start_time)
 
         if end_time:
-            conditions.append("actual_time <= ?")
+            conditions.append("actual_time <= %s")
             sql_params.append(end_time)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         query_sql = f"""
-            SELECT * FROM cron_executions
+            SELECT * FROM swe_cron_executions
             WHERE {where_clause}
             ORDER BY actual_time DESC
-            LIMIT ?
+            LIMIT %s
         """
         query_params = tuple(sql_params) + (limit,)
 
@@ -288,6 +294,7 @@ class QueryService:
         tenant_id: Optional[str] = None,
         bbk_id: Optional[str] = None,
         source_id: Optional[str] = None,
+        enabled: Optional[bool] = None,
         status: Optional[str] = None,
         limit: int = 10000,
     ) -> List[CronJobModel]:
@@ -297,6 +304,7 @@ class QueryService:
             tenant_id: Tenant ID filter
             bbk_id: BBK ID filter (分行号)
             source_id: Source ID filter (来源标识)
+            enabled: Enabled filter (是否启用)
             status: Status filter
             limit: Max records to return
 
@@ -310,28 +318,32 @@ class QueryService:
         sql_params: List = []
 
         if tenant_id:
-            conditions.append("tenant_id = ?")
+            conditions.append("tenant_id = %s")
             sql_params.append(tenant_id)
 
         if bbk_id:
-            conditions.append("bbk_id = ?")
+            conditions.append("bbk_id = %s")
             sql_params.append(bbk_id)
 
         if source_id:
-            conditions.append("source_id = ?")
+            conditions.append("source_id = %s")
             sql_params.append(source_id)
 
+        if enabled is not None:
+            conditions.append("enabled = %s")
+            sql_params.append(enabled)
+
         if status:
-            conditions.append("status = ?")
+            conditions.append("status = %s")
             sql_params.append(status)
 
         where_clause = " AND ".join(conditions)
 
         query_sql = f"""
-            SELECT * FROM cron_jobs
+            SELECT * FROM swe_cron_jobs
             WHERE {where_clause}
             ORDER BY created_at DESC
-            LIMIT ?
+            LIMIT %s
         """
         query_params = tuple(sql_params) + (limit,)
 
@@ -342,10 +354,10 @@ class QueryService:
         # Query execution count for each job
         if items:
             job_ids = [job.id for job in items]
-            placeholders = ",".join("?" * len(job_ids))
+            placeholders = ",".join("%s" for _ in job_ids)
             count_sql = f"""
                 SELECT job_id, COUNT(*) as count
-                FROM cron_executions
+                FROM swe_cron_executions
                 WHERE job_id IN ({placeholders})
                 GROUP BY job_id
             """

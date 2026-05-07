@@ -7,8 +7,10 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator
+from uuid import uuid4
 
 import httpx
 from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
@@ -61,6 +63,7 @@ if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
 
 logger = logging.getLogger(__name__)
+TASK_RUNS_STATE_KEY = "task_runs"
 
 _APPROVE_EXACT = frozenset(
     {
@@ -79,6 +82,84 @@ _DENY_EXACT = frozenset(
         "/daemon deny",
     },
 )
+
+
+def _extract_memory_entry_payload(entry: Any) -> dict[str, Any] | None:
+    """提取内存条目里的消息载荷。"""
+    if isinstance(entry, list) and entry and isinstance(entry[0], dict):
+        return entry[0]
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def _extract_text_from_message_content(content: Any) -> str:
+    """从消息内容中提取可展示文本。"""
+    if isinstance(content, str):
+        return content.strip()
+
+    if not isinstance(content, list):
+        return ""
+
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = ""
+        if block.get("type") == "text":
+            text = str(block.get("text", "") or "")
+        elif block.get("type") == "thinking":
+            text = str(block.get("thinking", "") or "")
+        if text.strip():
+            texts.append(text.strip())
+    return "\n".join(texts).strip()
+
+
+def _build_task_run_record(
+    memory_entries: list[Any],
+    *,
+    memory_start: int,
+) -> dict[str, Any] | None:
+    """根据本次新增消息构建任务运行元数据。"""
+    if not memory_entries:
+        return None
+
+    started_at: str | None = None
+    ended_at: str | None = None
+    preview_text = ""
+
+    for entry in memory_entries:
+        payload = _extract_memory_entry_payload(entry)
+        if not payload:
+            continue
+        timestamp = payload.get("timestamp")
+        if isinstance(timestamp, str) and timestamp and not started_at:
+            started_at = timestamp
+        if isinstance(timestamp, str) and timestamp:
+            ended_at = timestamp
+
+    for entry in reversed(memory_entries):
+        payload = _extract_memory_entry_payload(entry)
+        if not payload or payload.get("role") != "assistant":
+            continue
+        preview_text = _extract_text_from_message_content(
+            payload.get("content"),
+        )
+        if preview_text:
+            break
+
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    started_at = started_at or now
+    ended_at = ended_at or started_at
+
+    return {
+        "run_id": f"task-run-{uuid4()}",
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "memory_start": memory_start,
+        "memory_end": memory_start + len(memory_entries),
+        "preview_text": preview_text,
+    }
 
 
 def _is_approval(text: str) -> bool:
@@ -954,7 +1035,7 @@ class AgentRunner(Runner):
                         user_message=extracted_user,
                         assistant_response=extracted_assistant,
                         tenant_id=self.tenant_id,
-                        max_age_seconds=config.qa_content_max_age_seconds,
+                        # max_age_seconds=config.qa_content_max_age_seconds,
                     )
                     logger.info(
                         "Stored Q&A content for suggestions: chat_id=%s, "
@@ -1018,6 +1099,12 @@ class AgentRunner(Runner):
             )
             # 获取当前 agent 状态
             current_agent_state = agent.state_dict()
+            existing_memory = (
+                existing_state.get("agent", {}).get("memory", {}) or {}
+            )
+            current_memory = current_agent_state.get("memory", {}) or {}
+            existing_content = list(existing_memory.get("content", []) or [])
+            current_content = list(current_memory.get("content", []) or [])
 
             # 深度合并：对于 agent.memory，需要追加内容而不是覆盖
             if (
@@ -1041,6 +1128,16 @@ class AgentRunner(Runner):
             # 构建最终状态
             merged_state = dict(existing_state)
             merged_state["agent"] = current_agent_state
+            task_run = _build_task_run_record(
+                current_content,
+                memory_start=len(existing_content),
+            )
+            if task_run is not None:
+                task_runs = list(
+                    existing_state.get(TASK_RUNS_STATE_KEY, []) or [],
+                )
+                task_runs.append(task_run)
+                merged_state[TASK_RUNS_STATE_KEY] = task_runs
 
             # 直接保存合并后的状态
             # pylint: disable=protected-access

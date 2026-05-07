@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # SQL for creating cron_jobs table
 CREATE_CRON_JOBS_TABLE = """
-CREATE TABLE IF NOT EXISTS cron_jobs (
+CREATE TABLE IF NOT EXISTS swe_cron_jobs (
     id              VARCHAR(64) PRIMARY KEY COMMENT '任务ID (UUID)',
     name            VARCHAR(255) NOT NULL COMMENT '任务名称',
     tenant_id       VARCHAR(64) NOT NULL COMMENT '租户ID (分行号)',
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 
 # SQL for creating cron_executions table
 CREATE_CRON_EXECUTIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS cron_executions (
+CREATE TABLE IF NOT EXISTS swe_cron_executions (
     id              BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '执行记录ID',
     job_id          VARCHAR(64) NOT NULL COMMENT '任务ID',
     job_name        VARCHAR(255) DEFAULT '' COMMENT '任务名称 (冗余存储便于查询)',

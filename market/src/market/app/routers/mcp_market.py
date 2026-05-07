@@ -3,11 +3,12 @@
 
 import json
 import re
-from typing import Optional
+from typing import Annotated, Optional
 from urllib.parse import unquote
 
 from fastapi import (
     APIRouter,
+    Depends,
     File,
     Form,
     Header,
@@ -34,12 +35,31 @@ from ..deps import require_source_id
 from .my_mcp import _test_mcp_connection
 
 router = APIRouter()
+MCP_NOT_FOUND_DETAIL = "MCP not found or already deleted"
 
 
 def _require_manager(x_manager: Optional[str]) -> None:
     """校验管理员权限。"""
     if x_manager != "true":
         raise HTTPException(status_code=403, detail="Manager access required")
+
+
+class UploadMCPFormData:
+    """上传 MCP 的表单字段。"""
+
+    def __init__(
+        self,
+        name: Optional[str] = Form(default=None),
+        chinese_name: Optional[str] = Form(default=""),
+        description: Optional[str] = Form(default=""),
+        guidance: Optional[str] = Form(default=""),
+        bbk_ids: Optional[str] = Form(default=None),
+    ) -> None:
+        self.name = name
+        self.chinese_name = chinese_name
+        self.description = description
+        self.guidance = guidance
+        self.bbk_ids = bbk_ids
 
 
 def _normalize_client_key(value: str) -> str:
@@ -74,36 +94,57 @@ def _infer_transport(config: dict) -> Optional[str]:
     return None
 
 
-def _extract_upload_payload(
-    filename: str,
-    file_data: dict,
-) -> tuple[str, str, dict]:
-    """从上传文件中提取 client_key、name 和规范化后的 config。"""
-    fallback_name = re.sub(
+def _build_upload_fallback_name(filename: str) -> str:
+    """根据文件名生成上传名称兜底值。"""
+    return re.sub(
         r"\.(json|mcp\.json)$",
         "",
         filename,
         flags=re.IGNORECASE,
     )
-    config = {}
-    client_key = ""
-    name = ""
 
+
+def _extract_mcp_servers_payload(
+    file_data: dict,
+) -> tuple[str, str, dict]:
+    """从 mcpServers 结构中提取 client_key、name 和 config。"""
     mcp_servers = file_data.get("mcpServers")
-    if isinstance(mcp_servers, dict) and mcp_servers:
-        first_key, first_value = next(iter(mcp_servers.items()))
-        if isinstance(first_value, dict):
-            client_key = str(first_key)
-            config = dict(first_value)
-            name = str(config.get("name") or "")
+    if not isinstance(mcp_servers, dict) or not mcp_servers:
+        return "", "", {}
 
-    if not config:
-        raw_config = file_data.get("config", file_data)
-        if isinstance(raw_config, dict):
-            config = dict(raw_config)
-        client_key = str(file_data.get("client_key") or client_key or "")
-        name = str(config.get("name") or file_data.get("name") or name or "")
+    first_key, first_value = next(iter(mcp_servers.items()))
+    if not isinstance(first_value, dict):
+        return "", "", {}
 
+    config = dict(first_value)
+    return str(first_key), str(config.get("name") or ""), config
+
+
+def _extract_direct_payload(
+    file_data: dict,
+    current_client_key: str,
+    current_name: str,
+) -> tuple[str, str, dict]:
+    """从扁平 config 或 config 包裹结构中提取数据。"""
+    raw_config = file_data.get("config", file_data)
+    if not isinstance(raw_config, dict):
+        return current_client_key, current_name, {}
+
+    config = dict(raw_config)
+    client_key = str(file_data.get("client_key") or current_client_key or "")
+    name = str(
+        config.get("name") or file_data.get("name") or current_name or "",
+    )
+    return client_key, name, config
+
+
+def _finalize_upload_payload(
+    fallback_name: str,
+    client_key: str,
+    name: str,
+    config: dict,
+) -> tuple[str, str, dict]:
+    """补全 transport/name/client_key，并校验最终结果。"""
     if not config:
         raise ValueError("文件格式不正确")
 
@@ -117,6 +158,27 @@ def _extract_upload_payload(
         client_key or final_name or fallback_name,
     )
     return final_client_key, final_name, config
+
+
+def _extract_upload_payload(
+    filename: str,
+    file_data: dict,
+) -> tuple[str, str, dict]:
+    """从上传文件中提取 client_key、name 和规范化后的 config。"""
+    fallback_name = _build_upload_fallback_name(filename)
+    client_key, name, config = _extract_mcp_servers_payload(file_data)
+    if not config:
+        client_key, name, config = _extract_direct_payload(
+            file_data,
+            client_key,
+            name,
+        )
+    return _finalize_upload_payload(
+        fallback_name,
+        client_key,
+        name,
+        config,
+    )
 
 
 @router.post(
@@ -161,11 +223,7 @@ async def publish_mcp(
 async def upload_mcp(
     request: Request,
     file: UploadFile = File(...),
-    name: Optional[str] = Form(default=None),
-    chinese_name: Optional[str] = Form(default=""),
-    description: Optional[str] = Form(default=""),
-    guidance: Optional[str] = Form(default=""),
-    bbk_ids: Optional[str] = Form(default=None),
+    form: UploadMCPFormData = Depends(),
     x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
     x_manager: Optional[str] = Header(default=None, alias="X-Manager"),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
@@ -196,19 +254,19 @@ async def upload_mcp(
     except ValueError as e:
         return UploadMCPResponse(success=False, error=str(e))
 
-    final_name = name or inferred_name
+    final_name = form.name or inferred_name
 
     # 构建发布请求
     req = PublishMCPRequest(
         client_key=client_key,
         name=final_name,
-        chinese_name=chinese_name or "",
-        description=description or config.get("description", ""),
-        guidance=guidance or "",
+        chinese_name=form.chinese_name or "",
+        description=form.description or config.get("description", ""),
+        guidance=form.guidance or "",
         creator_id=x_user_id or "unknown",
         creator_name=unquote(x_user_name or ""),
         category_id=None,
-        bbk_ids=json.loads(bbk_ids) if bbk_ids else [],
+        bbk_ids=json.loads(form.bbk_ids) if form.bbk_ids else [],
         config=config,
     )
 
@@ -247,7 +305,7 @@ async def distribute_mcp(
     if item is None:
         raise HTTPException(
             status_code=404,
-            detail="MCP not found or already deleted",
+            detail=MCP_NOT_FOUND_DETAIL,
         )
 
     try:
@@ -289,7 +347,7 @@ async def delete_mcp(
     if item is None:
         raise HTTPException(
             status_code=404,
-            detail="MCP not found or already deleted",
+            detail=MCP_NOT_FOUND_DETAIL,
         )
 
     ok = await svc.delete_mcp(
@@ -354,7 +412,7 @@ async def test_market_mcp(
     if item is None:
         raise HTTPException(
             status_code=404,
-            detail="MCP not found or already deleted",
+            detail=MCP_NOT_FOUND_DETAIL,
         )
 
     mcp_config = load_mcp_config(svc.marketplace_root, source_id, item_id)

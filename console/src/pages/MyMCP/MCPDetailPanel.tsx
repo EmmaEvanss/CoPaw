@@ -194,7 +194,9 @@ export function MCPDetailPanel({
                   paddingLeft: 18,
                 }}
               >
-                <li>点击右上角加号按钮，填写名称、Client Key 和连接方式。</li>
+                <li>
+                  点击右上角加号按钮，填写名称并选择连接方式，系统会根据名称自动生成连接器标识。
+                </li>
                 <li>本地 stdio 填写命令与参数，远程连接填写 URL。</li>
                 <li>根据需要展开高级设置，配置请求头。</li>
                 <li>保存后点击“测试连接”确认工具可用。</li>

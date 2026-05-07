@@ -3,6 +3,7 @@
 
 Provides TracingModelWrapper that intercepts LLM calls to record tracing events.
 """
+
 import logging
 from typing import Any, AsyncGenerator, Optional, Sequence, Union
 
@@ -244,6 +245,8 @@ class TracingModelWrapper:
                 user_id=trace_ctx.user_id,
                 session_id=trace_ctx.session_id,
                 channel=trace_ctx.channel,
+                user_name=trace_ctx.user_name,
+                bbk_id=trace_ctx.bbk_id,
             )
         except Exception as e:
             logger.warning("Failed to emit LLM start event: %s", e)

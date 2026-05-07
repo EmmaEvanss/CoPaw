@@ -1216,7 +1216,7 @@ export default function BusinessOverviewPage() {
         userId={selectedUserId}
         startDate={startDate.format("YYYY-MM-DD")}
         endDate={calculatedEndDate.format("YYYY-MM-DD")}
-        sourceId={platform !== "all" ? platform : undefined}
+        sourceId={platform}
         onClose={() => {
           setModalOpen(false);
           setSelectedUserId(null);

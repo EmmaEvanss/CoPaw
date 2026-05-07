@@ -8,6 +8,7 @@ guard / approve flow.
 Separated from ``react_agent.py`` to keep the main agent class
 focused on lifecycle management.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -332,6 +333,8 @@ class ToolGuardMixin:
                     session_id=trace_ctx.session_id,
                     channel=trace_ctx.channel,
                     mcp_server=mcp_server,
+                    user_name=trace_ctx.user_name,
+                    bbk_id=trace_ctx.bbk_id,
                 )
         except Exception as e:
             logger.debug("Failed to emit tool start event: %s", e)

@@ -358,6 +358,8 @@ class TraceManager:
                 session_id=ctx.session_id,
                 channel=ctx.channel,
                 source_id=ctx.source_id,
+                user_name=ctx.user_name,
+                bbk_id=ctx.bbk_id,
             )
             detector.set_enabled_skills(enabled_skills)
 

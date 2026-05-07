@@ -64,7 +64,7 @@ export default function UserDetailModal({
         user_id: userId,
         start_date: startDate,
         end_date: endDate,
-        sourceId,
+        source_id: sourceId,
       });
       setSessions(data.items || []);
       setSessionsTotal(data.total || 0);

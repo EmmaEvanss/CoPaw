@@ -382,7 +382,7 @@ export const tracingApi = {
       session_id?: string;
       start_date?: string;
       end_date?: string;
-      sourceId?: string;
+      source_id?: string;
     },
   ): Promise<{
     items: SessionListItem[];

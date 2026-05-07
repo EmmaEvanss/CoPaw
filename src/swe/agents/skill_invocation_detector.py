@@ -71,6 +71,8 @@ class SkillInvocationDetector:
         channel: str = "",
         source_id: str = "",
         idle_threshold: int = 3,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> None:
         """Initialize the detector.
 
@@ -85,6 +87,8 @@ class SkillInvocationDetector:
             channel: Channel identifier
             source_id: Source identifier for data isolation
             idle_threshold: Number of non-skill tool calls before ending skill
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
         """
         self._registry = registry or get_skill_tool_registry()
         self._context_manager = context_manager or get_skill_context_manager()
@@ -95,6 +99,8 @@ class SkillInvocationDetector:
         self._session_id = session_id
         self._channel = channel
         self._source_id = source_id
+        self._user_name = user_name
+        self._bbk_id = bbk_id
 
         # Configuration
         self._idle_threshold = idle_threshold
@@ -537,6 +543,8 @@ class SkillInvocationDetector:
                         "trigger_reason": trigger_reason,
                         "confidence": confidence,
                     },
+                    user_name=self._user_name,
+                    bbk_id=self._bbk_id,
                 )
             except Exception as e:
                 logger.warning("Failed to emit skill start event: %s", e)

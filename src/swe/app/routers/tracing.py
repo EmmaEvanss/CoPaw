@@ -273,7 +273,7 @@ def _build_user_messages_csv_response(
 @router.get("/overview", response_model=OverviewStats)
 async def get_overview(
     request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier"),
+    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
     start_date: Optional[str] = Query(
         None,
         description="Start date (YYYY-MM-DD)",
@@ -283,7 +283,7 @@ async def get_overview(
     """Get overview statistics for the dashboard.
 
     Args:
-        source_id: Source identifier (optional, defaults from header)
+        source_id: Source identifier (use 'all' or leave empty for all platforms)
         start_date: Optional start date filter
         end_date: Optional end date filter
 
@@ -291,7 +291,8 @@ async def get_overview(
         Overview statistics including user counts, token usage,
         model distribution.
     """
-    actual_source_id = _get_source_id(request, source_id)
+    # Use 'all' to get data across all sources when not specified
+    actual_source_id = source_id or "all"
     try:
         manager = get_trace_manager()
         store = manager.store
@@ -308,7 +309,7 @@ async def get_overview(
 @router.get("/users", response_model=dict)
 async def get_users(
     request: Request,
-    source_id: Optional[str] = Query(None, description="Source identifier"),
+    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     user_id: Optional[str] = Query(
@@ -324,7 +325,7 @@ async def get_users(
     """Get list of users with their statistics.
 
     Args:
-        source_id: Source identifier (optional, defaults from header)
+        source_id: Source identifier (use 'all' or leave empty for all platforms)
         page: Page number
         page_size: Page size
         user_id: Filter by user ID
@@ -334,7 +335,8 @@ async def get_users(
     Returns:
         Paginated list of users with stats
     """
-    actual_source_id = _get_source_id(request, source_id)
+    # Use 'all' to get data across all sources when not specified
+    actual_source_id = source_id or "all"
     try:
         manager = get_trace_manager()
         store = manager.store
@@ -487,6 +489,18 @@ async def get_trace_detail(
     detail = await store.get_trace_detail(trace_id, actual_source_id)
     if detail is None:
         raise HTTPException(status_code=404, detail="Trace not found")
+
+    # Query model_output from Elasticsearch
+    try:
+        from ...elasticsearch import get_es_client
+
+        es_client = get_es_client()
+        if es_client and es_client.is_connected:
+            model_output = await es_client.get_message(trace_id)
+            if model_output:
+                detail.trace.model_output = model_output
+    except Exception as es_err:
+        logger.warning("Failed to query model_output from ES: %s", es_err)
 
     return detail
 
@@ -900,3 +914,229 @@ async def get_trace_timeline(
         raise HTTPException(status_code=404, detail="Trace not found")
 
     return detail
+
+
+@router.get("/sources", response_model=dict)
+async def get_sources(
+    request: Request,
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+) -> dict:
+    """Get list of all distinct source_ids (platforms).
+
+    Args:
+        start_date: Start date filter
+        end_date: End date filter
+
+    Returns:
+        List of source_id strings
+    """
+    try:
+        manager = get_trace_manager()
+        store = manager.store
+    except RuntimeError:
+        return {"sources": []}
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    sources = await store.get_sources(start, end)
+    return {"sources": sources}
+
+
+@router.get("/channel-distribution", response_model=dict)
+async def get_channel_distribution(
+    request: Request,
+    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+) -> dict:
+    """Get channel (platform) distribution statistics.
+
+    Args:
+        source_id: Source identifier (optional, use 'all' to get distribution across all platforms)
+        start_date: Start date filter
+        end_date: End date filter
+
+    Returns:
+        Channel distribution with platformUserDistribution, platformCallDistribution, totalPlatforms
+    """
+    # Use 'all' to get distribution across all sources
+    actual_source_id = source_id or "all"
+    try:
+        manager = get_trace_manager()
+        store = manager.store
+    except RuntimeError:
+        return {
+            "platformUserDistribution": [],
+            "platformCallDistribution": [],
+            "totalPlatforms": 0,
+        }
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    return await store.get_channel_distribution(actual_source_id, start, end)
+
+
+@router.get("/growth-stats", response_model=dict)
+async def get_growth_stats(
+    request: Request,
+    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    time_range: str = Query("day", description="Time range: day, week, month, custom"),
+) -> dict:
+    """Get growth statistics compared to previous period.
+
+    Args:
+        source_id: Source identifier (use 'all' or leave empty for all platforms)
+        start_date: Start date of current period (YYYY-MM-DD)
+        end_date: End date of current period (YYYY-MM-DD)
+        time_range: Time range type for calculating previous period
+
+    Returns:
+        Growth stats: callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth
+    """
+    # Use 'all' to get data across all sources when not specified
+    actual_source_id = source_id or "all"
+    try:
+        manager = get_trace_manager()
+        store = manager.store
+    except RuntimeError:
+        return {
+            "callsGrowth": 0,
+            "tokensGrowth": 0,
+            "sessionGrowth": 0,
+            "userGrowth": 0,
+            "platformGrowth": 0,
+        }
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    return await store.get_growth_stats(
+        actual_source_id, start, end, time_range
+    )
+
+
+@router.get("/daily-trend", response_model=dict)
+async def get_daily_trend(
+    request: Request,
+    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+) -> dict:
+    """Get daily trend data for the specified period.
+
+    Args:
+        source_id: Source identifier (use 'all' or leave empty for all platforms)
+        start_date: Start date filter
+        end_date: End date filter
+
+    Returns:
+        List of { date, calls, tokens, users }
+    """
+    # Use 'all' to get trend data across all sources
+    actual_source_id = source_id or "all"
+    try:
+        manager = get_trace_manager()
+        store = manager.store
+    except RuntimeError:
+        return {"trendData": []}
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    trend = await store.get_daily_trend(actual_source_id, start, end)
+    return {"trendData": trend}
+@router.get("/overview", response_model=OverviewStats)
+async def get_overview(
+    request: Request,
+    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    start_date: Optional[str] = Query(
+        None,
+        description="Start date (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+) -> OverviewStats:
+    """Get overview statistics for the dashboard.
+
+    Args:
+        source_id: Source identifier (use 'all' or leave empty for all platforms)
+        start_date: Optional start date filter
+        end_date: Optional end date filter
+
+    Returns:
+        Overview statistics including user counts, token usage,
+        model distribution.
+    """
+    # Use 'all' to get data across all sources when not specified
+    actual_source_id = source_id or "all"
+    try:
+        manager = get_trace_manager()
+        store = manager.store
+    except RuntimeError:
+        # Tracing not initialized, return empty stats
+        return OverviewStats()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    return await store.get_overview_stats(actual_source_id, start, end)
+
+
+@router.get("/users", response_model=dict)
+async def get_users(
+    request: Request,
+    source_id: Optional[str] = Query(None, description="Source identifier, use 'all' for all platforms"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    user_id: Optional[str] = Query(
+        None,
+        description="Filter by user ID (partial match)",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="Start date (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+) -> dict:
+    """Get list of users with their statistics.
+
+    Args:
+        source_id: Source identifier (use 'all' or leave empty for all platforms)
+        page: Page number
+        page_size: Page size
+        user_id: Filter by user ID
+        start_date: Start date filter
+        end_date: End date filter
+
+    Returns:
+        Paginated list of users with stats
+    """
+    # Use 'all' to get data across all sources when not specified
+    actual_source_id = source_id or "all"
+    try:
+        manager = get_trace_manager()
+        store = manager.store
+    except RuntimeError:
+        return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    users, total = await store.get_users(
+        actual_source_id,
+        page,
+        page_size,
+        user_id,
+        start,
+        end,
+    )
+    return {
+        "items": [u.model_dump() for u in users],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }

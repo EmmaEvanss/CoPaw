@@ -36,6 +36,8 @@ from ...agents.react_agent import SWEAgent
 from ...security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 from ...config.config import MCPClientConfig, MCPConfig, load_agent_config, SuggestionMode
 from ...constant import (
+    QUERY_CLEANUP_TIMEOUT,
+    QUERY_TIMEOUT_SECONDS,
     TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
     WORKING_DIR,
 )
@@ -62,6 +64,16 @@ _APPROVE_EXACT = frozenset(
         "/daemon approve",
     },
 )
+_MCP_HTTP_TIMEOUT_SECONDS = 240.0
+_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS = 60.0 * 5
+
+_DENY_EXACT = frozenset(
+    {
+        "deny",
+        "/deny",
+        "/daemon deny",
+    },
+)
 
 
 def _is_approval(text: str) -> bool:
@@ -73,6 +85,12 @@ def _is_approval(text: str) -> bool:
     """
     normalized = " ".join(text.split()).lower()
     return normalized in _APPROVE_EXACT
+
+
+def _is_denial(text: str) -> bool:
+    """Return True only when *text* is an explicit deny command."""
+    normalized = " ".join(text.split()).lower()
+    return normalized in _DENY_EXACT
 
 
 async def _build_and_connect_mcp_clients(
@@ -105,7 +123,6 @@ async def _build_and_connect_mcp_clients(
                 await client.connect()
                 clients.append(client)
                 logger.info(f"MCP client '{key}' created and connected")
-                print("passthrough_headers",passthrough_headers)
         except Exception as e:
             logger.warning(
                 f"Failed to create MCP client '{key}': {e}",
@@ -179,8 +196,6 @@ async def _create_mcp_client_with_headers(
     if passthrough_headers:
         merged_headers.update(passthrough_headers)
 
-    http_client = httpx.AsyncClient(headers=merged_headers)
-
     client = HttpStatefulClient(
         name=client_config.name,
         transport=client_config.transport,
@@ -193,8 +208,20 @@ async def _create_mcp_client_with_headers(
         client_context = sse_client(
             url=client_config.url,
             headers=merged_headers,
+            timeout=_MCP_HTTP_TIMEOUT_SECONDS,
+            sse_read_timeout=_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS,
         )
+        http_client = None
     else:  # streamable_http
+        http_client = httpx.AsyncClient(
+            headers=merged_headers,
+            timeout=httpx.Timeout(
+                connect=_MCP_HTTP_TIMEOUT_SECONDS,
+                read=_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS,
+                write=_MCP_HTTP_TIMEOUT_SECONDS,
+                pool=_MCP_HTTP_TIMEOUT_SECONDS,
+            ),
+        )
         client_context = streamable_http_client(
             url=client_config.url,
             http_client=http_client,
@@ -420,9 +447,15 @@ class AgentRunner(Runner):
                         ] = thinking_blocks
             return None, True, approved_tool_call
 
+        explicit_deny = _is_denial(normalized)
+        denial_decision = (
+            ApprovalDecision.DENIED
+            if explicit_deny
+            else ApprovalDecision.DENIED
+        )
         await svc.resolve_request(
             pending.request_id,
-            ApprovalDecision.DENIED,
+            denial_decision,
         )
         return (
             Msg(
@@ -536,6 +569,7 @@ class AgentRunner(Runner):
             session_id = request.session_id
             user_id = request.user_id
             channel = getattr(request, "channel", DEFAULT_CHANNEL)
+            skip_history = getattr(request, "skip_history", False)
 
             logger.info(
                 "Handle agent query:\n%s",
@@ -650,6 +684,7 @@ class AgentRunner(Runner):
                     user_id,
                     channel,
                     name=name,
+                    meta={"agent_id": self.agent_id},
                 )
                 logger.debug(f"Runner: Got chat: {chat.id}")
             else:
@@ -660,30 +695,59 @@ class AgentRunner(Runner):
 
             _was_cancelled = False
 
-            try:
-                await self.session.load_session_state(
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent=agent,
-                )
-            except KeyError as e:
-                logger.warning(
-                    "load_session_state skipped (state schema mismatch): %s; "
-                    "will save fresh state on completion to recover file",
-                    e,
-                )
-            session_state_loaded = True
+            session_state_loaded = await self.get_state_loaded(
+                agent,
+                session_id,
+                session_state_loaded,
+                skip_history,
+                user_id,
+            )
 
             # Rebuild system prompt so it always reflects the latest
             # AGENTS.md / SOUL.md / PROFILE.md, not the stale one saved
             # in the session state.
             agent.rebuild_sys_prompt()
 
-            async for msg, last in stream_printing_messages(
-                agents=[agent],
-                coroutine_task=agent(msgs),
+            async for msg, last in self._enforce_query_timeout(
+                stream_printing_messages(
+                    agents=[agent],
+                    coroutine_task=agent(msgs),
+                ),
+                session_id=session_id,
+                agent=agent,
             ):
                 yield msg, last
+
+            # Index model output to Elasticsearch
+            if trace_id and agent is not None:
+                assistant_response = _extract_assistant_response(agent)
+                logger.info(
+                    "ES write check: trace_id=%s, response_len=%d",
+                    trace_id,
+                    len(assistant_response) if assistant_response else 0,
+                )
+                if assistant_response:
+                    try:
+                        from ...elasticsearch import get_es_client
+
+                        es_client = get_es_client()
+                        if es_client and es_client.is_connected:
+                            await es_client.index_message(
+                                trace_id,
+                                assistant_response,
+                            )
+                        else:
+                            logger.warning(
+                                "ES client not available: connected=%s",
+                                es_client.is_connected if es_client else None,
+                            )
+                    except Exception as es_err:
+                        logger.warning(
+                            "Failed to index model output to ES: %s",
+                            es_err,
+                        )
+                else:
+                    logger.info("ES write skipped: empty assistant_response")
 
             # End trace with success status
             if trace_id and has_trace_manager():
@@ -751,18 +815,81 @@ class AgentRunner(Runner):
                 session_id,
             )
 
-            if agent is not None and session_state_loaded:
-                await self.session.save_session_state(
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent=agent,
-                )
+            async def _safe_cleanup() -> None:
+                """Safely run cleanup operations, ignoring CancelledError.
 
-            if self._chat_manager is not None and chat is not None:
-                await self._chat_manager.update_chat(chat)
+                When the outer scope is cancelled, await operations in finally
+                blocks may raise CancelledError due to asyncio checkpoint
+                behavior. These should be suppressed since the task is already
+                being cleaned up.
 
-            # Close all MCP clients created for this request
-            await _cleanup_mcp_clients(mcp_clients)
+                Each cleanup step is guarded by an ``asyncio.wait_for`` with
+                ``QUERY_CLEANUP_TIMEOUT`` to prevent a stalled cleanup
+                (e.g. database unreachable) from blocking the request forever.
+                """
+                try:
+                    if agent is not None and session_state_loaded:
+                        await asyncio.wait_for(
+                            self.save_job_session_state(
+                                agent,
+                                session_id,
+                                skip_history,
+                                user_id,
+                            ),
+                            timeout=QUERY_CLEANUP_TIMEOUT,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Runner finally: session state save timed out "
+                        "(session_id=%s, timeout=%.0fs)",
+                        session_id,
+                        QUERY_CLEANUP_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Runner finally: session state save cancelled (session_id=%s)",
+                        session_id,
+                    )
+                try:
+                    if self._chat_manager is not None and chat is not None:
+                        await asyncio.wait_for(
+                            self._chat_manager.update_chat(chat),
+                            timeout=QUERY_CLEANUP_TIMEOUT,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Runner finally: chat update timed out "
+                        "(session_id=%s, timeout=%.0fs)",
+                        session_id,
+                        QUERY_CLEANUP_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Runner finally: chat update cancelled (session_id=%s)",
+                        session_id,
+                    )
+                try:
+                    # Close all MCP clients created for this request
+                    # Check if mcp_clients exists in scope (may not if init failed early)
+                    if "mcp_clients" in locals() and mcp_clients:
+                        await asyncio.wait_for(
+                            _cleanup_mcp_clients(mcp_clients),
+                            timeout=QUERY_CLEANUP_TIMEOUT,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Runner finally: MCP cleanup timed out "
+                        "(session_id=%s, timeout=%.0fs)",
+                        session_id,
+                        QUERY_CLEANUP_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Runner finally: MCP cleanup cancelled (session_id=%s)",
+                        session_id,
+                    )
+
+            await _safe_cleanup()
 
             # === 可插拔式 Q&A 内容提取钩子 ===
             if (
@@ -813,6 +940,113 @@ class AgentRunner(Runner):
                         bool(assistant_response),
                         bool(user_message),
                     )
+
+    async def get_state_loaded(
+        self,
+        agent: SWEAgent,
+        session_id: str | None,
+        session_state_loaded: bool,
+        skip_history: bool | Any,
+        user_id: str | None,
+    ) -> bool:
+        # 对于 cron 任务，跳过会话历史加载（不读取旧历史）
+        if skip_history:
+            logger.info(
+                "Cron task: skipping session state load (session_id=%s)",
+                session_id,
+            )
+            session_state_loaded = True
+        else:
+            try:
+                await self.session.load_session_state(
+                    session_id=session_id,
+                    user_id=user_id,
+                    agent=agent,
+                )
+            except KeyError as e:
+                logger.warning(
+                    "load_session_state skipped (state schema mismatch): %s; "
+                    "will save fresh state on completion to recover file",
+                    e,
+                )
+            session_state_loaded = True
+        return session_state_loaded
+
+    async def save_job_session_state(
+        self,
+        agent: SWEAgent,
+        session_id: str | None | Any,
+        skip_history: bool | Any,
+        user_id: str | None,
+    ):
+        if skip_history:
+            # 对于 cron 任务：合并保存，保留旧历史 + 新消息
+            existing_state = await self.session.get_session_state_dict(
+                session_id=session_id,
+                user_id=user_id,
+                allow_not_exist=True,
+            )
+            # 获取当前 agent 状态
+            current_agent_state = agent.state_dict()
+
+            # 深度合并：对于 agent.memory，需要追加内容而不是覆盖
+            if (
+                "agent" in existing_state
+                and "memory" in existing_state["agent"]
+            ):
+                existing_memory = existing_state["agent"]["memory"]
+                current_memory = current_agent_state.get("memory", {})
+                # 合并 memory.content（消息列表）
+                if "content" in existing_memory:
+                    existing_content = existing_memory["content"]
+                    current_content = current_memory.get("content", [])
+                    # 追加新消息到旧消息后面
+                    current_memory = dict(current_memory)
+                    current_memory["content"] = (
+                        existing_content + current_content
+                    )
+                    current_agent_state = dict(current_agent_state)
+                    current_agent_state["memory"] = current_memory
+
+            # 构建最终状态
+            merged_state = dict(existing_state)
+            merged_state["agent"] = current_agent_state
+
+            # 直接保存合并后的状态
+            # pylint: disable=protected-access
+            session_save_path = self.session._get_save_path(
+                session_id,
+                user_id=user_id,
+            )
+
+            with open(
+                session_save_path,
+                "w",
+                encoding="utf-8",
+            ) as f:
+                f.write(json.dumps(merged_state, ensure_ascii=False))
+            logger.info(
+                "Cron task: saved merged session state "
+                "(session_id=%s, existing_memory_content=%s, new_content=%s)",
+                session_id,
+                len(
+                    existing_state.get("agent", {})
+                    .get("memory", {})
+                    .get("content", []),
+                ),
+                len(
+                    current_agent_state.get("memory", {}).get(
+                        "content",
+                        [],
+                    ),
+                ),
+            )
+        else:
+            await self.session.save_session_state(
+                session_id=session_id,
+                user_id=user_id,
+                agent=agent,
+            )
 
     async def _cleanup_denied_session_memory(
         self,
@@ -923,6 +1157,74 @@ class AgentRunner(Runner):
                 session_id,
                 exc_info=True,
             )
+
+    async def _enforce_query_timeout(
+        self,
+        msg_stream,
+        session_id: str,
+        agent=None,
+        timeout_seconds: float = QUERY_TIMEOUT_SECONDS,
+    ):
+        """Wrap an async message stream with global wall-clock timeout.
+
+        Iterates over *msg_stream* and yields each ``(msg, last)`` pair.
+        If the total elapsed time since the first call exceeds
+        *timeout_seconds*, a timeout notification message is yielded,
+        the stream is terminated, and the agent is interrupted.
+
+        Args:
+            msg_stream: Async iterable of ``(msg, last)`` tuples.
+            session_id: Session identifier for logging.
+            agent: Agent instance to interrupt on timeout.
+            timeout_seconds: Maximum wall-clock seconds for the entire
+                query (default: ``QUERY_TIMEOUT_SECONDS``).
+
+        Yields:
+            ``(msg, last)`` tuples, with a final timeout notification if
+            the limit is exceeded.
+        """
+        start = time.monotonic()
+        async for msg, last in msg_stream:
+            elapsed = time.monotonic() - start
+            if elapsed > timeout_seconds:
+                logger.warning(
+                    "Query timeout (%.0fs > %.0fs) for session %s",
+                    elapsed,
+                    timeout_seconds,
+                    session_id,
+                )
+                # Interrupt the agent to stop it from continuing
+                if agent is not None:
+                    try:
+                        await agent.interrupt()
+                        logger.info(
+                            "Agent interrupted after query timeout for session %s",
+                            session_id,
+                        )
+                    except Exception as interrupt_err:
+                        logger.warning(
+                            "Failed to interrupt agent on query timeout: %s",
+                            interrupt_err,
+                        )
+                yield (
+                    Msg(
+                        name="Friday",
+                        role="assistant",
+                        content=[
+                            TextBlock(
+                                type="text",
+                                text=(
+                                    f"⏰ 任务执行超时"
+                                    f"（{int(elapsed)}s > {int(timeout_seconds)}s），"
+                                    f"已自动终止。"
+                                ),
+                            ),
+                        ],
+                    ),
+                    True,
+                )
+                return
+            yield msg, last
 
     async def stream_query(
         self,

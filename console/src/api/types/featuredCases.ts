@@ -1,5 +1,5 @@
 /**
- * Featured Cases API types
+ * Featured Cases API types (simplified - no case_id)
  */
 
 export interface CaseStep {
@@ -15,20 +15,22 @@ export interface CaseDetail {
 
 export interface FeaturedCase {
   id: number;
-  case_id: string;
+  source_id: string;
+  bbk_id?: string | null;
   label: string;
   value: string;
   image_url?: string;
   iframe_url?: string;
   iframe_title?: string;
   steps?: CaseStep[];
+  sort_order: number;
   is_active: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
 export interface FeaturedCaseCreate {
-  case_id: string;
+  bbk_id?: string | null;
   label: string;
   value: string;
   image_url?: string;
@@ -38,41 +40,15 @@ export interface FeaturedCaseCreate {
 }
 
 export interface FeaturedCaseUpdate {
+  bbk_id?: string | null;
   label?: string;
   value?: string;
   image_url?: string;
   iframe_url?: string;
   iframe_title?: string;
   steps?: CaseStep[];
+  sort_order?: number;
   is_active?: boolean;
-}
-
-export interface CaseConfigItem {
-  case_id: string;
-  sort_order: number;
-}
-
-export interface CaseConfigCreate {
-  source_id: string;
-  bbk_id?: string | null;
-  case_ids: CaseConfigItem[];
-}
-
-export interface CaseConfigListItem {
-  source_id: string;
-  bbk_id: string | null;
-  case_count: number;
-}
-
-export interface CaseConfigListResponse {
-  configs: CaseConfigListItem[];
-  total: number;
-}
-
-export interface CaseConfigDetail {
-  source_id: string;
-  bbk_id: string | null;
-  case_ids: string[];
 }
 
 export interface FeaturedCaseListResponse {
@@ -82,7 +58,7 @@ export interface FeaturedCaseListResponse {
 
 // Display format (from /featured-cases endpoint)
 export interface FeaturedCaseDisplay {
-  id: string;
+  id: number;
   label: string;
   value: string;
   image_url?: string;

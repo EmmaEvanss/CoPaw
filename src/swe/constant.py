@@ -267,18 +267,22 @@ LLM_BACKOFF_CAP = EnvVarLoader.get_float(
 )
 
 # LLM concurrency control
-# Maximum number of concurrent in-flight LLM calls; excess requests wait on
-# the semaphore.  Tune to your API quota: start conservatively at 3-5 and
-# increase (e.g. OpenAI Tier 1 ~500 QPM allows ~25 at 3 s/call average).
+# Default maximum number of concurrent in-flight LLM calls per workload inside
+# each tenant-local agent scope. Chat and cron can be split with agent config
+# overrides; when unset, each workload uses this value independently. Tune to
+# your API quota: start conservatively at 3-5 and increase carefully.
 LLM_MAX_CONCURRENT = EnvVarLoader.get_int(
     "SWE_LLM_MAX_CONCURRENT",
     10,
     min_value=1,
 )
+DEFAULT_LLM_CHAT_MAX_CONCURRENT = 2
+DEFAULT_LLM_CRON_MAX_CONCURRENT = 3
 
-# Maximum queries per minute (QPM), enforced via a 60-second sliding window.
-# New requests that would exceed this limit will wait before being dispatched
-# to the API — proactively preventing 429s rather than reacting to them.
+# Maximum queries per minute (QPM) per tenant-local agent scope, enforced via
+# a 60-second sliding window. New requests that would exceed this limit wait
+# before being dispatched to the API, proactively preventing 429s. This quota
+# remains shared across chat and cron workloads.
 # 0 = unlimited (disabled).
 # Examples: Anthropic Tier-1 ≈ 50 QPM; OpenAI Tier-1 ≈ 500 QPM.
 LLM_MAX_QPM = EnvVarLoader.get_int(
@@ -287,28 +291,101 @@ LLM_MAX_QPM = EnvVarLoader.get_int(
     min_value=0,
 )
 
-# Default global pause duration (seconds) applied to all waiters when a 429
-# is received.  Overridden by the API's Retry-After header when present.
+# Default pause duration (seconds) applied to the tenant-local agent scope that
+# receives a 429. The cooldown is shared across workloads and overridden by the
+# API's Retry-After header when present.
 LLM_RATE_LIMIT_PAUSE = EnvVarLoader.get_float(
     "SWE_LLM_RATE_LIMIT_PAUSE",
     5.0,
     min_value=1.0,
 )
 
-# Random jitter range (seconds) added on top of the pause remaining time so
-# concurrent waiters stagger their wake-up and avoid a new burst.
+# Random jitter range (seconds) added on top of the scoped pause remaining
+# time so concurrent waiters in that scope stagger their wake-up.
 LLM_RATE_LIMIT_JITTER = EnvVarLoader.get_float(
     "SWE_LLM_RATE_LIMIT_JITTER",
     1.0,
     min_value=0.0,
 )
 
-# Maximum time (seconds) a caller will wait for a semaphore slot before
-# giving up with a RuntimeError rather than blocking indefinitely.
+# Default maximum time (seconds) a caller waits for its workload-specific
+# semaphore slot before giving up with a RuntimeError rather than blocking
+# indefinitely.
 LLM_ACQUIRE_TIMEOUT = EnvVarLoader.get_float(
     "SWE_LLM_ACQUIRE_TIMEOUT",
     300.0,
     min_value=10.0,
+)
+
+# MCP runtime call timeout (seconds).
+# Applied to call_tool() and list_tools() to prevent indefinite hangs
+# when an MCP server process stalls.
+MCP_CALL_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_MCP_CALL_TIMEOUT",
+    120.0,
+    min_value=10.0,
+)
+
+# Query global timeout (seconds).
+# Maximum wall-clock time for a single user request.  When exceeded the
+# runner yields a timeout notification and terminates the query.
+QUERY_TIMEOUT_SECONDS = EnvVarLoader.get_float(
+    "SWE_QUERY_TIMEOUT_SECONDS",
+    1800.0,  # 30 minutes
+    min_value=60.0,
+)
+
+# LLM single-call timeout (seconds).
+# Upper bound for a *single* LLM API call (including retries within the
+# SDK).  Does not include back-off wait between retry attempts.
+LLM_CALL_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_LLM_CALL_TIMEOUT",
+    600.0,  # 10 minutes
+    min_value=30.0,
+)
+
+# LLM streaming stall timeout (seconds).
+# If no chunk arrives from a streaming LLM response within this window,
+# the call is considered stalled and aborted.
+LLM_STREAM_STALL_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_LLM_STREAM_STALL_TIMEOUT",
+    120.0,  # 2 minutes
+    min_value=10.0,
+)
+
+# Agent watchdog timeout (seconds).
+# If the agent produces no output for this duration, it is considered
+# stuck and will be automatically interrupted.
+AGENT_WATCHDOG_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_AGENT_WATCHDOG_TIMEOUT",
+    300.0,  # 5 minutes
+    min_value=30.0,
+)
+
+# Query cleanup timeout (seconds).
+# Applied to each operation in the query_handler finally block to prevent
+# cleanup from blocking indefinitely (e.g. when the database is down).
+QUERY_CLEANUP_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_QUERY_CLEANUP_TIMEOUT",
+    30.0,
+    min_value=5.0,
+)
+
+# Agent interrupt timeout (seconds).
+# Maximum time to wait for the agent to finish after being interrupted.
+AGENT_INTERRUPT_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_AGENT_INTERRUPT_TIMEOUT",
+    60.0,
+    min_value=5.0,
+)
+
+# Channel consume timeout (seconds).
+# Maximum time allowed to process a single batch of channel messages.
+# Should be slightly larger than QUERY_TIMEOUT_SECONDS.
+CHANNEL_CONSUME_TIMEOUT = EnvVarLoader.get_float(
+    "SWE_CHANNEL_CONSUME_TIMEOUT",
+    1900.0,
+    min_value=60.0,
 )
 
 # Tool guard approval timeout (seconds).

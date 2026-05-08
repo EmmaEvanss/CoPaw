@@ -17,6 +17,4 @@ __all__ = [
     "store_suggestions",
     "take_suggestions",
     "peek_suggestions",
-    "store_qa_content",
-    "get_qa_content",
 ]

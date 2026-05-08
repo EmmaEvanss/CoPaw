@@ -1,6 +1,7 @@
 import React from "react";
 import ChatSessionItem from "../ChatSessionItem";
 import type { HistorySession } from "./historySessions";
+import { getHistorySessionTargetId } from "./historySessions";
 import { formatListTime } from "../../listTimeFormat";
 
 
@@ -12,6 +13,8 @@ export interface HistorySessionRowProps {
   active: boolean;
   onSessionClick: (sessionId: string) => void;
   onSessionDelete: (sessionId: string, backendId: string | null) => void;
+  /** Custom style for virtual scrolling positioning */
+  style?: React.CSSProperties;
 }
 
 
@@ -32,18 +35,18 @@ function resolveBackendChatId(
 
 function HistorySessionRowInner(props: HistorySessionRowProps) {
   const { session, active, onSessionClick, onSessionDelete } = props;
-  const sessionId = session.id || "";
+  const targetId = getHistorySessionTargetId(session);
   const backendId = resolveBackendChatId(session);
 
 
   const handleClick = React.useCallback(() => {
-    onSessionClick(sessionId);
-  }, [onSessionClick, sessionId]);
+    onSessionClick(targetId);
+  }, [onSessionClick, targetId]);
 
 
   const handleDelete = React.useCallback(() => {
-    onSessionDelete(sessionId, backendId);
-  }, [backendId, onSessionDelete, sessionId]);
+    onSessionDelete(targetId, backendId);
+  }, [backendId, onSessionDelete, targetId]);
 
 
   return (
@@ -56,6 +59,7 @@ function HistorySessionRowInner(props: HistorySessionRowProps) {
       showEdit={false}
       showTimeline={false}
       showChannel={false}
+      style={props.style}
     />
   );
 }
@@ -72,7 +76,8 @@ function areEqual(
     prevProps.session.id === nextProps.session.id &&
     prevProps.session.realId === nextProps.session.realId &&
     prevProps.session.name === nextProps.session.name &&
-    prevProps.session.createdAt === nextProps.session.createdAt
+    prevProps.session.createdAt === nextProps.session.createdAt &&
+    prevProps.style === nextProps.style
   );
 }
 

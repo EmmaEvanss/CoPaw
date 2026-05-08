@@ -11,6 +11,7 @@ import AgentScopeRuntimeRequestCard from "@/components/agentscope-chat/AgentScop
 import AgentScopeRuntimeResponseCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Card";
 // ==================== 组件引入方式变更结束 ====================
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { flushSync } from "react-dom";
 import { Button, Modal, Result, Tooltip } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import { ExclamationCircleOutlined, SettingOutlined } from "@ant-design/icons";
@@ -66,27 +67,33 @@ import {
 } from "./utils";
 import { deriveChatTaskState, shouldMarkTaskReadOnOpen } from "./taskJobs";
 import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
+import { matchesResolvedChatId } from "./sessionApi/resolvedSessionMapping";
 
-// ==================== 会话状态轮询 (自动 reconnect) ====================
-import { emit } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Context/useChatAnywhereEventEmitter";
-import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
-// ==================== 会话状态轮询 (自动 reconnect) ====================
 import RuntimeRequestCard from "./components/RuntimeRequestCard";
+import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
+import ApprovalActionCard from "./components/ApprovalActionCard";
 import type {
+  ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
   ChatRuntimeResponseCardData,
 } from "./messageMeta";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
+const TASK_RUNNING_POLL_MS = 30_000;
 const TASK_PAGE_POLL_MS = 30_000;
 const TASK_PENDING_POLL_MS = 30_000;
-const SESSION_RUNNING_POLL_MS = 5_000;
 
 interface SessionInfo {
   session_id?: string;
   user_id?: string;
   channel?: string;
+}
+
+interface ChatRequestTarget {
+  session_id?: string;
+  logical_session_id?: string;
+  chat_id?: string | null;
 }
 
 interface CustomWindow extends Window {
@@ -334,7 +341,7 @@ export default function ChatPage() {
   const dragCounterRef = useRef(0);
   const runtimeLoadingBridgeRef = useRef<RuntimeLoadingBridgeApi | null>(null);
   const { message } = useAppMessage();
-  const { setSessionLoading } = useChatAnywhereSessionsState();
+  const { setSessionLoading, setSessions } = useChatAnywhereSessionsState();
 
   // useTransition for non-urgent state updates (badge clearing)
   const [, startTransition] = useTransition();
@@ -386,7 +393,7 @@ export default function ChatPage() {
   // Register session API event callbacks for URL synchronization
 
   useEffect(() => {
-    sessionApi.onSessionIdResolved = (realId) => {
+    sessionApi.onSessionIdResolved = (_tempId, realId) => {
       if (!isChatActiveRef.current) return;
       // Update URL when realId is resolved, regardless of current chatId
       // (chatId may be undefined if URL was cleared in onSessionCreated)
@@ -423,7 +430,14 @@ export default function ChatPage() {
       // 3. A's request completes → onSessionSelected(A) fires
       // 4. Should NOT navigate back to A since user already chose B
       const currentUrlChatId = chatIdRef.current;
-      if (currentUrlChatId && currentUrlChatId !== targetId) {
+      if (
+        currentUrlChatId &&
+        currentUrlChatId !== targetId &&
+        !matchesResolvedChatId({
+          requestedSessionId: currentUrlChatId,
+          chatId: targetId,
+        })
+      ) {
         return;
       }
 
@@ -473,7 +487,7 @@ export default function ChatPage() {
 
   // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 处理 iframe URL 传递的 sessionId/taskId 参数，自动跳转到对应聊天页面
-  // sessionId: 直接导航到 /chat/:sessionId
+  // sessionId: 可传 backend chat.id 或逻辑 session_id，后续由初始选择逻辑解析
   // taskId: 查找 task.chat_id 后导航
   const sessionIdRef = useRef<string | null>(null);
   const taskIdRef = useRef<string | null>(null);
@@ -549,6 +563,10 @@ export default function ChatPage() {
     () => deriveChatTaskState(jobs, chatId),
     [jobs, chatId],
   );
+  const hasRunningTask = useMemo(
+    () => tasks.some((task) => task.task?.is_running),
+    [tasks],
+  );
 
   useEffect(() => {
     void refreshJobs();
@@ -560,16 +578,24 @@ export default function ChatPage() {
       }
     };
 
+    // 监听定时任务创建成功事件
+    const handleTaskCreated = () => {
+      void refreshJobs();
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    document.addEventListener("taskCreated", handleTaskCreated);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+      document.removeEventListener("taskCreated", handleTaskCreated);
     };
   }, [refreshJobs]);
 
   useEffect(() => {
-    const pollMs =
-      currentTask?.task?.has_scheduled_result === false
+    const pollMs = hasRunningTask
+      ? TASK_RUNNING_POLL_MS
+      : currentTask?.task?.has_scheduled_result === false
         ? TASK_PENDING_POLL_MS
         : TASK_PAGE_POLL_MS;
 
@@ -578,7 +604,7 @@ export default function ChatPage() {
     }, pollMs);
 
     return () => window.clearInterval(intervalId);
-  }, [currentTask?.task?.has_scheduled_result, refreshJobs]);
+  }, [currentTask?.task?.has_scheduled_result, hasRunningTask, refreshJobs]);
 
   useEffect(() => {
     const hadResult = Boolean(currentTask?.task?.has_scheduled_result);
@@ -623,74 +649,16 @@ export default function ChatPage() {
       });
   }, [currentTask?.id, currentTask?.task?.unread_execution_count]);
 
-  // ==================== 会话状态轮询 (自动 reconnect) ====================
-  // 当用户已在当前会话页面时，如果会话状态变为 running，自动触发 reconnect
-  // 注意：需要排除用户主动发起提问的情况（已在 generating 状态）
-  const sessionReconnectingRef = useRef(false);
-  const prevSessionStatusRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!chatId) return;
-
-    const pollSessionStatus = async () => {
-      try {
-        // 如果当前已经在 generating/loading 状态，说明用户主动发起的提问正在进行
-        // 此时不应触发 reconnect，避免重复创建 SSE 连接
-        const isLoading = runtimeLoadingBridgeRef.current?.getLoading?.() ?? false;
-        if (isLoading) {
-          // 正在进行中，跳过轮询，但记录状态为 running 以便下次正确判断
-          prevSessionStatusRef.current = "running";
-          return;
-        }
-
-        const chatHistory = await chatApi.getChat(chatId);
-        const status = chatHistory?.status;
-        const generating = status === "running";
-
-        // 状态从非 running 变为 running 时触发 reconnect
-        // 条件：1. 状态变为 running  2. 之前不是 running  3. 没有正在 reconnect  4. 当前没有正在 generating
-        if (
-          generating &&
-          prevSessionStatusRef.current !== "running" &&
-          !sessionReconnectingRef.current &&
-          !isLoading
-        ) {
-          sessionReconnectingRef.current = true;
-          // 使用 chatId（UUID）作为 session_id，后端会正确处理
-          console.info("[Chat] Session running, auto reconnect:", chatId);
-          emit({
-            type: "handleReconnect",
-            data: { session_id: chatId },
-          });
-        }
-
-        // 状态变为非 running 时重置 reconnecting 标记
-        if (!generating) {
-          sessionReconnectingRef.current = false;
-        }
-
-        prevSessionStatusRef.current = status;
-      } catch (err) {
-        console.warn("[Chat] Failed to poll session status:", err);
-      }
-    };
-
-    pollSessionStatus();
-    const intervalId = window.setInterval(pollSessionStatus, SESSION_RUNNING_POLL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [chatId]);
-  // ==================== 会话状态轮询结束 ====================
-
   const handleTaskOpen = useCallback(
     (task: CronJobSpecOutput) => {
       const taskChatId = task.task?.chat_id;
       if (!taskChatId) return;
 
-      // Set loading first to avoid blocking, then navigate
-      setSessionLoading(true);
+      // Force loading to render immediately before navigate triggers re-render
+      flushSync(() => {
+        setSessionLoading(true);
+      });
+
       navigate(`/chat/${taskChatId}`, { replace: true });
     },
     [navigate, setSessionLoading],
@@ -779,15 +747,15 @@ export default function ChatPage() {
   ]);
 
   // Show toast when task has no scheduled result yet
-  const taskNoResultShownRef = useRef(false);
+  const taskNoResultShownIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (currentTask && !currentTask.task?.has_scheduled_result) {
-      if (!taskNoResultShownRef.current) {
-        taskNoResultShownRef.current = true;
+      if (taskNoResultShownIdRef.current !== currentTask.id) {
+        taskNoResultShownIdRef.current = currentTask.id;
         message.info("当前任务暂未启动，等下次收到提醒再来看看哟~");
       }
     } else {
-      taskNoResultShownRef.current = false;
+      taskNoResultShownIdRef.current = null;
     }
   }, [currentTask?.id, currentTask?.task?.has_scheduled_result]);
 
@@ -803,11 +771,47 @@ export default function ChatPage() {
     [t],
   );
 
+  const resolveLogicalRequestSessionId = useCallback(
+    (
+      target: ChatRequestTarget,
+      session?: SessionInfo,
+    ): string => {
+      if (target.logical_session_id) {
+        return target.logical_session_id;
+      }
+
+      return sessionApi.getLogicalSessionId(
+        target.session_id || window.currentSessionId || session?.session_id || "",
+      );
+    },
+    [],
+  );
+
+  const resolveRequestChatId = useCallback(
+    (
+      target: ChatRequestTarget,
+      logicalSessionId: string,
+    ): string => {
+      return (
+        target.chat_id ||
+        sessionApi.getChatIdForSession(logicalSessionId) ||
+        sessionApi.getChatIdForSession(target.session_id || "") ||
+        target.session_id ||
+        chatIdRef.current ||
+        logicalSessionId
+      );
+    },
+    [],
+  );
+
   const customFetch = useCallback(
     async (data: {
       input?: Array<Record<string, unknown>>;
       biz_params?: Record<string, unknown>;
       signal?: AbortSignal;
+      session_id?: string;
+      logical_session_id?: string;
+      chat_id?: string | null;
     }): Promise<Response> => {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -831,7 +835,13 @@ export default function ChatPage() {
         return buildModelError();
       }
 
-      const { input = [], biz_params } = data;
+      const {
+        input = [],
+        biz_params,
+        session_id,
+        logical_session_id,
+        chat_id,
+      } = data;
       const session: SessionInfo = input[input.length - 1]?.session || {};
       const lastInput = input.slice(-1);
       const lastMsg = lastInput[0];
@@ -845,9 +855,18 @@ export default function ChatPage() {
             ]
           : lastInput;
 
+      const resolvedLogicalSessionId = resolveLogicalRequestSessionId(
+        {
+          session_id,
+          logical_session_id,
+          chat_id,
+        },
+        session,
+      );
+
       const requestBody = {
         input: rewrittenInput,
-        session_id: window.currentSessionId || session?.session_id || "",
+        session_id: resolvedLogicalSessionId,
         // ==================== userId 统一整改 (Kun He) ====================
         // 使用 getUserId()/getChannel() 获取，优先级：iframe > window > session > default
         user_id: getUserId(session?.user_id),
@@ -857,10 +876,14 @@ export default function ChatPage() {
         ...biz_params,
       };
 
-      const backendChatId =
-        sessionApi.getRealIdForSession(requestBody.session_id) ??
-        chatIdRef.current ??
-        requestBody.session_id;
+      const backendChatId = resolveRequestChatId(
+        {
+          session_id,
+          logical_session_id: resolvedLogicalSessionId,
+          chat_id,
+        },
+        requestBody.session_id,
+      );
       if (backendChatId) {
         const userText = rewrittenInput
           .filter((m: InputMessage) => m.role === "user")
@@ -881,7 +904,7 @@ export default function ChatPage() {
 
       return response;
     },
-    [selectedAgent],
+    [resolveLogicalRequestSessionId, resolveRequestChatId, selectedAgent],
   );
 
   const handleFileUpload = useCallback(
@@ -1045,7 +1068,7 @@ export default function ChatPage() {
             greeting={
               typeof greeting === "string"
                 ? greeting
-                : "你好，你的专属小龙虾，前来报到！"
+                : "你好，有什么可以帮您？"
             }
             onSubmit={(data) => onSubmit(data)}
           />
@@ -1095,6 +1118,9 @@ export default function ChatPage() {
           data: ChatRuntimeResponseCardData;
           isLast?: boolean;
         }) => <RuntimeResponseCard {...props} />,
+        ApprovalAction: (props: { data: ChatApprovalActionCardData }) => (
+          <ApprovalActionCard {...props} />
+        ),
       },
       api: {
         ...defaultConfig.api,
@@ -1102,27 +1128,41 @@ export default function ChatPage() {
         replaceMediaURL: (url: string) => {
           return toDisplayUrl(url);
         },
-        cancel(data: { session_id: string }) {
-          const chatId =
-            sessionApi.getRealIdForSession(data.session_id) ?? data.session_id;
+        cancel(data: {
+          session_id: string;
+          logical_session_id?: string;
+          chat_id?: string | null;
+        }) {
+          const logicalSessionId = resolveLogicalRequestSessionId(data);
+          const chatId = resolveRequestChatId(data, logicalSessionId);
           if (chatId) {
             chatApi.stopChat(chatId).catch((err) => {
               console.error("Failed to stop chat:", err);
             });
           }
         },
-        async reconnect(data: { session_id: string; signal?: AbortSignal }) {
+        async reconnect(data: {
+          session_id: string;
+          signal?: AbortSignal;
+          logical_session_id?: string;
+          chat_id?: string | null;
+        }) {
           const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...buildAuthHeaders(),
           };
+          const logicalSessionId = resolveLogicalRequestSessionId(data);
+          const reconnectSessionId = resolveRequestChatId(
+            data,
+            logicalSessionId,
+          );
 
           return fetch(getApiUrl("/console/chat"), {
             method: "POST",
             headers,
             body: JSON.stringify({
               reconnect: true,
-              session_id: window.currentSessionId || data.session_id,
+              session_id: reconnectSessionId,
               // ==================== userId 统一整改 (Kun He) ====================
               // 使用 getUserId()/getChannel() 获取
               user_id: getUserId(),
@@ -1163,6 +1203,8 @@ export default function ChatPage() {
     isComposingRef,
     isDark,
     multimodalCaps,
+    resolveLogicalRequestSessionId,
+    resolveRequestChatId,
     t,
   ]);
 

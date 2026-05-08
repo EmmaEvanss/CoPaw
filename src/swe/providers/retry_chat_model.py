@@ -5,11 +5,10 @@ Transparently retries LLM API calls on transient errors (rate-limit,
 timeout, connection) with configurable exponential back-off.
 
 Concurrency and rate-limit control (LLMRateLimiter):
-- A global semaphore caps the number of concurrent in-flight LLM calls,
-  preventing a burst of requests from hammering the upstream API.
-- When a 429 is received every concurrent caller is paused for the same
-  duration (plus per-caller jitter) before re-trying, eliminating the
-  thundering-herd problem where multiple callers retry at the same instant.
+- A tenant-local agent scoped semaphore caps the number of concurrent
+  in-flight LLM calls for that agent scope.
+- When a 429 is received, callers in the same agent scope are paused for the
+  same duration before retrying. Unrelated agents keep their own cooldown.
 
 Semaphore ownership rules:
 - Non-streaming: __call__'s finally block always releases the slot
@@ -34,16 +33,32 @@ from agentscope.model import ChatModelBase
 from agentscope.model._model_response import ChatResponse
 
 from ..constant import (
+    DEFAULT_LLM_CHAT_MAX_CONCURRENT,
+    DEFAULT_LLM_CRON_MAX_CONCURRENT,
     LLM_ACQUIRE_TIMEOUT,
     LLM_BACKOFF_BASE,
     LLM_BACKOFF_CAP,
+    LLM_CALL_TIMEOUT,
     LLM_MAX_CONCURRENT,
     LLM_MAX_RETRIES,
     LLM_MAX_QPM,
     LLM_RATE_LIMIT_JITTER,
     LLM_RATE_LIMIT_PAUSE,
+    LLM_STREAM_STALL_TIMEOUT,
 )
-from .rate_limiter import LLMRateLimiter, get_rate_limiter
+from ..config.llm_workload import (
+    LLM_WORKLOAD_CHAT,
+    LLM_WORKLOAD_CRON,
+    LLMWorkload,
+    get_current_llm_workload,
+    normalize_llm_workload,
+)
+from .rate_limiter import (
+    LLMRateLimiter,
+    RateLimiterScopeKey,
+    get_rate_limiter,
+    resolve_rate_limiter_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,23 +82,64 @@ class RetryConfig:
 class RateLimitConfig:
     """Rate-limiting policy for LLM calls.
 
-    Controls the global LLMRateLimiter singleton that caps concurrency and
-    coordinates pauses when a 429 is received.  The singleton is initialised
-    on the *first* call; subsequent callers share the same instance.
+    Controls the scoped LLMRateLimiter that caps concurrency and coordinates
+    pauses when a 429 is received inside the tenant-local agent scope.
 
     Attributes:
-        max_concurrent: Maximum concurrent in-flight LLM calls.
-        max_qpm: Maximum queries per minute (sliding window). 0 = disabled.
-        pause_seconds: Global pause duration (s) on a 429 response.
+        max_concurrent: Fallback maximum concurrent in-flight LLM calls.
+        chat_max_concurrent: Chat workload concurrency cap.
+        cron_max_concurrent: Cron workload concurrency cap.
+        max_qpm: Shared maximum queries per minute. 0 = disabled.
+        pause_seconds: Scope-local pause duration (s) on a 429 response.
         jitter_range: Random jitter (s) added on top of the pause.
-        acquire_timeout: Max seconds to wait for a slot before raising.
+        acquire_timeout: Default max seconds to wait for a slot.
+        chat_acquire_timeout: Optional chat workload acquire-timeout override.
+        cron_acquire_timeout: Optional cron workload acquire-timeout override.
     """
 
     max_concurrent: int = LLM_MAX_CONCURRENT
+    chat_max_concurrent: int | None = DEFAULT_LLM_CHAT_MAX_CONCURRENT
+    cron_max_concurrent: int | None = DEFAULT_LLM_CRON_MAX_CONCURRENT
     max_qpm: int = LLM_MAX_QPM
     pause_seconds: float = LLM_RATE_LIMIT_PAUSE
     jitter_range: float = LLM_RATE_LIMIT_JITTER
     acquire_timeout: float = LLM_ACQUIRE_TIMEOUT
+    chat_acquire_timeout: float | None = None
+    cron_acquire_timeout: float | None = None
+
+    def max_concurrent_for(self, workload: str | None) -> int:
+        """Return the concurrency cap for *workload* with default fallback."""
+        normalized = normalize_llm_workload(workload)
+        if (
+            normalized == LLM_WORKLOAD_CHAT
+            and self.chat_max_concurrent is not None
+        ):
+            return self.chat_max_concurrent
+        if normalized == LLM_WORKLOAD_CHAT:
+            return DEFAULT_LLM_CHAT_MAX_CONCURRENT
+        if (
+            normalized == LLM_WORKLOAD_CRON
+            and self.cron_max_concurrent is not None
+        ):
+            return self.cron_max_concurrent
+        if normalized == LLM_WORKLOAD_CRON:
+            return DEFAULT_LLM_CRON_MAX_CONCURRENT
+        return self.max_concurrent
+
+    def acquire_timeout_for(self, workload: str | None) -> float:
+        """Return the acquire timeout for *workload* with default fallback."""
+        normalized = normalize_llm_workload(workload)
+        if (
+            normalized == LLM_WORKLOAD_CHAT
+            and self.chat_acquire_timeout is not None
+        ):
+            return self.chat_acquire_timeout
+        if (
+            normalized == LLM_WORKLOAD_CRON
+            and self.cron_acquire_timeout is not None
+        ):
+            return self.cron_acquire_timeout
+        return self.acquire_timeout
 
 
 def _get_openai_retryable() -> tuple[type[Exception], ...]:
@@ -120,6 +176,10 @@ def _get_anthropic_retryable() -> tuple[type[Exception], ...]:
 
 def _is_retryable(exc: Exception) -> bool:
     """Return *True* if *exc* should trigger a retry."""
+    # TimeoutError from our own wait_for / stall detection is retryable
+    if isinstance(exc, TimeoutError):
+        return True
+
     retryable = _get_openai_retryable() + _get_anthropic_retryable()
     if retryable and isinstance(exc, retryable):
         return True
@@ -183,10 +243,30 @@ def _normalize_rate_limit_config(
         return RateLimitConfig()
     return RateLimitConfig(
         max_concurrent=max(1, cfg.max_concurrent),
+        chat_max_concurrent=(
+            max(1, cfg.chat_max_concurrent)
+            if cfg.chat_max_concurrent is not None
+            else DEFAULT_LLM_CHAT_MAX_CONCURRENT
+        ),
+        cron_max_concurrent=(
+            max(1, cfg.cron_max_concurrent)
+            if cfg.cron_max_concurrent is not None
+            else DEFAULT_LLM_CRON_MAX_CONCURRENT
+        ),
         max_qpm=max(0, cfg.max_qpm),
         pause_seconds=max(1.0, cfg.pause_seconds),
         jitter_range=max(0.0, cfg.jitter_range),
         acquire_timeout=max(10.0, cfg.acquire_timeout),
+        chat_acquire_timeout=(
+            max(10.0, cfg.chat_acquire_timeout)
+            if cfg.chat_acquire_timeout is not None
+            else None
+        ),
+        cron_acquire_timeout=(
+            max(10.0, cfg.cron_acquire_timeout)
+            if cfg.cron_acquire_timeout is not None
+            else None
+        ),
     )
 
 
@@ -206,8 +286,8 @@ class RetryChatModel(ChatModelBase):
     responses are also covered: if the stream fails mid-consumption the
     entire request is retried from scratch.
 
-    A global LLMRateLimiter is consulted on every call to cap concurrency and
-    to coordinate a shared pause across all callers when a 429 is received.
+    A scoped LLMRateLimiter is consulted on every call to cap concurrency and
+    coordinate 429 pauses within the tenant-local agent scope.
     """
 
     def __init__(
@@ -215,6 +295,10 @@ class RetryChatModel(ChatModelBase):
         inner: ChatModelBase,
         retry_config: RetryConfig | None = None,
         rate_limit_config: RateLimitConfig | None = None,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+        call_timeout: float = LLM_CALL_TIMEOUT,
+        stream_stall_timeout: float = LLM_STREAM_STALL_TIMEOUT,
     ) -> None:
         super().__init__(model_name=inner.model_name, stream=inner.stream)
         self._inner = inner
@@ -222,6 +306,15 @@ class RetryChatModel(ChatModelBase):
         self._rate_limit_config = _normalize_rate_limit_config(
             rate_limit_config,
         )
+        self._limiter_tenant_id = tenant_id
+        self._limiter_agent_id = agent_id
+        self._explicit_limiter_scope = (
+            RateLimiterScopeKey(tenant_id, agent_id)
+            if tenant_id and agent_id
+            else None
+        )
+        self._call_timeout = max(30.0, call_timeout)
+        self._stream_stall_timeout = max(10.0, stream_stall_timeout)
 
     # Expose the real model's class so that formatter mapping keeps working
     # when code inspects ``model.__class__`` after wrapping.
@@ -235,12 +328,16 @@ class RetryChatModel(ChatModelBase):
         limiter: LLMRateLimiter,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Yield all chunks from *stream*, managing the semaphore slot
-        lifecycle.
+        lifecycle and detecting stalls.
 
         Releases the semaphore slot after the first chunk arrives — once the
         API starts streaming the request has been accepted and will not be
         rate-limited mid-flight, so holding the slot for the full streaming
         duration would unnecessarily starve other callers.
+
+        If no chunk arrives within ``self._stream_stall_timeout`` seconds,
+        the stream is considered stalled and a ``TimeoutError`` is raised
+        so the caller can retry.
 
         Always closes *stream* on completion or error.  Any exception raised
         during iteration propagates to the caller's ``async for`` loop
@@ -248,9 +345,26 @@ class RetryChatModel(ChatModelBase):
         does not propagate to the final consumer unless all retries are
         exhausted.
         """
+        import time as _time
+
         first_chunk = True
+        last_chunk_time = _time.monotonic()
         try:
             async for chunk in stream:
+                now = _time.monotonic()
+                gap = now - last_chunk_time
+                if not first_chunk and gap > self._stream_stall_timeout:
+                    logger.warning(
+                        "LLM stream stalled: %.1fs since last chunk "
+                        "(threshold=%.0fs), aborting",
+                        gap,
+                        self._stream_stall_timeout,
+                    )
+                    raise TimeoutError(
+                        f"LLM stream stalled: no chunk for {gap:.1f}s "
+                        f"(threshold={self._stream_stall_timeout:.0f}s)",
+                    )
+                last_chunk_time = now
                 if first_chunk:
                     first_chunk = False
                     # return the slot once the API starts delivering
@@ -268,8 +382,21 @@ class RetryChatModel(ChatModelBase):
         *args: Any,
         **kwargs: Any,
     ) -> ChatResponse | AsyncGenerator[ChatResponse, None]:
+        workload = get_current_llm_workload()
+        acquire_timeout = self._rate_limit_config.acquire_timeout_for(
+            workload,
+        )
+        limiter_scope = resolve_rate_limiter_scope(
+            self._explicit_limiter_scope,
+            tenant_id=self._limiter_tenant_id,
+            agent_id=self._limiter_agent_id,
+        )
         limiter = await get_rate_limiter(
-            max_concurrent=self._rate_limit_config.max_concurrent,
+            scope_key=limiter_scope,
+            workload=workload,
+            max_concurrent=self._rate_limit_config.max_concurrent_for(
+                workload,
+            ),
             max_qpm=self._rate_limit_config.max_qpm,
             default_pause_seconds=self._rate_limit_config.pause_seconds,
             jitter_range=self._rate_limit_config.jitter_range,
@@ -292,17 +419,31 @@ class RetryChatModel(ChatModelBase):
                 try:
                     await asyncio.wait_for(
                         limiter.acquire(),
-                        timeout=self._rate_limit_config.acquire_timeout,
+                        timeout=acquire_timeout,
                     )
                     acquired = True
                 except asyncio.TimeoutError as exc:
+                    logger.warning(
+                        "LLM rate limiter timed out: scope=%s/%s, "
+                        "workload=%s, "
+                        "timeout=%.0fs",
+                        limiter_scope.tenant_id,
+                        limiter_scope.agent_id,
+                        workload,
+                        acquire_timeout,
+                    )
                     raise RuntimeError(
                         f"LLM rate limiter: timed out waiting"
-                        f" {self._rate_limit_config.acquire_timeout:.0f}s "
-                        "for an execution slot",
+                        f" {acquire_timeout:.0f}s "
+                        "for an execution slot "
+                        f"(scope={limiter_scope.tenant_id}/"
+                        f"{limiter_scope.agent_id}, workload={workload})",
                     ) from exc
 
-                result = await self._inner(*args, **kwargs)
+                result = await asyncio.wait_for(
+                    self._inner(*args, **kwargs),
+                    timeout=self._call_timeout,
+                )
 
                 if isinstance(result, AsyncGenerator):
                     # Transfer semaphore ownership to _wrap_stream, which uses
@@ -316,6 +457,9 @@ class RetryChatModel(ChatModelBase):
                         attempt,
                         attempts,
                         limiter,
+                        limiter_scope,
+                        workload,
+                        acquire_timeout,
                     )
 
                 return result
@@ -346,7 +490,62 @@ class RetryChatModel(ChatModelBase):
         # Should be unreachable, but satisfies the type-checker.
         raise last_exc  # type: ignore[misc]
 
-    # pylint: disable=too-many-branches
+    async def _handle_stream_failure(
+        self,
+        exc: Exception,
+        attempt: int,
+        max_attempts: int,
+        limiter: LLMRateLimiter,
+        message: str,
+    ) -> None:
+        """Report retryable stream failures and sleep before the next try."""
+        if _is_retryable(exc) and _is_rate_limit(exc):
+            await limiter.report_rate_limit(_extract_retry_after(exc))
+
+        if not _is_retryable(exc) or attempt >= max_attempts:
+            raise exc
+
+        delay = _compute_backoff(attempt, self._retry_config)
+        logger.warning(
+            "%s (attempt %d/%d): %s. Retrying in %.1fs ...",
+            message,
+            attempt,
+            max_attempts,
+            exc,
+            delay,
+        )
+        await asyncio.sleep(delay)
+
+    async def _acquire_stream_retry_slot(
+        self,
+        limiter: LLMRateLimiter,
+        limiter_scope: RateLimiterScopeKey,
+        workload: LLMWorkload,
+        acquire_timeout: float,
+    ) -> None:
+        """Acquire a limiter slot for a stream retry with scoped diagnostics."""
+        try:
+            await asyncio.wait_for(
+                limiter.acquire(),
+                timeout=acquire_timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            logger.warning(
+                "LLM rate limiter timed out: scope=%s/%s, workload=%s, "
+                "timeout=%.0fs, stream_retry=true",
+                limiter_scope.tenant_id,
+                limiter_scope.agent_id,
+                workload,
+                acquire_timeout,
+            )
+            raise RuntimeError(
+                f"LLM rate limiter: timed out waiting"
+                f" {acquire_timeout:.0f}s"
+                f" for an execution slot (stream retry, "
+                f"scope={limiter_scope.tenant_id}/{limiter_scope.agent_id}, "
+                f"workload={workload})",
+            ) from exc
+
     async def _wrap_stream(
         self,
         stream: AsyncGenerator[ChatResponse, None],
@@ -355,111 +554,71 @@ class RetryChatModel(ChatModelBase):
         current_attempt: int,
         max_attempts: int,
         limiter: LLMRateLimiter,
+        limiter_scope: RateLimiterScopeKey,
+        workload: LLMWorkload,
+        acquire_timeout: float,
     ) -> AsyncGenerator[ChatResponse, None]:
         """Yield chunks from *stream*; on transient failure, retry the full
         request and yield from the new stream instead."""
+        limiter.begin_stream()
         try:
-            async for chunk in self._consume_stream_with_slot(stream, limiter):
-                yield chunk
-            return  # stream completed without error
-        except Exception as failed_exc:
-            if _is_retryable(failed_exc) and _is_rate_limit(failed_exc):
-                await limiter.report_rate_limit(
-                    _extract_retry_after(failed_exc),
+            try:
+                async for chunk in self._consume_stream_with_slot(
+                    stream,
+                    limiter,
+                ):
+                    yield chunk
+                return  # stream completed without error
+            except Exception as failed_exc:
+                await self._handle_stream_failure(
+                    failed_exc,
+                    current_attempt,
+                    max_attempts,
+                    limiter,
+                    "LLM stream failed",
                 )
 
-            if (
-                not _is_retryable(failed_exc)
-                or current_attempt >= max_attempts
-            ):
-                raise failed_exc
-
-            delay = _compute_backoff(current_attempt, self._retry_config)
-            logger.warning(
-                "LLM stream failed (attempt %d/%d): %s. Retrying in %.1fs ...",
-                current_attempt,
-                max_attempts,
-                failed_exc,
-                delay,
-            )
-            await asyncio.sleep(delay)
-
-        # Retry loop for stream failures
-        for attempt in range(current_attempt + 1, max_attempts + 1):
-            acquired = False
-            owns_semaphore = True
-            try:
+            # Retry loop for stream failures
+            for attempt in range(current_attempt + 1, max_attempts + 1):
+                acquired = False
+                owns_semaphore = True
                 try:
-                    await asyncio.wait_for(
-                        limiter.acquire(),
-                        timeout=self._rate_limit_config.acquire_timeout,
+                    await self._acquire_stream_retry_slot(
+                        limiter,
+                        limiter_scope,
+                        workload,
+                        acquire_timeout,
                     )
                     acquired = True
-                except asyncio.TimeoutError as exc:
-                    raise RuntimeError(
-                        f"LLM rate limiter: timed out waiting"
-                        f" {self._rate_limit_config.acquire_timeout:.0f}s"
-                        f" for an execution slot (stream retry)",
-                    ) from exc
 
-                result = await self._inner(*call_args, **call_kwargs)
+                    result = await asyncio.wait_for(
+                        self._inner(*call_args, **call_kwargs),
+                        timeout=self._call_timeout,
+                    )
 
-                if isinstance(result, AsyncGenerator):
-                    owns_semaphore = False
-                    try:
+                    if isinstance(result, AsyncGenerator):
+                        owns_semaphore = False
                         async for chunk in self._consume_stream_with_slot(
                             result,
                             limiter,
                         ):
                             yield chunk
                         return  # stream completed without error
-                    except Exception as retry_failed:
-                        if _is_retryable(retry_failed) and _is_rate_limit(
-                            retry_failed,
-                        ):
-                            await limiter.report_rate_limit(
-                                _extract_retry_after(retry_failed),
-                            )
-                        if (
-                            not _is_retryable(retry_failed)
-                            or attempt >= max_attempts
-                        ):
-                            raise retry_failed
-                        retry_delay = _compute_backoff(
-                            attempt,
-                            self._retry_config,
-                        )
-                        logger.warning(
-                            "LLM stream retry failed (attempt %d/%d): %s. "
-                            "Retrying in %.1fs ...",
-                            attempt,
-                            max_attempts,
-                            retry_failed,
-                            retry_delay,
-                        )
-                        await asyncio.sleep(retry_delay)
-                else:
-                    yield result
-                    return
+                    else:
+                        yield result
+                        return
 
-            except Exception as retry_exc:
-                if _is_retryable(retry_exc) and _is_rate_limit(retry_exc):
-                    await limiter.report_rate_limit(
-                        _extract_retry_after(retry_exc),
+                except Exception as retry_exc:
+                    await self._handle_stream_failure(
+                        retry_exc,
+                        attempt,
+                        max_attempts,
+                        limiter,
+                        "LLM stream retry failed",
                     )
-                if not _is_retryable(retry_exc) or attempt >= max_attempts:
-                    raise
-                retry_delay = _compute_backoff(attempt, self._retry_config)
-                logger.warning(
-                    "LLM stream retry failed (attempt %d/%d): %s. "
-                    "Retrying in %.1fs ...",
-                    attempt,
-                    max_attempts,
-                    retry_exc,
-                    retry_delay,
-                )
-                await asyncio.sleep(retry_delay)
 
-            finally:
-                if owns_semaphore and acquired:
-                    limiter.release()
+                finally:
+                    if owns_semaphore and acquired:
+                        limiter.release()
+        finally:
+            limiter.end_stream()

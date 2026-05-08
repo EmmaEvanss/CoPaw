@@ -1,5 +1,5 @@
 /**
- * Featured Cases API module
+ * Featured Cases API module (simplified - no case_id)
  */
 import { request } from "../request";
 import type {
@@ -8,23 +8,20 @@ import type {
   FeaturedCaseUpdate,
   FeaturedCaseDisplay,
   FeaturedCaseListResponse,
-  CaseConfigCreate,
-  CaseConfigListResponse,
-  CaseConfigDetail,
 } from "../types/featuredCases";
 
 export const featuredCasesApi = {
   /** Get cases for current context (from X-Source-Id and X-Bbk-Id headers) */
   listCases: () => request<FeaturedCaseDisplay[]>("/featured-cases"),
 
-  /** Get case detail by ID */
-  getCaseDetail: (caseId: string) =>
-    request<FeaturedCase>(`/featured-cases/${encodeURIComponent(caseId)}`),
+  /** Get case detail by id */
+  getCaseDetail: (id: number) =>
+    request<FeaturedCase>(`/featured-cases/${id}`),
 
-  // ==================== Admin: Case definitions ====================
+  // ==================== Admin endpoints ====================
 
-  /** Admin: list all case definitions */
-  adminListCases: (params?: { page?: number; page_size?: number }) => {
+  /** Admin: list cases for current source_id context */
+  adminListCases: (params?: { bbk_id?: string; page?: number; page_size?: number }) => {
     const query = params
       ? new URLSearchParams(
           Object.entries(params)
@@ -37,7 +34,7 @@ export const featuredCasesApi = {
     );
   },
 
-  /** Admin: create case definition */
+  /** Admin: create case (source_id from header) */
   adminCreateCase: (caseItem: FeaturedCaseCreate) =>
     request<{ success: boolean; data: FeaturedCase }>(
       "/featured-cases/admin/cases",
@@ -47,70 +44,22 @@ export const featuredCasesApi = {
       }
     ),
 
-  /** Admin: update case definition */
-  adminUpdateCase: (caseId: string, caseItem: FeaturedCaseUpdate) =>
+  /** Admin: update case */
+  adminUpdateCase: (id: number, caseItem: FeaturedCaseUpdate) =>
     request<{ success: boolean; data: FeaturedCase }>(
-      `/featured-cases/admin/cases/${encodeURIComponent(caseId)}`,
+      `/featured-cases/admin/cases/${id}`,
       {
         method: "PUT",
         body: JSON.stringify(caseItem),
       }
     ),
 
-  /** Admin: delete case definition */
-  adminDeleteCase: (caseId: string) =>
+  /** Admin: delete case */
+  adminDeleteCase: (id: number) =>
     request<{ success: boolean }>(
-      `/featured-cases/admin/cases/${encodeURIComponent(caseId)}`,
+      `/featured-cases/admin/cases/${id}`,
       {
         method: "DELETE",
       }
     ),
-
-  // ==================== Admin: Case configs ====================
-
-  /** Admin: list case configs */
-  adminListConfigs: (params?: {
-    source_id?: string;
-    page?: number;
-    page_size?: number;
-  }) => {
-    const query = params
-      ? new URLSearchParams(
-          Object.entries(params)
-            .filter(([_, v]) => v !== undefined)
-            .map(([k, v]) => [k, String(v)])
-        ).toString()
-      : "";
-    return request<CaseConfigListResponse>(
-      `/featured-cases/admin/configs${query ? `?${query}` : ""}`
-    );
-  },
-
-  /** Admin: get config detail */
-  adminGetConfigDetail: (sourceId: string, bbkId?: string | null) => {
-    const params = new URLSearchParams({ source_id: sourceId });
-    if (bbkId) params.append("bbk_id", bbkId);
-    return request<CaseConfigDetail>(
-      `/featured-cases/admin/configs/detail?${params.toString()}`
-    );
-  },
-
-  /** Admin: upsert case config */
-  adminUpsertConfig: (config: CaseConfigCreate) =>
-    request<{ success: boolean }>("/featured-cases/admin/configs", {
-      method: "PUT",
-      body: JSON.stringify(config),
-    }),
-
-  /** Admin: delete case config */
-  adminDeleteConfig: (sourceId: string, bbkId?: string | null) => {
-    const params = new URLSearchParams({ source_id: sourceId });
-    if (bbkId) params.append("bbk_id", bbkId);
-    return request<{ success: boolean }>(
-      `/featured-cases/admin/configs?${params.toString()}`,
-      {
-        method: "DELETE",
-      }
-    );
-  },
 };

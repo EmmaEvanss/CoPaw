@@ -1,10 +1,11 @@
 import { getApiToken } from "./config";
+import { getExternalToken, isExternalTokenEnabled } from "./externalToken";
 
 // ==================== userId 统一整改 (Kun He) ====================
 // 使用统一的 getUserId helper，遵循优先级：iframe > window > session > default
 import { getUserId } from "../utils/identity";
 import { getIframeContext } from "../stores/iframeStore";
-import { DEFAULT_SOURCE_ID } from "../constants/identity";
+import { DEFAULT_SOURCE_ID, DEFAULT_BBK_ID } from "../constants/identity";
 // ==================== userId 统一整改结束 ====================
 
 /**
@@ -20,10 +21,19 @@ import { DEFAULT_SOURCE_ID } from "../constants/identity";
 export function buildAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
 
-  // 1. Token（优先级：localStorage > iframe context）
-  const token = getApiToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+  // 1. Token（优先级：外部系统 token > localStorage > iframe context）
+  // 优先使用外部系统 token（如果启用）
+  if (isExternalTokenEnabled()) {
+    const externalToken = getExternalToken();
+    if (externalToken) {
+      headers.Authorization = `Bearer ${externalToken}`;
+    }
+  } else {
+    // 回退到原有 token 逻辑
+    const token = getApiToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
   }
 
   // 2. Agent ID（从 sessionStorage 读取当前选中的 agent）
@@ -67,12 +77,17 @@ export function buildAuthHeaders(): Record<string, string> {
   // ==================== userId 统一整改结束 ====================
 
   // 5. Source ID（来自 iframe context，用于数据隔离）
-  // 非 iframe 模式下使用默认值
-  headers["X-Source-Id"] = iframeContext.source || DEFAULT_SOURCE_ID;
+  // 只有 iframe 模式下有值时才发送 X-Source-Id
+  const sourceId = iframeContext.source || DEFAULT_SOURCE_ID;
+  if (sourceId) {
+    headers["X-Source-Id"] = sourceId;
+  }
 
   // 6. BBK ID（来自 iframe context，用于维度配置匹配）
-  if (iframeContext.bbk) {
-    headers["X-Bbk-Id"] = iframeContext.bbk;
+  // 非 iframe 模式下使用 DEFAULT_BBK_ID
+  const bbkId = iframeContext.bbk || DEFAULT_BBK_ID;
+  if (bbkId) {
+    headers["X-Bbk-Id"] = bbkId;
   }
 
   // 7. Space（来自 iframe context）

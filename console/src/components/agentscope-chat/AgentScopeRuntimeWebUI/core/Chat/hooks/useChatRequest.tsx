@@ -10,12 +10,16 @@ import { IAgentScopeRuntimeWebUIMessage } from "@/components/agentscope-chat";
 import { IAgentScopeRuntimeWebUIInputData } from "../../types";
 import { withResponseHeaderMeta } from "./headerMeta";
 import type { CurrentQARef } from "./currentQARef";
+import {
+  isActiveChatRequestOwner,
+  type ChatRequestOwner,
+} from "./requestOwnership";
 
 interface UseChatRequestOptions {
   currentQARef: CurrentQARef;
   updateMessage: (message: IAgentScopeRuntimeWebUIMessage) => void;
   getCurrentSessionId: () => string;
-  onFinish: () => void;
+  onFinish: (owner: ChatRequestOwner) => void;
 }
 
 /**
@@ -65,8 +69,10 @@ export default function useChatRequest(options: UseChatRequestOptions) {
   }, []);
 
   const processSSEResponse = useCallback(
-    async (response: Response) => {
+    async (response: Response, owner: ChatRequestOwner) => {
       const responseHeaderTimestamp = getResponseHeaderTimestamp();
+      const isOwnerActive = () =>
+        isActiveChatRequestOwner(currentQARef.current.activeRequestOwner, owner);
       const buildResponseCard = () => {
         const responseData = currentQARef.current.response?.cards?.[0]
           ?.data as
@@ -98,7 +104,9 @@ export default function useChatRequest(options: UseChatRequestOptions) {
         if (currentApiOptions.cancel) {
           await Promise.resolve(
             currentApiOptions.cancel({
-              session_id: getCurrentSessionId(),
+              session_id: owner.sessionId,
+              logical_session_id: owner.logicalSessionId,
+              chat_id: owner.chatId,
             }),
           ).catch((error) => {
             console.error(error);
@@ -141,15 +149,73 @@ export default function useChatRequest(options: UseChatRequestOptions) {
               data: withResponseHeaderMeta(res, responseHeaderTimestamp),
             },
           ];
-          onFinish();
+          onFinish(owner);
         });
         return;
       }
+
+      // 辅助函数：从 chunkData 中提取 approval_action
+      // 后端将 msg.metadata 嵌套在 message.metadata.metadata 中
+      const extractApprovalAction = (data: any): any | null => {
+        if (!data || typeof data !== "object") return null;
+
+        // 获取 metadata 对象
+        const getMetadata = (obj: any): any | null => {
+          if (!obj || typeof obj !== "object") return null;
+          return obj.metadata;
+        };
+
+        const metadata = getMetadata(data);
+
+        if (metadata && typeof metadata === "object") {
+          // 路径1: metadata.approval_action (直接)
+          const directAction = (metadata as Record<string, unknown>).approval_action;
+          if (directAction && typeof directAction === "object") {
+            return directAction;
+          }
+
+          // 路径2: metadata.metadata.approval_action (嵌套)
+          const nestedMetadata = (metadata as Record<string, unknown>).metadata;
+          if (nestedMetadata && typeof nestedMetadata === "object") {
+            const nestedAction = (nestedMetadata as Record<string, unknown>).approval_action;
+            if (nestedAction && typeof nestedAction === "object") {
+              return nestedAction;
+            }
+          }
+        }
+
+        // 在 output 数组中查找
+        if (Array.isArray(data.output)) {
+          for (const msg of data.output) {
+            const msgMetadata = getMetadata(msg);
+            if (msgMetadata && typeof msgMetadata === "object") {
+              const directAction = (msgMetadata as Record<string, unknown>).approval_action;
+              if (directAction && typeof directAction === "object") {
+                return directAction;
+              }
+
+              const nestedMetadata = (msgMetadata as Record<string, unknown>).metadata;
+              if (nestedMetadata && typeof nestedMetadata === "object") {
+                const nestedAction = (nestedMetadata as Record<string, unknown>).approval_action;
+                if (nestedAction && typeof nestedAction === "object") {
+                  return nestedAction;
+                }
+              }
+            }
+          }
+        }
+
+        return null;
+      };
 
       try {
         for await (const chunk of Stream({
           readableStream: response.body,
         })) {
+          if (!isOwnerActive()) {
+            return;
+          }
+
           if (currentQARef.current.response?.msgStatus === "interrupted") {
             await cancelActiveRequest();
             break;
@@ -166,19 +232,31 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           )
             continue;
 
-          if (currentQARef.current.response) {
-            currentQARef.current.response.cards = [
+          if (currentQARef.current.response && isOwnerActive()) {
+            const cards: any[] = [
               {
                 code: "AgentScopeRuntimeResponseCard",
                 data: withResponseHeaderMeta(res, responseHeaderTimestamp),
               },
             ];
 
+            // 检测 approval_action metadata，额外创建审批卡片
+            const approvalAction =
+              extractApprovalAction(chunkData) || extractApprovalAction(res);
+            if (approvalAction) {
+              cards.push({
+                code: "ApprovalAction",
+                data: approvalAction,
+              });
+            }
+
+            currentQARef.current.response.cards = cards;
+
             if (
               res.status === AgentScopeRuntimeRunStatus.Completed ||
               res.status === AgentScopeRuntimeRunStatus.Failed
             ) {
-              onFinish();
+              onFinish(owner);
             } else {
               updateMessage(currentQARef.current.response);
             }
@@ -195,7 +273,13 @@ export default function useChatRequest(options: UseChatRequestOptions) {
     async (
       historyMessages: any[],
       biz_params?: IAgentScopeRuntimeWebUIInputData["biz_params"],
+      owner?: ChatRequestOwner,
     ) => {
+      const requestOwner = owner ?? currentQARef.current.activeRequestOwner;
+      if (!requestOwner) {
+        return;
+      }
+
       const currentApiOptions = apiOptionsRef.current;
       const { enableHistoryMessages = false } = currentApiOptions;
       const abortSignal = currentQARef.current.abortController?.signal;
@@ -206,6 +290,9 @@ export default function useChatRequest(options: UseChatRequestOptions) {
               input: historyMessages,
               biz_params,
               signal: abortSignal,
+              session_id: requestOwner.sessionId,
+              logical_session_id: requestOwner.logicalSessionId,
+              chat_id: requestOwner.chatId,
             })
           : await fetch(currentApiOptions.baseURL, {
               method: "POST",
@@ -226,14 +313,19 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       } catch (error) {}
 
       if (response && response.body) {
-        await processSSEResponse(response);
+        await processSSEResponse(response, requestOwner);
       }
     },
     [getCurrentSessionId, currentQARef, processSSEResponse],
   );
 
   const reconnect = useCallback(
-    async (sessionId: string) => {
+    async (sessionId: string, owner?: ChatRequestOwner) => {
+      const requestOwner = owner ?? currentQARef.current.activeRequestOwner;
+      if (!requestOwner) {
+        return;
+      }
+
       const currentApiOptions = apiOptionsRef.current;
       if (!currentApiOptions.reconnect) return;
 
@@ -243,11 +335,13 @@ export default function useChatRequest(options: UseChatRequestOptions) {
         response = await currentApiOptions.reconnect({
           session_id: sessionId,
           signal: abortSignal,
+          logical_session_id: requestOwner.logicalSessionId,
+          chat_id: requestOwner.chatId,
         });
       } catch (error) {}
 
       if (response && response.body) {
-        await processSSEResponse(response);
+        await processSSEResponse(response, requestOwner);
       }
     },
     [currentQARef, processSSEResponse],
@@ -275,10 +369,12 @@ export default function useChatRequest(options: UseChatRequestOptions) {
     currentQARef.current.abortController?.abort();
 
     const currentApiOptions = apiOptionsRef.current;
+    const activeSessionId =
+      currentQARef.current.activeRequestOwner?.sessionId ?? getCurrentSessionId();
     if (currentApiOptions.cancel) {
       await Promise.resolve(
         currentApiOptions.cancel({
-          session_id: getCurrentSessionId(),
+          session_id: activeSessionId,
         }),
       ).catch((error) => {
         console.error(error);

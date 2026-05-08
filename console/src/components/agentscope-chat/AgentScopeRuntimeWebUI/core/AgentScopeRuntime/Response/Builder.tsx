@@ -116,9 +116,21 @@ class AgentScopeRuntimeResponseBuilder {
 
   handleResponse(data: IAgentScopeRuntimeResponse) {
     this.data = produce(this.data, (draft) => {
+      const nextOutput = Array.isArray(data.output) ? data.output : [];
+
+      // Terminal response frames may carry only status/completed_at without
+      // repeating output. Preserve the latest rendered output in that case.
+      if (nextOutput.length === 0 && draft.output.length > 0) {
+        const rest = { ...data };
+        delete rest.output;
+        Object.assign(draft, rest);
+        return;
+      }
+
       if (!data.output) {
         data.output = [];
       }
+
       Object.assign(draft, data);
     });
   }

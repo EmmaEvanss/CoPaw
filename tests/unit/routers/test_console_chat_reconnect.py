@@ -155,7 +155,12 @@ def test_console_chat_reconnect_accepts_chat_id_without_creating_new_chat(
         },
     ) as response:
         assert response.status_code == 200
-        assert list(response.iter_lines()) == ['data: {"done": true}', ""]
+        assert list(response.iter_lines()) == [
+            ": keep-alive",
+            "",
+            'data: {"done": true}',
+            "",
+        ]
 
     assert not chat_manager.get_or_create_calls
 
@@ -195,7 +200,12 @@ def test_console_chat_reconnect_accepts_logical_session_id(
         },
     ) as response:
         assert response.status_code == 200
-        assert list(response.iter_lines()) == ['data: {"done": true}', ""]
+        assert list(response.iter_lines()) == [
+            ": keep-alive",
+            "",
+            'data: {"done": true}',
+            "",
+        ]
 
     assert chat_manager.get_chat_id_by_session_calls == [
         ("session-existing", "console"),

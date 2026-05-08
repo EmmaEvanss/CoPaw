@@ -10,12 +10,66 @@ const mocks = vi.hoisted(() => {
     promise: Promise.resolve(),
     resolve: () => {},
   };
+  const streamChunks = [
+    {
+      data: JSON.stringify({
+        object: "response",
+        id: "response-1",
+        status: "in_progress",
+        created_at: 1,
+        output: [
+          {
+            object: "message",
+            id: "message-1",
+            role: "assistant",
+            type: "message",
+            status: "in_progress",
+            content: [
+              {
+                object: "content",
+                type: "text",
+                text: "hello",
+                status: "completed",
+              },
+            ],
+          },
+        ],
+      }),
+    },
+    {
+      data: JSON.stringify({
+        object: "response",
+        id: "response-1",
+        status: "completed",
+        created_at: 1,
+        completed_at: 2,
+        output: [
+          {
+            object: "message",
+            id: "message-1",
+            role: "assistant",
+            type: "message",
+            status: "completed",
+            content: [
+              {
+                object: "content",
+                type: "text",
+                text: "hello world",
+                status: "completed",
+              },
+            ],
+          },
+        ],
+      }),
+    },
+  ];
 
   return {
     fetch: vi.fn(),
     reconnect: vi.fn(),
     cancel: vi.fn(),
     streamGate,
+    streamChunks,
   };
 });
 
@@ -24,60 +78,13 @@ vi.mock("@/components/agentscope-chat", () => ({
   uuid: vi.fn(() => "uuid-1"),
   Stream: vi.fn(() => ({
     async *[Symbol.asyncIterator]() {
-      yield {
-        data: JSON.stringify({
-          object: "response",
-          id: "response-1",
-          status: "in_progress",
-          created_at: 1,
-          output: [
-            {
-              object: "message",
-              id: "message-1",
-              role: "assistant",
-              type: "message",
-              status: "in_progress",
-              content: [
-                {
-                  object: "content",
-                  type: "text",
-                  text: "hello",
-                  status: "completed",
-                },
-              ],
-            },
-          ],
-        }),
-      };
+      yield mocks.streamChunks[0];
 
       await mocks.streamGate.promise;
 
-      yield {
-        data: JSON.stringify({
-          object: "response",
-          id: "response-1",
-          status: "completed",
-          created_at: 1,
-          completed_at: 2,
-          output: [
-            {
-              object: "message",
-              id: "message-1",
-              role: "assistant",
-              type: "message",
-              status: "completed",
-              content: [
-                {
-                  object: "content",
-                  type: "text",
-                  text: "hello world",
-                  status: "completed",
-                },
-              ],
-            },
-          ],
-        }),
-      };
+      for (const chunk of mocks.streamChunks.slice(1)) {
+        yield chunk;
+      }
     },
   })),
 }));
@@ -129,6 +136,61 @@ describe("useChatRequest", () => {
     mocks.fetch.mockReset();
     mocks.reconnect.mockReset();
     mocks.cancel.mockReset();
+    mocks.streamChunks.splice(
+      0,
+      mocks.streamChunks.length,
+      {
+        data: JSON.stringify({
+          object: "response",
+          id: "response-1",
+          status: "in_progress",
+          created_at: 1,
+          output: [
+            {
+              object: "message",
+              id: "message-1",
+              role: "assistant",
+              type: "message",
+              status: "in_progress",
+              content: [
+                {
+                  object: "content",
+                  type: "text",
+                  text: "hello",
+                  status: "completed",
+                },
+              ],
+            },
+          ],
+        }),
+      },
+      {
+        data: JSON.stringify({
+          object: "response",
+          id: "response-1",
+          status: "completed",
+          created_at: 1,
+          completed_at: 2,
+          output: [
+            {
+              object: "message",
+              id: "message-1",
+              role: "assistant",
+              type: "message",
+              status: "completed",
+              content: [
+                {
+                  object: "content",
+                  type: "text",
+                  text: "hello world",
+                  status: "completed",
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    );
     let resolveGate: () => void = () => {};
     mocks.streamGate.promise = new Promise<void>((resolve) => {
       resolveGate = resolve;
@@ -306,5 +368,129 @@ describe("useChatRequest", () => {
         chat_id: "chat-real-a",
       }),
     );
+  });
+
+  it("finishes on completed response frames even when output is empty", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      body: {},
+    } as Response);
+    mocks.streamChunks[1] = {
+      data: JSON.stringify({
+        object: "response",
+        id: "response-1",
+        status: "completed",
+        created_at: 1,
+        completed_at: 2,
+        output: [],
+      }),
+    };
+
+    const updateMessage = vi.fn();
+    const onFinish = vi.fn();
+    const currentQARef = {
+      current: {
+        response: {
+          id: "ui-response-a",
+          msgStatus: "generating",
+          cards: [
+            {
+              code: "AgentScopeRuntimeResponseCard",
+              data: {
+                id: "response-1",
+                status: "created",
+                created_at: 0,
+                output: [],
+              },
+            },
+          ],
+        },
+        activeRequestOwner: createOwner(),
+      },
+    } as CurrentQARef;
+
+    render(
+      <Harness
+        currentQARef={currentQARef}
+        updateMessage={updateMessage}
+        onFinish={onFinish}
+      />,
+    );
+
+    const requestPromise = hookApi.request([], undefined, createOwner());
+    mocks.streamGate.resolve();
+
+    await act(async () => {
+      await requestPromise;
+    });
+
+    expect(updateMessage).toHaveBeenCalledTimes(1);
+    expect(onFinish).toHaveBeenCalledWith(createOwner());
+  });
+
+  it("preserves the latest assistant output on terminal empty response frames", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      body: {},
+    } as Response);
+    mocks.streamChunks[1] = {
+      data: JSON.stringify({
+        object: "response",
+        id: "response-1",
+        status: "failed",
+        created_at: 1,
+        completed_at: 3,
+        output: [],
+        error: {
+          code: "timeout",
+          message: "timed out",
+        },
+      }),
+    };
+
+    const updateMessage = vi.fn();
+    const onFinish = vi.fn();
+    const currentQARef = {
+      current: {
+        response: {
+          id: "ui-response-a",
+          msgStatus: "generating",
+          cards: [
+            {
+              code: "AgentScopeRuntimeResponseCard",
+              data: {
+                id: "response-1",
+                status: "created",
+                created_at: 0,
+                output: [],
+              },
+            },
+          ],
+        },
+        activeRequestOwner: createOwner(),
+      },
+    } as CurrentQARef;
+
+    render(
+      <Harness
+        currentQARef={currentQARef}
+        updateMessage={updateMessage}
+        onFinish={onFinish}
+      />,
+    );
+
+    const requestPromise = hookApi.request([], undefined, createOwner());
+    mocks.streamGate.resolve();
+
+    await act(async () => {
+      await requestPromise;
+    });
+
+    const responseCardData = currentQARef.current.response?.cards?.[0]
+      ?.data as { output?: Array<{ content?: Array<{ text?: string }> }>; status?: string };
+
+    expect(responseCardData.status).toBe("failed");
+    expect(responseCardData.output?.[0]?.content?.[0]?.text).toBe("hello");
+    expect(onFinish).toHaveBeenCalledWith(createOwner());
   });
 });

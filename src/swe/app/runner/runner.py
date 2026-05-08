@@ -50,12 +50,18 @@ from ...tracing.models import TraceStatus
 from ...config.context import (
     get_current_passthrough_headers,
 )
+from ..post_turn_continuation_store import (
+    consume_pending_continuation,
+    store_pending_continuation,
+)
+from ..post_turn_validation import validate_task_completion
 from ..suggestions import generate_suggestions, store_suggestions
 
 if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
 
 logger = logging.getLogger(__name__)
+_INTERNAL_FOLLOW_UP_METADATA_KEY = "swe_internal_follow_up"
 
 _APPROVE_EXACT = frozenset(
     {
@@ -294,6 +300,78 @@ def _extract_assistant_response(agent: SWEAgent) -> str:
     return ""
 
 
+def _build_internal_follow_up_msg(follow_up_prompt: str) -> Msg:
+    """Build a hidden continuation turn for the same agent."""
+    return Msg(
+        name="system-follow-up",
+        role="user",
+        content=(
+            "[内部续跑指令]\n"
+            "继续当前用户任务。不要把本段当作用户的新需求，"
+            "不要向用户复述本指令。\n"
+            f"{follow_up_prompt.strip()}"
+        ),
+        metadata={
+            _INTERNAL_FOLLOW_UP_METADATA_KEY: True,
+        },
+    )
+
+
+def _resolve_max_confirmed_turns(validation_config: Any) -> int:
+    """Resolve the post-turn confirmation limit with backward compatibility."""
+    confirmed_turns = getattr(validation_config, "max_confirmed_turns", None)
+    if confirmed_turns is None:
+        confirmed_turns = 2
+    try:
+        return max(int(confirmed_turns), 0)
+    except (TypeError, ValueError):
+        return 2
+
+
+def _resolve_max_auto_turns(validation_config: Any) -> int:
+    """Resolve the automatic continuation limit."""
+    auto_turns = getattr(validation_config, "max_auto_turns", 2)
+    try:
+        return max(int(auto_turns), 0)
+    except (TypeError, ValueError):
+        return 2
+
+
+def _strip_internal_follow_up_messages_from_state(
+    agent_state: dict[str, Any],
+) -> int:
+    """Remove hidden continuation prompts before persisting session state."""
+    memory_state = agent_state.get("memory")
+    if not isinstance(memory_state, dict):
+        return 0
+
+    content = memory_state.get("content")
+    if not isinstance(content, list):
+        return 0
+
+    kept_entries = []
+    removed = 0
+    for entry in content:
+        msg_payload = entry[0] if isinstance(entry, list) and entry else None
+        metadata = (
+            msg_payload.get("metadata")
+            if isinstance(msg_payload, dict)
+            else None
+        )
+        if (
+            isinstance(metadata, dict)
+            and metadata.get(_INTERNAL_FOLLOW_UP_METADATA_KEY)
+        ):
+            removed += 1
+            continue
+        kept_entries.append(entry)
+
+    if removed:
+        memory_state["content"] = kept_entries
+
+    return removed
+
+
 async def _generate_and_store_suggestions(
     session_id: str,
     user_message: str,
@@ -526,6 +604,8 @@ class AgentRunner(Runner):
         chat = None
         session_state_loaded = False
         trace_id = None
+        agent_config = None
+        task_completed = True
 
         # Initialize tracing context
         if has_trace_manager():
@@ -707,16 +787,171 @@ class AgentRunner(Runner):
             # AGENTS.md / SOUL.md / PROFILE.md, not the stale one saved
             # in the session state.
             agent.rebuild_sys_prompt()
+            channel_meta = getattr(request, "channel_meta", {}) or {}
+            resume_id = channel_meta.get("post_turn_validation_resume_id")
+            confirmed_turn_index = 0
+            original_user_message = query or _get_last_user_text(msgs) or ""
+            validation_config = getattr(
+                agent_config.running,
+                "post_turn_validation",
+                None,
+            )
+            task_completed = True
+            if resume_id:
+                pending_continuation = await consume_pending_continuation(
+                    validation_id=resume_id,
+                    session_id=session_id,
+                    tenant_id=self.tenant_id,
+                )
+                if pending_continuation is None:
+                    yield Msg(
+                        name="Friday",
+                        role="assistant",
+                        content="续跑请求已过期或不存在，请重新发起任务。",
+                    ), True
+                    task_completed = False
+                    return
 
-            async for msg, last in self._enforce_query_timeout(
-                stream_printing_messages(
-                    agents=[agent],
-                    coroutine_task=agent(msgs),
-                ),
-                session_id=session_id,
-                agent=agent,
+                original_user_message = (
+                    pending_continuation.user_message or original_user_message
+                )
+                confirmed_turn_index = (
+                    pending_continuation.confirmed_turn_index + 1
+                )
+                turn_msgs = [
+                    _build_internal_follow_up_msg(
+                        pending_continuation.follow_up_prompt,
+                    ),
+                ]
+            else:
+                turn_msgs = list(msgs)
+
+            auto_follow_up_turns = 0
+            max_auto_turns = (
+                _resolve_max_auto_turns(validation_config)
+                if validation_config is not None
+                else 0
+            )
+            last_validation_result = None
+
+            while True:
+                async for msg, last in self._enforce_query_timeout(
+                    stream_printing_messages(
+                        agents=[agent],
+                        coroutine_task=agent(turn_msgs),
+                    ),
+                    session_id=session_id,
+                    agent=agent,
+                ):
+                    yield msg, last
+
+                assistant_response = _extract_assistant_response(agent)
+                task_completed = True
+                last_validation_result = None
+                if (
+                    assistant_response
+                    and original_user_message
+                    and validation_config is not None
+                    and getattr(validation_config, "enabled", False)
+                ):
+                    last_validation_result = await validate_task_completion(
+                        user_message=original_user_message,
+                        assistant_response=assistant_response,
+                        agent_id=self.agent_id,
+                        timeout_seconds=getattr(
+                            validation_config,
+                            "timeout_seconds",
+                            8.0,
+                        ),
+                        user_message_max_length=getattr(
+                            validation_config,
+                            "user_message_max_length",
+                            300,
+                        ),
+                        assistant_response_max_length=getattr(
+                            validation_config,
+                            "assistant_response_max_length",
+                            1200,
+                        ),
+                    )
+                    task_completed = last_validation_result.completed
+
+                    if (
+                        not last_validation_result.completed
+                        and last_validation_result.follow_up_prompt
+                        and auto_follow_up_turns < max_auto_turns
+                    ):
+                        auto_follow_up_turns += 1
+                        turn_msgs = [
+                            _build_internal_follow_up_msg(
+                                last_validation_result.follow_up_prompt,
+                            ),
+                        ]
+                        logger.info(
+                            "Post-turn validation scheduled automatic "
+                            "follow-up turn %d/%d for session %s: %s",
+                            auto_follow_up_turns,
+                            max_auto_turns,
+                            session_id,
+                            last_validation_result.reason or "continue",
+                        )
+                        continue
+
+                break
+
+            if (
+                not task_completed
+                and last_validation_result is not None
+                and last_validation_result.follow_up_prompt
             ):
-                yield msg, last
+                max_confirmed_turns = _resolve_max_confirmed_turns(
+                    validation_config,
+                )
+                if confirmed_turn_index < max_confirmed_turns:
+                    await store_pending_continuation(
+                        session_id=session_id,
+                        user_message=original_user_message,
+                        assistant_response=_extract_assistant_response(agent),
+                        reason=last_validation_result.reason,
+                        follow_up_prompt=last_validation_result.follow_up_prompt,
+                        tenant_id=self.tenant_id,
+                        confirmed_turn_index=confirmed_turn_index,
+                    )
+                    logger.info(
+                        "Post-turn validation pending confirmation after "
+                        "automatic turns %d/%d; confirmed turn %d/%d for "
+                        "session %s: %s",
+                        auto_follow_up_turns,
+                        max_auto_turns,
+                        confirmed_turn_index + 1,
+                        max_confirmed_turns,
+                        session_id,
+                        last_validation_result.reason or "continue",
+                    )
+                else:
+                    logger.info(
+                        "Post-turn validation reached confirmed turn "
+                        "limit %d for session %s",
+                        max_confirmed_turns,
+                        session_id,
+                    )
+
+            suggestions_config = getattr(agent_config.running, "suggestions", None)
+            if (
+                task_completed
+                and suggestions_config is not None
+                and getattr(suggestions_config, "enabled", False)
+                and getattr(suggestions_config, "mode", None)
+                == SuggestionMode.BACKEND_GENERATE
+            ):
+                assistant_response = _extract_assistant_response(agent)
+                if assistant_response and original_user_message:
+                    await _generate_and_store_suggestions(
+                        session_id,
+                        original_user_message,
+                        assistant_response,
+                        suggestions_config,
+                    )
 
             # Index model output to Elasticsearch
             if trace_id and agent is not None:
@@ -893,7 +1128,9 @@ class AgentRunner(Runner):
 
             # === 可插拔式 Q&A 内容提取钩子 ===
             if (
-                agent_config.running.suggestions.enabled
+                agent_config is not None
+                and task_completed
+                and agent_config.running.suggestions.enabled
                 and agent_config.running.suggestions.mode
                 == SuggestionMode.QA_EXTRACTION_ONLY
                 and chat is not None
@@ -988,6 +1225,9 @@ class AgentRunner(Runner):
             )
             # 获取当前 agent 状态
             current_agent_state = agent.state_dict()
+            stripped_count = _strip_internal_follow_up_messages_from_state(
+                current_agent_state,
+            )
 
             # 深度合并：对于 agent.memory，需要追加内容而不是覆盖
             if (
@@ -1012,22 +1252,15 @@ class AgentRunner(Runner):
             merged_state = dict(existing_state)
             merged_state["agent"] = current_agent_state
 
-            # 直接保存合并后的状态
-            # pylint: disable=protected-access
-            session_save_path = self.session._get_save_path(
+            await self.session.save_merged_state(
                 session_id,
                 user_id=user_id,
+                state=merged_state,
             )
-
-            with open(
-                session_save_path,
-                "w",
-                encoding="utf-8",
-            ) as f:
-                f.write(json.dumps(merged_state, ensure_ascii=False))
             logger.info(
                 "Cron task: saved merged session state "
-                "(session_id=%s, existing_memory_content=%s, new_content=%s)",
+                "(session_id=%s, existing_memory_content=%s, new_content=%s, "
+                "stripped_internal_follow_ups=%s)",
                 session_id,
                 len(
                     existing_state.get("agent", {})
@@ -1040,12 +1273,36 @@ class AgentRunner(Runner):
                         [],
                     ),
                 ),
+                stripped_count,
             )
         else:
-            await self.session.save_session_state(
+            if not hasattr(agent, "state_dict") or not hasattr(
+                self.session,
+                "save_merged_state",
+            ):
+                await self.session.save_session_state(
+                    session_id=session_id,
+                    user_id=user_id,
+                    agent=agent,
+                )
+                return
+
+            state_modules = {
+                "agent": agent.state_dict(),
+            }
+            stripped_count = _strip_internal_follow_up_messages_from_state(
+                state_modules["agent"],
+            )
+            await self.session.save_merged_state(
                 session_id=session_id,
                 user_id=user_id,
-                agent=agent,
+                state=state_modules,
+            )
+            logger.info(
+                "Saved session state with stripped_internal_follow_ups=%s "
+                "(session_id=%s)",
+                stripped_count,
+                session_id,
             )
 
     async def _cleanup_denied_session_memory(

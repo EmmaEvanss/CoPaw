@@ -225,12 +225,18 @@ export default function useChatRequest(options: UseChatRequestOptions) {
             apiOptionsRef.current.responseParser || JSON.parse;
           const chunkData = responseParser(chunk.data);
           const res = agentScopeRuntimeResponseBuilder.handle(chunkData);
+          const isTerminalResponse =
+            res.status === AgentScopeRuntimeRunStatus.Completed ||
+            res.status === AgentScopeRuntimeRunStatus.Failed;
+          const hasRenderableOutput = Boolean(
+            res.output?.some((message) => message.content?.length),
+          );
 
-          if (
-            res.status !== AgentScopeRuntimeRunStatus.Failed &&
-            !res.output?.[0]?.content?.length
-          )
+          // A terminal response frame may legitimately advance only status
+          // while leaving output empty. It must still finish the request.
+          if (!isTerminalResponse && !hasRenderableOutput) {
             continue;
+          }
 
           if (currentQARef.current.response && isOwnerActive()) {
             const cards: any[] = [
@@ -252,10 +258,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
 
             currentQARef.current.response.cards = cards;
 
-            if (
-              res.status === AgentScopeRuntimeRunStatus.Completed ||
-              res.status === AgentScopeRuntimeRunStatus.Failed
-            ) {
+            if (isTerminalResponse) {
               onFinish(owner);
             } else {
               updateMessage(currentQARef.current.response);
@@ -307,6 +310,7 @@ export default function useChatRequest(options: UseChatRequestOptions) {
                 session_id: getCurrentSessionId(),
                 stream: true,
                 biz_params,
+                ...biz_params,
               }),
               signal: abortSignal,
             });

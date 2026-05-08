@@ -142,3 +142,78 @@ def get_stats() -> Dict[str, Any]:
             for session_id, suggestions in _session_suggestions.items()
         },
     }
+
+
+def _hash_user_message(user_message: str) -> str:
+    return hashlib.sha256(user_message.encode("utf-8")).hexdigest()
+
+
+def _prune_expired_qa_content(
+    entries: Dict[str, Any],
+    max_age_seconds: int = _QA_MAX_AGE_SECONDS,
+) -> Dict[str, Any]:
+    cutoff = time.time() - max_age_seconds
+    return {
+        key: value
+        for key, value in entries.items()
+        if getattr(value, "ts", 0) >= cutoff
+    }
+
+
+async def store_qa_content(
+    chat_id: str,
+    user_message: str,
+    assistant_response: str,
+    tenant_id: Optional[str] = None,
+    max_age_seconds: int = _QA_MAX_AGE_SECONDS,
+) -> None:
+    """Store extracted Q&A content keyed by chat_id and user message hash."""
+    if not chat_id or not user_message or not assistant_response:
+        return
+
+    tenant_key = tenant_id or "default"
+    user_message_hash = _hash_user_message(user_message)
+    entry = QAContentEntry(
+        user_message=user_message,
+        user_message_hash=user_message_hash,
+        assistant_response=assistant_response,
+        ts=time.time(),
+        tenant_id=tenant_key,
+    )
+
+    async with _lock:
+        existing = _qa_content_store.get(chat_id, {})
+        existing = _prune_expired_qa_content(existing, max_age_seconds)
+        existing[user_message_hash] = entry
+        _qa_content_store[chat_id] = existing
+
+
+async def get_qa_content(
+    chat_id: str,
+    user_message: str,
+    tenant_id: Optional[str] = None,
+    max_age_seconds: int = _QA_MAX_AGE_SECONDS,
+) -> Optional[Dict[str, str]]:
+    """Get extracted Q&A content for a chat_id + user message pair."""
+    if not chat_id or not user_message:
+        return None
+
+    tenant_key = tenant_id or "default"
+    user_message_hash = _hash_user_message(user_message)
+
+    async with _lock:
+        entries = _qa_content_store.get(chat_id, {})
+        entries = _prune_expired_qa_content(entries, max_age_seconds)
+        if entries:
+            _qa_content_store[chat_id] = entries
+        elif chat_id in _qa_content_store:
+            del _qa_content_store[chat_id]
+
+        entry = entries.get(user_message_hash)
+        if entry is None or entry.tenant_id != tenant_key:
+            return None
+
+        return {
+            "user_message": entry.user_message,
+            "assistant_response": entry.assistant_response,
+        }

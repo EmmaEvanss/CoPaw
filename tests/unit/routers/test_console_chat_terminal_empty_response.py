@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -14,8 +15,10 @@ class _FakeConsoleChannel:
     def resolve_session_id(self, sender_id: str, channel_meta: dict) -> str:
         return channel_meta.get("session_id") or f"console:{sender_id}"
 
-    async def stream_one(self, payload):
-        yield payload
+    async def stream_one(self, _payload):
+        yield 'data: {"object":"response","status":"created","id":"response-1","created_at":1,"output":[]}\n\n'
+        yield 'data: {"object":"response","status":"in_progress","id":"response-1","created_at":1,"output":[]}\n\n'
+        yield 'data: {"object":"response","status":"completed","id":"response-1","created_at":1,"completed_at":2,"output":[]}\n\n'
 
 
 class _FakeChannelManager:
@@ -44,18 +47,16 @@ class _FakeChatManager:
 
 
 class _FakeTaskTracker:
-    async def attach_or_start(self, _run_key, _payload, _stream_fn):
-        return object(), True
+    async def attach_or_start(self, _run_key, payload, _stream_fn):
+        return payload, True
 
-    async def attach(self, _run_key):
-        return object()
-
-    async def stream_from_queue(self, _queue, _run_key):
-        await asyncio.sleep(0.03)
-        yield 'data: {"done": true}\n\n'
+    async def stream_from_queue(self, queue, _run_key):
+        await asyncio.sleep(0)
+        async for event in _FakeConsoleChannel().stream_one(queue):
+            yield event
 
 
-def test_console_chat_stream_emits_keepalive_and_disables_proxy_buffering(
+def test_console_chat_allows_terminal_response_frame_without_output(
     monkeypatch,
 ) -> None:
     app = FastAPI()
@@ -75,12 +76,6 @@ def test_console_chat_stream_emits_keepalive_and_disables_proxy_buffering(
         "get_agent_for_request",
         _fake_get_agent_for_request,
     )
-    monkeypatch.setattr(
-        console_router,
-        "_CONSOLE_SSE_HEARTBEAT_SECONDS",
-        0.01,
-        raising=False,
-    )
 
     client = TestClient(app)
     payload = {
@@ -94,18 +89,16 @@ def test_console_chat_stream_emits_keepalive_and_disables_proxy_buffering(
 
     with client.stream("POST", "/console/chat", json=payload) as response:
         assert response.status_code == 200
-        assert response.headers["x-accel-buffering"] == "no"
+        events = [
+            line.removeprefix("data: ")
+            for line in response.iter_lines()
+            if line.startswith("data: ")
+        ]
 
-        lines = response.iter_lines()
-        assert next(lines) == ": keep-alive"
-        assert next(lines) == ""
-
-        for line in lines:
-            if not line or line == ": keep-alive":
-                continue
-            assert line == 'data: {"done": true}'
-            break
-        else:
-            raise AssertionError(
-                "expected streamed data event after keepalive",
-            )
+    parsed = [json.loads(event) for event in events]
+    assert [event["status"] for event in parsed] == [
+        "created",
+        "in_progress",
+        "completed",
+    ]
+    assert parsed[-1]["output"] == []

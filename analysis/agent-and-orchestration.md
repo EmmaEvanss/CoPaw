@@ -2,6 +2,8 @@
 
 本文档聚焦 `src/swe/agents/`，说明 Agent 的核心对象、提示词拼装、工具体系、技能管理和内存子系统。
 
+补充说明：回合级执行收口在 `src/swe/app/runner/runner.py`，当前链路已经包含“回答后校验 -> 未完成自动续跑 -> 完成后产出尾随建议问”的后处理逻辑。排查单轮回答提前结束、自动续轮或建议问缺失时，需要联动查看 `src/swe/app/post_turn_validation.py` 与 `src/swe/app/suggestions/`。
+
 ## 目录结构
 
 | 目录/文件 | 作用 |

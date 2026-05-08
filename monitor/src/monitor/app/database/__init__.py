@@ -7,6 +7,9 @@ from .connection import (
     get_db_connection,
     init_db_connection,
     close_db_connection,
+    init_tracing_db_connection,
+    get_tracing_db_connection,
+    close_tracing_db_connection,
 )
 from .elasticsearch import (
     ESClient,
@@ -27,6 +30,9 @@ __all__ = [
     "get_db_connection",
     "init_db_connection",
     "close_db_connection",
+    "init_tracing_db_connection",
+    "get_tracing_db_connection",
+    "close_tracing_db_connection",
     "ESClient",
     "get_es_client",
     "init_es_client",

@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { mySkillsApi, MySkill } from "../../api/modules/mySkills";
 
-export function useMySkills(sourceId: string, userId: string) {
+export function useMySkills() {
   const [createdSkills, setCreatedSkills] = useState<MySkill[]>([]);
   const [receivedSkills, setReceivedSkills] = useState<MySkill[]>([]);
   const [loading, setLoading] = useState(false);
@@ -10,8 +10,8 @@ export function useMySkills(sourceId: string, userId: string) {
     setLoading(true);
     try {
       const [created, received] = await Promise.all([
-        mySkillsApi.getCreatedSkills(sourceId, userId),
-        mySkillsApi.getReceivedSkills(sourceId, userId),
+        mySkillsApi.getCreatedSkills(),
+        mySkillsApi.getReceivedSkills(),
       ]);
       setCreatedSkills(created);
       setReceivedSkills(received);
@@ -20,7 +20,7 @@ export function useMySkills(sourceId: string, userId: string) {
     } finally {
       setLoading(false);
     }
-  }, [sourceId, userId]);
+  }, []);
 
   return {
     createdSkills,

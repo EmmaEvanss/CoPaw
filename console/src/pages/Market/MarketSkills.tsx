@@ -40,13 +40,10 @@ const { Title, Text } = Typography;
 
 interface MarketSkillsProps {
   sourceId: string;
-  bbkId: string;
-  userId: string;
-  userName: string;
   isManager: boolean;
 }
 
-export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: MarketSkillsProps) {
+export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
   const {
     categories,
     skills,
@@ -63,7 +60,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
     refreshSkills,
     openSkillDetail,
     openDistributeModal,
-  } = useMarket(sourceId, bbkId);
+  } = useMarket(sourceId);
 
   // MCP 相关状态
   const [mcpList, setMcpList] = useState<MarketMCPItem[]>([]);
@@ -88,7 +85,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
   // Handle unpublish skill
   const handleUnpublish = async (skill: MarketSkill) => {
     try {
-      await marketApi.unpublishSkill(sourceId, skill.item_id, userId, userName);
+      await marketApi.unpublishSkill(sourceId, skill.item_id);
       message.success("下架成功");
       refreshSkills();
     } catch (err) {
@@ -101,14 +98,14 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
   const refreshMCP = useCallback(async () => {
     setMcpLoading(true);
     try {
-      const data = await marketMcpApi.listMarketMCP(sourceId, bbkId, selectedCategory ?? undefined);
+      const data = await marketMcpApi.listMarketMCP(selectedCategory ?? undefined);
       setMcpList(data);
     } catch (err) {
       console.error("获取 MCP 列表失败:", err);
     } finally {
       setMcpLoading(false);
     }
-  }, [sourceId, bbkId, selectedCategory]);
+  }, [sourceId, selectedCategory]);
 
   // 切换资源类型时刷新
   useEffect(() => {
@@ -120,7 +117,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
   // 获取 MCP 详情
   const openMCPDetail = useCallback(async (itemId: string) => {
     try {
-      const detail = await marketMcpApi.getMarketMCPDetail(sourceId, itemId, bbkId);
+      const detail = await marketMcpApi.getMarketMCPDetail(itemId);
       if (detail) {
         setSelectedMCP(detail);
         setMcpDetailMode("detail");
@@ -128,14 +125,14 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
     } catch (err) {
       console.error("获取 MCP 详情失败:", err);
     }
-  }, [sourceId, bbkId]);
+  }, []);
 
   // 删除 MCP
   const handleDeleteMCP = useCallback(async (target?: MarketMCPItem | MarketMCPDetail | null) => {
     const item = target || selectedMCP;
     if (!item) return;
     try {
-      await marketMcpApi.deleteMarketMCP(sourceId, item.item_id, userId, userName);
+      await marketMcpApi.deleteMarketMCP(item.item_id);
       message.success("删除成功");
       if (selectedMCP?.item_id === item.item_id) {
         setSelectedMCP(null);
@@ -146,7 +143,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
       console.error("删除 MCP 失败:", err);
       message.error("删除失败");
     }
-  }, [sourceId, userId, userName, selectedMCP, refreshMCP]);
+  }, [selectedMCP, refreshMCP]);
 
   const confirmDeleteMCP = useCallback((target: MarketMCPItem | MarketMCPDetail) => {
     Modal.confirm({
@@ -169,9 +166,9 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
 
   const openMCPEditModal = useCallback(async (target: MarketMCPItem | MarketMCPDetail) => {
     try {
-      const detail = "config" in target
-        ? target
-        : await marketMcpApi.getMarketMCPDetail(sourceId, target.item_id, bbkId);
+        const detail = "config" in target
+          ? target
+        : await marketMcpApi.getMarketMCPDetail(target.item_id);
       if (!detail) {
         message.error("未找到 MCP 详情");
         return;
@@ -182,7 +179,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
       console.error("打开 MCP 编辑弹窗失败:", err);
       message.error("打开编辑弹窗失败");
     }
-  }, [bbkId, sourceId]);
+  }, []);
 
   const handleMCPEditSuccess = useCallback(async (detail: MarketMCPDetail) => {
     setMcpEditModalOpen(false);
@@ -190,7 +187,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
     await refreshMCP();
     if (selectedMCP?.item_id === detail.item_id) {
       try {
-        const latest = await marketMcpApi.getMarketMCPDetail(sourceId, detail.item_id, bbkId);
+        const latest = await marketMcpApi.getMarketMCPDetail(detail.item_id);
         if (latest) {
           setSelectedMCP(latest);
         }
@@ -198,7 +195,7 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
         console.error("刷新编辑后的 MCP 详情失败:", err);
       }
     }
-  }, [bbkId, refreshMCP, selectedMCP, sourceId]);
+  }, [refreshMCP, selectedMCP]);
 
   // 过滤技能列表
   const filteredSkills = skills.filter((skill) => {
@@ -462,9 +459,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
             {mcpDetailMode === "detail" && selectedMCP ? (
               <MCPDetailDrawer
                 mcp={selectedMCP}
-                sourceId={sourceId}
-                userId={userId}
-                userName={userName}
                 onDistribute={() => {
                   setDistributeTargetMCP(selectedMCP);
                   setMcpDistributeModalOpen(true);
@@ -519,8 +513,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
         onClose={() => setDetailDrawerOpen(false)}
         isManager={isManager}
         sourceId={sourceId}
-        userId={userId}
-        userName={userName}
         onRefresh={refreshSkills}
       />
 
@@ -528,8 +520,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
       <UploadSkillModal
         open={uploadModalOpen}
         sourceId={sourceId}
-        userId={userId}
-        userName={userName}
         onClose={() => setUploadModalOpen(false)}
         onSuccess={refreshSkills}
       />
@@ -540,8 +530,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
           open={distributeModalOpen}
           skill={distributeTargetSkill}
           sourceId={sourceId}
-          userId={userId}
-          userName={userName}
           onClose={() => setDistributeModalOpen(false)}
           onSuccess={refreshSkills}
         />
@@ -550,9 +538,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
       {/* MCP 上传弹窗 */}
       <MCPUploadModal
         open={mcpUploadModalOpen}
-        sourceId={sourceId}
-        userId={userId}
-        userName={userName}
         onClose={() => setMcpUploadModalOpen(false)}
         onSuccess={refreshMCP}
       />
@@ -561,9 +546,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
       <MCPDistributeModal
         open={mcpDistributeModalOpen}
         mcp={distributeTargetMCP}
-        sourceId={sourceId}
-        userId={userId}
-        userName={userName}
         onClose={() => { setMcpDistributeModalOpen(false); setDistributeTargetMCP(null); }}
         onSuccess={() => {
           setMcpDistributeModalOpen(false);
@@ -575,9 +557,6 @@ export function MarketSkills({ sourceId, bbkId, userId, userName, isManager }: M
       <MCPEditModal
         open={mcpEditModalOpen}
         mcp={editingMCP}
-        sourceId={sourceId}
-        userId={userId}
-        userName={userName}
         onClose={() => {
           setMcpEditModalOpen(false);
           setEditingMCP(null);

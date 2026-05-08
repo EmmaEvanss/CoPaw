@@ -11,9 +11,6 @@ const { Text } = Typography;
 
 interface PublishMCPModalProps {
   open: boolean;
-  sourceId: string;
-  userId: string;
-  userName: string;
   clientKey: string;
   clientName: string;
   onClose: () => void;
@@ -22,9 +19,6 @@ interface PublishMCPModalProps {
 
 export function PublishMCPModal({
   open,
-  sourceId,
-  userId,
-  userName,
   clientKey,
   clientName,
   onClose,
@@ -43,7 +37,7 @@ export function PublishMCPModal({
       const values = await form.validateFields();
       setLoading(true);
 
-      await myMcpApi.publishSingleToMarket(sourceId, userId, userName, clientKey, {
+      await myMcpApi.publishSingleToMarket(clientKey, {
         bbk_ids: values.bbk_ids,
       });
       message.success("上架成功");

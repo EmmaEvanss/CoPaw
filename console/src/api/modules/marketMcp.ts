@@ -2,7 +2,7 @@
  * 市场 MCP API（调用市场服务）
  */
 import { request } from "../request";
-import { buildAuthHeaders } from "../authHeaders";
+import { mergeHeaders } from "../mergeHeaders";
 import type {
   MarketMCPItem,
   MarketMCPDetail,
@@ -13,22 +13,13 @@ import type {
   UpdateMarketMCPMetadataRequest,
 } from "../types";
 
-function mergeHeaders(extra?: Record<string, string>): RequestInit {
-  const base = buildAuthHeaders();
-  const merged: Record<string, string> = { ...base, ...(extra || {}) };
-  return { headers: new Headers(merged) };
-}
-
 export const marketMcpApi = {
   /**
    * 获取市场 MCP 列表
    */
   listMarketMCP: async (
-    sourceId: string,
-    bbkId: string,
     categoryId?: number
   ): Promise<MarketMCPItem[]> => {
-    const resolvedSourceId = sourceId || "default";
     let url = "/market/mcp";
     const params = new URLSearchParams();
     if (categoryId !== undefined) {
@@ -37,10 +28,7 @@ export const marketMcpApi = {
     if (params.toString()) {
       url += `?${params.toString()}`;
     }
-    const opts = mergeHeaders({
-      "X-Source-Id": resolvedSourceId,
-      "X-Bbk-Id": bbkId,
-    });
+    const opts = mergeHeaders();
     return request<MarketMCPItem[]>(url, opts);
   },
 
@@ -48,15 +36,9 @@ export const marketMcpApi = {
    * 获取市场 MCP 详情
    */
   getMarketMCPDetail: async (
-    sourceId: string,
-    itemId: string,
-    bbkId: string
+    itemId: string
   ): Promise<MarketMCPDetail | null> => {
-    const resolvedSourceId = sourceId || "default";
-    const opts = mergeHeaders({
-      "X-Source-Id": resolvedSourceId,
-      "X-Bbk-Id": bbkId,
-    });
+    const opts = mergeHeaders();
     return request<MarketMCPDetail | null>(
       `/market/mcp/${itemId}`,
       opts
@@ -67,12 +49,8 @@ export const marketMcpApi = {
    * 上传 MCP 到市场（管理员）
    */
   uploadMCP: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
     data: MCPUploadRequest
   ): Promise<MarketMCPItem> => {
-    const resolvedSourceId = sourceId || "default";
     const formData = new FormData();
     formData.append("file", data.file);
     formData.append("name", data.name);
@@ -90,12 +68,9 @@ export const marketMcpApi = {
     }
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
-        "X-Source-Id": resolvedSourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
+      ...(mergeHeaders({
         "X-Manager": "true",
-      }),
+      })),
       body: formData,
     };
     return request<MarketMCPItem>("/market/mcp/upload", opts);
@@ -105,22 +80,15 @@ export const marketMcpApi = {
    * 分发 MCP 到用户（管理员）
    */
   distributeMCP: async (
-    sourceId: string,
     itemId: string,
-    userId: string,
-    userName: string,
     data: MCPDistributeRequest
   ): Promise<MCPDistributeResponse> => {
-    const resolvedSourceId = sourceId || "default";
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        "X-Source-Id": resolvedSourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
-      }),
+      })),
       body: JSON.stringify(data),
     };
     return request<MCPDistributeResponse>(
@@ -133,20 +101,13 @@ export const marketMcpApi = {
    * 删除市场 MCP（管理员）
    */
   deleteMarketMCP: async (
-    sourceId: string,
-    itemId: string,
-    userId: string,
-    userName: string
+    itemId: string
   ): Promise<void> => {
-    const resolvedSourceId = sourceId || "default";
     const opts: RequestInit = {
       method: "DELETE",
-      headers: new Headers({
-        "X-Source-Id": resolvedSourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
+      ...(mergeHeaders({
         "X-Manager": "true",
-      }),
+      })),
     };
     return request<void>(`/market/mcp/${itemId}`, opts);
   },
@@ -155,20 +116,13 @@ export const marketMcpApi = {
    * 测试市场 MCP 连接（管理员）
    */
   testMarketMCP: async (
-    sourceId: string,
-    itemId: string,
-    userId: string,
-    userName: string
+    itemId: string
   ): Promise<MCPTestResult> => {
-    const resolvedSourceId = sourceId || "default";
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
-        "X-Source-Id": resolvedSourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
+      ...(mergeHeaders({
         "X-Manager": "true",
-      }),
+      })),
     };
     return request<MCPTestResult>(`/market/mcp/${itemId}/test`, opts);
   },
@@ -177,22 +131,15 @@ export const marketMcpApi = {
    * 更新市场 MCP 元数据（管理员）
    */
   updateMarketMCPMetadata: async (
-    sourceId: string,
     itemId: string,
-    userId: string,
-    userName: string,
     data: UpdateMarketMCPMetadataRequest,
   ): Promise<MarketMCPDetail> => {
-    const resolvedSourceId = sourceId || "default";
     const opts: RequestInit = {
       method: "PUT",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        "X-Source-Id": resolvedSourceId,
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
-      }),
+      })),
       body: JSON.stringify(data),
     };
     return request<MarketMCPDetail>(`/market/mcp/${itemId}/metadata`, opts);

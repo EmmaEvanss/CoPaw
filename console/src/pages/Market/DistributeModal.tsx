@@ -8,8 +8,6 @@ interface DistributeModalProps {
   open: boolean;
   skill: MarketSkill | null;
   sourceId: string;
-  userId: string;
-  userName: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -18,8 +16,6 @@ export function DistributeModal({
   open,
   skill,
   sourceId,
-  userId,
-  userName,
   onClose,
   onSuccess,
 }: DistributeModalProps) {
@@ -36,7 +32,7 @@ export function DistributeModal({
         target_type: targetType,
         target_values: targetType === "all" ? [] : values.target_values || [],
       };
-      await marketApi.distributeSkill(sourceId, skill.item_id, userId, userName, payload);
+      await marketApi.distributeSkill(sourceId, skill.item_id, payload);
       onSuccess();
       onClose();
     } catch (err) {

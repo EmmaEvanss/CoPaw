@@ -14,12 +14,10 @@ const { Title, Text } = Typography;
 
 export default function MySkillsPage() {
   const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
-  const bbkId = useIframeStore((state) => state.bbk) || "100";
   const manager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
-  const userName = useIframeStore((state) => state.clawName) || userId;
   const isManager = manager || userId === "default";
-  const { createdSkills, receivedSkills, loading, refresh } = useMySkills(sourceId, userId);
+  const { createdSkills, receivedSkills, loading, refresh } = useMySkills();
   const [searchText, setSearchText] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<MySkill | null>(null);
@@ -92,9 +90,6 @@ export default function MySkillsPage() {
         message.loading({ content: `正在上传 ${file.name}...`, key: "upload" });
         const result = await marketApi.uploadSkillToWorkspace(
           sourceId,
-          userId,
-          userName,
-          bbkId,
           file,
           { enable: true, overwrite, rename_map: renameMap }
         );
@@ -184,13 +179,13 @@ export default function MySkillsPage() {
     // Load skill files if not cached
     if (!skillFiles[skillName]) {
       try {
-        const files = await mySkillsApi.listSkillFiles(sourceId, userId, userName, bbkId, skillName);
+        const files = await mySkillsApi.listSkillFiles(skillName);
         setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
       } catch (err) {
         console.error("Failed to load skill files:", err);
       }
     }
-  }, [sourceId, userId, userName, bbkId, skillFiles]);
+  }, [skillFiles]);
 
   const toggleDir = useCallback((path: string) => {
     setExpandedDirs((prev) => {
@@ -206,33 +201,33 @@ export default function MySkillsPage() {
     setFileContent(null);
     setIsEditing(false);
     try {
-      const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, filePath);
+      const res = await mySkillsApi.readSkillFile(skill.skill_name, filePath);
       setFileContent(res.content);
       setFileType(res.file_type);
     } catch (err) {
       message.error("加载文件失败");
       setFileContent("");
     }
-  }, [sourceId, userId, userName, bbkId]);
+  }, []);
 
   const handleToggleEnabled = useCallback(async (skill: MySkill) => {
     const action = skill.enabled ? "disable" : "enable";
     try {
       if (skill.enabled) {
-        await mySkillsApi.disableSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+        await mySkillsApi.disableSkill(skill.skill_name);
       } else {
-        await mySkillsApi.enableSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+        await mySkillsApi.enableSkill(skill.skill_name);
       }
       message.success(`${action === "enable" ? "启用" : "禁用"}成功`);
       refresh();
     } catch (err) {
       message.error(`${action === "enable" ? "启用" : "禁用"}失败`);
     }
-  }, [sourceId, userId, userName, bbkId, refresh]);
+  }, [refresh]);
 
   const handleDelete = useCallback(async (skill: MySkill) => {
     try {
-      await mySkillsApi.deleteSkill(sourceId, userId, userName, bbkId, skill.skill_name);
+      await mySkillsApi.deleteSkill(skill.skill_name);
       message.success("删除成功");
       refresh();
       setSelectedSkill(null);
@@ -246,15 +241,13 @@ export default function MySkillsPage() {
     } catch (err) {
       message.error("删除失败");
     }
-  }, [sourceId, userId, userName, bbkId, refresh]);
+  }, [refresh]);
 
   const handleBatchDelete = useCallback(async () => {
     if (selectedForBatch.size === 0) return;
     const names = [...selectedForBatch];
     try {
-      const result = await mySkillsApi.batchDeleteSkills(
-        sourceId, userId, userName, bbkId, names
-      );
+      const result = await mySkillsApi.batchDeleteSkills(names);
       message.success(`成功删除 ${result.success_count} 个技能`);
       setSelectedForBatch(new Set());
       setBatchMode(false);
@@ -262,15 +255,13 @@ export default function MySkillsPage() {
     } catch (err) {
       message.error("批量删除失败");
     }
-  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+  }, [selectedForBatch, refresh]);
 
   const handleBatchEnable = useCallback(async () => {
     if (selectedForBatch.size === 0) return;
     const names = [...selectedForBatch];
     try {
-      const result = await mySkillsApi.batchEnableSkills(
-        sourceId, userId, userName, bbkId, names
-      );
+      const result = await mySkillsApi.batchEnableSkills(names);
       message.success(`成功启用 ${result.success_count} 个技能`);
       setSelectedForBatch(new Set());
       setBatchMode(false);
@@ -278,15 +269,13 @@ export default function MySkillsPage() {
     } catch (err) {
       message.error("批量启用失败");
     }
-  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+  }, [selectedForBatch, refresh]);
 
   const handleBatchDisable = useCallback(async () => {
     if (selectedForBatch.size === 0) return;
     const names = [...selectedForBatch];
     try {
-      const result = await mySkillsApi.batchDisableSkills(
-        sourceId, userId, userName, bbkId, names
-      );
+      const result = await mySkillsApi.batchDisableSkills(names);
       message.success(`成功禁用 ${result.success_count} 个技能`);
       setSelectedForBatch(new Set());
       setBatchMode(false);
@@ -294,13 +283,13 @@ export default function MySkillsPage() {
     } catch (err) {
       message.error("批量禁用失败");
     }
-  }, [selectedForBatch, sourceId, userId, userName, bbkId, refresh]);
+  }, [selectedForBatch, refresh]);
 
   const handleSaveContent = useCallback(async () => {
     if (!selectedSkill || !selectedFile || !isEditing) return;
     setIsSaving(true);
     try {
-      await mySkillsApi.saveSkillFile(sourceId, userId, userName, bbkId, selectedSkill.skill_name, selectedFile, draftContent);
+      await mySkillsApi.saveSkillFile(selectedSkill.skill_name, selectedFile, draftContent);
       setFileContent(draftContent);
       setIsEditing(false);
       message.success("保存成功");
@@ -309,7 +298,7 @@ export default function MySkillsPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [selectedSkill, selectedFile, isEditing, draftContent, sourceId, userId, userName, bbkId]);
+  }, [selectedSkill, selectedFile, isEditing, draftContent]);
 
   // Navigate to marketplace
   const goToMarketplace = () => {
@@ -324,7 +313,7 @@ export default function MySkillsPage() {
       message.loading({ content: "读取技能文件...", key: "sync" });
 
       // Read skill.json and SKILL.md
-      const files = await mySkillsApi.listSkillFiles(sourceId, userId, userName, bbkId, skill.skill_name);
+      const files = await mySkillsApi.listSkillFiles(skill.skill_name);
 
       let skillJson: Record<string, unknown> = {};
       let skillMd = "";
@@ -332,7 +321,7 @@ export default function MySkillsPage() {
       // Find skill.json
       const skillJsonFile = files.find((f) => f.name === "skill.json" && f.type === "file");
       if (skillJsonFile) {
-        const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, "skill.json");
+        const res = await mySkillsApi.readSkillFile(skill.skill_name, "skill.json");
         try {
           skillJson = JSON.parse(res.content);
         } catch {
@@ -343,7 +332,7 @@ export default function MySkillsPage() {
       // Find SKILL.md
       const skillMdFile = files.find((f) => f.name === "SKILL.md" && f.type === "file");
       if (skillMdFile) {
-        const res = await mySkillsApi.readSkillFile(sourceId, userId, userName, bbkId, skill.skill_name, "SKILL.md");
+        const res = await mySkillsApi.readSkillFile(skill.skill_name, "SKILL.md");
         skillMd = res.content;
       }
 
@@ -359,7 +348,7 @@ export default function MySkillsPage() {
     } catch (err) {
       message.error({ content: "读取技能文件失败", key: "sync" });
     }
-  }, [sourceId, userId, userName, bbkId]);
+  }, []);
 
   // File tree component
   const FileTree = ({ nodes, level, skill }: { nodes: FileTreeNode[]; level: number; skill: MySkill }) => (
@@ -920,7 +909,6 @@ export default function MySkillsPage() {
         open={publishModalOpen}
         sourceId={sourceId}
         userId={userId}
-        userName={userName}
         onClose={() => {
           setPublishModalOpen(false);
           setPublishInitialData(null);

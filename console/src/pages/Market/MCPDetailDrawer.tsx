@@ -34,9 +34,6 @@ const { Title, Paragraph, Text } = Typography;
 
 interface MCPDetailDrawerProps {
   mcp: MarketMCPDetail | null;
-  sourceId: string;
-  userId: string;
-  userName: string;
   onDistribute: () => void;
   onEdit?: () => void;
   onDelete: () => void;
@@ -56,9 +53,6 @@ function formatDateTime(value?: string | null): string {
 
 export function MCPDetailDrawer({
   mcp,
-  sourceId,
-  userId,
-  userName,
   onDistribute,
   onEdit,
   onDelete,
@@ -111,7 +105,7 @@ export function MCPDetailDrawer({
     setTestLoading(true);
     setTestResult(null);
     try {
-      const result = await marketMcpApi.testMarketMCP(sourceId, mcp.item_id, userId, userName);
+      const result = await marketMcpApi.testMarketMCP(mcp.item_id);
       setTestResult(result);
       if (result.success) {
         message.success(`连接成功，共 ${result.tools.length} 个工具`);

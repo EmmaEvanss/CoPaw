@@ -9,6 +9,7 @@
 用户技能目录：
   <swe_root>/<user_id>/workspaces/<agent_id>/skills/<skill_name>/
 """
+
 from __future__ import annotations
 
 import json
@@ -371,8 +372,6 @@ def copy_mcp_to_user(
         distributed_by: 分发者标识。
         agent_id: Agent ID，默认为 "default"。
     """
-    _validate_path_segment(client_key, "client_key")
-
     mcp_config = load_mcp_config(marketplace_root, source_id, item_id)
     if mcp_config is None:
         raise ValueError(f"MCP config not found for item {item_id}")

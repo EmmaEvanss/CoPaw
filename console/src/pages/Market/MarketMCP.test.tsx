@@ -114,9 +114,6 @@ describe("MarketSkills MCP tab", () => {
       root.render(
         <MarketSkills
           sourceId=""
-          bbkId=""
-          userId="u001"
-          userName="张三"
           isManager={isManager}
         />,
       );

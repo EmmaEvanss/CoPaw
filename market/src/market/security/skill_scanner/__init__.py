@@ -177,12 +177,17 @@ _history_lock = threading.Lock()
 
 
 def _get_blocked_history_path() -> Path:
-    try:
-        from ...constant import WORKING_DIR
-
-        return WORKING_DIR / _BLOCKED_HISTORY_FILE
-    except Exception:
-        return Path.home() / ".swe" / _BLOCKED_HISTORY_FILE
+    swe_root = (
+        Path(
+            os.environ.get(
+                "SWE_WORKING_DIR",
+                os.environ.get("MARKET_SWE_ROOT", "~/.swe"),
+            ),
+        )
+        .expanduser()
+        .resolve()
+    )
+    return swe_root / _BLOCKED_HISTORY_FILE
 
 
 @dataclass

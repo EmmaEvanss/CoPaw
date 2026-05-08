@@ -15,9 +15,6 @@ import type { MarketMCPItem } from "../../api/types";
 interface MCPDistributeModalProps {
   open: boolean;
   mcp: MarketMCPItem | null;
-  sourceId: string;
-  userId: string;
-  userName: string;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -25,9 +22,6 @@ interface MCPDistributeModalProps {
 export function MCPDistributeModal({
   open,
   mcp,
-  sourceId,
-  userId,
-  userName,
   onClose,
   onSuccess,
 }: MCPDistributeModalProps) {
@@ -64,10 +58,7 @@ export function MCPDistributeModal({
     setSubmitting(true);
     try {
       const result = await marketMcpApi.distributeMCP(
-        sourceId,
         mcp.item_id,
-        userId,
-        userName,
         {
           target_tenant_ids: sanitizedSelectedTenantIds,
           overwrite: true,

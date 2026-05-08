@@ -121,18 +121,12 @@ function parseMcpUploadFile(file: File, raw: string): ParsedUploadConfig {
 
 interface MCPUploadModalProps {
   open: boolean;
-  sourceId: string;
-  userId: string;
-  userName: string;
   onClose: () => void;
   onSuccess: () => void;
 }
 
 export function MCPUploadModal({
   open,
-  sourceId,
-  userId,
-  userName,
   onClose,
   onSuccess,
 }: MCPUploadModalProps) {
@@ -193,7 +187,7 @@ export function MCPUploadModal({
 
       setLoading(true);
 
-      await marketMcpApi.uploadMCP(sourceId, userId, userName, {
+      await marketMcpApi.uploadMCP({
         name: values.name,
         chinese_name: values.chinese_name,
         description: values.description,

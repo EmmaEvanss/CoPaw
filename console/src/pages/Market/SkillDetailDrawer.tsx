@@ -9,12 +9,10 @@ interface SkillDetailDrawerProps {
   onClose: () => void;
   isManager?: boolean;
   sourceId?: string;
-  userId?: string;
-  userName?: string;
   onRefresh?: () => void;
 }
 
-export function SkillDetailDrawer({ open, skill, onClose, isManager, sourceId, userId, userName, onRefresh }: SkillDetailDrawerProps) {
+export function SkillDetailDrawer({ open, skill, onClose, isManager, sourceId, onRefresh }: SkillDetailDrawerProps) {
   if (!skill) return null;
 
   const userStatsColumns = [
@@ -24,9 +22,9 @@ export function SkillDetailDrawer({ open, skill, onClose, isManager, sourceId, u
   ];
 
   const handleUnpublish = async () => {
-    if (!sourceId || !userId || !userName) return;
+    if (!sourceId) return;
     try {
-      await marketApi.unpublishSkill(sourceId, skill.item_id, userId, userName);
+      await marketApi.unpublishSkill(sourceId, skill.item_id);
       message.success("下架成功");
       onClose();
       onRefresh?.();

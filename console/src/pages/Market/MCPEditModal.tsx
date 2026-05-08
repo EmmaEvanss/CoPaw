@@ -14,9 +14,6 @@ import type { MarketMCPDetail } from "../../api/types";
 interface MCPEditModalProps {
   open: boolean;
   mcp: MarketMCPDetail | null;
-  sourceId: string;
-  userId: string;
-  userName: string;
   onClose: () => void;
   onSuccess: (detail: MarketMCPDetail) => void;
 }
@@ -31,9 +28,6 @@ interface MCPMetadataEditFormValues {
 export function MCPEditModal({
   open,
   mcp,
-  sourceId,
-  userId,
-  userName,
   onClose,
   onSuccess,
 }: MCPEditModalProps) {
@@ -61,10 +55,7 @@ export function MCPEditModal({
       const values = await form.validateFields();
       setSubmitting(true);
       const detail = await marketMcpApi.updateMarketMCPMetadata(
-        sourceId,
         mcp.item_id,
-        userId,
-        userName,
         {
           chinese_name: values.chinese_name || "",
           description: values.description || "",

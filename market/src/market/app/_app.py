@@ -16,6 +16,20 @@ from .routers import api_router
 logger = logging.getLogger(__name__)
 
 
+def _resolve_swe_root() -> Path:
+    """按 SWE 语义解析用户工作根目录。"""
+    return (
+        Path(
+            os.environ.get(
+                "SWE_WORKING_DIR",
+                os.environ.get("MARKET_SWE_ROOT", "~/.swe"),
+            ),
+        )
+        .expanduser()
+        .resolve()
+    )
+
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     logger.info("Market service starting up...")
@@ -42,15 +56,17 @@ async def lifespan(fastapi_app: FastAPI):
         logger.info("Database connection disabled (no host configured)")
     fastapi_app.state.db = db
 
-    marketplace_root = Path(
-        os.environ.get(
-            "MARKET_MARKETPLACE_ROOT",
-            str(Path.home() / ".swe.marketplace"),
-        ),
+    marketplace_root = (
+        Path(
+            os.environ.get(
+                "MARKET_MARKETPLACE_ROOT",
+                str(Path.home() / ".swe.marketplace"),
+            ),
+        )
+        .expanduser()
+        .resolve()
     )
-    swe_root = Path(
-        os.environ.get("MARKET_SWE_ROOT", str(Path.home() / ".swe")),
-    )
+    swe_root = _resolve_swe_root()
     from ..marketplace.service import MarketplaceService
 
     fastapi_app.state.marketplace = MarketplaceService(

@@ -9,8 +9,6 @@ interface UploadSkillModalProps {
   onClose: () => void;
   onSuccess: () => void;
   sourceId: string;
-  userId: string;
-  userName: string;
 }
 
 const { Dragger } = Upload;
@@ -20,8 +18,6 @@ export default function UploadSkillModal({
   onClose,
   onSuccess,
   sourceId,
-  userId,
-  userName,
 }: UploadSkillModalProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -69,8 +65,6 @@ export default function UploadSkillModal({
       message.loading({ content: `正在上传 ${file.name}...`, key: "upload" });
       const result = await marketApi.uploadSkillToMarket(
         sourceId,
-        userId,
-        userName,
         file,
         {
           category_id: selectedCategory,

@@ -2,7 +2,7 @@
  * 我的 MCP 管理 API
  */
 import { request } from "../request";
-import { buildAuthHeaders } from "../authHeaders";
+import { mergeHeaders } from "../mergeHeaders";
 import type {
   MyMCPListItem,
   MyMCPDetail,
@@ -15,12 +15,6 @@ import type {
   PublishSingleMCPResponse,
   MCPTestResult,
 } from "../types";
-
-function mergeHeaders(extra?: Record<string, string>): RequestInit {
-  const base = buildAuthHeaders();
-  const merged: Record<string, string> = { ...base, ...(extra || {}) };
-  return { headers: new Headers(merged) };
-}
 
 export const myMcpApi = {
   /**
@@ -106,20 +100,14 @@ export const myMcpApi = {
    * 发布 MCP 到市场（管理员）
    */
   publishToMarket: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
     data: PublishMCPRequest
   ): Promise<PublishMCPResponse> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        ...(sourceId ? { "X-Source-Id": sourceId } : {}),
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
-      }),
+      })),
       body: JSON.stringify(data),
     };
     return request<PublishMCPResponse>("/market/my-mcp/publish", opts);
@@ -129,21 +117,15 @@ export const myMcpApi = {
    * 发布单个 MCP 到市场（管理员）
    */
   publishSingleToMarket: async (
-    sourceId: string,
-    userId: string,
-    userName: string,
     clientKey: string,
     data: PublishSingleMCPRequest
   ): Promise<PublishSingleMCPResponse> => {
     const opts: RequestInit = {
       method: "POST",
-      headers: new Headers({
+      ...(mergeHeaders({
         "Content-Type": "application/json",
-        ...(sourceId ? { "X-Source-Id": sourceId } : {}),
-        "X-User-Id": userId,
-        "X-User-Name": encodeURIComponent(userName),
         "X-Manager": "true",
-      }),
+      })),
       body: JSON.stringify(data),
     };
     return request<PublishSingleMCPResponse>(

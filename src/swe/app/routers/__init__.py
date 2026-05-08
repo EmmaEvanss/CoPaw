@@ -23,7 +23,6 @@ from .auth import router as auth_router
 from .messages import router as messages_router
 from .files import router as files_router
 from .settings import router as settings_router
-from .tracing import router as tracing_router
 from ..instance import instance_router
 from ..backup.router import router as backup_router
 from ..backup.batch_router import router as batch_backup_router
@@ -57,7 +56,6 @@ router.include_router(token_usage_router)
 router.include_router(auth_router)
 router.include_router(files_router)
 router.include_router(settings_router)
-router.include_router(tracing_router)
 router.include_router(instance_router)
 router.include_router(backup_router)
 router.include_router(batch_backup_router)

@@ -11,7 +11,7 @@ from ..config.constant import (
     DOCS_ENABLED,
     CORS_ORIGINS,
     DB_HOST,
-    TRACING_DB_HOST,
+    ES_HOST,
 )
 from .routers import api_router
 
@@ -39,36 +39,29 @@ async def lifespan(
     else:
         logger.info("Database not configured (MONITOR_DB_HOST not set)")
 
-    # Initialize tracing database connection if configured
-    if TRACING_DB_HOST:
+    # Initialize Elasticsearch client if configured (用于查询 model_output)
+    if ES_HOST:
         try:
-            from .database import init_tracing_db_connection, init_es_client
+            from .database import init_es_client
 
-            await init_tracing_db_connection()
             await init_es_client()
-            logger.info("Tracing database initialized successfully")
+            logger.info("Elasticsearch client initialized successfully")
         except Exception as e:
-            logger.warning("Tracing database initialization failed: %s", e)
+            logger.warning("Elasticsearch initialization failed: %s", e)
     else:
-        logger.info(
-            "Tracing database not configured (TRACING_DB_HOST not set)",
-        )
+        logger.info("Elasticsearch not configured (ES_HOST not set)")
 
     yield
 
-    # Close tracing database connection on shutdown
-    if TRACING_DB_HOST:
+    # Close Elasticsearch client on shutdown
+    if ES_HOST:
         try:
-            from .database import close_tracing_db_connection, close_es_client
+            from .database import close_es_client
 
-            await close_tracing_db_connection()
             await close_es_client()
-            logger.info("Tracing database connection closed")
+            logger.info("Elasticsearch client closed")
         except Exception as e:
-            logger.warning(
-                "Failed to close tracing database connection: %s",
-                e,
-            )
+            logger.warning("Failed to close Elasticsearch client: %s", e)
 
     # Close database connection on shutdown
     if DB_HOST:

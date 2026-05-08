@@ -188,26 +188,6 @@ HEALTH_CHECK_TIMEOUT = EnvVarLoader.get_float(
 )
 
 # ============================================================
-# Tracing 数据库配置（复用 SWE 数据库）
-# ============================================================
-
-TRACING_DB_HOST = EnvVarLoader.get_str("TRACING_DB_HOST", "")
-TRACING_DB_PORT = EnvVarLoader.get_int("TRACING_DB_PORT", 3306, min_value=1)
-TRACING_DB_USER = EnvVarLoader.get_str("TRACING_DB_USER", "root")
-TRACING_DB_ACCESS = EnvVarLoader.get_str("TRACING_DB_ACCESS", "")
-TRACING_DB_NAME = EnvVarLoader.get_str("TRACING_DB_NAME", "swe")
-TRACING_DB_MIN_CONN = EnvVarLoader.get_int(
-    "TRACING_DB_MIN_CONN",
-    2,
-    min_value=1,
-)
-TRACING_DB_MAX_CONN = EnvVarLoader.get_int(
-    "TRACING_DB_MAX_CONN",
-    10,
-    min_value=1,
-)
-
-# ============================================================
 # Elasticsearch 配置
 # ============================================================
 

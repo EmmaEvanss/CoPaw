@@ -82,7 +82,7 @@ def _parse_date(
         ) from exc
 
 
-router = APIRouter(prefix="/tracing", tags=["tracing"])
+router = APIRouter(prefix="/monitor/tracing", tags=["tracing"])
 
 
 # ===== 运营概览 =====

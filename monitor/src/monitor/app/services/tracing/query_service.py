@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from ...database import get_tracing_db_connection, DatabaseConnection
+from ...database import get_db_connection, DatabaseConnection
 from ...models.tracing import (
     EventType,
     ModelUsage,
@@ -51,7 +51,7 @@ class TracingQueryService:
     @classmethod
     def get_instance(cls) -> "TracingQueryService":
         """获取服务实例（使用全局数据库连接）."""
-        db = get_tracing_db_connection()
+        db = get_db_connection()
         return cls(db)
 
     # ===== 运营概览 =====
@@ -178,6 +178,16 @@ class TracingQueryService:
                       AND user_id != 'default'
                 """
                 row = await self._db.fetch_one(query, (source_id, s, e))
+
+            if row is None:
+                return {
+                    "calls": 0,
+                    "tokens": 0,
+                    "sessions": 0,
+                    "users": 0,
+                    "platforms": 0,
+                    "avg_duration": 0.0,
+                }
             return {
                 "calls": row["calls"] or 0,
                 "tokens": row["tokens"] or 0,

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Monitor 常量与环境变量加载工具."""
+
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-
 
 _ENV_VAR_OVERRIDES: ContextVar[dict[str, str]] = ContextVar(
     "monitor_env_var_overrides",
@@ -190,6 +190,14 @@ HEALTH_CHECK_TIMEOUT = EnvVarLoader.get_float(
 )
 
 # ============================================================
+# Elasticsearch 配置
+# ============================================================
+
+ES_HOST = EnvVarLoader.get_str("ES_HOST", "")
+ES_PORT = EnvVarLoader.get_int("ES_PORT", 9200, min_value=1)
+ES_USER = EnvVarLoader.get_str("ES_USER", "")
+ES_PASSWORD = EnvVarLoader.get_str("ES_PASSWORD", "")
+ES_INDEX = EnvVarLoader.get_str("ES_INDEX", "swe_messages")
 # SWE 定时任务恢复预热配置
 # ============================================================
 

@@ -8,6 +8,12 @@ from .connection import (
     init_db_connection,
     close_db_connection,
 )
+from .elasticsearch import (
+    ESClient,
+    get_es_client,
+    init_es_client,
+    close_es_client,
+)
 from .schema import (
     init_database_tables,
     CREATE_CRON_JOBS_TABLE,
@@ -21,6 +27,10 @@ __all__ = [
     "get_db_connection",
     "init_db_connection",
     "close_db_connection",
+    "ESClient",
+    "get_es_client",
+    "init_es_client",
+    "close_es_client",
     "init_database_tables",
     "CREATE_CRON_JOBS_TABLE",
     "CREATE_CRON_EXECUTIONS_TABLE",

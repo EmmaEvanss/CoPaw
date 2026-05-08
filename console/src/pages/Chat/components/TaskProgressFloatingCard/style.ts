@@ -2,12 +2,7 @@ import { createGlobalStyle } from "antd-style";
 
 export default createGlobalStyle`
 .task-progress-floating {
-  position: absolute;
-  z-index: 2;
-  left: 8px;
-  right: 8px;
-  bottom: 100%;
-  margin-bottom: 8px;
+  margin: 0 0 8px 0;
   max-height: 220px;
   overflow-y: auto;
   background: ${(p) => p.theme.colorBgElevated};

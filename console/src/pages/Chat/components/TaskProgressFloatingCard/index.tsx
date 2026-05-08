@@ -13,7 +13,14 @@ export default function TaskProgressFloatingCard(props: {
   progress: ChatTaskProgressData | null;
 }) {
   const { progress } = props;
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
+
+  // 新 turn 出现时重置为折叠状态
+  useEffect(() => {
+    if (progress) {
+      setCollapsed(true);
+    }
+  }, [progress?.turn_id]);
 
   useEffect(() => {
     if (!progress) return;
@@ -88,7 +95,11 @@ export default function TaskProgressFloatingCard(props: {
         >
           <SparkProjectNoLine className="task-progress-floating-header-icon" />
           <span className="task-progress-floating-header-title">
-            {progress.title || "任务计划"}
+            {collapsed
+              ? (progress.items.find((i) => i.status === "running")?.label
+                  || progress.title
+                  || "任务计划")
+              : (progress.title || "任务计划")}
           </span>
           <span className="task-progress-floating-header-badge">
             {progress.current_step_index != null

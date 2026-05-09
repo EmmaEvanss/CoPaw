@@ -10,8 +10,7 @@ interface UserStatsHeaderProps {
 /** 计算内容是否超过指定行数 */
 function useTruncatedTags(
   items: Array<{ name: string; count: number; error_count?: number }>,
-  containerWidth: number = 600,
-  tagHeight: number = 28,
+  containerWidth: number = 700,
   lineHeight: number = 2
 ): {
   displayItems: Array<{ name: string; count: number; error_count?: number }>;
@@ -23,21 +22,21 @@ function useTruncatedTags(
       return { displayItems: [], hasMore: false, hiddenCount: 0 };
     }
 
-    // 估算每个tag的宽度（粗略计算）
-    const avgCharWidth = 8;
-    const padding = 16;
+    // 估算每个tag的宽度
+    // 中文字符约 14px，英文/数字约 8px，取平均 10px
+    const avgCharWidth = 10;
+    // Tag 的 padding + margin + border 等额外空间
+    const extraPadding = 28;
 
-    // 计算一行能放多少个tag
-    const maxWidth = containerWidth;
     let currentLineWidth = 0;
     let lineCount = 1;
     let displayCount = 0;
 
     for (const item of items) {
       const tagText = `${item.name}: ${item.count} calls`;
-      const estimatedWidth = tagText.length * avgCharWidth + padding;
+      const estimatedWidth = tagText.length * avgCharWidth + extraPadding;
 
-      if (currentLineWidth + estimatedWidth > maxWidth) {
+      if (currentLineWidth + estimatedWidth > containerWidth) {
         lineCount++;
         currentLineWidth = estimatedWidth;
       } else {
@@ -56,7 +55,7 @@ function useTruncatedTags(
     const hiddenCount = items.length - displayCount;
 
     return { displayItems, hasMore, hiddenCount };
-  }, [items, containerWidth, tagHeight, lineHeight]);
+  }, [items, containerWidth, lineHeight]);
 }
 
 /** 格式化 token 数量 */
@@ -99,7 +98,7 @@ function TagList({
       <div
         style={{
           marginTop: 8,
-          maxHeight: "2.5em",
+          maxHeight: 56,
           overflow: "hidden",
           position: "relative",
         }}

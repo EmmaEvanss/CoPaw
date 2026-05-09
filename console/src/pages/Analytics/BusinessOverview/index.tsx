@@ -19,6 +19,7 @@ import {
   type UserRow,
   type TimeRange,
 } from "./types";
+import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 
 const { Option } = Select;
 
@@ -82,12 +83,13 @@ export default function BusinessOverviewPage() {
         if (ctx.state?.isSuperManager) {
           return "all";
         }
-        return ctx.state?.source || "all";
+        return ctx.state?.source || DEFAULT_SOURCE_ID || "all";
       }
     } catch {
       // ignore
     }
-    return "all";
+    // 非 iframe 模式下使用默认 source
+    return DEFAULT_SOURCE_ID || "all";
   });
 
   // 平台列表（从API获取）
@@ -185,9 +187,9 @@ export default function BusinessOverviewPage() {
         setSources(res.sources || []);
       } else {
         // 非超级管理员：只显示用户所属平台
-        if (userSource) {
-          setSources([userSource]);
-          setPlatform(userSource);
+        const effectiveSource = userSource || DEFAULT_SOURCE_ID;
+        if (effectiveSource) {
+          setSources([effectiveSource]);
         } else {
           setSources([]);
         }
@@ -347,19 +349,21 @@ export default function BusinessOverviewPage() {
     }
   }, [startDate, endDate, platform, activeFilterType]);
 
-  // 初始加载用户排行榜
+  // 调用数排行榜：筛选条件变化时重新加载
   useEffect(() => {
-    // 重置分页状态，但不重置 loadingRef（避免清除加载锁导致重复请求）
     setCallsPage(1);
-    setActivePage(1);
     setCallsHasMore(true);
-    setActiveHasMore(true);
-    // 先清空数据再加载，避免重复数据
     setCallsUsers([]);
-    setActiveUsers([]);
     fetchCallsUsers(1, false);
+  }, [fetchCallsUsers]);
+
+  // 最近活跃用户：筛选条件变化时重新加载
+  useEffect(() => {
+    setActivePage(1);
+    setActiveHasMore(true);
+    setActiveUsers([]);
     fetchActiveUsers(1, false);
-  }, [fetchCallsUsers, fetchActiveUsers]);
+  }, [fetchActiveUsers]);
 
   // 滚动加载更多调用数用户
   const handleCallsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -708,28 +712,13 @@ export default function BusinessOverviewPage() {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      // SVG 使用 preserveAspectRatio="xMidYMid meet" 会居中显示
-      // 需要计算实际的缩放比例和偏移量
-      const viewBoxAspect = width / height;
-      const containerAspect = rect.width / rect.height;
+      // SVG 拉伸填充容器，直接按比例计算
+      const scaleX = rect.width / width;
 
-      let actualScaleX: number;
-      let offsetX: number;
-
-      if (containerAspect > viewBoxAspect) {
-        // 容器更宽，SVG 按高度缩放，左右留白
-        actualScaleX = rect.height / height;
-        offsetX = (rect.width - width * actualScaleX) / 2;
-      } else {
-        // 容器更高，SVG 按宽度缩放，上下留白
-        actualScaleX = rect.width / width;
-        offsetX = 0;
-      }
-
-      // 计算每个数据点在 DOM 中的实际 X 位置（考虑居中偏移）
+      // 计算每个数据点在 DOM 中的实际 X 位置
       const dataPoints = chartData.map((d, i) => ({
         index: i,
-        x: xScale(i) * actualScaleX + offsetX,
+        x: xScale(i) * scaleX,
         data: d,
       }));
 
@@ -746,7 +735,7 @@ export default function BusinessOverviewPage() {
       }
 
       // 计算实际图表宽度的一半作为阈值
-      const actualChartWidth = chartWidth * actualScaleX;
+      const actualChartWidth = chartWidth * scaleX;
       const threshold = actualChartWidth / chartData.length / 2;
 
       if (minDistance <= threshold) {
@@ -779,7 +768,7 @@ export default function BusinessOverviewPage() {
           width="100%"
           height={height}
           viewBox={`0 0 ${width} ${height}`}
-          preserveAspectRatio="xMidYMid meet"
+          preserveAspectRatio="none"
         >
           {/* Y轴 */}
           {yTicks.map((tick, i) => (

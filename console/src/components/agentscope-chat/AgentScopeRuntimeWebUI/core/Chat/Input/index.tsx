@@ -17,12 +17,14 @@ import {
 import { ChatAnywhereMessagesContext } from "../../Context/ChatAnywhereMessagesContext";
 import { useContextSelector } from "use-context-selector";
 
+const RUNTIME_INPUT_UPLOAD_FILE_EVENT = "pasteFile";
+
 export interface InputProps {
   onCancel: () => void;
   onSubmit: (data: IAgentScopeRuntimeWebUIInputData) => void;
 }
 
-export default function Input(props: InputProps) {
+export default function Input({ onCancel, onSubmit }: InputProps) {
   const [content, setContent, getContent] = useGetState("");
   const restoredBizParamsRef = useRef<
     IAgentScopeRuntimeWebUIInputData["biz_params"]
@@ -95,6 +97,23 @@ export default function Input(props: InputProps) {
       document.removeEventListener(RUNTIME_INPUT_SET_CONTENT_EVENT, handler);
   }, [setContent, setFileList]);
 
+  useEffect(() => {
+    if (!handlePasteFile) {
+      return;
+    }
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ file?: File }>).detail;
+      if (detail?.file instanceof File) {
+        handlePasteFile(detail.file);
+      }
+    };
+
+    document.addEventListener(RUNTIME_INPUT_UPLOAD_FILE_EVENT, handler);
+    return () =>
+      document.removeEventListener(RUNTIME_INPUT_UPLOAD_FILE_EVENT, handler);
+  }, [handlePasteFile]);
+
   const handleContentChange = useCallback(
     (value: string) => {
       restoredBizParamsRef.current = undefined;
@@ -108,7 +127,7 @@ export default function Input(props: InputProps) {
     if (!next) return;
 
     const fileList = (getFileList?.() || []).filter((i) => i.response?.url);
-    props.onSubmit({
+    onSubmit({
       query: getContent(),
       fileList,
       biz_params: restoredBizParamsRef.current,
@@ -118,11 +137,11 @@ export default function Input(props: InputProps) {
     if (setFileList) {
       setFileList([]);
     }
-  }, []);
+  }, [beforeSubmit, getContent, getFileList, onSubmit, setContent, setFileList]);
 
   const handleCancel = useCallback(() => {
-    props.onCancel();
-  }, []);
+    onCancel();
+  }, [onCancel]);
 
   return (
     <div className={prefixCls}>

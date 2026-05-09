@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Drawer, Empty, List, Segmented, Spin, Tooltip, Typography } from "antd";
+import { Button, Drawer, Empty, List, Select, Spin, Tooltip, Typography } from "antd";
 import {
   SparkLocalFileLine,
   SparkRefreshLine,
@@ -47,6 +47,25 @@ function getSourceLabel(source: GeneratedFileItem["source"]) {
   return source === "generated" ? "生成文件" : "上传文件";
 }
 
+function getPreviewTypeLabel(type: GeneratedFileItem["preview_type"]) {
+  const labels: Record<GeneratedFileItem["preview_type"], string> = {
+    image: "图片",
+    video: "视频",
+    audio: "音频",
+    office: "文档",
+    pdf: "PDF",
+    markdown: "Markdown",
+    text: "文本",
+    html: "HTML",
+    other: "文件",
+  };
+  return labels[type] || "文件";
+}
+
+function getDisplayName(file: GeneratedFileItem) {
+  return file.display_name || file.name;
+}
+
 export default function GeneratedFilesDrawer() {
   const [open, setOpen] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
@@ -78,7 +97,6 @@ export default function GeneratedFilesDrawer() {
 
   const handlePreview = useCallback((file: GeneratedFileItem) => {
     setPreviewFile(file);
-    setOpen(false);
   }, []);
 
   return (
@@ -102,7 +120,7 @@ export default function GeneratedFilesDrawer() {
         }
         open={open}
         onClose={() => setOpen(false)}
-        width={420}
+        width={520}
         className={styles.drawer}
         extra={
           <Tooltip title="刷新">
@@ -115,20 +133,32 @@ export default function GeneratedFilesDrawer() {
           </Tooltip>
         }
       >
-        <div className={styles.toolbar}>
-          <Segmented
-            size="small"
-            value={source}
-            options={sourceOptions}
-            onChange={(value) => setSource(value as FileSource)}
-          />
-          <div className={styles.sortControl}>
-            <div className={styles.sortLabel}>
+        <div className={styles.summary}>
+          <div>
+            <div className={styles.summaryTitle}>当前聊天相关文件</div>
+            <div className={styles.summaryMeta}>
+              共 {files.length} 个文件，点击条目可预览
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.filterPanel}>
+          <div className={styles.filterGroup}>
+            <div className={styles.filterLabel}>文件来源</div>
+            <Select
+              className={styles.filterSelect}
+              value={source}
+              options={sourceOptions}
+              onChange={(value) => setSource(value as FileSource)}
+            />
+          </div>
+          <div className={styles.filterGroup}>
+            <div className={styles.filterLabel}>
               <SparkSortLine />
               <span>时间排序</span>
             </div>
-            <Segmented
-              size="small"
+            <Select
+              className={styles.filterSelect}
               value={sortOrder}
               options={sortOptions}
               onChange={(value) => setSortOrder(value as SortOrder)}
@@ -148,7 +178,8 @@ export default function GeneratedFilesDrawer() {
               className={styles.fileList}
               dataSource={files}
               renderItem={(file) => {
-                const { icon, color } = getFileIcon(file.name, 28);
+                const displayName = getDisplayName(file);
+                const { icon, color } = getFileIcon(displayName, 28);
                 return (
                   <List.Item
                     className={styles.fileItem}
@@ -168,16 +199,21 @@ export default function GeneratedFilesDrawer() {
                     <div className={styles.fileMeta}>
                       <Typography.Text
                         className={styles.fileName}
-                        ellipsis={{ tooltip: file.relative_path }}
+                        ellipsis={{ tooltip: file.name }}
                       >
-                        {file.name}
+                        {displayName}
                       </Typography.Text>
                       <div className={styles.fileSubline}>
                         <span className={styles.sourceBadge}>
                           {getSourceLabel(file.source)}
                         </span>
+                        <span className={styles.typeBadge}>
+                          {getPreviewTypeLabel(file.preview_type)}
+                        </span>
                         <span>{formatFileSize(file.size)}</span>
-                        <span>{formatModifiedTime(file.modified_at)}</span>
+                      </div>
+                      <div className={styles.fileTime}>
+                        {formatModifiedTime(file.modified_at)}
                       </div>
                     </div>
                   </List.Item>
@@ -192,7 +228,7 @@ export default function GeneratedFilesDrawer() {
         open={Boolean(previewFile)}
         onClose={() => setPreviewFile(null)}
         fileUrl={previewUrl}
-        fileName={previewFile?.name || ""}
+        fileName={previewFile ? getDisplayName(previewFile) : ""}
         previewType={previewFile?.preview_type}
       />
     </>

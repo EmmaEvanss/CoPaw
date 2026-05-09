@@ -56,12 +56,14 @@ _PREVIEW_TYPES = (
     "html",
     "other",
 )
+_UPLOADED_STORED_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}_(?P<name>.+)$")
 
 
 class GeneratedFileItem(BaseModel):
     """聊天相关文件列表项。"""
 
     name: str = Field(..., description="文件名")
+    display_name: str = Field(..., description="用于界面展示的文件名")
     relative_path: str = Field(..., description="相对来源目录的路径")
     file_url: str = Field(..., description="文件绝对路径")
     size: int = Field(..., description="文件大小，单位字节")
@@ -105,6 +107,19 @@ def _looks_like_text_file(path: Path) -> bool:
     except UnicodeDecodeError:
         return False
     return True
+
+
+def _resolve_display_name(
+    file_name: str,
+    source: Literal["generated", "uploaded"],
+) -> str:
+    """上传文件展示原始文件名，生成文件展示实际文件名。"""
+    if source != "uploaded":
+        return file_name
+    match = _UPLOADED_STORED_NAME_PATTERN.match(file_name)
+    if not match:
+        return file_name
+    return match.group("name") or file_name
 
 
 def _resolve_preview_type(
@@ -201,6 +216,7 @@ def _collect_chat_files_from_dir(
         items.append(
             GeneratedFileItem(
                 name=resolved.name,
+                display_name=_resolve_display_name(resolved.name, source),
                 relative_path=relative_path,
                 file_url=str(resolved),
                 size=stat.st_size,

@@ -374,7 +374,7 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
         body: { padding: "16px 0" },
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: fullscreen ? "85vh" : "200px" }}>
+      <div style={{ display: "flex", justifyContent: "center", minHeight: fullscreen ? "85vh" : "200px" }}>
         {renderPreviewContent}
       </div>
     </Modal>

@@ -17,6 +17,7 @@ export interface ChatUploadResponse {
 
 export interface GeneratedFileItem {
   name: string;
+  display_name: string;
   relative_path: string;
   file_url: string;
   size: number;

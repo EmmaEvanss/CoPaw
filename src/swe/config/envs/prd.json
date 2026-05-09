@@ -68,6 +68,7 @@
   "SWE_CRON_WPLUS_PRIVATE_KEY": "",
   "SWE_USER_INFO_API_URL": "",
   "SWE_MONITOR_API_URL": "",
+  "SWE_SERVER_DOMAIN": "",
   "SWE_CRON_SCHEDULER_BASE_URL": "http://cron-job-manager-serv.paas.cmbchina.cn",
   "SWE_CRON_SCHEDULER_JOB_GROUP": "",
   "SWE_CRON_SCHEDULER_AUTHOR": "",

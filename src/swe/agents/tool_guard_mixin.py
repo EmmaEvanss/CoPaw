@@ -20,7 +20,7 @@ import time
 import uuid as _uuid
 from typing import Any, Literal
 
-from agentscope.message import Msg
+from agentscope.message import Msg, ToolResultBlock
 
 from ..constant import AGENT_WATCHDOG_TIMEOUT, QUERY_TIMEOUT_SECONDS
 from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
@@ -149,6 +149,11 @@ class ToolGuardMixin:
                 )
             except asyncio.TimeoutError:
                 elapsed = time.monotonic() - started_at
+                timeout_text = (
+                    f"Error: Tool {tool_name} timed out after "
+                    f"{LOCAL_TOOL_EXECUTION_HARD_TIMEOUT:.2f}s "
+                    f"(elapsed {elapsed:.2f}s)."
+                )
                 logger.warning(
                     "Local tool hard timeout: tool_name=%s tool_call_id=%s "
                     "elapsed=%.3fs timeout=%.3fs",
@@ -157,21 +162,50 @@ class ToolGuardMixin:
                     elapsed,
                     LOCAL_TOOL_EXECUTION_HARD_TIMEOUT,
                 )
-                return {
-                    "type": "tool_result",
-                    "id": tool_call_id,
-                    "name": tool_name,
-                    "output": [
-                        {
-                            "type": "text",
-                            "text": (
-                                f"Error: Tool {tool_name} timed out after "
-                                f"{LOCAL_TOOL_EXECUTION_HARD_TIMEOUT:.2f}s "
-                                f"(elapsed {elapsed:.2f}s)."
-                            ),
-                        },
-                    ],
-                }
+                await self._persist_local_tool_timeout_result(
+                    tool_call_id,
+                    tool_name,
+                    timeout_text,
+                )
+                return None
+
+    async def _persist_local_tool_timeout_result(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        timeout_text: str,
+    ) -> None:
+        """Print and persist the timeout result seen by the next LLM turn."""
+        timeout_msg = Msg(
+            "system",
+            [
+                ToolResultBlock(
+                    type="tool_result",
+                    id=tool_call_id,
+                    name=tool_name,
+                    output=[{"type": "text", "text": timeout_text}],
+                ),
+            ],
+            "system",
+        )
+
+        memory_content = getattr(getattr(self, "memory", None), "content", [])
+        if memory_content:
+            last_msg, marks = memory_content[-1]
+            if (
+                TOOL_GUARD_DENIED_MARK not in marks
+                and last_msg.role == "system"
+                and last_msg.get_content_blocks("tool_result")
+                and last_msg.get_content_blocks("tool_result")[0].get("id")
+                == tool_call_id
+            ):
+                last_msg.content = timeout_msg.content
+                timeout_msg = last_msg
+                await self.print(timeout_msg, True)
+                return
+
+        await self.print(timeout_msg, True)
+        await self.memory.add(timeout_msg)
 
     def _should_require_approval(self) -> bool:
         """``True`` when a ``session_id`` is available for approval."""

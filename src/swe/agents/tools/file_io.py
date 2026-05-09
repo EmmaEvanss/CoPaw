@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # flake8: noqa: E501
 # pylint: disable=line-too-long
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -350,7 +351,8 @@ async def write_file(
     encoding = _get_encoding_for_file(file_path)
 
     try:
-        _write_content_with_diagnostics(
+        await asyncio.to_thread(
+            _write_content_with_diagnostics,
             operation="write_file",
             file_path=file_path,
             content=content,
@@ -518,7 +520,8 @@ async def append_file(
     encoding = _get_encoding_for_file(file_path)
 
     try:
-        _write_content_with_diagnostics(
+        await asyncio.to_thread(
+            _write_content_with_diagnostics,
             operation="append_file",
             file_path=file_path,
             content=content,

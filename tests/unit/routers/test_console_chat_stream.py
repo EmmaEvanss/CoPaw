@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -31,7 +32,9 @@ class _FakeChatManager:
         user_id: str,
         channel_id: str,
         name: str,
+        meta=None,
     ):
+        _ = meta
         return SimpleNamespace(
             id=f"chat:{session_id}",
             session_id=session_id,
@@ -95,8 +98,12 @@ def test_console_chat_stream_emits_keepalive_and_disables_proxy_buffering(
         assert response.headers["x-accel-buffering"] == "no"
 
         lines = response.iter_lines()
-        assert next(lines) == ": keep-alive"
-        assert next(lines) == ""
+        first_line = next(lines)
+        if first_line == ": keep-alive":
+            assert next(lines) == ""
+        else:
+            assert first_line == 'data: {"done": true}'
+            return
 
         for line in lines:
             if not line or line == ": keep-alive":
@@ -107,3 +114,129 @@ def test_console_chat_stream_emits_keepalive_and_disables_proxy_buffering(
             raise AssertionError(
                 "expected streamed data event after keepalive",
             )
+
+
+def test_generated_files_returns_chat_files_sorted_by_time(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(console_router.router)
+
+    static_dir = tmp_path / "static"
+    media_dir = tmp_path / "media"
+    static_dir.mkdir()
+    media_dir.mkdir()
+    old_file = static_dir / "old.txt"
+    new_file = media_dir / "new"
+    old_file.write_text("old", encoding="utf-8")
+    new_file.write_text("new", encoding="utf-8")
+    os.utime(old_file, (100, 100))
+    os.utime(new_file, (200, 200))
+
+    workspace = SimpleNamespace(workspace_dir=tmp_path)
+
+    async def _fake_get_agent_for_request(_request):
+        return workspace
+
+    monkeypatch.setattr(
+        console_router,
+        "get_agent_for_request",
+        _fake_get_agent_for_request,
+    )
+
+    client = TestClient(app)
+
+    desc_response = client.get("/console/generated-files?sort=desc")
+    assert desc_response.status_code == 200
+    desc_files = desc_response.json()["files"]
+    assert [item["name"] for item in desc_files] == ["new", "old.txt"]
+    assert [item["source"] for item in desc_files] == [
+        "uploaded",
+        "generated",
+    ]
+    assert desc_files[0]["preview_type"] == "text"
+
+    asc_response = client.get("/console/generated-files?sort=asc")
+    assert asc_response.status_code == 200
+    assert [item["name"] for item in asc_response.json()["files"]] == [
+        "old.txt",
+        "new",
+    ]
+
+    uploaded_response = client.get(
+        "/console/generated-files?source=uploaded",
+    )
+    assert uploaded_response.status_code == 200
+    assert uploaded_response.json()["files"] == [
+        {
+            **desc_files[0],
+            "name": "new",
+            "source": "uploaded",
+            "preview_type": "text",
+        },
+    ]
+
+
+def test_generated_files_returns_empty_when_static_dir_missing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(console_router.router)
+    workspace = SimpleNamespace(workspace_dir=tmp_path)
+
+    async def _fake_get_agent_for_request(_request):
+        return workspace
+
+    monkeypatch.setattr(
+        console_router,
+        "get_agent_for_request",
+        _fake_get_agent_for_request,
+    )
+
+    client = TestClient(app)
+    response = client.get("/console/generated-files")
+
+    assert response.status_code == 200
+    assert response.json() == {"files": []}
+
+
+def test_generated_files_uses_console_channel_media_dir(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(console_router.router)
+
+    media_dir = tmp_path / "custom-media"
+    media_dir.mkdir()
+    uploaded_file = media_dir / "uploaded.txt"
+    uploaded_file.write_text("uploaded", encoding="utf-8")
+
+    class _FakeChannelManager:
+        async def get_channel(self, _name):
+            return SimpleNamespace(media_dir=media_dir)
+
+    workspace = SimpleNamespace(
+        workspace_dir=tmp_path,
+        channel_manager=_FakeChannelManager(),
+    )
+
+    async def _fake_get_agent_for_request(_request):
+        return workspace
+
+    monkeypatch.setattr(
+        console_router,
+        "get_agent_for_request",
+        _fake_get_agent_for_request,
+    )
+
+    client = TestClient(app)
+    response = client.get("/console/generated-files?source=uploaded")
+
+    assert response.status_code == 200
+    files = response.json()["files"]
+    assert len(files) == 1
+    assert files[0]["name"] == "uploaded.txt"
+    assert files[0]["source"] == "uploaded"

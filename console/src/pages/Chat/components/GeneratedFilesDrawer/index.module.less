@@ -1,0 +1,197 @@
+.triggerButton {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 0, 0, 0.62);
+  border-radius: 6px;
+
+  &:hover,
+  &:focus-visible {
+    color: #3769fc;
+    background: rgba(55, 105, 252, 0.08);
+  }
+}
+
+.drawer {
+  :global(.ant-drawer-body) {
+    padding: 16px;
+  }
+}
+
+.drawerTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sortControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sortLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: rgba(0, 0, 0, 0.58);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 48px 0;
+}
+
+.fileList {
+  :global(.ant-list-items) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+.fileItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 10px 12px !important;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
+
+  &:hover {
+    background: rgba(55, 105, 252, 0.05);
+    border-color: rgba(55, 105, 252, 0.22);
+  }
+}
+
+.fileIcon {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.035);
+  border-radius: 8px;
+}
+
+.fileMeta {
+  flex: 1;
+  min-width: 0;
+}
+
+.fileName {
+  display: block;
+  max-width: 100%;
+  color: rgba(0, 0, 0, 0.86);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.fileSubline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 4px;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.4;
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.sourceBadge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  color: #3769fc;
+  background: rgba(55, 105, 252, 0.08);
+  border-radius: 4px;
+}
+
+:global(.dark-mode) {
+  .triggerButton {
+    color: rgba(255, 255, 255, 0.72);
+
+    &:hover,
+    &:focus-visible {
+      color: #7f9cff;
+      background: rgba(127, 156, 255, 0.14);
+    }
+  }
+
+  .sortLabel {
+    color: rgba(255, 255, 255, 0.58);
+  }
+
+  .fileItem {
+    border-color: rgba(255, 255, 255, 0.08);
+
+    &:hover {
+      background: rgba(127, 156, 255, 0.1);
+      border-color: rgba(127, 156, 255, 0.3);
+    }
+  }
+
+  .fileIcon {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .fileName {
+    color: rgba(255, 255, 255, 0.88);
+  }
+
+  .fileSubline {
+    color: rgba(255, 255, 255, 0.48);
+  }
+
+  .sourceBadge {
+    color: #9aacff;
+    background: rgba(127, 156, 255, 0.14);
+  }
+}
+
+@media (max-width: 520px) {
+  .toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sortControl {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .fileSubline {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+}

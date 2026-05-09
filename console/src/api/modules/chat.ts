@@ -15,6 +15,30 @@ export interface ChatUploadResponse {
   stored_name?: string;
 }
 
+export interface GeneratedFileItem {
+  name: string;
+  relative_path: string;
+  file_url: string;
+  size: number;
+  modified_at: string;
+  mime_type?: string | null;
+  preview_type:
+    | "image"
+    | "video"
+    | "audio"
+    | "office"
+    | "pdf"
+    | "markdown"
+    | "text"
+    | "html"
+    | "other";
+  source: "generated" | "uploaded";
+}
+
+export interface GeneratedFilesResponse {
+  files: GeneratedFileItem[];
+}
+
 const FILES_PREVIEW = "/files/preview";
 
 export const chatApi = {
@@ -87,6 +111,14 @@ export const chatApi = {
         method: "POST",
         body: JSON.stringify(chatIds),
       },
+    ),
+
+  listGeneratedFiles: (
+    sort: "asc" | "desc" = "desc",
+    source: "all" | "generated" | "uploaded" = "all",
+  ) =>
+    request<GeneratedFilesResponse>(
+      `/console/generated-files?sort=${encodeURIComponent(sort)}&source=${encodeURIComponent(source)}`,
     ),
 
   stopChat: (chatId: string) =>

@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import re
 import asyncio
 import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import AsyncGenerator, Union, Any, Optional, Dict
+from typing import AsyncGenerator, Literal, Union, Any, Optional, Dict
 
 from fastapi import (
     APIRouter,
@@ -34,6 +36,194 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 _RECONNECT_ATTACH_ATTEMPTS = 10
 _RECONNECT_ATTACH_RETRY_DELAY_SECONDS = 0.1
 _CONSOLE_SSE_HEARTBEAT_SECONDS = 15
+_CHAT_FILE_LIST_LIMIT = 500
+_TEXT_SNIFF_BYTES = 4096
+_TEXT_PREVIEW_MIME_PREFIX = "text/"
+_TEXT_PREVIEW_MIME_TYPES = {
+    "application/json",
+    "application/xml",
+    "application/x-yaml",
+    "application/toml",
+}
+_PREVIEW_TYPES = (
+    "image",
+    "video",
+    "audio",
+    "office",
+    "pdf",
+    "markdown",
+    "text",
+    "html",
+    "other",
+)
+
+
+class GeneratedFileItem(BaseModel):
+    """聊天相关文件列表项。"""
+
+    name: str = Field(..., description="文件名")
+    relative_path: str = Field(..., description="相对来源目录的路径")
+    file_url: str = Field(..., description="文件绝对路径")
+    size: int = Field(..., description="文件大小，单位字节")
+    modified_at: str = Field(..., description="最后修改时间")
+    mime_type: str | None = Field(default=None, description="文件 MIME 类型")
+    preview_type: Literal[
+        "image",
+        "video",
+        "audio",
+        "office",
+        "pdf",
+        "markdown",
+        "text",
+        "html",
+        "other",
+    ] = Field(default="other", description="前端预览类型")
+    source: Literal["generated", "uploaded"] = Field(
+        ...,
+        description="文件来源：generated 表示生成文件，uploaded 表示上传文件",
+    )
+
+
+class GeneratedFilesResponse(BaseModel):
+    """聊天相关文件列表响应。"""
+
+    files: list[GeneratedFileItem] = Field(default_factory=list)
+
+
+def _looks_like_text_file(path: Path) -> bool:
+    """在缺少后缀时通过内容嗅探判断是否可按文本预览。"""
+    try:
+        sample = path.read_bytes()[:_TEXT_SNIFF_BYTES]
+    except OSError:
+        return False
+    if not sample:
+        return True
+    if b"\x00" in sample:
+        return False
+    try:
+        sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def _resolve_preview_type(
+    path: Path,
+    mime_type: str | None,
+) -> Literal[
+    "image",
+    "video",
+    "audio",
+    "office",
+    "pdf",
+    "markdown",
+    "text",
+    "html",
+    "other",
+]:
+    """根据后缀、MIME 与内容嗅探给前端提供稳定预览类型。"""
+    ext = path.suffix.lower().lstrip(".")
+    if ext in {"png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"}:
+        return "image"
+    if ext in {"mp4", "avi", "mov", "wmv", "flv", "mkv", "webm"}:
+        return "video"
+    if ext in {"mp3", "wav", "flac", "ape", "aac", "ogg", "m4a"}:
+        return "audio"
+    if ext in {"doc", "docx", "xls", "xlsx", "ppt", "pptx"}:
+        return "office"
+    if ext == "pdf":
+        return "pdf"
+    if ext in {"md", "mdx"}:
+        return "markdown"
+    if ext in {"html", "htm", "xhtml"}:
+        return "html"
+    if ext in {
+        "txt",
+        "json",
+        "xml",
+        "csv",
+        "log",
+        "yaml",
+        "yml",
+        "toml",
+        "ini",
+        "conf",
+        "config",
+        "env",
+        "sh",
+        "bash",
+        "zsh",
+        "ps1",
+        "bat",
+        "cmd",
+    }:
+        return "text"
+    if mime_type:
+        if mime_type.startswith("image/"):
+            return "image"
+        if mime_type.startswith("video/"):
+            return "video"
+        if mime_type.startswith("audio/"):
+            return "audio"
+        if mime_type == "application/pdf":
+            return "pdf"
+        if mime_type in {"text/html", "application/xhtml+xml"}:
+            return "html"
+        if (
+            mime_type.startswith(_TEXT_PREVIEW_MIME_PREFIX)
+            or mime_type in _TEXT_PREVIEW_MIME_TYPES
+        ):
+            return "text"
+    if _looks_like_text_file(path):
+        return "text"
+    return "other"
+
+
+def _collect_chat_files_from_dir(
+    root_dir: Path,
+    source: Literal["generated", "uploaded"],
+) -> list[GeneratedFileItem]:
+    """从指定目录收集聊天文件，并限制路径只来自该目录内部。"""
+    if not root_dir.is_dir():
+        return []
+
+    items: list[GeneratedFileItem] = []
+    for path in root_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        try:
+            relative_path = resolved.relative_to(root_dir).as_posix()
+        except ValueError:
+            continue
+        stat = resolved.stat()
+        mime_type, _ = mimetypes.guess_type(str(resolved))
+        items.append(
+            GeneratedFileItem(
+                name=resolved.name,
+                relative_path=relative_path,
+                file_url=str(resolved),
+                size=stat.st_size,
+                modified_at=datetime.fromtimestamp(
+                    stat.st_mtime,
+                ).isoformat(),
+                mime_type=mime_type,
+                preview_type=_resolve_preview_type(resolved, mime_type),
+                source=source,
+            ),
+        )
+    return items
+
+
+async def _resolve_console_media_dir(workspace, workspace_dir: Path) -> Path:
+    """解析 Console 上传目录，保持文件列表与上传接口使用同一位置。"""
+    channel_manager = getattr(workspace, "channel_manager", None)
+    if channel_manager is not None:
+        console_channel = await channel_manager.get_channel("console")
+        media_dir = getattr(console_channel, "media_dir", None)
+        if media_dir:
+            return Path(media_dir).expanduser().resolve()
+    return (workspace_dir / "media").resolve()
 
 
 async def _stream_with_keepalive(
@@ -340,6 +530,54 @@ async def post_console_upload(
         "file_name": safe_name,
         "size": len(data),
     }
+
+
+@router.get(
+    "/generated-files",
+    response_model=GeneratedFilesResponse,
+    summary="列出当前聊天工作区相关文件",
+)
+async def get_console_generated_files(
+    request: Request,
+    sort: str = Query(
+        "desc",
+        pattern="^(asc|desc)$",
+        description="按修改时间排序：asc 或 desc",
+    ),
+    source: str = Query(
+        "all",
+        pattern="^(all|generated|uploaded)$",
+        description="文件来源：all、generated 或 uploaded",
+    ),
+) -> GeneratedFilesResponse:
+    """列出当前 Agent 工作区 static 与 media 目录下的聊天相关文件。"""
+    workspace = await get_agent_for_request(request)
+    workspace_dir = Path(workspace.workspace_dir)
+    items: list[GeneratedFileItem] = []
+    if source in ("all", "generated"):
+        items.extend(
+            _collect_chat_files_from_dir(
+                (workspace_dir / "static").resolve(),
+                "generated",
+            ),
+        )
+    if source in ("all", "uploaded"):
+        media_dir = await _resolve_console_media_dir(
+            workspace,
+            workspace_dir,
+        )
+        items.extend(
+            _collect_chat_files_from_dir(
+                media_dir,
+                "uploaded",
+            ),
+        )
+
+    reverse = sort != "asc"
+    items.sort(key=lambda item: item.modified_at, reverse=reverse)
+    return GeneratedFilesResponse(
+        files=items[:_CHAT_FILE_LIST_LIMIT],
+    )
 
 
 @router.get("/push-messages")

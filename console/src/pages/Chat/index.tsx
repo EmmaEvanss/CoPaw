@@ -80,6 +80,7 @@ import RuntimeResponseCard from "./components/RuntimeResponseCard";
 import ApprovalActionCard from "./components/ApprovalActionCard";
 import TaskRunGroupCard from "./components/TaskRunGroupCard";
 import TaskProgressFloatingCard from "./components/TaskProgressFloatingCard";
+import GeneratedFilesDrawer from "./components/GeneratedFilesDrawer";
 import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
@@ -1159,6 +1160,7 @@ export default function ChatPage() {
             <RuntimeLoadingBridge bridgeRef={runtimeLoadingBridgeRef} />
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
+            <GeneratedFilesDrawer />
             <ModelSelector />
             {/* <ChatActionGroup /> */}
           </>

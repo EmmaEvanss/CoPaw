@@ -1112,6 +1112,14 @@ export default function BusinessOverviewPage() {
     chartData: { name: string; fullName?: string; value: number }[],
     height: number = 220,
   ) => {
+    if (chartData.length === 0) {
+      return (
+        <div className={styles.barChartContainer} style={{ height, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span className={styles.emptyList}>暂无数据</span>
+        </div>
+      );
+    }
+
     const maxValue = Math.max(...chartData.map((d) => d.value), 1);
 
     return (
@@ -1163,29 +1171,83 @@ export default function BusinessOverviewPage() {
           {metric === "calls" ? "调用次数" : "最后活跃"}
         </span>
       </div>
-      {users.map((user, index) => {
-        // 格式化显示：机构名称/用户姓名(用户ID)
-        const displayParts: string[] = [];
-        if (user.bbkId) {
-          const bbkName = getBbkDisplayName(user.bbkId);
-          if (bbkName && bbkName !== "-") {
-            displayParts.push(bbkName);
+      {users.length === 0 ? (
+        <div className={styles.emptyList}>暂无数据</div>
+      ) : (
+        users.map((user, index) => {
+          // 格式化显示：机构名称/用户姓名(用户ID)
+          const displayParts: string[] = [];
+          if (user.bbkId) {
+            const bbkName = getBbkDisplayName(user.bbkId);
+            if (bbkName && bbkName !== "-") {
+              displayParts.push(bbkName);
+            }
           }
-        }
-        if (user.userName) {
-          displayParts.push(user.userName);
-        }
-        const displayName = displayParts.length > 0
-          ? `${displayParts.join("/")}(${user.userId})`
-          : user.userId;
+          if (user.userName) {
+            displayParts.push(user.userName);
+          }
+          const displayName = displayParts.length > 0
+            ? `${displayParts.join("/")}(${user.userId})`
+            : user.userId;
 
-        return (
+          return (
+            <div
+              key={user.userId}
+              className={styles.userItem}
+              onClick={() => {
+                setSelectedUserId(user.userId);
+                setModalOpen(true);
+              }}
+              style={{ cursor: "pointer" }}
+            >
+              <span
+                className={`${styles.rank} ${
+                  index === 0
+                    ? styles.top1
+                    : index === 1
+                    ? styles.top2
+                    : index === 2
+                    ? styles.top3
+                    : styles.normal
+                }`}
+              >
+                {index + 1}
+              </span>
+              <span className={styles.userName}>
+                {displayName}
+              </span>
+              <span className={styles.userValue}>
+                {metric === "calls"
+                  ? formatNumber(user.calls)
+                  : user.lastActive}
+              </span>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
+  // ============================================================
+  // 渲染：技能列表
+  // ============================================================
+  const renderSkillList = (items: SkillUsage[]) => (
+    <div className={styles.userList}>
+      <div className={styles.userHeader}>
+        <span className={styles.userHeaderRank}>#</span>
+        <span className={styles.userHeaderName}>技能名称</span>
+        <span className={styles.userHeaderValue}>调用次数</span>
+      </div>
+      {items.length === 0 ? (
+        <div className={styles.emptyList}>暂无数据</div>
+      ) : (
+        items.map((skill, index) => (
           <div
-            key={user.userId}
+            key={skill.skill_name}
             className={styles.userItem}
             onClick={() => {
-              setSelectedUserId(user.userId);
-              setModalOpen(true);
+              setSelectedSkillName(skill.skill_name);
+              setSkillModalOpen(true);
             }}
             style={{ cursor: "pointer" }}
           >
@@ -1203,60 +1265,14 @@ export default function BusinessOverviewPage() {
               {index + 1}
             </span>
             <span className={styles.userName}>
-              {displayName}
+              {truncateName(skill.skill_name, 20)}
             </span>
             <span className={styles.userValue}>
-              {metric === "calls"
-                ? formatNumber(user.calls)
-                : user.lastActive}
+              {formatNumber(skill.count)}
             </span>
           </div>
-        );
-      })}
-    </div>
-  );
-
-  // ============================================================
-  // 渲染：技能列表
-  // ============================================================
-  const renderSkillList = (items: SkillUsage[]) => (
-    <div className={styles.userList}>
-      <div className={styles.userHeader}>
-        <span className={styles.userHeaderRank}>#</span>
-        <span className={styles.userHeaderName}>技能名称</span>
-        <span className={styles.userHeaderValue}>调用次数</span>
-      </div>
-      {items.map((skill, index) => (
-        <div
-          key={skill.skill_name}
-          className={styles.userItem}
-          onClick={() => {
-            setSelectedSkillName(skill.skill_name);
-            setSkillModalOpen(true);
-          }}
-          style={{ cursor: "pointer" }}
-        >
-          <span
-            className={`${styles.rank} ${
-              index === 0
-                ? styles.top1
-                : index === 1
-                ? styles.top2
-                : index === 2
-                ? styles.top3
-                : styles.normal
-            }`}
-          >
-            {index + 1}
-          </span>
-          <span className={styles.userName}>
-            {truncateName(skill.skill_name, 20)}
-          </span>
-          <span className={styles.userValue}>
-            {formatNumber(skill.count)}
-          </span>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   );
 
@@ -1270,32 +1286,36 @@ export default function BusinessOverviewPage() {
         <span className={styles.userHeaderName}>服务名称</span>
         <span className={styles.userHeaderValue}>调用次数</span>
       </div>
-      {items.map((server, index) => (
-        <div
-          key={server.server_name}
-          className={styles.userItem}
-        >
-          <span
-            className={`${styles.rank} ${
-              index === 0
-                ? styles.top1
-                : index === 1
-                ? styles.top2
-                : index === 2
-                ? styles.top3
-                : styles.normal
-            }`}
+      {items.length === 0 ? (
+        <div className={styles.emptyList}>暂无数据</div>
+      ) : (
+        items.map((server, index) => (
+          <div
+            key={server.server_name}
+            className={styles.userItem}
           >
-            {index + 1}
-          </span>
-          <span className={styles.userName}>
-            {truncateName(server.server_name, 20)}
-          </span>
-          <span className={styles.userValue}>
-            {formatNumber(server.total_calls)}
-          </span>
-        </div>
-      ))}
+            <span
+              className={`${styles.rank} ${
+                index === 0
+                  ? styles.top1
+                  : index === 1
+                  ? styles.top2
+                  : index === 2
+                  ? styles.top3
+                  : styles.normal
+              }`}
+            >
+              {index + 1}
+            </span>
+            <span className={styles.userName}>
+              {truncateName(server.server_name, 20)}
+            </span>
+            <span className={styles.userValue}>
+              {formatNumber(server.total_calls)}
+            </span>
+          </div>
+        ))
+      )}
     </div>
   );
 

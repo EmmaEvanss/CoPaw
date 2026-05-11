@@ -5,6 +5,7 @@ This module provides context variables to pass tenant identity, user identity,
 and workspace directory to tool functions, enabling strict tenant isolation
 in a multi-tenant environment.
 """
+
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Generator

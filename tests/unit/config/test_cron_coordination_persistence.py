@@ -6,6 +6,7 @@ These tests verify:
 - save_config does not persist cron_coordination
 - Environment-derived values are used instead
 """
+
 from __future__ import annotations
 
 import json

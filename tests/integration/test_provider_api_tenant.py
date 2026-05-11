@@ -2,6 +2,7 @@
 # flake8: noqa: E402
 # pylint: disable=wrong-import-position,redefined-outer-name,unused-variable
 """Integration tests for provider API tenant routing."""
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock

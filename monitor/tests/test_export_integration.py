@@ -3,6 +3,7 @@
 
 These tests verify the actual Excel export output format.
 """
+
 import pytest
 from datetime import datetime, timezone
 from io import BytesIO

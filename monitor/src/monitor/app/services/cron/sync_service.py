@@ -4,6 +4,7 @@
 Provides methods to sync job definitions and execution records
 from SWE to Monitor database.
 """
+
 import logging
 from datetime import datetime
 from typing import Optional

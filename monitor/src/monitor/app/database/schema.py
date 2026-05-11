@@ -4,6 +4,7 @@
 This module provides SQL scripts to create the required tables for
 cron job definitions and execution history.
 """
+
 import logging
 
 from .connection import get_db_connection

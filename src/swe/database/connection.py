@@ -3,6 +3,7 @@
 
 Provides async connection pool management for MySQL-compatible databases.
 """
+
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional

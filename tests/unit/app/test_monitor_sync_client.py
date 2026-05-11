@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for SWE Monitor sync client."""
+
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch

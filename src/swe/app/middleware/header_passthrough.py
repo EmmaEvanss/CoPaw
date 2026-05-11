@@ -4,6 +4,7 @@
 Extracts x-header-* prefixed HTTP headers and stores them in context
 for later injection into MCP client HTTP requests.
 """
+
 import logging
 from typing import Callable, Awaitable
 

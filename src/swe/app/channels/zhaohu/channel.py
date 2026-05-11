@@ -625,6 +625,7 @@ class ZhaohuChannel(BaseChannel):
         self,
         task_content: str,
         chat_id: str,
+        include_link: bool = True,
     ) -> list:
         """Build card content for task initiated notification (Template 1).
 
@@ -633,13 +634,11 @@ class ZhaohuChannel(BaseChannel):
         Args:
             task_content: The original task content from user message
             chat_id: Chat ID for generating claw URL
+            include_link: 是否在卡片中包含跳转链接
 
         Returns:
             Card content array for send_custom_card
         """
-        # Generate claw URL for navigation
-        claw_url = self._build_claw_url(chat_id)
-
         # Template 1: Task initiated notification
         card_content = [
             {
@@ -651,24 +650,34 @@ class ZhaohuChannel(BaseChannel):
                     },
                 ],
             },
-            {
-                "type": "content",
-                "list": [
-                    {
-                        "type": [3],
-                        "content": "点击跳转小助claw版查看",
-                        "style": 1,
-                        "action": 1,
-                        "link": {
-                            "pcUrl": claw_url,
-                        },
-                    },
-                ],
-            },
         ]
+
+        if include_link:
+            claw_url = self._build_claw_url(chat_id)
+            card_content.append(
+                {
+                    "type": "content",
+                    "list": [
+                        {
+                            "type": [3],
+                            "content": "点击跳转小助claw版查看",
+                            "style": 1,
+                            "action": 1,
+                            "link": {
+                                "pcUrl": claw_url,
+                            },
+                        },
+                    ],
+                },
+            )
+
         return card_content
 
-    def _build_task_progress_card(self, tasks: list) -> list:
+    def _build_task_progress_card(
+        self,
+        tasks: list,
+        include_link: bool = True,
+    ) -> list:
         """Build card content for task progress query (Template 2).
 
         Used when user queries task progress with keywords.
@@ -746,7 +755,7 @@ class ZhaohuChannel(BaseChannel):
             ]
 
             # Operation row (view result button) - only for completed tasks with chat_id
-            if status == "completed" and task_chat_id:
+            if status == "completed" and task_chat_id and include_link:
                 # Generate claw URL using task_chat_id
                 result_url = self._build_claw_url(task_chat_id)
                 task_list.append(
@@ -794,6 +803,28 @@ class ZhaohuChannel(BaseChannel):
             )
 
         return card_content
+
+    async def _should_include_link(self, tenant_id: str) -> bool:
+        """判断当前租户的通知卡片是否应包含跳转链接。
+
+        仅 RMASSIST 来源的租户需要跳转链接。
+
+        Args:
+            tenant_id: 租户标识（sap_id）。
+
+        Returns:
+            如果应包含链接返回 True。
+        """
+        try:
+            from ....workspace.tenant_init_source_store import is_tenant_source
+
+            return await is_tenant_source(tenant_id, "RMASSIST")
+        except Exception:
+            logger.warning(
+                "zhaohu _should_include_link: failed to check source for %s",
+                tenant_id,
+            )
+            return False
 
     async def _query_user_info(self, open_id: str) -> Optional[Dict[str, Any]]:
         """Query user info to convert openId to sapId.
@@ -1047,7 +1078,9 @@ class ZhaohuChannel(BaseChannel):
                         {
                             "task_name": raw_task.get("task_name", "未知任务"),
                             "status": raw_task.get("status", "pending"),
-                            "status_text": raw_task.get("status_text", "待开始"),
+                            "status_text": raw_task.get(
+                                "status_text", "待开始"
+                            ),
                             "time_info": raw_task.get("time_info", ""),
                             "task_chat_id": task_meta.get("task_chat_id", ""),
                             "job_id": raw_task.get("job_id", ""),
@@ -1065,7 +1098,11 @@ class ZhaohuChannel(BaseChannel):
                 )
 
         # Build and send card using Template 2 (task progress card)
-        card_content = self._build_task_progress_card(tasks)
+        include_link = await self._should_include_link(user_id)
+        card_content = self._build_task_progress_card(
+            tasks,
+            include_link=include_link,
+        )
         code, msg = await self.send_custom_card(open_id, card_content)
 
         if code == 0:
@@ -1255,7 +1292,12 @@ class ZhaohuChannel(BaseChannel):
         )
 
         # Step 1: Send card notification immediately
-        card_content = self._build_task_initiated_card(task_content, chat_id)
+        include_link = await self._should_include_link(user_id)
+        card_content = self._build_task_initiated_card(
+            task_content,
+            chat_id,
+            include_link=include_link,
+        )
         code, msg = await self.send_custom_card(from_id, card_content)
         if code == 0:
             logger.info(
@@ -1359,7 +1401,9 @@ class ZhaohuChannel(BaseChannel):
             )
         except Exception:
             logger.exception("zhaohu LLM processing failed: msgId=%s", msg_id)
-            await self.send(yst_id, "抱歉，处理您的消息时发生错误，请稍后重试。", meta)
+            await self.send(
+                yst_id, "抱歉，处理您的消息时发生错误，请稍后重试。", meta
+            )
         finally:
             reset_current_tenant_id(tenant_token)
             reset_current_user_id(user_token)
@@ -1572,9 +1616,11 @@ class ZhaohuChannel(BaseChannel):
         )
 
         # Send card notification to user (task initiated)
+        include_link = await self._should_include_link(sap_id)
         card_content = self._build_task_initiated_card(
             task_content,
             session_id,
+            include_link=include_link,
         )
         code, msg = await self.send_custom_card(from_id, card_content)
 

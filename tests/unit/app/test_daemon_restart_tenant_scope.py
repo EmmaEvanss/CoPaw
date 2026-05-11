@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Regression tests for tenant-aware daemon restart reload."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace

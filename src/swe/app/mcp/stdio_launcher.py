@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant-aware MCP stdio launcher with optional process limits."""
+
 from __future__ import annotations
 
 import argparse

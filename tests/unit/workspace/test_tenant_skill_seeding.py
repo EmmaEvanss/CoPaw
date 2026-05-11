@@ -4,6 +4,7 @@
 Tests skill pool reconciliation with explicit working_dir parameter
 and skill seeding from default tenant during full initialization.
 """
+
 import json
 import sys
 from pathlib import Path

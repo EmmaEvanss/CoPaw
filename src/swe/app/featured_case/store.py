@@ -29,21 +29,17 @@ class FeaturedCaseStore:
         source_id: str,
         bbk_id: Optional[str] = None,
     ) -> list[dict]:
-        """Get cases for display on chat page (top 5).
+        """获取聊天欢迎页当前维度的全部可展示案例。
 
-        Logic:
-        - bbk_id is None or "100" (total branch): return all active cases for source_id
-        - bbk_id is non-100: return specified bbk_id cases + default (bbk_id="100") cases,
-          with specified bbk_id cases first
-
-        Limited to top 5 results.
+        展示数量由前端控制，接口需要返回完整列表，便于判断是否
+        显示“查看更多”入口。
 
         Args:
-            source_id: Source identifier
-            bbk_id: BBK identifier (optional)
+            source_id: 来源标识
+            bbk_id: 可选的 BBK 标识
 
         Returns:
-            List of case dicts for display (max 5 items)
+            当前维度匹配的案例列表
         """
         if not self._use_db:
             return []
@@ -51,19 +47,15 @@ class FeaturedCaseStore:
         DEFAULT_BBK_ID = "100"
 
         if bbk_id is None or bbk_id == DEFAULT_BBK_ID:
-            # Total branch or no filter - return all active cases for source_id
             query = """
                 SELECT id, label, value, image_url,
                        iframe_url, iframe_title, steps, sort_order
                 FROM swe_featured_case
                 WHERE source_id = %s AND is_active = 1
                 ORDER BY sort_order ASC
-                LIMIT 5
             """
             rows = await self.db.fetch_all(query, (source_id,))
         else:
-            # Query both specified bbk_id and default (bbk_id="100")
-            # Sort: specified bbk_id first, then default
             query = """
                 SELECT id, label, value, image_url,
                        iframe_url, iframe_title, steps, sort_order
@@ -74,7 +66,6 @@ class FeaturedCaseStore:
                 ORDER BY
                     CASE WHEN bbk_id <=> %s THEN 0 ELSE 1 END,
                     sort_order ASC
-                LIMIT 5
             """
             rows = await self.db.fetch_all(
                 query,

@@ -184,6 +184,33 @@ class TestFeaturedCaseStoreWithMockDb:
         assert result[1]["detail"] is None
 
     @pytest.mark.asyncio
+    async def test_get_cases_for_dimension_returns_all_display_cases(
+        self,
+        store,
+        mock_db,
+    ):
+        """展示接口返回完整列表，便于前端判断是否需要查看更多。"""
+        mock_db.fetch_all.return_value = [
+            {
+                "id": index,
+                "label": f"案例{index}",
+                "value": f"内容{index}",
+                "image_url": None,
+                "iframe_url": None,
+                "iframe_title": None,
+                "steps": None,
+                "sort_order": index,
+            }
+            for index in range(1, 7)
+        ]
+
+        result = await store.get_cases_for_dimension("source1", None)
+
+        assert len(result) == 6
+        query = mock_db.fetch_all.call_args.args[0]
+        assert "LIMIT 5" not in query
+
+    @pytest.mark.asyncio
     async def test_get_cases_for_dimension_with_null_bbk_id(
         self,
         store,

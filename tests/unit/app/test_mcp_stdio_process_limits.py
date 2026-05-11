@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for tenant-aware MCP stdio process-limit enforcement."""
+
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
@@ -64,9 +65,12 @@ def _write_process_limit_config(
 
 @pytest.fixture
 def tenant_config_root(tmp_path: Path):
-    with patch("swe.constant.WORKING_DIR", tmp_path), patch(
-        "swe.config.utils.WORKING_DIR",
-        tmp_path,
+    with (
+        patch("swe.constant.WORKING_DIR", tmp_path),
+        patch(
+            "swe.config.utils.WORKING_DIR",
+            tmp_path,
+        ),
     ):
         yield tmp_path
 
@@ -86,11 +90,14 @@ def _stub_react_agent_tool_exports():
 def test_stdio_launcher_main_applies_limits_before_exec() -> None:
     from swe.app.mcp.stdio_launcher import main
 
-    with patch(
-        "swe.app.mcp.stdio_launcher.resource.setrlimit",
-    ) as mock_setrlimit, patch(
-        "swe.app.mcp.stdio_launcher.os.execvpe",
-    ) as mock_execvpe:
+    with (
+        patch(
+            "swe.app.mcp.stdio_launcher.resource.setrlimit",
+        ) as mock_setrlimit,
+        patch(
+            "swe.app.mcp.stdio_launcher.os.execvpe",
+        ) as mock_execvpe,
+    ):
         main(
             [
                 "--cpu-time-limit-seconds",

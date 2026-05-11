@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Cron CLI tenant header regression tests."""
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch

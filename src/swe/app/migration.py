@@ -3,6 +3,7 @@
 
 Handles migration from legacy single-agent config to new multi-agent structure.
 """
+
 import json
 import logging
 import shutil
@@ -17,6 +18,7 @@ from ..config.config import (
     HeartbeatConfig,
     MCPConfig,
     build_qa_agent_tools_config,
+    normalize_system_prompt_files,
 )
 from ..constant import (
     BUILTIN_QA_AGENT_ID,
@@ -135,11 +137,8 @@ def _do_migrate_legacy_workspace() -> bool:
             else AgentsRunningConfig()
         ),
         # llm_routing removed - now managed at tenant level
-        system_prompt_files=(
-            legacy_agents.system_prompt_files
-            if hasattr(legacy_agents, "system_prompt_files")
-            and legacy_agents.system_prompt_files
-            else ["AGENTS.md", "SOUL.md", "PROFILE.md"]
+        system_prompt_files=normalize_system_prompt_files(
+            getattr(legacy_agents, "system_prompt_files", None),
         ),
         tools=config.tools if hasattr(config, "tools") else None,
         security=config.security if hasattr(config, "security") else None,

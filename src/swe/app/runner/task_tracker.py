@@ -4,6 +4,7 @@
 run_key is ChatSpec.id (chat_id). Per run: task, queues, event buffer.
 Reconnects get buffer replay + new events. Cleanup when task completes.
 """
+
 from __future__ import annotations
 
 import asyncio

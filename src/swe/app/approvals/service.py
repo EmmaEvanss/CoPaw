@@ -5,6 +5,7 @@ The ``ApprovalService`` is the single central store for pending /
 completed approval records.  Approval is granted exclusively via
 the ``/daemon approve`` command in the chat interface.
 """
+
 from __future__ import annotations
 
 import asyncio

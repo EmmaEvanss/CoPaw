@@ -92,6 +92,14 @@ class TracingModelWrapper:
         # Get trace context
         trace_ctx = get_current_trace()
         if trace_ctx is None:
+            # 记录缺少 trace context 的情况，帮助排查 token 为 0 的问题
+            logger.warning(
+                "TracingModelWrapper: no trace context, skipping tracing. "
+                "This may result in token=0 in database. "
+                "provider=%s, model=%s",
+                self.provider_id,
+                self._model_name,
+            )
             return await self._call_model(
                 messages,
                 tools,
@@ -163,7 +171,9 @@ class TracingModelWrapper:
     ) -> AsyncGenerator[ChatResponse, None]:
         """Wrap streaming response to collect token usage."""
         last_usage = None
+        chunk_count = 0
         async for chunk in stream:
+            chunk_count += 1
             chunk_usage = getattr(chunk, "usage", None)
             if chunk_usage:
                 last_usage = chunk_usage
@@ -171,6 +181,23 @@ class TracingModelWrapper:
 
         # Extract tokens from stream usage
         input_tokens, output_tokens = self._extract_stream_tokens(last_usage)
+
+        # 调试日志：帮助排查 token 为 0 的问题
+        if input_tokens == 0 and output_tokens == 0:
+            logger.debug(
+                "Stream token extraction: no usage found. "
+                "chunks=%d, last_usage=%s, span_id=%s",
+                chunk_count,
+                type(last_usage).__name__ if last_usage else None,
+                span_id,
+            )
+        else:
+            logger.debug(
+                "Stream token extraction: input=%d, output=%d, span_id=%s",
+                input_tokens,
+                output_tokens,
+                span_id,
+            )
 
         # Emit LLM_OUTPUT event
         if span_id:
@@ -183,22 +210,22 @@ class TracingModelWrapper:
             )
 
     def _extract_stream_tokens(self, usage: Any) -> tuple[int, int]:
-        """Extract token counts from stream usage."""
+        """Extract token counts from stream usage.
+
+        AgentScope 在流式响应的最后一个 chunk 中返回 usage，
+        格式为 ChatUsage(input_tokens, output_tokens, time)。
+        OpenAI 原始响应中 usage 字段名为 prompt_tokens / completion_tokens。
+        """
         input_tokens = 0
         output_tokens = 0
 
-        # Try to get usage from stream chunks
-        if usage is None:
-            # Unwrap to get actual model's _last_usage
-            model = self._model
-            inner_model = getattr(model, "_model", None)
-            if inner_model is not None:
-                model = inner_model
-            usage = getattr(model, "_last_usage", None)
-
         if usage:
+            # ChatUsage 对象 (AgentScope 格式)
             if hasattr(usage, "input_tokens"):
                 input_tokens = usage.input_tokens or 0
+            elif hasattr(usage, "prompt_tokens"):
+                # OpenAI 原生格式
+                input_tokens = usage.prompt_tokens or 0
             elif isinstance(usage, dict):
                 input_tokens = usage.get(
                     "input_tokens",
@@ -207,6 +234,9 @@ class TracingModelWrapper:
 
             if hasattr(usage, "output_tokens"):
                 output_tokens = usage.output_tokens or 0
+            elif hasattr(usage, "completion_tokens"):
+                # OpenAI 原生格式
+                output_tokens = usage.completion_tokens or 0
             elif isinstance(usage, dict):
                 output_tokens = usage.get(
                     "output_tokens",
@@ -274,26 +304,29 @@ class TracingModelWrapper:
     def _extract_tokens(self, result: ChatResponse) -> tuple[int, int]:
         """Extract token counts from model response.
 
-        Args:
-            result: Model response
+        尝试从多个位置获取 usage 信息：
+        1. result.metadata.usage (AgentScope 格式)
+        2. result.usage (AgentScope ChatUsage)
+        3. result.raw.usage (OpenAI 原生响应)
 
-        Returns:
-            Tuple of (input_tokens, output_tokens)
+        支持两种字段命名：
+        - AgentScope: input_tokens / output_tokens
+        - OpenAI: prompt_tokens / completion_tokens
         """
         input_tokens = 0
         output_tokens = 0
         usage = None
 
-        # 1. Check result.metadata.usage
+        # 1. Check result.metadata.usage (AgentScope 格式)
         metadata = getattr(result, "metadata", None)
         if metadata and isinstance(metadata, dict):
             usage = metadata.get("usage")
 
-        # 2. Check result.usage directly
+        # 2. Check result.usage directly (AgentScope ChatUsage)
         if usage is None:
             usage = getattr(result, "usage", None)
 
-        # 3. Try to get from raw response
+        # 3. Try to get from raw response (OpenAI 原生)
         if usage is None:
             raw = getattr(result, "raw", None)
             if raw:
@@ -301,31 +334,28 @@ class TracingModelWrapper:
                 if usage is None and isinstance(raw, dict):
                     usage = raw.get("usage")
 
-        # 4. Try to get from model's _last_usage (fallback for providers
-        # that don't return usage in stream chunks)
-        # Note: self._model may be another wrapper, so we need to unwrap
-        if usage is None:
-            model = self._model
-            # Unwrap TokenRecordingModelWrapper if present
-            inner_model = getattr(model, "_model", None)
-            if inner_model is not None:
-                model = inner_model
-            usage = getattr(model, "_last_usage", None)
-
         if not usage:
             return 0, 0
 
         # Handle different usage formats
+        # AgentScope ChatUsage 格式
         if hasattr(usage, "input_tokens"):
             input_tokens = usage.input_tokens or 0
+        # OpenAI 原生格式
+        elif hasattr(usage, "prompt_tokens"):
+            input_tokens = usage.prompt_tokens or 0
         elif isinstance(usage, dict):
             input_tokens = usage.get(
                 "input_tokens",
                 usage.get("prompt_tokens", 0),
             )
 
+        # AgentScope ChatUsage 格式
         if hasattr(usage, "output_tokens"):
             output_tokens = usage.output_tokens or 0
+        # OpenAI 原生格式
+        elif hasattr(usage, "completion_tokens"):
+            output_tokens = usage.completion_tokens or 0
         elif isinstance(usage, dict):
             output_tokens = usage.get(
                 "output_tokens",

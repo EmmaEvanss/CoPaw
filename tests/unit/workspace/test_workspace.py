@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for Workspace class."""
+
 import tempfile
 from pathlib import Path
 import pytest

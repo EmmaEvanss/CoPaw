@@ -3,6 +3,7 @@
 
 Defines configuration classes for database connections.
 """
+
 import logging
 from typing import Optional
 

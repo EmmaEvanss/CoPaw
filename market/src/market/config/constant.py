@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Market 常量与环境变量加载工具."""
+
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-
 
 _ENV_VAR_OVERRIDES: ContextVar[dict[str, str]] = ContextVar(
     "market_env_var_overrides",

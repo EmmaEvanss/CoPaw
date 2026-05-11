@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """MCP Schema 单元测试."""
+
 import pytest
 from market.marketplace.schemas import (
     MarketMCPItem,

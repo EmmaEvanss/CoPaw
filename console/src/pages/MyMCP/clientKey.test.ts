@@ -28,4 +28,3 @@ describe("buildClientKey", () => {
     expect(second).toMatch(/^tian-qi-cha-xun-[0-9a-f]{4}$/);
   });
 });
-

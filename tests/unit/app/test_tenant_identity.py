@@ -4,6 +4,7 @@
 Tests valid/missing/invalid tenant ID handling, exempt endpoints,
 and context binding behavior.
 """
+
 import importlib.util
 import sys
 import types

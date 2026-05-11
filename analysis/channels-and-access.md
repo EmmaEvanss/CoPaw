@@ -94,6 +94,10 @@ Message Channel
   -> runner/runner.py
 ```
 
+补充约定：`/console/chat` 的 SSE 事件流中，`object=response` 的终态帧（如 `status=completed` 或 `status=failed`）允许只推进状态字段而不重复携带 `output`。前端必须把这类空 `output` 终态帧视为合法结束信号，不能据此继续保持 loading，也不能清空已经渲染出的最后一条消息。
+
+后校验补充：当任务未完成但可继续时，后端先按 `max_auto_turns` 做有限自动续跑（默认 2 轮）；自动续跑后仍未完成，才返回待确认结果并由前端展示“继续执行”提示卡片。用户确认后再发起新的 `/console/chat` 请求，内部续跑指令只通过 `post_turn_validation_resume_id` 在服务端消费，不进入可见历史。
+
 ## 关联功能域
 
 - Agent 执行内核: [agent-and-orchestration.md](agent-and-orchestration.md)

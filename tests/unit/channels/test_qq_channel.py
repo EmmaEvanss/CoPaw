@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for QQ channel."""
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,6 @@ from swe.app.channels.qq.channel import (
     RATE_LIMIT_DELAY,
     RECONNECT_DELAYS,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

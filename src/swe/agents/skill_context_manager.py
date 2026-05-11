@@ -60,11 +60,11 @@ class SkillContextManager:
         "skill_context",
         default=None,
     )
-    _context_stack: ContextVar[
-        Optional[list[SkillExecutionContext]]
-    ] = ContextVar(
-        "skill_context_stack",
-        default=None,
+    _context_stack: ContextVar[Optional[list[SkillExecutionContext]]] = (
+        ContextVar(
+            "skill_context_stack",
+            default=None,
+        )
     )
 
     def _get_stack(self) -> list[SkillExecutionContext]:

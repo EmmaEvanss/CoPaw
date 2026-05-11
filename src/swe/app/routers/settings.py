@@ -4,6 +4,7 @@
 Persisted in tenant workspace ``settings.json``, isolated per tenant.
 All endpoints are public (no auth required) but tenant-scoped.
 """
+
 from __future__ import annotations
 
 import json

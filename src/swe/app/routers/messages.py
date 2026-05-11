@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """API router for sending messages to channels."""
+
 from __future__ import annotations
 
 import logging

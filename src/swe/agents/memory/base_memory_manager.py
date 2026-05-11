@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Abstract base class for SWE memory managers."""
+
 import asyncio
 import logging
 from abc import ABC, abstractmethod

@@ -4,6 +4,7 @@
 Tests TenantWorkspacePool initialization during app startup,
 shutdown cleanup, and tenant-first resolution order.
 """
+
 import sys
 from pathlib import Path
 

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """市场 MCP 浏览路由."""
+
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -21,7 +22,9 @@ async def list_market_mcp(
     source_id = require_source_id(x_source_id)
     user_bbk_id = x_bbk_id or "100"
     svc = request.app.state.marketplace
-    return await svc.list_mcp_items(source_id, user_bbk_id, category_id=category_id)
+    return await svc.list_mcp_items(
+        source_id, user_bbk_id, category_id=category_id
+    )
 
 
 @router.get("/market/mcp/{item_id}", response_model=MarketMCPDetail)

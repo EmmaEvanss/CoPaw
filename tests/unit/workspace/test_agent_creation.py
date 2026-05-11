@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for agent creation with short UUID."""
+
 from unittest.mock import patch
 
 from swe.config.config import (

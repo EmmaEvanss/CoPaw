@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant injection regression tests for cron APIs."""
+
 import importlib.util
 import sys
 import types

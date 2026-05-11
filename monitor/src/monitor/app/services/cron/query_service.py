@@ -5,8 +5,8 @@ Provides methods to query job definitions and execution history
 for the frontend overview page.
 """
 import logging
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timezone, timedelta
+from typing import List, Optional, Tuple
 
 from ...database import get_db_connection
 from ...models.cron import (
@@ -17,8 +17,55 @@ from ...models.cron import (
     PaginatedResponse,
 )
 
+# 北京时间 (东八区 UTC+8)
+BEIJING_TZ = timezone(timedelta(hours=8))
+
 logger = logging.getLogger(__name__)
 
+def convert_utc_to_beijing(dt: Optional[datetime]) -> Optional[datetime]:
+    """将 UTC 时间转换为北京时间。
+
+    数据库存储的是 UTC 时间，需要转换为北京时间 (UTC+8) 显示给用户。
+
+    Args:
+        dt: UTC 时间 (naive datetime，无时区信息)
+
+    Returns:
+        北京时间 (naive datetime，已加8小时)
+    """
+    if dt is None:
+        return None
+    # 假设数据库存储的是 UTC 时间，直接加8小时
+    return dt + timedelta(hours=8)
+
+
+def convert_row_times_to_beijing(row: dict, time_fields: List[str]) -> dict:
+    """将字典中的时间字段从 UTC 转换为北京时间。
+
+    Args:
+        row: 数据库返回的行字典
+        time_fields: 需要转换的时间字段名列表
+
+    Returns:
+        转换后的行字典
+    """
+    result = row.copy()
+    for field in time_fields:
+        if field in result and result[field] is not None:
+            result[field] = convert_utc_to_beijing(result[field])
+    return result
+
+
+# 任务定义表的时间字段
+JOB_TIME_FIELDS = ["created_at", "updated_at", "deleted_at"]
+
+# 执行历史表的时间字段
+EXECUTION_TIME_FIELDS = [
+    "scheduled_time",
+    "actual_time",
+    "end_time",
+    "created_at",
+]
 
 class QueryService:
     """Service for querying cron data."""
@@ -90,8 +137,11 @@ class QueryService:
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        items = [CronJobModel.model_validate(row) for row in rows]
-
+        # 转换 UTC 时间为北京时间
+        items = [
+            CronJobModel.model_validate(convert_row_times_to_beijing(row, JOB_TIME_FIELDS))
+            for row in rows
+        ]
         # Query execution count for each job
         if items:
             job_ids = [job.id for job in items]
@@ -135,7 +185,10 @@ class QueryService:
         if not row:
             return None
 
-        return CronJobModel.model_validate(row)
+        # 转换 UTC 时间为北京时间
+        return CronJobModel.model_validate(
+            convert_row_times_to_beijing(row, JOB_TIME_FIELDS)
+        )
 
     async def list_executions(
         self,
@@ -194,7 +247,11 @@ class QueryService:
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        items = [ExecutionModel.model_validate(row) for row in rows]
+        # 转换 UTC 时间为北京时间
+        items = [
+            ExecutionModel.model_validate(convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS))
+            for row in rows
+        ]
 
         return PaginatedResponse(
             items=items,
@@ -225,7 +282,10 @@ class QueryService:
         if not row:
             return None
 
-        return ExecutionModel.model_validate(row)
+        # 转换 UTC 时间为北京时间
+        return ExecutionModel.model_validate(
+            convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS)
+        )
 
     async def get_executions_for_export(
         self,
@@ -287,8 +347,11 @@ class QueryService:
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        return [ExecutionModel.model_validate(row) for row in rows]
-
+        # 转换 UTC 时间为北京时间
+        return [
+            ExecutionModel.model_validate(convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS))
+            for row in rows
+        ]
     async def get_jobs_for_export(
         self,
         tenant_id: Optional[str] = None,
@@ -349,8 +412,11 @@ class QueryService:
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        items = [CronJobModel.model_validate(row) for row in rows]
-
+        # 转换 UTC 时间为北京时间
+        items = [
+            CronJobModel.model_validate(convert_row_times_to_beijing(row, JOB_TIME_FIELDS))
+            for row in rows
+        ]
         # Query execution count for each job
         if items:
             job_ids = [job.id for job in items]

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """SWE 定时任务预热接口."""
+
 from fastapi import APIRouter
 
 from ..services.cron.warmup_service import (

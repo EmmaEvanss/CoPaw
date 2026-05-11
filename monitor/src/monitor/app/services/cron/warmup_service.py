@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """SWE 定时任务恢复预热服务."""
+
 from __future__ import annotations
 
 import asyncio
@@ -66,7 +67,9 @@ def parse_fixed_headers(headers_json: str) -> dict[str, str]:
     try:
         parsed = json.loads(headers_json)
     except json.JSONDecodeError as exc:
-        raise ValueError("MONITOR_SWE_WARMUP_HEADERS_JSON 不是合法 JSON") from exc
+        raise ValueError(
+            "MONITOR_SWE_WARMUP_HEADERS_JSON 不是合法 JSON"
+        ) from exc
 
     if not isinstance(parsed, dict):
         raise ValueError("MONITOR_SWE_WARMUP_HEADERS_JSON 必须是对象")
@@ -172,7 +175,9 @@ class SweCronWarmupService:
             )
             return self._task
 
-    async def _run_with_delay(self, start_delay_seconds: float) -> WarmupStatus:
+    async def _run_with_delay(
+        self, start_delay_seconds: float
+    ) -> WarmupStatus:
         try:
             if start_delay_seconds > 0:
                 # 给 SWE 主服务和网关留出初始化时间，降低容器冷启动竞态。

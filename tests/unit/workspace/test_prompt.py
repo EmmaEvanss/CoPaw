@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Tests for agent identity in system prompt."""
+"""Tests for agent identity and default files in system prompt."""
+
 import tempfile
 from pathlib import Path
 import pytest
-from swe.agents.prompt import build_system_prompt_from_working_dir
+from swe.agents.prompt import (
+    PromptBuilder,
+    build_system_prompt_from_working_dir,
+)
 
 
 @pytest.fixture
@@ -96,3 +100,19 @@ def test_prompt_identity_format(temp_workspace):  # pylint: disable=W0621
         "This is your unique identifier in the multi-agent system.\n\n"
     )
     assert expected_header in prompt
+
+
+def test_prompt_builder_defaults_include_memory(temp_workspace):
+    """Default prompt files should include MEMORY.md content."""
+    for filename, content in {
+        "AGENTS.md": "agents",
+        "SOUL.md": "soul",
+        "PROFILE.md": "profile",
+        "MEMORY.md": "memory",
+    }.items():
+        (temp_workspace / filename).write_text(content, encoding="utf-8")
+
+    prompt = PromptBuilder(working_dir=temp_workspace).build()
+
+    assert "# MEMORY.md" in prompt
+    assert "memory" in prompt

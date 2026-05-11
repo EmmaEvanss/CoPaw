@@ -7,6 +7,7 @@ This module provides primitives for:
 - Legacy execution lock: Non-default timed execution compatibility surface
 - Reload pub/sub: Notify leader of cron configuration changes
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -45,9 +46,9 @@ class CoordinationConfig:
     redis_access: str = ""
     # Cluster mode configuration
     cluster_mode: bool = False
-    cluster_nodes: Optional[
-        list
-    ] = None  # List of ClusterNode or dict {"host": str, "port": int}
+    cluster_nodes: Optional[list] = (
+        None  # List of ClusterNode or dict {"host": str, "port": int}
+    )
     cluster_startup_nodes: Optional[list] = None
     # Additional cluster options
     cluster_skip_full_coverage_check: bool = True
@@ -697,9 +698,11 @@ class CronCoordination:
                 await self._redis.ping()
             logger.info(
                 "Connected to Redis for cron coordination: %s (cluster=%s)",
-                self._config.redis_url
-                if not self._config.cluster_mode
-                else "cluster",
+                (
+                    self._config.redis_url
+                    if not self._config.cluster_mode
+                    else "cluster"
+                ),
                 self._config.cluster_mode,
             )
             return True

@@ -9,6 +9,7 @@ Tests cover:
 - Missing tenant context failure
 - Symlink escape rejection
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,7 +32,6 @@ from swe.security.tenant_path_boundary import (
     PathTraversalError,
     AbsolutePathDeniedError,
 )
-
 
 # =============================================================================
 # Fixtures

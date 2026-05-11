@@ -5,6 +5,7 @@ Creates the directory structure and seeds default agents for a single tenant.
 Used by both ``swe init --tenant-id`` (CLI) and ``TenantWorkspacePool`` (runtime)
 so the bootstrap logic lives in one place.
 """
+
 import json
 import logging
 import shutil
@@ -286,9 +287,9 @@ class TenantInitializer:
 
         # Step 3: Seed default workspace skills from default tenant
         # Note: This raises RuntimeError on failure
-        result[
-            "workspace_seed"
-        ] = self.seed_default_workspace_skills_from_default()
+        result["workspace_seed"] = (
+            self.seed_default_workspace_skills_from_default()
+        )
 
         # Step 4: Ensure the default workspace scaffold is complete.
         result["workspace_scaffold"] = self.ensure_default_workspace_scaffold()

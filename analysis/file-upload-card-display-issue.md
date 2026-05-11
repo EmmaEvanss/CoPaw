@@ -125,10 +125,10 @@ const handleBeforeUpload = useCallback((file: File) => {
 const handleSend = useCallback(() => {
   const trimmed = inputValue.trim();
   if (!trimmed) return;
-  
+
   // 过滤出已成功上传的文件
   const uploadedFiles = fileList.filter((f) => f.response?.url);
-  
+
   // 提交时包含文件列表
   onSubmit({ query: trimmed, fileList: uploadedFiles });
   setInputValue("");
@@ -148,7 +148,7 @@ const handleSend = useCallback(() => {
       />
     </div>
   )}
-  
+
   {/* 输入框 */}
   <Input.TextArea
     value={inputValue}
@@ -158,7 +158,7 @@ const handleSend = useCallback(() => {
     autoSize={{ minRows: 1, maxRows: 5 }}
     bordered={false}
   />
-  
+
   {/* 操作栏：上传按钮 + 发送按钮 */}
   <div className="welcome-input-actions">
     <Upload beforeUpload={handleBeforeUpload}>
@@ -302,4 +302,3 @@ const uploadedFiles = fileList.filter((f) => f.response?.url);
 - **清晰的责任划分**：欢迎页负责欢迎态交互，底部 Input 负责历史会话
 - **易于维护**：两个系统独立，修改一个不会影响另一个
 - **可扩展性**：未来可以轻松添加更多输入入口
-

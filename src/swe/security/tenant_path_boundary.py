@@ -5,6 +5,7 @@ This module provides centralized path resolution and authorization for
 builtin local path tools, ensuring all resolved paths stay within the
 current tenant's workspace root (WORKING_DIR/<tenant_id>).
 """
+
 from __future__ import annotations
 
 import os

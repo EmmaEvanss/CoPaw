@@ -5,6 +5,7 @@ import "./i18n";
 // 确保不遗漏父窗口发送的任何初始化消息 (USER_DATA)
 import {
   initIframeMessageListener,
+  resetIframeContextForStandalone,
   handleUrlOriginParam,
   fetchAndSetUserName,
 } from "./utils/iframeMessage";
@@ -15,9 +16,9 @@ import {
 
 /**
  * 初始化流程：
- * 1. 先获取外部 token（如果配置了）
- * 2. 等待 token 获取完成
- * 3. 初始化 iframe 消息监听器
+ * 1. 尽早初始化 iframe 消息监听器，避免遗漏父窗口消息
+ * 2. 获取外部 token（如果配置了）
+ * 3. 等待 token 获取完成
  * 4. 处理 URL 参数场景
  * 5. 查询用户名称
  * 6. 渲染 React 应用
@@ -26,8 +27,9 @@ async function initializeApp(): Promise<void> {
   // 初始化 iframe 消息监听器（在 React 渲染之前）
   // 确保不遗漏父窗口发送的任何消息
   initIframeMessageListener();
+  resetIframeContextForStandalone();
 
-  // 在所有初始化之前获取 token，同步等待完成
+  // 在需要鉴权的初始化逻辑之前获取 token，同步等待完成
   if (isExternalTokenEnabled()) {
     try {
       await ensureValidToken();

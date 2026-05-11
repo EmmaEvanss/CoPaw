@@ -13,8 +13,10 @@ import useChatMessageHandler from "./useChatMessageHandler";
 import useChatRequest from "./useChatRequest";
 import useChatSessionHandler from "./useChatSessionHandler";
 import useSuggestionsPolling from "./useSuggestionsPolling";
+import usePostTurnValidationPolling from "./usePostTurnValidationPolling";
 import { useChatAnywhereOptions } from "../../Context/ChatAnywhereOptionsContext";
 import ReactDOM from "react-dom";
+import { consumePostTurnValidation } from "@/api/modules/postTurnValidation";
 import {
   FollowUpSubmitCoordinator,
   FOLLOW_UP_SUBMIT_FAILED_EVENT,
@@ -59,6 +61,10 @@ export default function useChatController() {
     currentQARef,
     updateMessage: messageHandler.updateMessage,
   });
+  const { fetchPendingValidation } = usePostTurnValidationPolling({
+    currentQARef,
+    updateMessage: messageHandler.updateMessage,
+  });
 
   /**
    * 完成响应
@@ -82,12 +88,22 @@ export default function useChatController() {
         false,
       );
 
-      // 完成后轮询获取建议
       if (status === "finished") {
-        pollSuggestions();
+        void (async () => {
+          const hasPendingValidation = await fetchPendingValidation();
+          if (!hasPendingValidation) {
+            pollSuggestions();
+          }
+        })();
       }
     },
-    [setLoading, messageHandler, sessionHandler, pollSuggestions],
+    [
+      setLoading,
+      messageHandler,
+      sessionHandler,
+      fetchPendingValidation,
+      pollSuggestions,
+    ],
   );
 
   // API 请求处理
@@ -311,6 +327,114 @@ export default function useChatController() {
     finishResponse("interrupted", currentQARef.current.activeRequestOwner);
   }, [finishResponse]);
 
+  const updatePostTurnValidationStatus = useCallback(
+    (
+      validationId: string,
+      status: "dismissed" | "consumed",
+    ): boolean => {
+      const latestResponse = currentQARef.current.response;
+      const card = latestResponse?.cards?.[0];
+      const validation = card?.data?.post_turn_validation;
+      if (!latestResponse || !card?.data || validation?.id !== validationId) {
+        return false;
+      }
+
+      const updatedCards = [
+        {
+          ...card,
+          data: {
+            ...card.data,
+            post_turn_validation: {
+              ...validation,
+              status,
+            },
+          },
+        },
+        ...latestResponse.cards.slice(1),
+      ];
+
+      currentQARef.current.response = {
+        ...latestResponse,
+        cards: updatedCards,
+      };
+      ReactDOM.flushSync(() => {
+        messageHandler.updateMessage(currentQARef.current.response!);
+      });
+      return true;
+    },
+    [messageHandler],
+  );
+
+  const handlePostTurnValidationContinue = useCallback(
+    async (validationId: string) => {
+      if (!validationId || getLoading?.()) {
+        return;
+      }
+
+      const activeSessionId = sessionHandler.getCurrentSessionId();
+      if (!activeSessionId) {
+        return;
+      }
+
+      const consumed = await consumePostTurnValidation({
+        validationId,
+        sessionId: activeSessionId,
+      });
+      if (!consumed) {
+        return;
+      }
+
+      updatePostTurnValidationStatus(validationId, "consumed");
+      await submitTurn({
+        query: "继续执行上一步任务",
+        fileList: [],
+        biz_params: {
+          post_turn_validation_resume_id: validationId,
+        },
+      });
+    },
+    [
+      getLoading,
+      sessionHandler,
+      submitTurn,
+      updatePostTurnValidationStatus,
+    ],
+  );
+
+  const handlePostTurnValidationDismiss = useCallback(
+    async (validationId: string) => {
+      if (!validationId) {
+        return;
+      }
+
+      const activeSessionId = sessionHandler.getCurrentSessionId();
+      if (activeSessionId) {
+        await consumePostTurnValidation({
+          validationId,
+          sessionId: activeSessionId,
+        });
+      }
+      updatePostTurnValidationStatus(validationId, "dismissed");
+      pollSuggestions();
+    },
+    [pollSuggestions, sessionHandler, updatePostTurnValidationStatus],
+  );
+
+  const handleSuggestionSubmit = useCallback(
+    async (data: FollowUpSubmitData) => {
+      if (!data?.query || getLoading?.()) {
+        return;
+      }
+
+      await submitTurn({
+        query: data.query,
+        fileList: data.fileList || [],
+        biz_params: data.biz_params,
+      });
+    },
+    [getLoading, submitTurn],
+  );
+
   /**
    * 处理重新生成
    */
@@ -399,12 +523,42 @@ export default function useChatController() {
 
   useChatAnywhereEventEmitter(
     {
+      type: "handleSuggestionSubmit",
+      callback: async (data) => {
+        await handleSuggestionSubmit(data.detail);
+      },
+    },
+    [handleSuggestionSubmit],
+  );
+
+  useChatAnywhereEventEmitter(
+    {
       type: "handleApproval",
       callback: async (data) => {
         await handleApproval(data.detail);
       },
     },
     [handleApproval],
+  );
+
+  useChatAnywhereEventEmitter(
+    {
+      type: "handlePostTurnValidationContinue",
+      callback: async (data) => {
+        await handlePostTurnValidationContinue(data.detail?.validation_id);
+      },
+    },
+    [handlePostTurnValidationContinue],
+  );
+
+  useChatAnywhereEventEmitter(
+    {
+      type: "handlePostTurnValidationDismiss",
+      callback: async (data) => {
+        await handlePostTurnValidationDismiss(data.detail?.validation_id);
+      },
+    },
+    [handlePostTurnValidationDismiss],
   );
 
   return {

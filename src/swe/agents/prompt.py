@@ -5,10 +5,12 @@
 This module provides utilities for building system prompts from
 markdown configuration files in the working directory.
 """
+
 import logging
 import re
 from pathlib import Path
 
+from ..config.config import get_default_system_prompt_files
 from .utils.file_handling import read_text_file_with_encoding_fallback
 
 logger = logging.getLogger(__name__)
@@ -27,11 +29,7 @@ class PromptConfig:
 
     # Default files to load when no config is provided
     # All files are optional - if they don't exist, they'll be skipped
-    DEFAULT_FILES = [
-        "AGENTS.md",
-        "SOUL.md",
-        "PROFILE.md",
-    ]
+    DEFAULT_FILES = get_default_system_prompt_files()
 
 
 class PromptBuilder:
@@ -195,6 +193,7 @@ def build_system_prompt_from_working_dir(
     - AGENTS.md - Detailed workflows, rules, and guidelines
     - SOUL.md - Core identity and behavioral principles
     - PROFILE.md - Agent identity and user profile
+    - MEMORY.md - Long-term workspace memory and operator notes
 
     All files are optional. If a file doesn't exist or can't be read, it will be
     skipped. If no files can be loaded, returns the default prompt.
@@ -212,8 +211,10 @@ def build_system_prompt_from_working_dir(
              If no files exist, returns the default prompt.
 
     Example:
-        If working_dir contains AGENTS.md, SOUL.md and PROFILE.md, they will be combined:
-        "# AGENTS.md\\n\\n...\\n\\n# SOUL.md\\n\\n...\\n\\n# PROFILE.md\\n\\n..."
+        If working_dir contains AGENTS.md, SOUL.md, PROFILE.md and MEMORY.md,
+        they will be combined:
+        "# AGENTS.md\\n\\n...\\n\\n# SOUL.md\\n\\n...\\n\\n"
+        "# PROFILE.md\\n\\n...\\n\\n# MEMORY.md\\n\\n..."
     """
     from ..constant import WORKING_DIR
     from ..config import load_config

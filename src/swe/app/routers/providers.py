@@ -30,7 +30,6 @@ from ...providers.provider import ProviderInfo, ModelInfo
 from ...providers.provider_manager import ActiveModelsInfo, ProviderManager
 from ..workspace.tenant_initializer import TenantInitializer
 
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -673,7 +672,7 @@ async def set_active_model(
 )
 async def list_active_model_distribution_tenants(
     request: Request,
-) -> (DistributionTenantListResponse):
+) -> DistributionTenantListResponse:
     return DistributionTenantListResponse(
         tenant_ids=await list_logical_tenant_ids(
             _request_source_id(request),

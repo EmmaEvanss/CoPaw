@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant-local skill pool regression tests."""
+
 from __future__ import annotations
 
 import sys

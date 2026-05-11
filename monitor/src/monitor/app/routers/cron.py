@@ -3,6 +3,7 @@
 
 Provides endpoints for frontend to query job definitions and execution history.
 """
+
 import logging
 from datetime import datetime
 from io import BytesIO
@@ -32,11 +33,13 @@ async def list_jobs(
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
     bbk_id: str | None = Query(default=None, description="分行号筛选"),
     source_id: str | None = Query(default=None, description="来源标识筛选"),
-    creator_user_id: str | None = Query(default=None, description="创建者ID筛选"),
+    creator_user_id: str | None = Query(
+        default=None, description="创建者ID筛选"
+    ),
     status: str | None = Query(default=None, description="状态筛选"),
     enabled: bool | None = Query(default=None, description="是否启用筛选"),
     page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
     service: QueryService = Depends(get_query_service),
 ) -> PaginatedResponse[CronJobModel]:
     """List cron jobs with pagination and filters.
@@ -96,10 +99,14 @@ async def list_executions(
     job_id: str | None = Query(default=None, description="任务ID筛选"),
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
     status: str | None = Query(default=None, description="执行状态筛选"),
-    start_time: datetime | None = Query(default=None, description="开始时间范围"),
-    end_time: datetime | None = Query(default=None, description="结束时间范围"),
+    start_time: datetime | None = Query(
+        default=None, description="开始时间范围"
+    ),
+    end_time: datetime | None = Query(
+        default=None, description="结束时间范围"
+    ),
     page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
     service: QueryService = Depends(get_query_service),
 ) -> PaginatedResponse[ExecutionModel]:
     """List execution history with pagination and filters.
@@ -163,8 +170,12 @@ async def export_data(
     source_id: str | None = Query(default=None, description="来源标识筛选"),
     enabled: bool | None = Query(default=None, description="是否启用筛选"),
     status: str | None = Query(default=None, description="状态筛选"),
-    start_time: datetime | None = Query(default=None, description="开始时间范围"),
-    end_time: datetime | None = Query(default=None, description="结束时间范围"),
+    start_time: datetime | None = Query(
+        default=None, description="开始时间范围"
+    ),
+    end_time: datetime | None = Query(
+        default=None, description="结束时间范围"
+    ),
     export_type: str = Query(
         default="executions",
         description="导出类型: jobs/executions",

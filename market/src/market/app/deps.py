@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """FastAPI 依赖注入."""
+
 from typing import Annotated, Optional
 from fastapi import Depends, HTTPException, Request
 from ..database.connection import DatabaseConnection

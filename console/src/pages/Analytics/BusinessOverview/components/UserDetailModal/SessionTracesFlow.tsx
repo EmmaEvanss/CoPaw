@@ -108,7 +108,7 @@ export default function SessionTracesFlow({
       <div className={styles.tracesTitle}>对话流</div>
 
       <Timeline
-        items={traces.map((trace) => {
+        items={[...traces].reverse().map((trace) => {
           const isExpanded = expandedTraces.has(trace.trace_id);
           const detail = traceDetails.get(trace.trace_id);
           const isLoading = loadingTraces.has(trace.trace_id);
@@ -163,6 +163,20 @@ export default function SessionTracesFlow({
                 {/* 展开的详情内容 */}
                 {isExpanded && detail && (
                   <div className={styles.traceDetail}>
+                    {/* 技能使用 */}
+                    {detail.trace.skills_used && detail.trace.skills_used.length > 0 && (
+                      <div className={styles.skillsSection}>
+                        <span className={styles.sectionLabel}>技能使用:</span>
+                        <div className={styles.tagList}>
+                          {detail.trace.skills_used.map((skill) => (
+                            <Tag key={skill} color="blue">
+                              {skill}
+                            </Tag>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* 用户输入 */}
                     {detail.trace.user_message && (
                       <div className={styles.userMessage}>
@@ -186,42 +200,6 @@ export default function SessionTracesFlow({
                         <div className={styles.messageContent}>
                           {detail.trace.model_output}
                         </div>
-                      </div>
-                    )}
-
-                    {/* 技能使用 */}
-                    {detail.trace.skills_used && detail.trace.skills_used.length > 0 && (
-                      <div className={styles.skillsSection}>
-                        <span className={styles.sectionLabel}>技能使用:</span>
-                        <div className={styles.tagList}>
-                          {detail.trace.skills_used.map((skill) => (
-                            <Tag key={skill} color="blue">
-                              {skill}
-                            </Tag>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 工具调用 */}
-                    {detail.tools_called.length > 0 && (
-                      <div className={styles.toolsSection}>
-                        <span className={styles.sectionLabel}>工具调用:</span>
-                        {detail.tools_called.map((tool, idx) => (
-                          <div key={idx} className={styles.toolCard}>
-                            <div className={styles.toolName}>{tool.tool_name}</div>
-                            {tool.duration_ms && (
-                              <div className={styles.toolMeta}>
-                                耗时: {formatDuration(tool.duration_ms)}
-                              </div>
-                            )}
-                            {tool.error && (
-                              <div className={styles.toolError}>
-                                错误: {tool.error}
-                              </div>
-                            )}
-                          </div>
-                        ))}
                       </div>
                     )}
 

@@ -240,6 +240,12 @@ const pollSuggestions = useCallback(async () => {
 | backend_generate | 提取 + 异步生成建议 | 轮询 GET /suggestions |
 | qa_extraction_only | 仅提取 Q&A | 获取 Q&A + 调用外部 API |
 
+当前前端实现采用“后端生成优先，前端生成兜底”的兼容策略：
+响应完成后先读取 `GET /api/console/suggestions`；如果后端没有返回建议，
+再通过 `POST /api/console/suggestions/qa-content` 获取 Q&A 内容并调用外部
+suggestions API。本地或外部 API 未配置时会使用 mock suggestions，保证
+“猜你想问”展示和点击追问链路可回归验证。
+
 ---
 
 ## 7. 验证方案

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """MCP 模型测试."""
+
 import pytest
 from market.marketplace.models import MarketItem
 

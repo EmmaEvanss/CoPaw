@@ -40,7 +40,6 @@ from swe.providers.anthropic_provider import AnthropicProvider
 from swe.providers.ollama_provider import OllamaProvider
 from swe.constant import SECRET_DIR
 
-
 logger = logging.getLogger(__name__)
 
 if fcntl is None and msvcrt is None:  # pragma: no cover
@@ -428,10 +427,10 @@ class ProviderManager:
         with ProviderManager._instances_lock:
             # Double-check after acquiring lock
             if effective_tenant_id not in ProviderManager._instances:
-                ProviderManager._instances[
-                    effective_tenant_id
-                ] = ProviderManager(
-                    effective_tenant_id,
+                ProviderManager._instances[effective_tenant_id] = (
+                    ProviderManager(
+                        effective_tenant_id,
+                    )
                 )
             return ProviderManager._instances[effective_tenant_id]
 

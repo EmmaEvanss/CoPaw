@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Authentication API endpoints."""
+
 from __future__ import annotations
 
 import os

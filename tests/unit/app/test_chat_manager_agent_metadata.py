@@ -103,7 +103,9 @@ async def test_get_or_create_chat_stores_agent_metadata_for_new_chat() -> None:
     assert chat.meta["agent_id"] == "agent-a"
 
 
-async def test_get_or_create_chat_merges_agent_metadata_for_existing_chat() -> None:
+async def test_get_or_create_chat_merges_agent_metadata_for_existing_chat() -> (
+    None
+):
     repo = _InMemoryChatRepo()
     manager = ChatManager(repo=repo)
     existing = await manager.get_or_create_chat(

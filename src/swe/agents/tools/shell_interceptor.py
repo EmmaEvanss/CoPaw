@@ -5,6 +5,7 @@ This module provides command interception mechanism that automatically
 injects tenant isolation parameters (--tenant-id, --target-user, etc.)
 from ContextVar into specific commands like 'cron' and 'swe'.
 """
+
 from __future__ import annotations
 
 import logging

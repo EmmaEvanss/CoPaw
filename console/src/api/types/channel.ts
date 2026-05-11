@@ -111,6 +111,12 @@ export interface XiaoYiConfig extends BaseChannelConfig {
   task_timeout_ms?: number;
 }
 
+export interface ZhaohuConfig extends BaseChannelConfig {
+  robot_open_id: string;
+  client_id: string;
+  client_secret: string;
+}
+
 export interface ChannelConfig {
   imessage: IMessageChannelConfig;
   discord: DiscordConfig;
@@ -125,6 +131,7 @@ export interface ChannelConfig {
   console: ConsoleConfig;
   voice: VoiceChannelConfig;
   xiaoyi: XiaoYiConfig;
+  zhaohu: ZhaohuConfig;
 }
 
 export type SingleChannelConfig =
@@ -140,4 +147,17 @@ export type SingleChannelConfig =
   | MattermostConfig
   | WecomConfig
   | VoiceChannelConfig
-  | XiaoYiConfig;
+  | XiaoYiConfig
+  | ZhaohuConfig;
+
+export interface ChannelDistributionTenantResult {
+  tenant_id: string;
+  success: boolean;
+  bootstrapped?: boolean;
+  error?: string;
+}
+
+export interface ChannelDistributionResponse {
+  source_agent_id: string;
+  results: ChannelDistributionTenantResult[];
+}

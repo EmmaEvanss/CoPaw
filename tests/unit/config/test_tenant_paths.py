@@ -4,6 +4,7 @@
 Tests tenant-aware path computation and strict failure when
 tenant/workspace context is absent.
 """
+
 # pylint: disable=redefined-outer-name
 import importlib
 import sys
@@ -39,9 +40,9 @@ tenant_init_source_store_stub.get_tenant_init_source_store = (
     _get_tenant_init_source_store
 )
 tenant_init_source_store_stub.TenantInitSourceStore = object
-sys.modules[
-    "swe.app.workspace.tenant_init_source_store"
-] = tenant_init_source_store_stub
+sys.modules["swe.app.workspace.tenant_init_source_store"] = (
+    tenant_init_source_store_stub
+)
 
 # Stub swe.app namespace and submodules
 app_stub = types.ModuleType("swe.app")

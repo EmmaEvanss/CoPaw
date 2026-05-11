@@ -509,5 +509,6 @@ export interface IAgentScopeRuntimeWebUIInputData {
    */
   biz_params?: {
     user_prompt_params?: Record<string, string>;
+    post_turn_validation_resume_id?: string;
   };
 }

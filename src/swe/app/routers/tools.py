@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """API routes for built-in tools management."""
+
 # pylint: disable=no-name-in-module
 
 from __future__ import annotations

@@ -3,6 +3,7 @@
 
 Provides methods to export job definitions and execution history to Excel.
 """
+
 import logging
 from typing import List, Optional
 
@@ -88,16 +89,20 @@ class ExportService:
             ws.cell(
                 row=row,
                 column=14,
-                value=job.created_at.strftime("%Y-%m-%d %H:%M:%S")
-                if job.created_at
-                else "",
+                value=(
+                    job.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                    if job.created_at
+                    else ""
+                ),
             )
             ws.cell(
                 row=row,
                 column=15,
-                value=job.updated_at.strftime("%Y-%m-%d %H:%M:%S")
-                if job.updated_at
-                else "",
+                value=(
+                    job.updated_at.strftime("%Y-%m-%d %H:%M:%S")
+                    if job.updated_at
+                    else ""
+                ),
             )
 
         # Save to bytes
@@ -174,23 +179,29 @@ class ExportService:
             ws.cell(
                 row=row,
                 column=6,
-                value=exec.scheduled_time.strftime("%Y-%m-%d %H:%M:%S")
-                if exec.scheduled_time
-                else "",
+                value=(
+                    exec.scheduled_time.strftime("%Y-%m-%d %H:%M:%S")
+                    if exec.scheduled_time
+                    else ""
+                ),
             )
             ws.cell(
                 row=row,
                 column=7,
-                value=exec.actual_time.strftime("%Y-%m-%d %H:%M:%S")
-                if exec.actual_time
-                else "",
+                value=(
+                    exec.actual_time.strftime("%Y-%m-%d %H:%M:%S")
+                    if exec.actual_time
+                    else ""
+                ),
             )
             ws.cell(
                 row=row,
                 column=8,
-                value=exec.end_time.strftime("%Y-%m-%d %H:%M:%S")
-                if exec.end_time
-                else "",
+                value=(
+                    exec.end_time.strftime("%Y-%m-%d %H:%M:%S")
+                    if exec.end_time
+                    else ""
+                ),
             )
             ws.cell(row=row, column=9, value=exec.duration_ms)
             ws.cell(

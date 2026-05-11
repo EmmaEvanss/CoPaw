@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Active-model distribution router tests."""
+
 from __future__ import annotations
 
 import asyncio

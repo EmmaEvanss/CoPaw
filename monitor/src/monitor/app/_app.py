@@ -45,8 +45,13 @@ async def lifespan(
         try:
             from .database import init_es_client
 
-            await init_es_client()
-            logger.info("Elasticsearch client initialized successfully")
+            es_client = await init_es_client()
+            if es_client and es_client.is_connected:
+                logger.info("Elasticsearch client initialized successfully")
+            else:
+                logger.warning(
+                    "Elasticsearch client initialized but not connected",
+                )
         except Exception as e:
             logger.warning("Elasticsearch initialization failed: %s", e)
     else:

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """数据库配置模块."""
+
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -49,10 +50,10 @@ def get_database_config(
         user=user if user is not None else DB_USER,
         password=password if password is not None else DB_ACCESS,
         database=database if database is not None else DB_NAME,
-        min_connections=min_connections
-        if min_connections is not None
-        else DB_MIN_CONN,
-        max_connections=max_connections
-        if max_connections is not None
-        else DB_MAX_CONN,
+        min_connections=(
+            min_connections if min_connections is not None else DB_MIN_CONN
+        ),
+        max_connections=(
+            max_connections if max_connections is not None else DB_MAX_CONN
+        ),
     )

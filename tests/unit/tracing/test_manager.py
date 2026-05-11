@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for TraceManager and TraceContext."""
+
 # pylint: disable=protected-access,redefined-outer-name,unused-import
 
 from datetime import datetime

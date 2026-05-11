@@ -1,6 +1,10 @@
 import { buildAuthHeaders } from "@/api/authHeaders";
 
-export interface SuggestionsRequest {
+export interface BackendSuggestionsRequest {
+  sessionId: string;
+}
+
+export interface GeneratedSuggestionsRequest {
   chatId: string;
   turnId: string;
   userMessage: string;
@@ -20,7 +24,14 @@ export interface QAContentResponse {
   };
 }
 
-interface SuggestionsResponse {
+interface BackendSuggestionsResponse {
+  suggestions?: Array<{
+    id?: string;
+    suggestions?: unknown;
+  }>;
+}
+
+interface GeneratedSuggestionsResponse {
   returnCode?: string;
   errorMsg?: string;
   body?: {
@@ -53,7 +64,7 @@ function normalizeSuggestions(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function buildMockSuggestions(request: SuggestionsRequest): string[] {
+function buildMockSuggestions(request: GeneratedSuggestionsRequest): string[] {
   const trimmedUserMessage = request.userMessage.trim();
   if (!trimmedUserMessage) {
     return MOCK_SUGGESTIONS;
@@ -66,11 +77,43 @@ function buildMockSuggestions(request: SuggestionsRequest): string[] {
   ];
 }
 
-export async function fetchSuggestions(
-  request: SuggestionsRequest,
+export async function fetchBackendSuggestions(
+  request: BackendSuggestionsRequest,
 ): Promise<string[]> {
   try {
-    const baseUrl = window.__env__.baseUrl || "";
+    const baseUrl = window.__env__?.baseUrl || "";
+    const apiUrl = `${baseUrl}/api/console/suggestions?session_id=${encodeURIComponent(
+      request.sessionId,
+    )}`;
+
+    const response = await fetch(apiUrl, {
+      method: "GET",
+      headers: {
+        ...buildAuthHeaders(),
+      },
+    });
+
+    if (!response.ok) {
+      console.error("[Suggestions] API request failed:", response.status);
+      return [];
+    }
+
+    const result: BackendSuggestionsResponse = await response.json();
+    const firstEntry = Array.isArray(result.suggestions)
+      ? result.suggestions[0]
+      : undefined;
+    return normalizeSuggestions(firstEntry?.suggestions);
+  } catch (error) {
+    console.error("[Suggestions] API request error:", error);
+    return [];
+  }
+}
+
+export async function fetchGeneratedSuggestions(
+  request: GeneratedSuggestionsRequest,
+): Promise<string[]> {
+  try {
+    const baseUrl = window.__env__?.baseUrl || "";
     const isDev = baseUrl === "yourapi";
     const useMock = DEFAULT_ENABLE_MOCK || isDev;
     if (useMock) {
@@ -95,30 +138,29 @@ export async function fetchSuggestions(
     });
 
     if (!response.ok) {
-      console.error("[Suggestions] API request failed:", response.status);
+      console.error(
+        "[Suggestions] generated API request failed:",
+        response.status,
+      );
       return [];
     }
 
-    const result: SuggestionsResponse = await response.json();
+    const result: GeneratedSuggestionsResponse = await response.json();
     return normalizeSuggestions(
       result.body?.output?.result?.suggestions ??
         result.body?.output?.result?.questions,
     );
   } catch (error) {
-    console.error("[Suggestions] API request error:", error);
+    console.error("[Suggestions] generated API request error:", error);
     return [];
   }
 }
 
-/**
- * 从后端获取提取的 Q&A 内容
- * 用于生成猜你想问建议
- */
 export async function fetchQAContent(
   request: QAContentRequest,
 ): Promise<QAContentResponse> {
   try {
-    const baseUrl = window.__env__.baseUrl || "";
+    const baseUrl = window.__env__?.baseUrl || "";
     const apiUrl = `${baseUrl}/api/console/suggestions/qa-content`;
 
     const response = await fetch(apiUrl, {
@@ -127,7 +169,10 @@ export async function fetchQAContent(
         "Content-Type": "application/json",
         ...buildAuthHeaders(),
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify({
+        chat_id: request.chatId,
+        user_message: request.userMessage,
+      }),
     });
 
     if (!response.ok) {
@@ -141,3 +186,5 @@ export async function fetchQAContent(
     return { success: false };
   }
 }
+
+export const fetchSuggestions = fetchBackendSuggestions;

@@ -1,27 +1,160 @@
-import { Descriptions, Tag } from "antd";
+import { Descriptions, Tag, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 import { UserStats } from "../../../../../api/modules/tracing";
+import { useMemo } from "react";
 
 interface UserStatsHeaderProps {
   userStats: UserStats;
 }
 
+/** 计算内容是否超过指定行数 */
+function useTruncatedTags(
+  items: Array<{ name: string; count: number; error_count?: number }>,
+  containerWidth: number = 700,
+  lineHeight: number = 2
+): {
+  displayItems: Array<{ name: string; count: number; error_count?: number }>;
+  hasMore: boolean;
+  hiddenCount: number;
+} {
+  return useMemo(() => {
+    if (items.length === 0) {
+      return { displayItems: [], hasMore: false, hiddenCount: 0 };
+    }
+
+    // 估算每个tag的宽度
+    // 中文字符约 14px，英文/数字约 8px，取平均 10px
+    const avgCharWidth = 10;
+    // Tag 的 padding + margin + border 等额外空间
+    const extraPadding = 28;
+
+    let currentLineWidth = 0;
+    let lineCount = 1;
+    let displayCount = 0;
+
+    for (const item of items) {
+      const tagText = `${item.name}: ${item.count} calls`;
+      const estimatedWidth = tagText.length * avgCharWidth + extraPadding;
+
+      if (currentLineWidth + estimatedWidth > containerWidth) {
+        lineCount++;
+        currentLineWidth = estimatedWidth;
+      } else {
+        currentLineWidth += estimatedWidth;
+      }
+
+      if (lineCount <= lineHeight) {
+        displayCount++;
+      } else {
+        break;
+      }
+    }
+
+    const displayItems = items.slice(0, displayCount);
+    const hasMore = items.length > displayCount;
+    const hiddenCount = items.length - displayCount;
+
+    return { displayItems, hasMore, hiddenCount };
+  }, [items, containerWidth, lineHeight]);
+}
+
+/** 格式化 token 数量 */
+function formatTokens(tokens: number): string {
+  if (!tokens) return "0";
+  if (tokens < 1000) return tokens.toString();
+  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`;
+  return `${(tokens / 1000000).toFixed(2)}M`;
+}
+
+/** 格式化时长 */
+function formatDuration(ms: number): string {
+  if (!ms) return "-";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60000).toFixed(1)}m`;
+}
+
+/** 标签列表组件，支持截断和tooltip */
+function TagList({
+  items,
+  colorFn,
+  getTooltipContent,
+}: {
+  items: Array<{ name: string; count: number; error_count?: number }>;
+  colorFn?: (item: { error_count?: number }) => string;
+  getTooltipContent?: (item: { name: string; count: number; error_count?: number }) => string;
+}) {
+  const { displayItems, hasMore, hiddenCount } = useTruncatedTags(items);
+
+  if (items.length === 0) return null;
+
+  // 构建完整内容的tooltip
+  const fullContent = items
+    .map((item) => (getTooltipContent ? getTooltipContent(item) : `${item.name}: ${item.count} calls`))
+    .join(", ");
+
+  return (
+    <Tooltip title={fullContent} placement="topLeft">
+      <div
+        style={{
+          marginTop: 8,
+          maxHeight: 56,
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
+        {displayItems.map((item) => (
+          <Tag
+            key={item.name}
+            color={colorFn ? colorFn(item) : "default"}
+            style={{ marginBottom: 4, marginRight: 4 }}
+          >
+            {item.name}: {item.count} calls
+          </Tag>
+        ))}
+        {hasMore && (
+          <Tag style={{ marginBottom: 4 }} color="processing">
+            +{hiddenCount} more
+          </Tag>
+        )}
+      </div>
+    </Tooltip>
+  );
+}
+
 export default function UserStatsHeader({ userStats }: UserStatsHeaderProps) {
   const { t } = useTranslation();
 
-  const formatTokens = (tokens: number) => {
-    if (!tokens) return "0";
-    if (tokens < 1000) return tokens.toString();
-    if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`;
-    return `${(tokens / 1000000).toFixed(2)}M`;
-  };
+  // 准备模型使用数据
+  const modelItems = useMemo(
+    () =>
+      userStats.model_usage.map((m) => ({
+        name: m.model_name,
+        count: m.count,
+      })),
+    [userStats.model_usage]
+  );
 
-  const formatDuration = (ms: number) => {
-    if (!ms) return "-";
-    if (ms < 1000) return `${ms}ms`;
-    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-    return `${(ms / 60000).toFixed(1)}m`;
-  };
+  // 准备 MCP 工具使用数据
+  const mcpToolItems = useMemo(
+    () =>
+      (userStats.mcp_tools_used || []).map((tool) => ({
+        name: `${tool.tool_name} (${tool.mcp_server})`,
+        count: tool.count,
+        error_count: tool.error_count,
+      })),
+    [userStats.mcp_tools_used]
+  );
+
+  // 准备技能使用数据
+  const skillItems = useMemo(
+    () =>
+      userStats.skills_used.map((s) => ({
+        name: s.skill_name,
+        count: s.count,
+      })),
+    [userStats.skills_used]
+  );
 
   return (
     <div>
@@ -47,42 +180,29 @@ export default function UserStatsHeader({ userStats }: UserStatsHeaderProps) {
       </Descriptions>
 
       {/* 模型使用 */}
-      {userStats.model_usage.length > 0 && (
+      {modelItems.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <span style={{ fontWeight: 500, marginRight: 8 }}>模型使用:</span>
-          {userStats.model_usage.map((m) => (
-            <Tag key={m.model_name} style={{ marginBottom: 4 }}>
-              {m.model_name}: {m.count} calls
-            </Tag>
-          ))}
+          <TagList items={modelItems} />
         </div>
       )}
 
-      {/* 工具使用 */}
-      {userStats.tools_used.length > 0 && (
+      {/* MCP 工具使用 */}
+      {mcpToolItems.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <span style={{ fontWeight: 500, marginRight: 8 }}>工具使用:</span>
-          {userStats.tools_used.map((tool) => (
-            <Tag
-              key={tool.tool_name}
-              color={tool.error_count > 0 ? "error" : "default"}
-              style={{ marginBottom: 4 }}
-            >
-              {tool.tool_name}: {tool.count} calls
-            </Tag>
-          ))}
+          <TagList
+            items={mcpToolItems}
+            colorFn={(item) => (item.error_count && item.error_count > 0 ? "error" : "default")}
+          />
         </div>
       )}
 
       {/* 技能使用 */}
-      {userStats.skills_used.length > 0 && (
+      {skillItems.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <span style={{ fontWeight: 500, marginRight: 8 }}>技能使用:</span>
-          {userStats.skills_used.map((s) => (
-            <Tag key={s.skill_name} color="blue" style={{ marginBottom: 4 }}>
-              {s.skill_name}: {s.count} calls
-            </Tag>
-          ))}
+          <TagList items={skillItems} colorFn={() => "blue"} />
         </div>
       )}
     </div>

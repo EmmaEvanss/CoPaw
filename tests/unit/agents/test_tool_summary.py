@@ -38,6 +38,17 @@ def test_rule_call_summary_describes_file_read_action() -> None:
     assert summary == "正在读取 demo.txt"
 
 
+def test_rule_call_summary_hides_unknown_tool_json_arguments() -> None:
+    summary = tool_summary.generate_tool_call_summary(
+        tool_name="query_business_opportunity",
+        arguments='{"bbkOrgId": "V00", "brnOrgId": "V00001"}',
+    )
+
+    assert summary == "正在查询操作"
+    assert "bbkOrgId" not in summary
+    assert "V00001" not in summary
+
+
 @pytest.mark.asyncio
 async def test_async_call_summary_uses_model_for_all_tools(
     monkeypatch,

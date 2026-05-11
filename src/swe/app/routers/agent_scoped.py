@@ -7,6 +7,7 @@ allowing downstream APIs to access the correct agent context.
 Note: For tenant-scoped deployments, tenant identity is resolved first
 before agent resolution. The agent namespace is per-tenant.
 """
+
 from fastapi import APIRouter, Request
 from fastapi.routing import APIRoute
 from starlette.middleware.base import (

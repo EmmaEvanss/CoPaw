@@ -15,14 +15,14 @@ router = APIRouter(prefix="/backup", tags=["backup"])
 
 
 class CreateBackupRequest(BaseModel):
-    tenant_ids: Optional[
-        list[str]
-    ] = None  # Specific tenants to backup, None = all tenants
+    tenant_ids: Optional[list[str]] = (
+        None  # Specific tenants to backup, None = all tenants
+    )
     instance_id: Optional[str] = None  # Required for multi-instance deployment
     backup_date: Optional[str] = None  # YYYY-MM-DD, defaults to today
-    backup_hour: Optional[
-        int
-    ] = None  # 0-23, defaults to current hour if not specified
+    backup_hour: Optional[int] = (
+        None  # 0-23, defaults to current hour if not specified
+    )
 
 
 class CreateBackupResponse(BaseModel):

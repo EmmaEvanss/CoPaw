@@ -5,6 +5,7 @@ Loads security rules from YAML files (see ``rules/signatures/``) and
 performs fast, line-based regex matching with a multiline fallback for
 patterns that intentionally span newlines.
 """
+
 from __future__ import annotations
 
 import logging

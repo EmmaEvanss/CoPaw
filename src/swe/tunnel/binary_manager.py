@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Auto-download cloudflared binary if not in PATH."""
+
 from __future__ import annotations
 
 import hashlib

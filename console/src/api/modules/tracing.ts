@@ -77,6 +77,7 @@ export interface UserStats {
   avg_duration_ms: number;
   tools_used: ToolUsage[];
   skills_used: SkillUsage[];
+  mcp_tools_used: MCPToolUsage[];
 }
 
 export interface UserListItem {
@@ -257,8 +258,6 @@ export interface UserMessageItem {
   session_id: string;
   channel: string;
   user_message: string | null;
-  input_tokens: number;
-  output_tokens: number;
   model_name: string | null;
   start_time: string;
   duration_ms: number | null;
@@ -287,6 +286,8 @@ export const tracingApi = {
       end_date?: string;
       source_id?: string;
       sort_by?: string;
+      filter_user_type?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -299,7 +300,13 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value && value !== "all") params.append(key, value);
+        // filter_user_type 需要传递 "all" 或 "filtered"
+        // source_id 使用 "all" 表示查询全部
+        if (key === "filter_user_type") {
+          if (value) params.append(key, value);
+        } else if (value && value !== "all") {
+          params.append(key, value);
+        }
       });
     }
     return request(`/monitor/tracing/users?${params.toString()}`);
@@ -329,6 +336,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -386,6 +394,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -429,7 +438,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserMessageItem[];
@@ -455,7 +465,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
     format: string = "xlsx",
   ): Promise<Blob> => {
@@ -556,5 +567,86 @@ export const tracingApi = {
     if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/daily-trend${query}`);
+  },
+
+  // 技能调用排行榜（分页）
+  getSkills: async (
+    page = 1,
+    pageSize = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: SkillUsage[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/monitor/tracing/skills?${params.toString()}`);
+  },
+
+  // 技能调用的对话列表（分页）
+  getSkillTraces: async (
+    skillName: string,
+    page = 1,
+    pageSize = 20,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: TraceListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(
+      `/monitor/tracing/skills/${encodeURIComponent(skillName)}/traces?${params.toString()}`,
+    );
+  },
+
+  // MCP 服务调用排行榜（分页）
+  getMCPServers: async (
+    page = 1,
+    pageSize = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: MCPServerUsage[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/monitor/tracing/mcp?${params.toString()}`);
   },
 };

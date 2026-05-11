@@ -3,6 +3,7 @@
 """
 Streaming AI skill optimization API
 """
+
 import json
 import logging
 
@@ -11,7 +12,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ...agents.model_factory import create_model_and_formatter
-
 
 logger = logging.getLogger(__name__)
 

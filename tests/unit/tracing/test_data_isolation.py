@@ -4,6 +4,7 @@
 Verifies that data belonging to different source_id tenants
 is properly scoped and never leaks across boundaries.
 """
+
 # pylint: disable=protected-access,redefined-outer-name,unused-variable
 
 from datetime import datetime
@@ -16,7 +17,6 @@ from swe.tracing.manager import TraceManager
 from swe.tracing.models import EventType, Span, Trace
 from swe.tracing.store import TraceStore, _matches_trace_filters
 from swe.database.config import DatabaseConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers

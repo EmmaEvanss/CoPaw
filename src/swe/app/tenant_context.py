@@ -5,6 +5,7 @@ This module provides shared helpers and context managers for binding
 tenant/workspace context in various entry points (HTTP requests,
 cron jobs, channel callbacks).
 """
+
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator

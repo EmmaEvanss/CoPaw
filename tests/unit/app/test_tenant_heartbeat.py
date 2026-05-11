@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant-bound heartbeat path tests."""
+
 import importlib.util
 import sys
 import types

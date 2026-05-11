@@ -7,13 +7,13 @@ Defines models for:
 - SyncRequest models: Request bodies for sync APIs
 - Query models: Request/response models for query APIs
 """
+
 import json
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, Field
-
 
 # ============================================================
 # Enums
@@ -62,7 +62,9 @@ class CronJobModel(BaseModel):
     name: str = Field(..., description="任务名称")
     tenant_id: str = Field(..., description="租户ID (分行号)")
     bbk_id: str = Field(default="", description="分行号 (X-Bbk-Id header)")
-    source_id: str = Field(default="", description="来源标识 (X-Source-Id header)")
+    source_id: str = Field(
+        default="", description="来源标识 (X-Source-Id header)"
+    )
     enabled: bool = Field(default=True, description="是否启用")
     task_type: str = Field(..., description="任务类型: text/agent")
 
@@ -78,7 +80,9 @@ class CronJobModel(BaseModel):
     # 执行配置
     timeout_seconds: int = Field(default=7200, description="超时秒数")
     max_concurrency: int = Field(default=1, description="最大并发数")
-    misfire_grace_seconds: int = Field(default=300, description="misfire容错秒数")
+    misfire_grace_seconds: int = Field(
+        default=300, description="misfire容错秒数"
+    )
 
     # 任务内容
     text_content: str = Field(default="", description="text类型任务内容")
@@ -98,9 +102,15 @@ class CronJobModel(BaseModel):
     pause_reason: str = Field(default="", description="暂停原因")
 
     # 时间戳
-    created_at: Optional[datetime] = Field(default=None, description="创建时间")
-    updated_at: Optional[datetime] = Field(default=None, description="更新时间")
-    deleted_at: Optional[datetime] = Field(default=None, description="删除时间")
+    created_at: Optional[datetime] = Field(
+        default=None, description="创建时间"
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None, description="更新时间"
+    )
+    deleted_at: Optional[datetime] = Field(
+        default=None, description="删除时间"
+    )
 
     # 统计字段（不在数据库中，运行时计算）
     execution_count: int = Field(default=0, description="已执行次数")
@@ -161,14 +171,18 @@ class ExecutionModel(BaseModel):
     session_id: str = Field(default="", description="关联的 session ID")
 
     # 执行结果预览
-    input_snapshot: str = Field(default="", description="执行时的输入快照 (JSON字符串)")
+    input_snapshot: str = Field(
+        default="", description="执行时的输入快照 (JSON字符串)"
+    )
     output_preview: str = Field(default="", description="输出预览 (前100字符)")
 
     # 执行元数据
     meta: str = Field(default="", description="执行元数据 (JSON字符串)")
 
     # 时间戳
-    created_at: Optional[datetime] = Field(default=None, description="记录创建时间")
+    created_at: Optional[datetime] = Field(
+        default=None, description="记录创建时间"
+    )
 
     def get_meta_dict(self) -> Dict[str, Any]:
         """Parse meta string to dict."""
@@ -204,7 +218,9 @@ class CronJobSyncRequest(BaseModel):
     name: str = Field(..., description="任务名称")
     tenant_id: str = Field(default="", description="租户ID")
     bbk_id: str = Field(default="", description="分行号 (X-Bbk-Id header)")
-    source_id: str = Field(default="", description="来源标识 (X-Source-Id header)")
+    source_id: str = Field(
+        default="", description="来源标识 (X-Source-Id header)"
+    )
     enabled: bool = Field(default=True, description="是否启用")
     task_type: str = Field(default="agent", description="任务类型")
 
@@ -220,11 +236,15 @@ class CronJobSyncRequest(BaseModel):
     # 执行配置
     timeout_seconds: int = Field(default=7200, description="超时秒数")
     max_concurrency: int = Field(default=1, description="最大并发数")
-    misfire_grace_seconds: int = Field(default=300, description="misfire容错秒数")
+    misfire_grace_seconds: int = Field(
+        default=300, description="misfire容错秒数"
+    )
 
     # 任务内容
     text_content: str = Field(default="", description="text类型任务内容")
-    request_input: str = Field(default="", description="agent类型请求输入 (JSON字符串)")
+    request_input: str = Field(
+        default="", description="agent类型请求输入 (JSON字符串)"
+    )
 
     # 任务元数据
     creator_user_id: str = Field(default="", description="创建者用户ID")
@@ -270,7 +290,9 @@ class ExecutionSyncRequest(BaseModel):
     session_id: str = Field(default="", description="关联的 session ID")
 
     # 执行结果预览
-    input_snapshot: str = Field(default="", description="执行时的输入快照 (JSON字符串)")
+    input_snapshot: str = Field(
+        default="", description="执行时的输入快照 (JSON字符串)"
+    )
     output_preview: str = Field(default="", description="输出预览")
 
     # 执行元数据
@@ -288,11 +310,13 @@ class CronJobQueryParams(BaseModel):
     tenant_id: Optional[str] = Field(default=None, description="租户ID筛选")
     bbk_id: Optional[str] = Field(default=None, description="分行号筛选")
     source_id: Optional[str] = Field(default=None, description="来源标识筛选")
-    creator_user_id: Optional[str] = Field(default=None, description="创建者ID筛选")
+    creator_user_id: Optional[str] = Field(
+        default=None, description="创建者ID筛选"
+    )
     status: Optional[str] = Field(default=None, description="状态筛选")
     enabled: Optional[bool] = Field(default=None, description="是否启用筛选")
     page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
 
 
 class ExecutionQueryParams(BaseModel):
@@ -301,10 +325,14 @@ class ExecutionQueryParams(BaseModel):
     job_id: Optional[str] = Field(default=None, description="任务ID筛选")
     tenant_id: Optional[str] = Field(default=None, description="租户ID筛选")
     status: Optional[str] = Field(default=None, description="执行状态筛选")
-    start_time: Optional[datetime] = Field(default=None, description="开始时间范围")
-    end_time: Optional[datetime] = Field(default=None, description="结束时间范围")
+    start_time: Optional[datetime] = Field(
+        default=None, description="开始时间范围"
+    )
+    end_time: Optional[datetime] = Field(
+        default=None, description="结束时间范围"
+    )
     page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
 
 
 class ExportQueryParams(BaseModel):
@@ -312,8 +340,12 @@ class ExportQueryParams(BaseModel):
 
     tenant_id: Optional[str] = Field(default=None, description="租户ID筛选")
     status: Optional[str] = Field(default=None, description="状态筛选")
-    start_time: Optional[datetime] = Field(default=None, description="开始时间范围")
-    end_time: Optional[datetime] = Field(default=None, description="结束时间范围")
+    start_time: Optional[datetime] = Field(
+        default=None, description="开始时间范围"
+    )
+    end_time: Optional[datetime] = Field(
+        default=None, description="结束时间范围"
+    )
 
 
 # ============================================================
@@ -330,7 +362,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
     items: List[T] = Field(default_factory=list, description="数据列表")
     total: int = Field(default=0, description="总数量")
     page: int = Field(default=1, description="当前页码")
-    page_size: int = Field(default=20, description="每页数量")
+    page_size: int = Field(default=10, description="每页数量")
 
 
 class SyncJobResponse(BaseModel):
@@ -405,9 +437,7 @@ def convert_spec_to_sync_request(
     status = (
         "active"
         if enabled and not pause_reason
-        else "paused"
-        if pause_reason
-        else "active"
+        else "paused" if pause_reason else "active"
     )
 
     # Extract request_input

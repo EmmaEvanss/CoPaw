@@ -1,39 +1,74 @@
 # -*- coding: utf-8 -*-
-"""FastAPI 服务启动入口."""
+"""SWE 服务启动入口.
+
+使用独立虚拟环境 venv_swe 运行，避免与其他服务包冲突。
+"""
 
 import os
+import subprocess
 import sys
 
-# 添加 src 目录到 PYTHONPATH（必须在 import 之前）
-src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+# 服务配置
+SERVICE_NAME = "swe"
+VENV_DIR = "venv_swe"
+PORT = 8088
 
-# 设置环境变量，确保 uvicorn 子进程也能找到模块
-os.environ["PYTHONPATH"] = src_path
 
-# 先安装包（如果未安装）
-try:
-    import swe
-except ImportError:
-    print("正在安装项目依赖...")
-    import subprocess
+def get_venv_python():
+    """获取虚拟环境的 Python 路径."""
+    if sys.platform == "win32":
+        return os.path.join(VENV_DIR, "Scripts", "python.exe")
+    return os.path.join(VENV_DIR, "bin", "python")
 
+
+def ensure_venv():
+    """确保虚拟环境存在并安装依赖."""
+    venv_python = get_venv_python()
+
+    if not os.path.exists(venv_python):
+        print(f"[{SERVICE_NAME}] 创建虚拟环境 {VENV_DIR}...")
+        subprocess.check_call([sys.executable, "-m", "venv", VENV_DIR])
+        print(f"[{SERVICE_NAME}] 虚拟环境创建完成")
+
+    # 安装依赖
+    print(f"[{SERVICE_NAME}] 安装依赖...")
     subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
+        [venv_python, "-m", "pip", "install", "-e", ".", "--quiet"],
     )
-    print("依赖安装完成")
+    print(f"[{SERVICE_NAME}] 依赖安装完成")
 
-# 直接导入 app 对象
-from swe.app._app import app
 
-import uvicorn
+def run_in_venv():
+    """在虚拟环境中启动服务."""
+    # 添加 src 目录到 PYTHONPATH
+    src_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = src_path
+
+    venv_python = get_venv_python()
+
+    # 使用虚拟环境的 Python 运行实际服务
+    subprocess.check_call(
+        [
+            venv_python,
+            "-m",
+            "uvicorn",
+            "swe.app._app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(PORT),
+            "--log-level",
+            "info",
+        ],
+        env=env,
+    )
+
 
 if __name__ == "__main__":
-    # 直接传入 app 对象，而不是字符串路径
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=8088,
-        log_level="info",
-    )
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
+
+    ensure_venv()
+    print(f"[{SERVICE_NAME}] 启动服务，端口: {PORT}")
+    run_in_venv()

@@ -9,6 +9,7 @@ Priority (highest to lowest):
 2. Existing environment variables
 3. Environment JSON defaults (this module)
 """
+
 from __future__ import annotations
 
 import json

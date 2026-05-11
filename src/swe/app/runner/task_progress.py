@@ -13,7 +13,6 @@ from agentscope_runtime.engine.schemas.agent_schemas import (
 )
 from pydantic import BaseModel, Field, model_validator
 
-
 TaskStepStatus = Literal["todo", "running", "done"]
 TaskPhaseStatus = Literal["active", "completed", "cancelled"]
 
@@ -65,9 +64,11 @@ def normalize_task_progress_payload(
     phase_status: TaskPhaseStatus,
 ) -> TaskProgressPayload:
     normalized_items = [
-        item
-        if isinstance(item, TaskProgressItem)
-        else TaskProgressItem(**item)
+        (
+            item
+            if isinstance(item, TaskProgressItem)
+            else TaskProgressItem(**item)
+        )
         for item in items
     ]
     running_index: int | None = None

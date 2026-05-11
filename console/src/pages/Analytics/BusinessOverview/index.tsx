@@ -7,8 +7,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Row, Col, Tooltip, Select, DatePicker, message } from "antd";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
-import { tracingApi } from "../../../api/modules/tracing";
+import { tracingApi, type SkillUsage, type MCPServerUsage } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
+import SkillDetailModal from "./components/SkillDetailModal";
+import { useIframeStore } from "../../../stores/iframeStore";
 import {
   formatNumber,
   formatTokens,
@@ -18,6 +20,7 @@ import {
   type UserRow,
   type TimeRange,
 } from "./types";
+import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 
 const { Option } = Select;
 
@@ -66,7 +69,29 @@ export default function BusinessOverviewPage() {
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
   const [startDate, setStartDate] = useState<dayjs.Dayjs>(dayjs());
   const [endDate, setEndDate] = useState<dayjs.Dayjs>(dayjs());
-  const [platform, setPlatform] = useState<string>("all");
+
+  // 获取用户权限和来源信息
+  const isSuperManager = useIframeStore((state) => state.isSuperManager);
+  const userSource = useIframeStore((state) => state.source);
+
+  // 非超级管理员的平台初始值为用户所属平台，超级管理员默认为 "all"
+  const [platform, setPlatform] = useState<string>(() => {
+    // 初始化时从 sessionStorage 获取，避免闪烁
+    try {
+      const stored = sessionStorage.getItem("swe-iframe-context");
+      if (stored) {
+        const ctx = JSON.parse(stored);
+        if (ctx.state?.isSuperManager) {
+          return "all";
+        }
+        return ctx.state?.source || DEFAULT_SOURCE_ID || "all";
+      }
+    } catch {
+      // ignore
+    }
+    // 非 iframe 模式下使用默认 source
+    return DEFAULT_SOURCE_ID || "all";
+  });
 
   // 平台列表（从API获取）
   const [sources, setSources] = useState<string[]>([]);
@@ -111,6 +136,24 @@ export default function BusinessOverviewPage() {
   const [activeLoading, setActiveLoading] = useState(false);
   const activeLoadingRef = useRef(false);
 
+  // 用户过滤类型：filtered(已过滤) / all(全部) - 分别控制
+  const [callsFilterType, setCallsFilterType] = useState<"filtered" | "all">("filtered");
+  const [activeFilterType, setActiveFilterType] = useState<"filtered" | "all">("filtered");
+
+  // 技能调用排行榜分页状态
+  const [skills, setSkills] = useState<SkillUsage[]>([]);
+  const [skillsPage, setSkillsPage] = useState(1);
+  const [skillsHasMore, setSkillsHasMore] = useState(true);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const skillsLoadingRef = useRef(false);
+
+  // MCP服务调用排行榜分页状态
+  const [mcpServers, setMcpServers] = useState<MCPServerUsage[]>([]);
+  const [mcpPage, setMcpPage] = useState(1);
+  const [mcpHasMore, setMcpHasMore] = useState(true);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const mcpLoadingRef = useRef(false);
+
   // 折线图悬浮 tooltip 状态
   const [lineChartTooltip, setLineChartTooltip] = useState<{
     visible: boolean;
@@ -134,6 +177,10 @@ export default function BusinessOverviewPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
+  // 技能详情弹窗状态
+  const [skillModalOpen, setSkillModalOpen] = useState(false);
+  const [selectedSkillName, setSelectedSkillName] = useState<string>("");
+
   // 计算结束日期
   const calculateEndDate = (start: dayjs.Dayjs, mode: TimeRange): dayjs.Dayjs => {
     switch (mode) {
@@ -153,12 +200,23 @@ export default function BusinessOverviewPage() {
   // 获取平台列表
   const fetchSources = useCallback(async () => {
     try {
-      const res = await tracingApi.getSources();
-      setSources(res.sources || []);
+      // 超级管理员：加载所有平台选项
+      if (isSuperManager) {
+        const res = await tracingApi.getSources();
+        setSources(res.sources || []);
+      } else {
+        // 非超级管理员：只显示用户所属平台
+        const effectiveSource = userSource || DEFAULT_SOURCE_ID;
+        if (effectiveSource) {
+          setSources([effectiveSource]);
+        } else {
+          setSources([]);
+        }
+      }
     } catch (error) {
       console.error("Failed to fetch sources:", error);
     }
-  }, []);
+  }, [isSuperManager, userSource]);
 
   // 初始加载平台列表
   useEffect(() => {
@@ -218,13 +276,7 @@ export default function BusinessOverviewPage() {
   // 初始加载和日期变化时获取数据
   useEffect(() => {
     fetchData();
-    // 重置分页状态
-    setCallsUsers([]);
-    setCallsPage(1);
-    setCallsHasMore(true);
-    setActiveUsers([]);
-    setActivePage(1);
-    setActiveHasMore(true);
+    // 分页状态的重置和用户数据加载由 fetchCallsUsers/fetchActiveUsers 的 useEffect 处理
   }, [fetchData]);
 
   // 转换用户数据格式
@@ -257,10 +309,16 @@ export default function BusinessOverviewPage() {
         end_date: endStr,
         source_id: filterSourceId,
         sort_by: "conversations",
+        filter_user_type: callsFilterType,
       });
       const users = transformUserData(res.items);
       if (append) {
-        setCallsUsers((prev) => [...prev, ...users]);
+        // 追加数据时去重，避免重复
+        setCallsUsers((prev) => {
+          const existingIds = new Set(prev.map(u => u.userId));
+          const newUsers = users.filter(u => !existingIds.has(u.userId));
+          return [...prev, ...newUsers];
+        });
       } else {
         setCallsUsers(users);
       }
@@ -271,7 +329,7 @@ export default function BusinessOverviewPage() {
       callsLoadingRef.current = false;
       setCallsLoading(false);
     }
-  }, [startDate, endDate, platform]);
+  }, [startDate, endDate, platform, callsFilterType]);
 
   // 加载最近活跃用户
   const fetchActiveUsers = useCallback(async (page: number, append: boolean = false) => {
@@ -288,10 +346,16 @@ export default function BusinessOverviewPage() {
         end_date: endStr,
         source_id: filterSourceId,
         sort_by: "last_active",
+        filter_user_type: activeFilterType,
       });
       const users = transformUserData(res.items);
       if (append) {
-        setActiveUsers((prev) => [...prev, ...users]);
+        // 追加数据时去重，避免重复
+        setActiveUsers((prev) => {
+          const existingIds = new Set(prev.map(u => u.userId));
+          const newUsers = users.filter(u => !existingIds.has(u.userId));
+          return [...prev, ...newUsers];
+        });
       } else {
         setActiveUsers(users);
       }
@@ -302,19 +366,23 @@ export default function BusinessOverviewPage() {
       activeLoadingRef.current = false;
       setActiveLoading(false);
     }
-  }, [startDate, endDate, platform]);
+  }, [startDate, endDate, platform, activeFilterType]);
 
-  // 初始加载用户排行榜
+  // 调用数排行榜：筛选条件变化时重新加载
   useEffect(() => {
-    callsLoadingRef.current = false;
-    activeLoadingRef.current = false;
     setCallsPage(1);
-    setActivePage(1);
     setCallsHasMore(true);
-    setActiveHasMore(true);
+    setCallsUsers([]);
     fetchCallsUsers(1, false);
+  }, [fetchCallsUsers]);
+
+  // 最近活跃用户：筛选条件变化时重新加载
+  useEffect(() => {
+    setActivePage(1);
+    setActiveHasMore(true);
+    setActiveUsers([]);
     fetchActiveUsers(1, false);
-  }, [fetchCallsUsers, fetchActiveUsers]);
+  }, [fetchActiveUsers]);
 
   // 滚动加载更多调用数用户
   const handleCallsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
@@ -343,6 +411,116 @@ export default function BusinessOverviewPage() {
       fetchActiveUsers(nextPage, true);
     }
   }, [activeHasMore, activePage, fetchActiveUsers]);
+
+  // 加载技能调用排行榜
+  const fetchSkills = useCallback(async (page: number, append: boolean = false) => {
+    if (skillsLoadingRef.current) return;
+    skillsLoadingRef.current = true;
+    setSkillsLoading(true);
+    const startStr = startDate.format("YYYY-MM-DD");
+    const endStr = endDate.format("YYYY-MM-DD");
+    const filterSourceId = platform === "all" ? undefined : platform;
+
+    try {
+      const res = await tracingApi.getSkills(page, 10, {
+        start_date: startStr,
+        end_date: endStr,
+        source_id: filterSourceId,
+      });
+      if (append) {
+        setSkills((prev) => {
+          const existingNames = new Set(prev.map(s => s.skill_name));
+          const newSkills = (res.items || []).filter(s => !existingNames.has(s.skill_name));
+          return [...prev, ...newSkills];
+        });
+      } else {
+        setSkills(res.items || []);
+      }
+      setSkillsHasMore((res.items || []).length === 10);
+    } catch (error) {
+      console.error("Failed to fetch skills:", error);
+    } finally {
+      skillsLoadingRef.current = false;
+      setSkillsLoading(false);
+    }
+  }, [startDate, endDate, platform]);
+
+  // 加载 MCP 服务调用排行榜
+  const fetchMcpServers = useCallback(async (page: number, append: boolean = false) => {
+    if (mcpLoadingRef.current) return;
+    mcpLoadingRef.current = true;
+    setMcpLoading(true);
+    const startStr = startDate.format("YYYY-MM-DD");
+    const endStr = endDate.format("YYYY-MM-DD");
+    const filterSourceId = platform === "all" ? undefined : platform;
+
+    try {
+      const res = await tracingApi.getMCPServers(page, 10, {
+        start_date: startStr,
+        end_date: endStr,
+        source_id: filterSourceId,
+      });
+      if (append) {
+        setMcpServers((prev) => {
+          const existingNames = new Set(prev.map(s => s.server_name));
+          const newServers = (res.items || []).filter(s => !existingNames.has(s.server_name));
+          return [...prev, ...newServers];
+        });
+      } else {
+        setMcpServers(res.items || []);
+      }
+      setMcpHasMore((res.items || []).length === 10);
+    } catch (error) {
+      console.error("Failed to fetch MCP servers:", error);
+    } finally {
+      mcpLoadingRef.current = false;
+      setMcpLoading(false);
+    }
+  }, [startDate, endDate, platform]);
+
+  // 技能排行榜：筛选条件变化时重新加载
+  useEffect(() => {
+    setSkillsPage(1);
+    setSkillsHasMore(true);
+    setSkills([]);
+    fetchSkills(1, false);
+  }, [fetchSkills]);
+
+  // MCP排行榜：筛选条件变化时重新加载
+  useEffect(() => {
+    setMcpPage(1);
+    setMcpHasMore(true);
+    setMcpServers([]);
+    fetchMcpServers(1, false);
+  }, [fetchMcpServers]);
+
+  // 滚动加载更多技能
+  const handleSkillsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    if (
+      target.scrollHeight - target.scrollTop <= target.clientHeight + 50 &&
+      skillsHasMore &&
+      !skillsLoadingRef.current
+    ) {
+      const nextPage = skillsPage + 1;
+      setSkillsPage(nextPage);
+      fetchSkills(nextPage, true);
+    }
+  }, [skillsHasMore, skillsPage, fetchSkills]);
+
+  // 滚动加载更多 MCP 服务
+  const handleMcpScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    if (
+      target.scrollHeight - target.scrollTop <= target.clientHeight + 50 &&
+      mcpHasMore &&
+      !mcpLoadingRef.current
+    ) {
+      const nextPage = mcpPage + 1;
+      setMcpPage(nextPage);
+      fetchMcpServers(nextPage, true);
+    }
+  }, [mcpHasMore, mcpPage, fetchMcpServers]);
 
   // 处理开始日期变化
   const handleStartDateChange = (date: dayjs.Dayjs | null) => {
@@ -423,7 +601,7 @@ export default function BusinessOverviewPage() {
 
   // 趋势标题固定为近30天（趋势图始终显示近30天数据，不受顶部日期选择器影响）
   const getTrendTitle = () => {
-    return "近30天使用趋势";
+    return "近30天调用量趋势";
   };
 
   // 计算指标数据
@@ -625,8 +803,8 @@ export default function BusinessOverviewPage() {
       );
     }
 
-    const padding = { top: 20, right: 30, bottom: 60, left: 50 };
-    const width = 1000;
+    const padding = { top: 20, right: 10, bottom: 60, left: 40 };
+    const width = 1400; // 增大宽度以更好地填充容器
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
 
@@ -663,28 +841,33 @@ export default function BusinessOverviewPage() {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      // SVG 使用 preserveAspectRatio="xMidYMid meet" 会居中显示
-      // 需要计算实际的缩放比例和偏移量
-      const viewBoxAspect = width / height;
-      const containerAspect = rect.width / rect.height;
+      // 容器有124px 左右 padding
+      const containerPadding = 12;
+      const svgWidth = rect.width - containerPadding * 2;
 
-      let actualScaleX: number;
+      // SVG 保持宽高比，计算实际渲染尺寸
+      const svgAspect = width / height;
+      const containerAspect = svgWidth / height;
+
+      let actualSvgWidth: number;
       let offsetX: number;
 
-      if (containerAspect > viewBoxAspect) {
-        // 容器更宽，SVG 按高度缩放，左右留白
-        actualScaleX = rect.height / height;
-        offsetX = (rect.width - width * actualScaleX) / 2;
+      if (containerAspect >= svgAspect) {
+        // 容器更宽，SVG 高度撑满，左右留白
+        actualSvgWidth = height * svgAspect;
+        offsetX = containerPadding + (svgWidth - actualSvgWidth) / 2;
       } else {
-        // 容器更高，SVG 按宽度缩放，上下留白
-        actualScaleX = rect.width / width;
-        offsetX = 0;
+        // 容器更窄，SVG 宽度撑满
+        actualSvgWidth = svgWidth;
+        offsetX = containerPadding;
       }
 
-      // 计算每个数据点在 DOM 中的实际 X 位置（考虑居中偏移）
+      const scaleX = actualSvgWidth / width;
+
+      // 计算每个数据点在 DOM 中的实际 X 位置
       const dataPoints = chartData.map((d, i) => ({
         index: i,
-        x: xScale(i) * actualScaleX + offsetX,
+        x: offsetX + xScale(i) * scaleX,
         data: d,
       }));
 
@@ -701,7 +884,7 @@ export default function BusinessOverviewPage() {
       }
 
       // 计算实际图表宽度的一半作为阈值
-      const actualChartWidth = chartWidth * actualScaleX;
+      const actualChartWidth = chartWidth * scaleX;
       const threshold = actualChartWidth / chartData.length / 2;
 
       if (minDistance <= threshold) {
@@ -734,7 +917,7 @@ export default function BusinessOverviewPage() {
           width="100%"
           height={height}
           viewBox={`0 0 ${width} ${height}`}
-          preserveAspectRatio="xMidYMid meet"
+          preserveAspectRatio="xMidYMin meet"
         >
           {/* Y轴 */}
           {yTicks.map((tick, i) => (
@@ -929,6 +1112,14 @@ export default function BusinessOverviewPage() {
     chartData: { name: string; fullName?: string; value: number }[],
     height: number = 220,
   ) => {
+    if (chartData.length === 0) {
+      return (
+        <div className={styles.barChartContainer} style={{ height, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span className={styles.emptyList}>暂无数据</span>
+        </div>
+      );
+    }
+
     const maxValue = Math.max(...chartData.map((d) => d.value), 1);
 
     return (
@@ -980,29 +1171,83 @@ export default function BusinessOverviewPage() {
           {metric === "calls" ? "调用次数" : "最后活跃"}
         </span>
       </div>
-      {users.map((user, index) => {
-        // 格式化显示：机构名称/用户姓名(用户ID)
-        const displayParts: string[] = [];
-        if (user.bbkId) {
-          const bbkName = getBbkDisplayName(user.bbkId);
-          if (bbkName && bbkName !== "-") {
-            displayParts.push(bbkName);
+      {users.length === 0 ? (
+        <div className={styles.emptyList}>暂无数据</div>
+      ) : (
+        users.map((user, index) => {
+          // 格式化显示：机构名称/用户姓名(用户ID)
+          const displayParts: string[] = [];
+          if (user.bbkId) {
+            const bbkName = getBbkDisplayName(user.bbkId);
+            if (bbkName && bbkName !== "-") {
+              displayParts.push(bbkName);
+            }
           }
-        }
-        if (user.userName) {
-          displayParts.push(user.userName);
-        }
-        const displayName = displayParts.length > 0
-          ? `${displayParts.join("/")}(${user.userId})`
-          : user.userId;
+          if (user.userName) {
+            displayParts.push(user.userName);
+          }
+          const displayName = displayParts.length > 0
+            ? `${displayParts.join("/")}(${user.userId})`
+            : user.userId;
 
-        return (
+          return (
+            <div
+              key={user.userId}
+              className={styles.userItem}
+              onClick={() => {
+                setSelectedUserId(user.userId);
+                setModalOpen(true);
+              }}
+              style={{ cursor: "pointer" }}
+            >
+              <span
+                className={`${styles.rank} ${
+                  index === 0
+                    ? styles.top1
+                    : index === 1
+                    ? styles.top2
+                    : index === 2
+                    ? styles.top3
+                    : styles.normal
+                }`}
+              >
+                {index + 1}
+              </span>
+              <span className={styles.userName}>
+                {displayName}
+              </span>
+              <span className={styles.userValue}>
+                {metric === "calls"
+                  ? formatNumber(user.calls)
+                  : user.lastActive}
+              </span>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
+  // ============================================================
+  // 渲染：技能列表
+  // ============================================================
+  const renderSkillList = (items: SkillUsage[]) => (
+    <div className={styles.userList}>
+      <div className={styles.userHeader}>
+        <span className={styles.userHeaderRank}>#</span>
+        <span className={styles.userHeaderName}>技能名称</span>
+        <span className={styles.userHeaderValue}>调用次数</span>
+      </div>
+      {items.length === 0 ? (
+        <div className={styles.emptyList}>暂无数据</div>
+      ) : (
+        items.map((skill, index) => (
           <div
-            key={user.userId}
+            key={skill.skill_name}
             className={styles.userItem}
             onClick={() => {
-              setSelectedUserId(user.userId);
-              setModalOpen(true);
+              setSelectedSkillName(skill.skill_name);
+              setSkillModalOpen(true);
             }}
             style={{ cursor: "pointer" }}
           >
@@ -1020,16 +1265,57 @@ export default function BusinessOverviewPage() {
               {index + 1}
             </span>
             <span className={styles.userName}>
-              {displayName}
+              {truncateName(skill.skill_name, 20)}
             </span>
             <span className={styles.userValue}>
-              {metric === "calls"
-                ? formatNumber(user.calls)
-                : user.lastActive}
+              {formatNumber(skill.count)}
             </span>
           </div>
-        );
-      })}
+        ))
+      )}
+    </div>
+  );
+
+  // ============================================================
+  // 渲染：MCP服务列表
+  // ============================================================
+  const renderMcpList = (items: MCPServerUsage[]) => (
+    <div className={styles.userList}>
+      <div className={styles.userHeader}>
+        <span className={styles.userHeaderRank}>#</span>
+        <span className={styles.userHeaderName}>服务名称</span>
+        <span className={styles.userHeaderValue}>调用次数</span>
+      </div>
+      {items.length === 0 ? (
+        <div className={styles.emptyList}>暂无数据</div>
+      ) : (
+        items.map((server, index) => (
+          <div
+            key={server.server_name}
+            className={styles.userItem}
+          >
+            <span
+              className={`${styles.rank} ${
+                index === 0
+                  ? styles.top1
+                  : index === 1
+                  ? styles.top2
+                  : index === 2
+                  ? styles.top3
+                  : styles.normal
+              }`}
+            >
+              {index + 1}
+            </span>
+            <span className={styles.userName}>
+              {truncateName(server.server_name, 20)}
+            </span>
+            <span className={styles.userValue}>
+              {formatNumber(server.total_calls)}
+            </span>
+          </div>
+        ))
+      )}
     </div>
   );
 
@@ -1092,8 +1378,9 @@ export default function BusinessOverviewPage() {
           style={{ width: 180 }}
           value={platform}
           onChange={(v) => setPlatform(v)}
+          disabled={!isSuperManager}
         >
-          <Option value="all">全部平台</Option>
+          {isSuperManager && <Option value="all">全部平台</Option>}
           {sources.map((source) => (
             <Option key={source} value={source}>
               {getPlatformDisplayName(source)}
@@ -1114,7 +1401,11 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              platformData.userGrowth > 0 ? styles.negative : styles.positive
+              platformData.userGrowth > 0
+                ? styles.negative
+                : platformData.userGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
             {formatChange(platformData.userGrowth)} 环比
@@ -1135,7 +1426,11 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.tokensGrowth > 0 ? styles.negative : styles.positive
+              metricData.tokensGrowth > 0
+                ? styles.negative
+                : metricData.tokensGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
             {formatChange(metricData.tokensGrowth)} 环比
@@ -1148,7 +1443,11 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.sessionGrowth > 0 ? styles.negative : styles.positive
+              metricData.sessionGrowth > 0
+                ? styles.negative
+                : metricData.sessionGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
             {formatChange(metricData.sessionGrowth)} 环比
@@ -1161,7 +1460,11 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              metricData.callsGrowth > 0 ? styles.negative : styles.positive
+              metricData.callsGrowth > 0
+                ? styles.negative
+                : metricData.callsGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
             {formatChange(metricData.callsGrowth)} 环比
@@ -1175,7 +1478,11 @@ export default function BusinessOverviewPage() {
           </div>
           <div
             className={`${styles.metricChange} ${
-              growthStats.avgDurationGrowth > 0 ? styles.negative : styles.positive
+              growthStats.avgDurationGrowth > 0
+                ? styles.negative
+                : growthStats.avgDurationGrowth < 0
+                ? styles.positive
+                : styles.neutral
             }`}
           >
             {formatChange(growthStats.avgDurationGrowth)} 环比
@@ -1217,7 +1524,37 @@ export default function BusinessOverviewPage() {
       <Row gutter={[16, 16]} className={styles.userRow}>
         <Col xs={24} lg={12}>
           <div className={styles.userCardScroll}>
-            <div className={styles.cardTitle}>调用数排行榜</div>
+            <div className={styles.cardTitleRow}>
+              <span className={styles.cardTitle}>调用数排行榜</span>
+              <div className={styles.filterTab}>
+                <span
+                  className={callsFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (callsFilterType !== "filtered") {
+                      setCallsFilterType("filtered");
+                      setCallsUsers([]);
+                      setCallsPage(1);
+                      setCallsHasMore(true);
+                    }
+                  }}
+                >
+                  已过滤
+                </span>
+                <span
+                  className={callsFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (callsFilterType !== "all") {
+                      setCallsFilterType("all");
+                      setCallsUsers([]);
+                      setCallsPage(1);
+                      setCallsHasMore(true);
+                    }
+                  }}
+                >
+                  全部
+                </span>
+              </div>
+            </div>
             <div
               className={styles.userListScroll}
               onScroll={handleCallsScroll}
@@ -1234,7 +1571,37 @@ export default function BusinessOverviewPage() {
         </Col>
         <Col xs={24} lg={12}>
           <div className={styles.userCardScroll}>
-            <div className={styles.cardTitle}>最近活跃用户</div>
+            <div className={styles.cardTitleRow}>
+              <span className={styles.cardTitle}>最近活跃用户</span>
+              <div className={styles.filterTab}>
+                <span
+                  className={activeFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (activeFilterType !== "filtered") {
+                      setActiveFilterType("filtered");
+                      setActiveUsers([]);
+                      setActivePage(1);
+                      setActiveHasMore(true);
+                    }
+                  }}
+                >
+                  已过滤
+                </span>
+                <span
+                  className={activeFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                  onClick={() => {
+                    if (activeFilterType !== "all") {
+                      setActiveFilterType("all");
+                      setActiveUsers([]);
+                      setActivePage(1);
+                      setActiveHasMore(true);
+                    }
+                  }}
+                >
+                  全部
+                </span>
+              </div>
+            </div>
             <div
               className={styles.userListScroll}
               onScroll={handleActiveScroll}
@@ -1251,28 +1618,40 @@ export default function BusinessOverviewPage() {
         </Col>
       </Row>
 
-      {/* 热门技能和工具 */}
+      {/* 技能和MCP服务调用排行榜 */}
       <Row gutter={[16, 16]} className={styles.skillRow}>
         <Col xs={24} lg={12}>
-          <div className={styles.skillCard}>
-            <div className={styles.cardTitle}>热门技能 Top5</div>
-            {renderBarChart(
-              (overviewStats?.top_skills || []).slice(0, 5).map((s: any) => ({
-                name: s.skill_name,
-                value: s.count
-              })),
-            )}
+          <div className={styles.userCardScroll}>
+            <div className={styles.cardTitle}>技能调用排行榜</div>
+            <div
+              className={styles.userListScroll}
+              onScroll={handleSkillsScroll}
+            >
+              {renderSkillList(skills)}
+              {skillsLoading && skillsHasMore && (
+                <div className={styles.loadingMore}>加载中...</div>
+              )}
+              {!skillsLoading && !skillsHasMore && skills.length > 0 && (
+                <div className={styles.noMoreData}>已加载全部</div>
+              )}
+            </div>
           </div>
         </Col>
         <Col xs={24} lg={12}>
-          <div className={styles.skillCard}>
-            <div className={styles.cardTitle}>热门MCP服务 Top5</div>
-            {renderBarChart(
-              (overviewStats?.mcp_servers || []).slice(0, 5).map((s: any) => ({
-                name: s.server_name,
-                value: s.total_calls
-              })),
-            )}
+          <div className={styles.userCardScroll}>
+            <div className={styles.cardTitle}>MCP服务调用排行榜</div>
+            <div
+              className={styles.userListScroll}
+              onScroll={handleMcpScroll}
+            >
+              {renderMcpList(mcpServers)}
+              {mcpLoading && mcpHasMore && (
+                <div className={styles.loadingMore}>加载中...</div>
+              )}
+              {!mcpLoading && !mcpHasMore && mcpServers.length > 0 && (
+                <div className={styles.noMoreData}>已加载全部</div>
+              )}
+            </div>
           </div>
         </Col>
       </Row>
@@ -1360,6 +1739,19 @@ export default function BusinessOverviewPage() {
         onClose={() => {
           setModalOpen(false);
           setSelectedUserId(null);
+        }}
+      />
+
+      {/* 技能详情弹窗 */}
+      <SkillDetailModal
+        open={skillModalOpen}
+        skillName={selectedSkillName}
+        startDate={startDate.format("YYYY-MM-DD")}
+        endDate={calculatedEndDate.format("YYYY-MM-DD")}
+        sourceId={platform}
+        onClose={() => {
+          setSkillModalOpen(false);
+          setSelectedSkillName("");
         }}
       />
     </div>

@@ -4,6 +4,7 @@
 Tests set/get/reset behavior for tenant, user, and workspace contextvars,
 as well as the strict helpers that raise when context is missing.
 """
+
 import sys
 from pathlib import Path
 

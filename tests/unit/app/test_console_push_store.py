@@ -3,6 +3,7 @@
 
 Tests that messages are isolated by tenant and do not leak across tenants.
 """
+
 import asyncio
 import importlib.util
 import sys

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for Monitor cron query API."""
+
 import pytest
 
 from monitor.app.models.cron import (

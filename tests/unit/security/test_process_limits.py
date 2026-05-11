@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for tenant-scoped process limit policy resolution."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -107,9 +108,12 @@ def test_resolve_current_process_limit_policy_uses_current_tenant_config(
         memory_max_mb=256,
     )
 
-    with patch("swe.constant.WORKING_DIR", tmp_path), patch(
-        "swe.config.utils.WORKING_DIR",
-        tmp_path,
+    with (
+        patch("swe.constant.WORKING_DIR", tmp_path),
+        patch(
+            "swe.config.utils.WORKING_DIR",
+            tmp_path,
+        ),
     ):
         with tenant_context(tenant_id="tenant-b"):
             shell_policy = resolve_current_process_limit_policy("shell")
@@ -136,10 +140,14 @@ def test_resolved_policy_builds_unix_preexec_fn(tmp_path: Path) -> None:
         memory_max_mb=64,
     )
 
-    with patch("swe.constant.WORKING_DIR", tmp_path), patch(
-        "swe.config.utils.WORKING_DIR",
-        tmp_path,
-    ), patch("swe.security.process_limits.sys.platform", "linux"):
+    with (
+        patch("swe.constant.WORKING_DIR", tmp_path),
+        patch(
+            "swe.config.utils.WORKING_DIR",
+            tmp_path,
+        ),
+        patch("swe.security.process_limits.sys.platform", "linux"),
+    ):
         with tenant_context(tenant_id="tenant-a"):
             policy = resolve_current_process_limit_policy("shell")
 
@@ -169,10 +177,14 @@ def test_shell_policy_skips_memory_rlimit_on_macos(tmp_path: Path) -> None:
         memory_max_mb=64,
     )
 
-    with patch("swe.constant.WORKING_DIR", tmp_path), patch(
-        "swe.config.utils.WORKING_DIR",
-        tmp_path,
-    ), patch("swe.security.process_limits.sys.platform", "darwin"):
+    with (
+        patch("swe.constant.WORKING_DIR", tmp_path),
+        patch(
+            "swe.config.utils.WORKING_DIR",
+            tmp_path,
+        ),
+        patch("swe.security.process_limits.sys.platform", "darwin"),
+    ):
         with tenant_context(tenant_id="tenant-a"):
             policy = resolve_current_process_limit_policy("shell")
 
@@ -202,10 +214,14 @@ def test_resolved_policy_reports_unsupported_platform(tmp_path: Path) -> None:
         memory_max_mb=32,
     )
 
-    with patch("swe.constant.WORKING_DIR", tmp_path), patch(
-        "swe.config.utils.WORKING_DIR",
-        tmp_path,
-    ), patch("swe.security.process_limits.sys.platform", "win32"):
+    with (
+        patch("swe.constant.WORKING_DIR", tmp_path),
+        patch(
+            "swe.config.utils.WORKING_DIR",
+            tmp_path,
+        ),
+        patch("swe.security.process_limits.sys.platform", "win32"),
+    ):
         with tenant_context(tenant_id="tenant-a"):
             policy = resolve_current_process_limit_policy("shell")
 

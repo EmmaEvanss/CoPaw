@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for tenant model API endpoints."""
+
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock

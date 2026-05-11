@@ -2,6 +2,7 @@
 # pylint: disable=too-many-branches
 # mypy: ignore-errors
 """ReMeLight-backed memory manager for SWE agents."""
+
 import importlib
 import importlib.metadata
 import json

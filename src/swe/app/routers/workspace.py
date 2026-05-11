@@ -29,7 +29,6 @@ from ..workspace.file_broadcast import (
     FileBroadcastService,
 )
 
-
 router = APIRouter(prefix="/workspace", tags=["workspace"])
 
 
@@ -298,8 +297,9 @@ async def broadcast_workspace_files(
     # Resolve tenant working dir the same way as skill broadcast:
     # use effective_tenant_id (handles source_id → default_{source_id})
     # and get_tenant_working_dir_strict to get the tenant root.
-    tenant_id = getattr(request.state, "tenant_id", None)
-    source_id = getattr(request.state, "source_id", None)
+    tenant_id = str(getattr(request.state, "tenant_id", None) or "default")
+    raw_source_id = getattr(request.state, "source_id", None)
+    source_id = str(raw_source_id) if raw_source_id else None
     effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
     source_working_dir = get_tenant_working_dir_strict(effective_tenant_id)
 

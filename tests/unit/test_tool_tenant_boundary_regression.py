@@ -5,6 +5,7 @@
 These tests confirm that search and media tools cannot read or enumerate
 sibling tenant directories.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,7 +18,6 @@ from swe.config.context import tenant_context
 from swe.agents.tools.file_search import grep_search, glob_search
 from swe.agents.tools.view_media import view_image, view_video
 from swe.agents.tools.send_file import send_file_to_user
-
 
 # =============================================================================
 # Fixtures

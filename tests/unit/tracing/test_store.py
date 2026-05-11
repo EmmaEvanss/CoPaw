@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for TraceStore."""
+
 # pylint: disable=protected-access,redefined-outer-name,unused-variable
 
 from datetime import datetime, timedelta

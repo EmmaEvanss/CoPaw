@@ -706,10 +706,13 @@ class ShellBackupWorker:
                         dest_path.mkdir(parents=True, exist_ok=True)
                     else:
                         dest_path.parent.mkdir(parents=True, exist_ok=True)
-                        with zf.open(member) as source, open(
-                            dest_path,
-                            "wb",
-                        ) as target:
+                        with (
+                            zf.open(member) as source,
+                            open(
+                                dest_path,
+                                "wb",
+                            ) as target,
+                        ):
                             target.write(source.read())
 
         await asyncio.to_thread(_do_extract)

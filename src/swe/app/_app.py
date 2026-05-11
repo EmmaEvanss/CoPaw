@@ -317,31 +317,6 @@ async def lifespan(
             traceback.format_exc(),
         )
 
-    # --- Initialize Elasticsearch client for model output storage ---
-    es_client = None
-    try:
-        from ..elasticsearch import get_elasticsearch_config, init_es_client
-
-        es_config = get_elasticsearch_config()
-        if es_config.host:
-            es_client = init_es_client(es_config)
-            if es_client:
-                await es_client.connect()
-                if es_client.is_connected:
-                    logger.info("Elasticsearch client connected")
-                else:
-                    logger.warning("Elasticsearch client failed to connect")
-        else:
-            logger.info("Elasticsearch is disabled (no host configured)")
-    except Exception as e:
-        import traceback
-
-        logger.warning(
-            "Failed to initialize Elasticsearch client: %s\n%s",
-            e,
-            traceback.format_exc(),
-        )
-
     # --- Initialize instance module config---
     # from .instance.router import init_instance_module
 
@@ -402,14 +377,6 @@ async def lifespan(
                 logger.info("Database connection closed")
             except Exception as e:
                 logger.warning("Error closing database connection: %s", e)
-
-        # Close Elasticsearch client
-        if es_client:
-            try:
-                await es_client.close()
-                logger.info("Elasticsearch client closed")
-            except Exception as e:
-                logger.warning("Error closing Elasticsearch client: %s", e)
 
         # 停止服务心跳并发送关闭信号
         await stop_service_heartbeat()

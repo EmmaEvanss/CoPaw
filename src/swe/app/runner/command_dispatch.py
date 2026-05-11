@@ -3,6 +3,7 @@
 
 Yields (Msg, last) compatible with query_handler stream.
 """
+
 from __future__ import annotations
 
 import logging

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Integrated tests for SWE app startup and console."""
+
 # pylint:disable=consider-using-with
 from __future__ import annotations
 

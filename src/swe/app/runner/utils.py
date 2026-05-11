@@ -181,9 +181,9 @@ def _build_media_message_from_block(
                             "image/jpeg",
                         )
                         base64_data = source.get("data", "")
-                        kwargs[
-                            "image_url"
-                        ] = f"data:{media_type};base64,{base64_data}"
+                        kwargs["image_url"] = (
+                            f"data:{media_type};base64,{base64_data}"
+                        )
                     media_message.add_content(
                         new_content=ImageContent(
                             delta=False,
@@ -221,9 +221,9 @@ def _build_media_message_from_block(
                     ):
                         media_type = source.get("media_type")
                         base64_data = source.get("data", "")
-                        kwargs[
-                            "data"
-                        ] = f"data:{media_type};base64,{base64_data}"
+                        kwargs["data"] = (
+                            f"data:{media_type};base64,{base64_data}"
+                        )
                         kwargs["format"] = media_type
                     media_message.add_content(
                         new_content=AudioContent(
@@ -252,9 +252,9 @@ def _build_media_message_from_block(
                             "video/mp4",
                         )
                         base64_data = source.get("data", "")
-                        kwargs[
-                            "video_url"
-                        ] = f"data:{media_type};base64,{base64_data}"
+                        kwargs["video_url"] = (
+                            f"data:{media_type};base64,{base64_data}"
+                        )
                     media_message.add_content(
                         new_content=VideoContent(
                             delta=False,
@@ -282,9 +282,9 @@ def _build_media_message_from_block(
                             "application/octet-stream",
                         )
                         base64_data = source.get("data", "")
-                        kwargs[
-                            "file_url"
-                        ] = f"data:{media_type};base64,{base64_data}"
+                        kwargs["file_url"] = (
+                            f"data:{media_type};base64,{base64_data}"
+                        )
                     elif isinstance(source, str):
                         kwargs["file_url"] = _resolve_content_url(
                             source,

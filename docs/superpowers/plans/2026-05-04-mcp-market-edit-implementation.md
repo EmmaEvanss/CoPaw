@@ -705,4 +705,3 @@ git commit -m "feat(market): add mcp metadata edit flow"
 - 前端统一使用 `MarketMCPDetail`
 - API 方法统一命名为 `updateMarketMCPMetadata`
 - 后端 schema 统一命名为 `UpdateMarketMCPMetadataRequest`
-

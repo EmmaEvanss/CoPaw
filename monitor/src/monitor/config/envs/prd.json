@@ -10,5 +10,10 @@
   "MONITOR_DB_MIN_CONN": "2",
   "MONITOR_DB_MAX_CONN": "10",
   "MONITOR_MONITOR_INTERVAL": "30",
-  "MONITOR_ALERT_ENABLED": "true"
+  "MONITOR_ALERT_ENABLED": "true",
+  "ES_HOST": "",
+  "ES_PORT": "9200",
+  "ES_USER": "",
+  "ES_ACCESS": "",
+  "ES_INDEX": "swe_model_outputs"
 }

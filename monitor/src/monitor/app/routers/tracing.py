@@ -5,11 +5,14 @@
 提供运营看板的数据查询和导出 API 端点。
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Request
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 
 from ..models.tracing import (
     OverviewStats,
@@ -17,8 +20,10 @@ from ..models.tracing import (
     TraceDetailWithTimeline,
     SessionStats,
     UserStats,
+    ModelOutputRequest,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
+from ..database import get_es_client
 
 
 def _get_source_id(
@@ -146,6 +151,11 @@ async def get_users(
         None,
         description="排序字段: conversations, last_active",
     ),
+    filter_user_type: Optional[str] = Query(
+        "filtered",
+        description="用户过滤类型: filtered(过滤80/IT开头用户), all(仅过滤default用户)",
+    ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户列表及其统计信息.
 
@@ -157,6 +167,7 @@ async def get_users(
         start_date: 开始日期筛选
         end_date: 结束日期筛选
         sort_by: 排序字段（conversations, last_active）
+        filter_user_type: 用户过滤类型（filtered/all）
 
     Returns:
         分页的用户列表及统计信息
@@ -175,6 +186,8 @@ async def get_users(
         start,
         end,
         sort_by,
+        filter_user_type,
+        bbk_id,
     )
     return {
         "items": [u.model_dump() for u in users],
@@ -235,6 +248,7 @@ async def get_traces(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取对话列表.
 
@@ -266,6 +280,7 @@ async def get_traces(
         status=status,
         start_date=start,
         end_date=end,
+        bbk_id=bbk_id,
     )
     return {
         "items": [t.model_dump() for t in traces],
@@ -361,6 +376,7 @@ async def get_sessions(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取会话列表及其统计信息.
 
@@ -390,6 +406,7 @@ async def get_sessions(
         session_id=session_id,
         start_date=start,
         end_date=end,
+        bbk_id=bbk_id,
     )
     return {
         "items": [s.model_dump() for s in sessions],
@@ -458,6 +475,7 @@ async def get_user_messages(
         None,
         description="搜索用户消息内容",
     ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户消息列表（含 Token 信息）.
 
@@ -492,6 +510,7 @@ async def get_user_messages(
         end_date=end,
         query_text=query,
         export=False,
+        bbk_id=bbk_id,
     )
     return {
         "items": [m.model_dump() for m in messages],
@@ -524,6 +543,7 @@ async def export_user_messages(
         description="导出格式: csv, json 或 xlsx",
         alias="format",
     ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> StreamingResponse:
     """导出用户消息.
 
@@ -553,6 +573,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
+            bbk_id=bbk_id,
         )
     if export_format == "xlsx":
         return await export_service.export_user_messages_xlsx(
@@ -562,6 +583,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
+            bbk_id=bbk_id,
         )
     return await export_service.export_user_messages_csv(
         source_id=actual_source_id,
@@ -570,6 +592,7 @@ async def export_user_messages(
         start_date=start,
         end_date=end,
         query_text=query,
+        bbk_id=bbk_id,
     )
 
 
@@ -671,6 +694,11 @@ async def get_growth_stats(
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
+    if start is None or end is None:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date and end_date are required",
+        )
 
     return await service.get_growth_stats(
         actual_source_id,
@@ -788,31 +816,100 @@ async def get_tool_usage(
 @router.get("/skills", response_model=dict)
 async def get_skill_usage(
     request: Request,
-    source_id: Optional[str] = Query(None, description="数据源标识"),
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量"),
     start_date: Optional[str] = Query(
         None,
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
 ) -> dict:
-    """获取技能使用统计.
+    """获取技能调用排行榜（分页）.
 
     Args:
-        source_id: 数据源标识（可选，默认从请求头获取）
+        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+        page: 页码
+        page_size: 每页数量
         start_date: 开始日期筛选
         end_date: 结束日期筛选
 
     Returns:
-        技能使用统计
+        分页的技能调用排行榜
     """
-    actual_source_id = _get_source_id(request, source_id)
+    actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await service.get_overview_stats(actual_source_id, start, end)
-    return {"skills": [s.model_dump() for s in stats.top_skills]}
+    skills, total = await service.get_skills_paginated(
+        actual_source_id,
+        page,
+        page_size,
+        start,
+        end,
+    )
+    return {
+        "items": [s.model_dump() for s in skills],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/skills/{skill_name}/traces", response_model=dict)
+async def get_skill_traces(
+    skill_name: str,
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+) -> dict:
+    """获取指定技能调用的对话列表（分页）.
+
+    Args:
+        skill_name: 技能名称
+        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+        page: 页码
+        page_size: 每页数量
+        start_date: 开始日期筛选
+        end_date: 结束日期筛选
+
+    Returns:
+        分页的对话列表
+    """
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    traces, total = await service.get_skill_traces(
+        skill_name,
+        actual_source_id,
+        page,
+        page_size,
+        start,
+        end,
+    )
+    return {
+        "items": [t.model_dump() for t in traces],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # ===== MCP 使用 =====
@@ -821,31 +918,84 @@ async def get_skill_usage(
 @router.get("/mcp", response_model=dict)
 async def get_mcp_usage(
     request: Request,
-    source_id: Optional[str] = Query(None, description="数据源标识"),
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量"),
     start_date: Optional[str] = Query(
         None,
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
 ) -> dict:
-    """获取 MCP 工具和服务器使用统计.
+    """获取 MCP 服务调用排行榜（分页）.
 
     Args:
-        source_id: 数据源标识（可选，默认从请求头获取）
+        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+        page: 页码
+        page_size: 每页数量
         start_date: 开始日期筛选
         end_date: 结束日期筛选
 
     Returns:
-        MCP 使用统计
+        分页的 MCP 服务调用排行榜
     """
-    actual_source_id = _get_source_id(request, source_id)
+    actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await service.get_overview_stats(actual_source_id, start, end)
+    servers, total = await service.get_mcp_servers_paginated(
+        actual_source_id,
+        page,
+        page_size,
+        start,
+        end,
+    )
     return {
-        "mcp_tools": [t.model_dump() for t in stats.top_mcp_tools],
-        "mcp_servers": [s.model_dump() for s in stats.mcp_servers],
+        "items": [s.model_dump() for s in servers],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
+
+
+# ===== Model Output 写入 =====
+
+
+@router.post("/model-output")
+async def index_model_output(
+    request: Request,
+    body: ModelOutputRequest,
+):
+    """写入 model_output 到 ES.
+
+    由 SWE 服务调用，将 model_output 写入 Elasticsearch。
+
+    Args:
+        body: 包含 trace_id 和 model_output
+
+    Returns:
+        写入结果
+    """
+    es_client = get_es_client()
+    if es_client is None or not es_client.is_connected:
+        # ES 未配置，静默跳过（与原 SWE 行为一致）
+        logger.info("ES not configured, skipping model_output write")
+        return {"status": "skipped", "reason": "ES not configured"}
+
+    try:
+        success = await es_client.index_message(
+            body.trace_id,
+            body.model_output,
+        )
+        if success:
+            return {"status": "success"}
+        else:
+            return {"status": "failed"}
+    except Exception as e:
+        logger.warning("Failed to write model_output: %s", e)
+        return {"status": "failed", "error": str(e)}

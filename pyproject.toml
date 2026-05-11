@@ -105,5 +105,8 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 
+[tool.pylint.refactoring]
+max-nested-blocks = 5
+
 [tool.pylint.'CLASSES']
 max-public-methods = 25

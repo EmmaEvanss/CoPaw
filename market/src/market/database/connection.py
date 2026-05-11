@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """异步 MySQL 连接池."""
+
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional

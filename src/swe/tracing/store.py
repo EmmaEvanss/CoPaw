@@ -714,13 +714,14 @@ class TraceStore:
                       AND user_id != 'default'
                 """
                 row = await self.db.fetch_one(query, (source_id, s, e))
+            stats_row = row or {}
             return {
-                "calls": row["calls"] or 0,
-                "tokens": row["tokens"] or 0,
-                "sessions": row["sessions"] or 0,
-                "users": row["users"] or 0,
-                "platforms": row["platforms"] or 0,
-                "avg_duration": float(row["avg_duration"] or 0),
+                "calls": stats_row.get("calls") or 0,
+                "tokens": stats_row.get("tokens") or 0,
+                "sessions": stats_row.get("sessions") or 0,
+                "users": stats_row.get("users") or 0,
+                "platforms": stats_row.get("platforms") or 0,
+                "avg_duration": float(stats_row.get("avg_duration") or 0),
             }
 
         curr = await get_stats(start_date, end_date)

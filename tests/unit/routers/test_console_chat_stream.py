@@ -151,6 +151,10 @@ def test_generated_files_returns_chat_files_sorted_by_time(
     assert desc_response.status_code == 200
     desc_files = desc_response.json()["files"]
     assert [item["name"] for item in desc_files] == ["new", "old.txt"]
+    assert [item["display_name"] for item in desc_files] == [
+        "new",
+        "old.txt",
+    ]
     assert [item["source"] for item in desc_files] == [
         "uploaded",
         "generated",
@@ -239,4 +243,40 @@ def test_generated_files_uses_console_channel_media_dir(
     files = response.json()["files"]
     assert len(files) == 1
     assert files[0]["name"] == "uploaded.txt"
+    assert files[0]["display_name"] == "uploaded.txt"
     assert files[0]["source"] == "uploaded"
+
+
+def test_generated_files_hides_uploaded_uuid_prefix(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app = FastAPI()
+    app.include_router(console_router.router)
+
+    media_dir = tmp_path / "media"
+    media_dir.mkdir()
+    stored_name = "5b2dc838632e4be48f1fd39a08f50bb6_report.txt"
+    uploaded_file = media_dir / stored_name
+    uploaded_file.write_text("uploaded", encoding="utf-8")
+
+    workspace = SimpleNamespace(workspace_dir=tmp_path)
+
+    async def _fake_get_agent_for_request(_request):
+        return workspace
+
+    monkeypatch.setattr(
+        console_router,
+        "get_agent_for_request",
+        _fake_get_agent_for_request,
+    )
+
+    client = TestClient(app)
+    response = client.get("/console/generated-files?source=uploaded")
+
+    assert response.status_code == 200
+    files = response.json()["files"]
+    assert len(files) == 1
+    assert files[0]["name"] == stored_name
+    assert files[0]["display_name"] == "report.txt"
+    assert files[0]["file_url"].endswith(stored_name)

@@ -7,6 +7,7 @@ This module provides utilities for:
 - Managing download directories
 - Reading text files with encoding fallback for cross-platform compatibility
 """
+
 import os
 import mimetypes
 import base64

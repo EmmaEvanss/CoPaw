@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for skill_feature_extractor module."""
+
 # pylint: disable=protected-access, redefined-outer-name
 
 import pytest

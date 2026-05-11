@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """管理员市场 API."""
+
 import asyncio
 import io
 import json

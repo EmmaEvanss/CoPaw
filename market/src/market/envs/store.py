@@ -7,6 +7,7 @@ Persistence strategy (two layers):
 2. **os.environ** – injected into the current Python process so that
    ``os.getenv()`` and child subprocesses can read them immediately.
 """
+
 from __future__ import annotations
 
 import json

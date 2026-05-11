@@ -11,7 +11,6 @@ from src.swe.app.mcp.stateful_client import (
     _call_with_timeout_refresh,
 )
 
-
 # ---------------------------------------------------------------------------
 # _call_with_timeout_refresh unit tests
 # ---------------------------------------------------------------------------
@@ -191,12 +190,15 @@ class TestProgressCallbacksInjectionCleanup:
 
         meta = {"progressToken": "test@abc-123"}
 
-        with patch(
-            "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
-            0.1,
-        ), patch(
-            "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
-            0.0,
+        with (
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
+                0.1,
+            ),
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
+                0.0,
+            ),
         ):
             await client.call_tool("my_tool", meta=meta)
 
@@ -225,12 +227,15 @@ class TestProgressCallbacksInjectionCleanup:
 
         meta = {"progressToken": "test@timeout-123"}
 
-        with patch(
-            "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
-            0.05,
-        ), patch(
-            "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
-            0.0,
+        with (
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
+                0.05,
+            ),
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
+                0.0,
+            ),
         ):
             with pytest.raises(asyncio.TimeoutError):
                 await client.call_tool("my_tool", meta=meta)
@@ -250,12 +255,15 @@ class TestProgressCallbacksInjectionCleanup:
         client.on_progress_callback = None
         client._validate_connection = MagicMock()
 
-        with patch(
-            "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
-            0.1,
-        ), patch(
-            "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
-            0.0,
+        with (
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
+                0.1,
+            ),
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
+                0.0,
+            ),
         ):
             await client.call_tool("my_tool")
 
@@ -353,12 +361,15 @@ class TestOnProgressCallback:
 
         meta = {"progressToken": "test@cb-123"}
 
-        with patch(
-            "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
-            0.1,
-        ), patch(
-            "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
-            0.0,
+        with (
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_PER_NOTIFICATION_TIMEOUT",
+                0.1,
+            ),
+            patch(
+                "src.swe.app.mcp.stateful_client.MCP_MAX_TOTAL_TIMEOUT",
+                0.0,
+            ),
         ):
             # Simulate a progress notification after a short delay
             async def _call_and_notify(*_a, **_kw):

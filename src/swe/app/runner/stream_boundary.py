@@ -23,7 +23,6 @@ from ...agents.utils.tool_summary import (
     generate_tool_output_summary,
 )
 
-
 logger = logging.getLogger(__name__)
 
 _STREAM_SUMMARY_TIMEOUT_SECONDS = 0.15

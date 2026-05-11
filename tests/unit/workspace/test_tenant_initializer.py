@@ -3,6 +3,7 @@
 
 Tests tenant directory initialization, idempotency, and runtime integration.
 """
+
 import json
 import sys
 from pathlib import Path

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant env lookup regression tests."""
+
 from swe.config.utils import get_tenant_env
 
 

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for CLI --agent-id parameter support."""
+
 import json
 import tempfile
 from pathlib import Path

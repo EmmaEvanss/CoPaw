@@ -19,6 +19,7 @@ export const CHANNEL_LABELS: Record<string, string> = {
   wecom: "WeCom",
   xiaoyi: "XiaoYi",
   weixin: "WeChat",
+  zhaohu: "Zhaohu",
 };
 
 function formatCustomChannelKey(key: string): string {

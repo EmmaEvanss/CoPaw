@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Allow running Market via ``python -m market``."""
+
 from .cli.main import cli
 
 if __name__ == "__main__":

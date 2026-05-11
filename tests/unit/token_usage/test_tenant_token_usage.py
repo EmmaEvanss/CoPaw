@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Token usage tenant isolation regression tests."""
+
 from __future__ import annotations
 
 import asyncio

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Chat management API."""
+
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
@@ -16,7 +17,6 @@ from .models import (
 )
 from .utils import agentscope_msg_to_message
 from ..approvals import get_approval_service
-
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 TASK_MESSAGES_STATE_KEY = "task_messages"

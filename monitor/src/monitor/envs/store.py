@@ -6,6 +6,7 @@ Persistence strategy (two layers):
 1. **envs.json** – canonical store, survives process restarts.
 2. **os.environ** – injected into the current Python process.
 """
+
 from __future__ import annotations
 
 import json

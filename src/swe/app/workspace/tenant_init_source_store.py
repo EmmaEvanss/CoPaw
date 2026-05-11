@@ -129,6 +129,40 @@ class TenantInitSourceStore:
             )
             return []
 
+    async def is_tenant_source(
+        self,
+        tenant_id: str,
+        expected_source_id: str,
+    ) -> bool:
+        """判断租户是否属于指定来源。
+
+        Args:
+            tenant_id: 租户标识。
+            expected_source_id: 期望的来源标识。
+
+        Returns:
+            如果租户在 swe_tenant_init_source 表中存在对应的 source_id 记录则返回 True。
+        """
+        if not self._use_db:
+            return False
+        query = (
+            "SELECT 1 FROM swe_tenant_init_source "
+            "WHERE tenant_id = %s AND source_id = %s LIMIT 1"
+        )
+        try:
+            row = await self.db.fetch_one(
+                query,
+                (tenant_id, expected_source_id),
+            )
+            return row is not None
+        except Exception as e:
+            logger.warning(
+                "Failed to check source for tenant=%s: %s",
+                tenant_id,
+                e,
+            )
+            return False
+
     async def get_by_source(self, source_id: str) -> list[dict]:
         """Query all tenants initialized from a given source.
 
@@ -190,6 +224,79 @@ class TenantInitSourceStore:
             logger.warning(f"Failed to query all init_source mappings: {e}")
             return [], 0
 
+    async def get_by_tenant_prefix(
+        self,
+        prefixes: list[str],
+    ) -> list[dict]:
+        """Query tenants whose tenant_id starts with given prefixes.
+
+        Args:
+            prefixes: List of prefixes to filter (e.g., ["80", "0", "IT"]).
+
+        Returns:
+            List of dicts with tenant_id, source_id, tenant_name, bbk_id.
+        """
+        if not self._use_db or not prefixes:
+            return []
+
+        # 构建 OR 条件
+        conditions = " OR ".join([f"tenant_id LIKE '{p}%'" for p in prefixes])
+        query = (
+            "SELECT tenant_id, source_id, tenant_name, bbk_id, init_source "
+            "FROM swe_tenant_init_source WHERE " + conditions
+        )
+        try:
+            rows = await self.db.fetch_all(query)
+            return list(rows)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query tenants by prefixes {prefixes}: {e}",
+            )
+            return []
+
+    async def update_tenant_info(
+        self,
+        tenant_id: str,
+        source_id: str,
+        tenant_name: str | None = None,
+        bbk_id: str | None = None,
+    ) -> bool:
+        """Update tenant_name and bbk_id for a tenant-source combination.
+
+        Args:
+            tenant_id: The tenant identifier.
+            source_id: The source identifier.
+            tenant_name: The tenant name to update (optional).
+            bbk_id: The BBK ID to update (optional).
+
+        Returns:
+            True if update succeeded, False otherwise.
+        """
+        if not self._use_db:
+            return False
+
+        try:
+            query = (
+                "UPDATE swe_tenant_init_source "
+                "SET tenant_name = %s, bbk_id = %s "
+                "WHERE tenant_id = %s AND source_id = %s"
+            )
+            await self.db.execute(
+                query,
+                (tenant_name, bbk_id, tenant_id, source_id),
+            )
+            logger.info(
+                f"Updated tenant info: tenant={tenant_id}, "
+                f"source={source_id}, tenant_name={tenant_name}, "
+                f"bbk_id={bbk_id}",
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to update tenant info for {tenant_id}: {e}",
+            )
+            return False
+
 
 def init_tenant_init_source_module(db=None) -> None:
     """Initialize tenant init source module with database connection.
@@ -218,3 +325,24 @@ def get_tenant_init_source_store() -> Optional["TenantInitSourceStore"]:
         The store instance, or None if not initialized.
     """
     return _store
+
+
+async def is_tenant_source(
+    tenant_id: str,
+    expected_source_id: str,
+) -> bool:
+    """判断租户是否属于指定来源的便捷函数。
+
+    内部调用 TenantInitSourceStore.is_tenant_source，store 为 None 时返回 False。
+
+    Args:
+        tenant_id: 租户标识。
+        expected_source_id: 期望的来源标识。
+
+    Returns:
+        如果租户在 swe_tenant_init_source 表中存在对应的 source_id 记录则返回 True。
+    """
+    store = get_tenant_init_source_store()
+    if store is None:
+        return False
+    return await store.is_tenant_source(tenant_id, expected_source_id)

@@ -25,7 +25,6 @@ from swe.providers.provider import ModelInfo
 from swe.providers.provider_manager import ProviderManager
 from swe.tenant_models.manager import TenantModelManager
 
-
 LEGACY_PROVIDER = {
     "providers": {
         "modelscope": {

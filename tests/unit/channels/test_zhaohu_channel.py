@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for Zhaohu channel case2 non-streaming handling."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -17,7 +18,6 @@ from agentscope_runtime.engine.schemas.agent_schemas import (
 )
 
 from swe.app.channels.zhaohu.channel import ZhaohuChannel
-
 
 # ---------------------------------------------------------------------------
 # Helpers

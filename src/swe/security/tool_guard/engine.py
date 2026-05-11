@@ -15,6 +15,7 @@ Usage::
 Custom guardians can be registered at construction time or later via
 :meth:`register_guardian`.
 """
+
 from __future__ import annotations
 
 import logging

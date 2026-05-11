@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant isolation tests for console push message API."""
+
 import importlib.util
 import sys
 import types

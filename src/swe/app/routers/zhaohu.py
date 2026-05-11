@@ -4,6 +4,7 @@
 Exports ``zhaohu_router`` with Zhaohu callback endpoint:
 ``/api/zhaohu/callback`` - receives inbound messages from Zhaohu platform.
 """
+
 from __future__ import annotations
 
 import logging

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for Monitor cron export service."""
+
 import pytest
 from datetime import datetime, timezone
 

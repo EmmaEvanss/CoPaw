@@ -6,6 +6,7 @@
 Tests workspace loading from pool, request.state binding,
 and context reset after response.
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch

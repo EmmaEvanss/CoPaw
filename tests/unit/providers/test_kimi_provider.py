@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-outer-name,unused-argument,protected-access,wrong-import-position
 """Tests for the Kimi built-in providers."""
+
 from __future__ import annotations
 
 import sys
@@ -21,7 +22,6 @@ from swe.providers.capability_baseline import ExpectedCapabilityRegistry
 from swe.providers.openai_provider import OpenAIProvider
 from swe.providers.provider import ModelInfo
 from swe.providers.provider_manager import ProviderManager
-
 
 KIMI_MODEL_IDS = [
     "kimi-k2.5",

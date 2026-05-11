@@ -24,6 +24,7 @@
     "help": "Help",
     "close": "Close",
     "actions": "Actions",
+    "search": "Search",
     "total": "Total {{count}}"
   },
   "nav": {
@@ -213,7 +214,7 @@
     "deleteSuccess": "Agent deleted successfully",
     "deleteFailed": "Failed to delete agent",
     "selectAgent": "Select Agent",
-    "defaultDisplayName": "小助 Claw",
+    "defaultDisplayName": "AI 伙伴",
     "currentWorkspace": "Current Agent",
     "switchSuccess": "Agent switched successfully",
     "switchFailed": "Failed to switch agent",
@@ -625,7 +626,7 @@
     "welcomeGreeting": "Welcome Greeting",
     "welcomeText": "Welcome Message",
     "welcomeTextTooltip": "Message automatically sent when a user enters a single chat session with the bot for the first time that day",
-    "welcomeTextPlaceholder": "e.g. Hello! I'm CoPaw. How can I help you?",
+    "welcomeTextPlaceholder": "e.g. Hello! I'm SWE. How can I help you?",
     "loginWeCom": "Authorize WeCom Bot via QR Code",
     "wecomAuthHint": "Click the button to open the WeCom QR code window. After scanning and confirming, Bot ID and Secret will be filled in automatically.",
     "wecomAuthSuccess": "WeCom bot authorized successfully",
@@ -655,7 +656,15 @@
     "weixinScanHint": "Scan the QR code with WeChat, then click Save",
     "weixinQrcodeFailed": "Failed to fetch QR code, please try again",
     "weixinLoginSuccess": "WeChat login successful, token has been filled in",
-    "weixinQrcodeExpired": "QR code expired, please get a new one"
+    "weixinQrcodeExpired": "QR code expired, please get a new one",
+    "distributeToTenants": "Distribute to Tenants",
+    "distributeTitle": "Distribute Channel Config to Tenants",
+    "distributeHint": "Distribute the current channel config to target tenants' default agent.",
+    "distributeOverwrite": "Overwrite existing values",
+    "distribute": "Distribute",
+    "distributeSuccess": "Distributed successfully to {{count}} tenant(s)",
+    "distributeFailed": "Distribution failed",
+    "distributePartialFailure": "Partial distribution failure"
   },
   "sessions": {
     "title": "Sessions",
@@ -1382,7 +1391,7 @@
     }
   },
   "login": {
-    "title": "Login to CoPaw",
+    "title": "Login to SWE",
     "registerTitle": "Create Account",
     "firstUserHint": "Create your admin account to get started",
     "usernamePlaceholder": "Username",

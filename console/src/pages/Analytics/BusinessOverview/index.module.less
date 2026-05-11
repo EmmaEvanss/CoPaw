@@ -369,6 +369,10 @@
     &.negative {
       color: #f5222d;
     }
+
+    &.neutral {
+      color: #8c8c8c;
+    }
   }
 
   .metricSubRow {
@@ -430,6 +434,7 @@
   height: 280px;
   position: relative;
   cursor: crosshair;
+  padding: 0 12px;
 }
 
 // 折线图悬浮 Tooltip
@@ -686,6 +691,45 @@
     margin-bottom: 12px;
     flex-shrink: 0;
   }
+
+  .cardTitleRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+
+    .cardTitle {
+      margin-bottom: 0;
+    }
+  }
+
+  .filterTab {
+    display: flex;
+    font-size: 12px;
+    border: 1px solid #e8e8e8;
+    border-radius: 4px;
+    overflow: hidden;
+
+    .filterTabItem {
+      padding: 4px 10px;
+      cursor: pointer;
+      color: #666;
+      background: #fff;
+      transition: all 0.2s;
+
+      &:hover {
+        color: #1677ff;
+      }
+    }
+
+    .filterTabActive {
+      padding: 4px 10px;
+      cursor: pointer;
+      color: #fff;
+      background: #1677ff;
+    }
+  }
 }
 
 .userListScroll {
@@ -713,7 +757,8 @@
 }
 
 .loadingMore,
-.noMoreData {
+.noMoreData,
+.emptyList {
   text-align: center;
   padding: 12px 0;
   font-size: 12px;

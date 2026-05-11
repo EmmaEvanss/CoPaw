@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant-scoped skill pool router tests."""
+
 import asyncio
 import importlib.util
 import json

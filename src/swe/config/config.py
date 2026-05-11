@@ -41,6 +41,16 @@ from ..constant import (
 from ..providers.models import ModelSlotConfig
 from ..tracing.config import TracingConfig
 
+LEGACY_DEFAULT_SYSTEM_PROMPT_FILES = (
+    "AGENTS.md",
+    "SOUL.md",
+    "PROFILE.md",
+)
+DEFAULT_SYSTEM_PROMPT_FILES = (
+    *LEGACY_DEFAULT_SYSTEM_PROMPT_FILES,
+    "MEMORY.md",
+)
+
 
 def generate_short_agent_id() -> str:
     """Generate a 6-character short UUID for agent identification.
@@ -49,6 +59,30 @@ def generate_short_agent_id() -> str:
         6-character short UUID string
     """
     return shortuuid.ShortUUID().random(length=6)
+
+
+def get_default_system_prompt_files() -> list[str]:
+    """Return the default workspace system prompt files."""
+    return list(DEFAULT_SYSTEM_PROMPT_FILES)
+
+
+def normalize_system_prompt_files(
+    files: list[str] | tuple[str, ...] | None,
+) -> list[str]:
+    """Upgrade only the historical default prompt-file selection.
+
+    Existing custom selections are preserved verbatim. Historical defaults are
+    normalized to the current ordered default that includes MEMORY.md.
+    """
+    if files is None:
+        return get_default_system_prompt_files()
+
+    normalized_files = list(files)
+    if len(normalized_files) == len(
+        LEGACY_DEFAULT_SYSTEM_PROMPT_FILES,
+    ) and set(normalized_files) == set(LEGACY_DEFAULT_SYSTEM_PROMPT_FILES):
+        return get_default_system_prompt_files()
+    return normalized_files
 
 
 class BaseChannelConfig(BaseModel):
@@ -406,7 +440,7 @@ class SuggestionConfig(BaseModel):
         description="是否启用猜你想问功能",
     )
     mode: SuggestionMode = Field(
-        default=SuggestionMode.QA_EXTRACTION_ONLY,
+        default=SuggestionMode.BACKEND_GENERATE,
         description="猜你想问生成模式",
     )
     max_suggestions: int = Field(
@@ -444,6 +478,47 @@ class SuggestionConfig(BaseModel):
         ge=30,
         le=300,
         description="Q&A 内容存储有效期（秒）",
+    )
+
+
+class PostTurnValidationConfig(BaseModel):
+    """回答后校验配置 - 判断任务是否完成并在必要时提示续跑."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(
+        default=True,
+        description="是否启用回答后的任务完成校验",
+    )
+    max_confirmed_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=5,
+        description="单次用户请求最多允许用户确认续跑的轮数",
+    )
+    max_auto_turns: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="每次用户请求或确认后最多允许全自动续跑的轮数",
+    )
+    timeout_seconds: float = Field(
+        default=8.0,
+        ge=1.0,
+        le=20.0,
+        description="后校验模型调用超时时间（秒）",
+    )
+    user_message_max_length: int = Field(
+        default=300,
+        ge=50,
+        le=1000,
+        description="后校验时保留的用户任务长度上限",
+    )
+    assistant_response_max_length: int = Field(
+        default=1200,
+        ge=200,
+        le=4000,
+        description="后校验时保留的助手回答长度上限",
     )
 
 
@@ -588,13 +663,13 @@ class AgentsRunningConfig(BaseModel):
 
         normalized = dict(data)
         if normalized.get("llm_chat_max_concurrent") is None:
-            normalized[
-                "llm_chat_max_concurrent"
-            ] = DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            normalized["llm_chat_max_concurrent"] = (
+                DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            )
         if normalized.get("llm_cron_max_concurrent") is None:
-            normalized[
-                "llm_cron_max_concurrent"
-            ] = DEFAULT_LLM_CRON_MAX_CONCURRENT
+            normalized["llm_cron_max_concurrent"] = (
+                DEFAULT_LLM_CRON_MAX_CONCURRENT
+            )
         return normalized
 
     @model_validator(mode="after")
@@ -681,6 +756,11 @@ class AgentsRunningConfig(BaseModel):
     suggestions: SuggestionConfig = Field(
         default_factory=SuggestionConfig,
         description="猜你想问功能配置",
+    )
+
+    post_turn_validation: PostTurnValidationConfig = Field(
+        default_factory=PostTurnValidationConfig,
+        description="回答后的任务完成校验与自动续跑配置",
     )
 
     @property
@@ -787,7 +867,7 @@ class AgentProfileConfig(BaseModel):
         description="Language setting for this agent",
     )
     system_prompt_files: List[str] = Field(
-        default_factory=lambda: ["AGENTS.md", "SOUL.md", "PROFILE.md"],
+        default_factory=get_default_system_prompt_files,
         description="System prompt markdown files",
     )
     tools: Optional["ToolsConfig"] = Field(
@@ -798,6 +878,13 @@ class AgentProfileConfig(BaseModel):
         default=None,
         description="Security configuration for this agent",
     )
+
+    @model_validator(mode="after")
+    def _normalize_system_prompt_files(self):
+        self.system_prompt_files = normalize_system_prompt_files(
+            self.system_prompt_files,
+        )
+        return self
 
 
 class AgentsConfig(BaseModel):
@@ -829,7 +916,7 @@ class AgentsConfig(BaseModel):
     language: str = Field(default="zh")
     installed_md_files_language: Optional[str] = None
     system_prompt_files: List[str] = Field(
-        default_factory=lambda: ["AGENTS.md", "SOUL.md", "PROFILE.md"],
+        default_factory=get_default_system_prompt_files,
     )
     audio_mode: Literal["auto", "native"] = Field(
         default="auto",
@@ -870,6 +957,13 @@ class AgentsConfig(BaseModel):
             'e.g. "whisper-1", "whisper-large-v3".'
         ),
     )
+
+    @model_validator(mode="after")
+    def _normalize_system_prompt_files(self):
+        self.system_prompt_files = normalize_system_prompt_files(
+            self.system_prompt_files,
+        )
+        return self
 
 
 class LastDispatchConfig(BaseModel):
@@ -1541,11 +1635,8 @@ def load_agent_config(
                 and config.agents.llm_routing
                 else AgentsLLMRoutingConfig()
             ),
-            system_prompt_files=(
-                config.agents.system_prompt_files
-                if hasattr(config.agents, "system_prompt_files")
-                and config.agents.system_prompt_files
-                else ["AGENTS.md", "SOUL.md", "PROFILE.md"]
+            system_prompt_files=normalize_system_prompt_files(
+                getattr(config.agents, "system_prompt_files", None),
             ),
         )
         # Save for future use
@@ -1577,6 +1668,10 @@ def load_agent_config(
             data = normalized_data
     except Exception:
         pass
+
+    data["system_prompt_files"] = normalize_system_prompt_files(
+        data.get("system_prompt_files"),
+    )
 
     return AgentProfileConfig(**data)
 
@@ -1679,10 +1774,12 @@ def migrate_legacy_config_to_multi_agent() -> bool:
             if legacy_agents.llm_routing
             else AgentsLLMRoutingConfig()
         ),
-        system_prompt_files=(
-            legacy_agents.system_prompt_files
-            if legacy_agents.system_prompt_files
-            else ["AGENTS.md", "SOUL.md", "PROFILE.md"]
+        system_prompt_files=normalize_system_prompt_files(
+            (
+                legacy_agents.system_prompt_files
+                if legacy_agents.system_prompt_files
+                else None
+            ),
         ),
         tools=config.tools if config.tools else None,
         security=config.security if config.security else None,
@@ -1717,8 +1814,8 @@ def migrate_legacy_config_to_multi_agent() -> bool:
                     shutil.copy2(old_path, new_path)
                 print(f"  Migrated {item_name} to default workspace")
 
-    # Copy markdown files (AGENTS.md, SOUL.md, PROFILE.md)
-    for md_file in ["AGENTS.md", "SOUL.md", "PROFILE.md"]:
+    # Copy markdown files used by the default system prompt.
+    for md_file in get_default_system_prompt_files():
         old_md = old_workspace / md_file
         if old_md.exists():
             new_md = default_workspace / md_file

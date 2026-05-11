@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """CLI command: run SWE app on a free port in a native webview window."""
+
 # pylint:disable=too-many-branches,too-many-statements,consider-using-with
 from __future__ import annotations
 

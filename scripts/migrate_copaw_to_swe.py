@@ -6,6 +6,7 @@ Migrate ~/.copaw to ~/.swe with backup support.
 This script is automatically called when SWE starts and detects
 the old ~/.copaw directory exists but ~/.swe does not.
 """
+
 from __future__ import annotations
 
 import logging

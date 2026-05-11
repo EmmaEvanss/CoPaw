@@ -196,8 +196,8 @@ HEALTH_CHECK_TIMEOUT = EnvVarLoader.get_float(
 ES_HOST = EnvVarLoader.get_str("ES_HOST", "")
 ES_PORT = EnvVarLoader.get_int("ES_PORT", 9200, min_value=1)
 ES_USER = EnvVarLoader.get_str("ES_USER", "")
-ES_PASSWORD = EnvVarLoader.get_str("ES_PASSWORD", "")
-ES_INDEX = EnvVarLoader.get_str("ES_INDEX", "swe_messages")
+ES_ACCESS = EnvVarLoader.get_str("ES_ACCESS", "")
+ES_INDEX = EnvVarLoader.get_str("ES_INDEX", "swe_model_outputs")
 # SWE 定时任务恢复预热配置
 # ============================================================
 

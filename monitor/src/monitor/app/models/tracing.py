@@ -264,6 +264,7 @@ class UserStats(BaseModel):
     avg_duration_ms: int = 0
     tools_used: list[ToolUsage] = Field(default_factory=list)
     skills_used: list[SkillUsage] = Field(default_factory=list)
+    mcp_tools_used: list[MCPToolUsage] = Field(default_factory=list)
 
 
 class ToolCall(BaseModel):
@@ -452,7 +453,7 @@ class SessionStats(BaseModel):
 
 
 class UserMessageItem(BaseModel):
-    """User message with token info for cost analysis."""
+    """User message for cost analysis."""
 
     trace_id: str
     source_id: str
@@ -462,8 +463,13 @@ class UserMessageItem(BaseModel):
     session_id: str
     channel: str
     user_message: Optional[str] = None
-    input_tokens: int = 0
-    output_tokens: int = 0
     model_name: Optional[str] = None
     start_time: datetime
     duration_ms: Optional[int] = None
+
+
+class ModelOutputRequest(BaseModel):
+    """Model output 写入请求."""
+
+    trace_id: str = Field(description="追踪 ID")
+    model_output: str = Field(description="模型输出文本")

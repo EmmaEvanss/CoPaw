@@ -21,6 +21,7 @@ from swe.app.workspace.tenant_init_source_store import (  # noqa: E402
     TenantInitSourceStore,
     init_tenant_init_source_module,
     get_tenant_init_source_store,
+    is_tenant_source,
 )
 from swe.config.context import (  # noqa: E402
     set_current_source_id,
@@ -464,6 +465,73 @@ class TestTenantInitSourceModuleInit:
     def test_cleanup(self):
         """Reset global store after tests."""
         init_tenant_init_source_module(db=None)
+
+
+# ==================== is_tenant_source tests ====================
+
+
+class TestIsTenantSource:
+    """Tests for is_tenant_source convenience function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_without_store(self):
+        """is_tenant_source returns False when store is None (no DB)."""
+        init_tenant_init_source_module(db=None)
+        result = await is_tenant_source("tenant-1", "RMASSIST")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_source_matches(self):
+        """is_tenant_source returns True when tenant has matching source_id."""
+        mock_db = MagicMock()
+        mock_db.is_connected = True
+        mock_db.fetch_one = AsyncMock(
+            return_value={"source_id": "RMASSIST"},
+        )
+        init_tenant_init_source_module(db=mock_db)
+
+        result = await is_tenant_source("tenant-1", "RMASSIST")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_source_does_not_match(self):
+        """is_tenant_source returns False when tenant has no matching source."""
+        mock_db = MagicMock()
+        mock_db.is_connected = True
+        mock_db.fetch_one = AsyncMock(return_value=None)
+        init_tenant_init_source_module(db=mock_db)
+
+        result = await is_tenant_source("tenant-1", "RMASSIST")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_db_error(self):
+        """is_tenant_source returns False when database query fails."""
+        mock_db = MagicMock()
+        mock_db.is_connected = True
+        mock_db.fetch_one = AsyncMock(side_effect=Exception("DB error"))
+        init_tenant_init_source_module(db=mock_db)
+
+        result = await is_tenant_source("tenant-1", "RMASSIST")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_instance_method_returns_false_without_db(self):
+        """TenantInitSourceStore.is_tenant_source returns False without DB."""
+        store = TenantInitSourceStore(db=None)
+        result = await store.is_tenant_source("tenant-1", "RMASSIST")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_instance_method_returns_true_when_match(self):
+        """TenantInitSourceStore.is_tenant_source returns True on match."""
+        mock_db = MagicMock()
+        mock_db.is_connected = True
+        mock_db.fetch_one = AsyncMock(return_value={"source_id": "RMASSIST"})
+        store = TenantInitSourceStore(db=mock_db)
+
+        result = await store.is_tenant_source("tenant-1", "RMASSIST")
+        assert result is True
 
 
 # ==================== Context variable tests ====================

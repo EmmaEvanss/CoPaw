@@ -1,5 +1,9 @@
 import { request } from "../request";
-import type { ChannelConfig, SingleChannelConfig } from "../types";
+import type {
+  ChannelConfig,
+  SingleChannelConfig,
+  ChannelDistributionResponse,
+} from "../types";
 
 export const channelApi = {
   listChannelTypes: () => request<string[]>("/config/channels/types"),
@@ -36,5 +40,26 @@ export const channelApi = {
       `/config/channels/weixin/qrcode/status?qrcode=${encodeURIComponent(
         qrcode,
       )}`,
+    ),
+
+  listChannelDistributionTenants: () =>
+    request<{ tenant_ids: string[] }>(
+      "/config/channels/distribution/tenants",
+    ),
+
+  distributeChannelConfig: (
+    channelName: string,
+    body: {
+      target_tenant_ids: string[];
+      fields?: string[];
+      overwrite?: boolean;
+    },
+  ) =>
+    request<ChannelDistributionResponse>(
+      `/config/channels/${encodeURIComponent(channelName)}/distribute`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
     ),
 };

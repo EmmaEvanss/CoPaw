@@ -634,7 +634,15 @@
     "weixinScanHint": "请用微信扫描二维码，扫码成功后点击保存",
     "weixinQrcodeFailed": "获取二维码失败，请稍后重试",
     "weixinLoginSuccess": "微信扫码登录成功，Token 已填入",
-    "weixinQrcodeExpired": "二维码已过期，请重新获取"
+    "weixinQrcodeExpired": "二维码已过期，请重新获取",
+    "distributeToTenants": "分发到租户",
+    "distributeTitle": "分发通道配置到租户",
+    "distributeHint": "将当前通道配置分发到目标租户的 default agent。",
+    "distributeOverwrite": "覆盖已有配置",
+    "distribute": "分发",
+    "distributeSuccess": "分发成功，共 {{count}} 个租户",
+    "distributeFailed": "分发失败",
+    "distributePartialFailure": "部分租户分发失败"
   },
   "sessions": {
     "title": "会话",

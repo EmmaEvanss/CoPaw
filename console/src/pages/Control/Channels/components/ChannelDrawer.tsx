@@ -8,12 +8,13 @@ import {
   Select,
 } from "@agentscope-ai/design";
 import { useAppMessage } from "../../../../hooks/useAppMessage";
-import { Alert, ConfigProvider, Spin } from "antd";
+import { Alert, ConfigProvider, Modal, Spin } from "antd";
 import { LinkOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import type { FormInstance } from "antd";
 import { useCallback, useRef, useState } from "react";
 import { getChannelLabel, type ChannelKey } from "./constants";
+import { TenantTargetPicker } from "../../../../components/TenantTargetPicker";
 import styles from "../index.module.less";
 import { useTheme } from "../../../../contexts/ThemeContext";
 import { api } from "../../../../api";
@@ -141,6 +142,15 @@ export function ChannelDrawer({
   const weixinPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const weixinConfirmedRef = useRef(false);
 
+  // 通道配置分发状态
+  const [distributeOpen, setDistributeOpen] = useState(false);
+  const [distributeLoading, setDistributeLoading] = useState(false);
+  const [distributeSubmitting, setDistributeSubmitting] = useState(false);
+  const [distributeTenantIds, setDistributeTenantIds] = useState<string[]>([]);
+  const [selectedDistributeTenantIds, setSelectedDistributeTenantIds] =
+    useState<string[]>([]);
+  const [distributeOverwrite, setDistributeOverwrite] = useState(false);
+
   const stopWeixinPoll = useCallback(() => {
     if (weixinPollRef.current) {
       clearInterval(weixinPollRef.current);
@@ -245,6 +255,66 @@ export function ChannelDrawer({
       );
     }
   }, [loadWecomSDK, form, t]);
+
+  // ── 通道配置分发 ──────────────────────────────────────────────────────────
+
+  const handleOpenDistribute = async () => {
+    setDistributeOpen(true);
+    setSelectedDistributeTenantIds([]);
+    setDistributeLoading(true);
+    try {
+      const result = await api.listChannelDistributionTenants();
+      setDistributeTenantIds(result.tenant_ids || []);
+    } catch (error) {
+      message.error(
+        error instanceof Error ? error.message : "加载租户列表失败",
+      );
+    } finally {
+      setDistributeLoading(false);
+    }
+  };
+
+  const handleDistribute = async () => {
+    if (!activeKey || !selectedDistributeTenantIds.length) return;
+    setDistributeSubmitting(true);
+    try {
+      const result = await api.distributeChannelConfig(activeKey, {
+        target_tenant_ids: selectedDistributeTenantIds,
+        fields: ["robot_open_id", "client_id", "client_secret"],
+        overwrite: distributeOverwrite,
+      });
+      const items = result.results || [];
+      const succeeded = items.filter((r) => r.success);
+      const failed = items.filter((r) => !r.success);
+      if (succeeded.length > 0) {
+        message.success(t("channels.distributeSuccess", { count: succeeded.length }));
+      }
+      if (failed.length > 0) {
+        const lines = failed.map(
+          (r) => `• ${r.tenant_id}: ${r.error || t("channels.distributeFailed")}`,
+        );
+        Modal.confirm({
+          title: t("channels.distributePartialFailure"),
+          content: (
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+              {lines.join("\n")}
+            </pre>
+          ),
+          okText: t("common.close"),
+          cancelButtonProps: { style: { display: "none" } },
+        });
+      }
+      setDistributeOpen(false);
+    } catch (error) {
+      message.error(
+        error instanceof Error
+          ? error.message
+          : t("channels.distributeFailed"),
+      );
+    } finally {
+      setDistributeSubmitting(false);
+    }
+  };
 
   // ── Access control fields (shared across multiple channels) ──────────────
 
@@ -891,6 +961,33 @@ export function ChannelDrawer({
           </>
         );
 
+      case "zhaohu":
+        return (
+          <>
+            <Form.Item
+              name="robot_open_id"
+              label="Robot Open ID"
+              rules={[{ required: true }]}
+            >
+              <Input />
+            </Form.Item>
+            <Form.Item
+              name="client_id"
+              label="Client ID"
+              rules={[{ required: true }]}
+            >
+              <Input />
+            </Form.Item>
+            <Form.Item
+              name="client_secret"
+              label="Client Secret"
+              rules={[{ required: true }]}
+            >
+              <Input.Password />
+            </Form.Item>
+          </>
+        );
+
       default:
         return null;
     }
@@ -984,6 +1081,11 @@ export function ChannelDrawer({
 
   const drawerFooter = (
     <div className={styles.formActions}>
+      {activeKey === "zhaohu" && (
+        <Button onClick={handleOpenDistribute}>
+          {t("channels.distributeToTenants")}
+        </Button>
+      )}
       <Button onClick={onClose}>{t("common.cancel")}</Button>
       <Button type="primary" loading={saving} onClick={() => form.submit()}>
         {t("common.save")}
@@ -1051,6 +1153,43 @@ export function ChannelDrawer({
             renderAccessControlFields()}
         </Form>
       )}
+
+      <Modal
+        open={distributeOpen}
+        title={t("channels.distributeTitle")}
+        onCancel={
+          distributeSubmitting ? undefined : () => setDistributeOpen(false)
+        }
+        onOk={handleDistribute}
+        okText={t("channels.distribute")}
+        cancelText={t("common.cancel")}
+        okButtonProps={{
+          disabled: !selectedDistributeTenantIds.length,
+          loading: distributeSubmitting,
+        }}
+      >
+        <div style={{ display: "grid", gap: 12 }}>
+          <div style={{ color: "#666", fontSize: 12 }}>
+            {t("channels.distributeHint")}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Switch
+              checked={distributeOverwrite}
+              onChange={setDistributeOverwrite}
+            />
+            <span>{t("channels.distributeOverwrite")}</span>
+          </div>
+          {distributeLoading ? (
+            <div>{t("common.loading")}</div>
+          ) : (
+            <TenantTargetPicker
+              tenantIds={distributeTenantIds}
+              selectedTenantIds={selectedDistributeTenantIds}
+              onChange={setSelectedDistributeTenantIds}
+            />
+          )}
+        </div>
+      </Modal>
     </Drawer>
   );
 }

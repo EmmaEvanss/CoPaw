@@ -129,6 +129,40 @@ class TenantInitSourceStore:
             )
             return []
 
+    async def is_tenant_source(
+        self,
+        tenant_id: str,
+        expected_source_id: str,
+    ) -> bool:
+        """判断租户是否属于指定来源。
+
+        Args:
+            tenant_id: 租户标识。
+            expected_source_id: 期望的来源标识。
+
+        Returns:
+            如果租户在 swe_tenant_init_source 表中存在对应的 source_id 记录则返回 True。
+        """
+        if not self._use_db:
+            return False
+        query = (
+            "SELECT 1 FROM swe_tenant_init_source "
+            "WHERE tenant_id = %s AND source_id = %s LIMIT 1"
+        )
+        try:
+            row = await self.db.fetch_one(
+                query,
+                (tenant_id, expected_source_id),
+            )
+            return row is not None
+        except Exception as e:
+            logger.warning(
+                "Failed to check source for tenant=%s: %s",
+                tenant_id,
+                e,
+            )
+            return False
+
     async def get_by_source(self, source_id: str) -> list[dict]:
         """Query all tenants initialized from a given source.
 
@@ -218,3 +252,24 @@ def get_tenant_init_source_store() -> Optional["TenantInitSourceStore"]:
         The store instance, or None if not initialized.
     """
     return _store
+
+
+async def is_tenant_source(
+    tenant_id: str,
+    expected_source_id: str,
+) -> bool:
+    """判断租户是否属于指定来源的便捷函数。
+
+    内部调用 TenantInitSourceStore.is_tenant_source，store 为 None 时返回 False。
+
+    Args:
+        tenant_id: 租户标识。
+        expected_source_id: 期望的来源标识。
+
+    Returns:
+        如果租户在 swe_tenant_init_source 表中存在对应的 source_id 记录则返回 True。
+    """
+    store = get_tenant_init_source_store()
+    if store is None:
+        return False
+    return await store.is_tenant_source(tenant_id, expected_source_id)

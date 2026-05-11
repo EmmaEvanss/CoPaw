@@ -7,7 +7,7 @@ from typing import Any, List, Optional
 import segno
 
 from fastapi import APIRouter, Body, HTTPException, Path, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..utils import schedule_agent_reload
 from ...config import (
@@ -32,6 +32,59 @@ from ...config.config import (
 from .schemas_config import HeartbeatBody
 
 router = APIRouter(prefix="/config", tags=["config"])
+
+
+class ChannelDistributionRequest(BaseModel):
+    """通道配置分发请求体。"""
+
+    target_tenant_ids: List[str] = Field(
+        default_factory=list,
+        description="目标租户 ID 列表",
+    )
+    fields: Optional[List[str]] = Field(
+        default=None,
+        description="指定分发的字段列表，为 None 时分发全部字段",
+    )
+    overwrite: bool = Field(
+        default=False,
+        description="是否覆盖目标租户已有值",
+    )
+
+
+class ChannelDistributionTenantResult(BaseModel):
+    """单个租户的通道配置分发结果。"""
+
+    tenant_id: str = Field(..., description="目标租户 ID")
+    success: bool = Field(..., description="是否分发成功")
+    bootstrapped: bool = Field(
+        default=False,
+        description="目标租户是否在分发过程中完成初始化",
+    )
+    error: str = Field(default="", description="失败原因")
+
+
+class ChannelDistributionResponse(BaseModel):
+    """通道配置分发响应。"""
+
+    source_agent_id: str = Field(..., description="源 Agent ID")
+    results: List[ChannelDistributionTenantResult] = Field(
+        default_factory=list,
+        description="各目标租户的分发结果",
+    )
+
+
+def _validate_target_tenant_id(tenant_id: str) -> str:
+    """校验目标租户 ID 格式，防止路径穿越等注入。"""
+    tenant_id = str(tenant_id or "").strip()
+    if not tenant_id:
+        raise ValueError("tenant_id is required")
+    if len(tenant_id) > 256:
+        raise ValueError(f"Invalid tenant ID format: {tenant_id}")
+    if ".." in tenant_id or "/" in tenant_id or "\\" in tenant_id:
+        raise ValueError(f"Invalid tenant ID format: {tenant_id}")
+    if any(ord(c) < 32 for c in tenant_id):
+        raise ValueError(f"Invalid tenant ID format: {tenant_id}")
+    return tenant_id
 
 
 _CHANNEL_CONFIG_CLASS_MAP = {
@@ -335,6 +388,290 @@ async def put_channel(
     )
 
     return channel_config
+
+
+def _request_source_id(request: Request) -> str | None:
+    return getattr(request.state, "source_id", None)
+
+
+def _request_tenant_id(request: Request) -> str | None:
+    return getattr(request.state, "tenant_id", None)
+
+
+def _get_multi_agent_manager(request: Request):
+    manager = getattr(request.app.state, "multi_agent_manager", None)
+    if manager is None:
+        raise RuntimeError("MultiAgentManager not initialized")
+    return manager
+
+
+def _extract_source_channel_config(source_channels, channel_name: str):
+    source_channel = getattr(source_channels, channel_name, None)
+    if source_channel is not None:
+        return source_channel
+    extra = getattr(source_channels, "__pydantic_extra__", None) or {}
+    return extra.get(channel_name)
+
+
+def _build_fields_to_distribute(
+    source_channel,
+    fields: Optional[List[str]],
+) -> dict:
+    source_dump = (
+        source_channel.model_dump()
+        if hasattr(source_channel, "model_dump")
+        else dict(source_channel)
+    )
+    if fields:
+        return {k: v for k, v in source_dump.items() if k in fields}
+    return source_dump
+
+
+def _merge_config_values(
+    existing_values: dict,
+    fields_to_distribute: dict,
+    overwrite: bool,
+) -> dict:
+    merged_values = dict(existing_values)
+    if overwrite:
+        merged_values.update(fields_to_distribute)
+        return merged_values
+    for key, value in fields_to_distribute.items():
+        if key not in merged_values or not merged_values[key]:
+            merged_values[key] = value
+    return merged_values
+
+
+def _apply_distributed_channel_values(
+    target_channels: ChannelConfig,
+    channel_name: str,
+    fields_to_distribute: dict,
+    overwrite: bool,
+) -> None:
+    config_class = _CHANNEL_CONFIG_CLASS_MAP.get(channel_name)
+    existing = getattr(target_channels, channel_name, None)
+
+    if config_class is not None:
+        if existing is not None:
+            merged = _merge_config_values(
+                existing.model_dump(),
+                fields_to_distribute,
+                overwrite,
+            )
+            setattr(target_channels, channel_name, config_class(**merged))
+            return
+        setattr(
+            target_channels,
+            channel_name,
+            config_class(**fields_to_distribute),
+        )
+        return
+
+    if existing is not None and isinstance(existing, dict):
+        merged_dict = _merge_config_values(
+            existing,
+            fields_to_distribute,
+            overwrite,
+        )
+        setattr(target_channels, channel_name, merged_dict)
+        return
+
+    setattr(target_channels, channel_name, fields_to_distribute)
+
+
+def _prepare_target_tenant(
+    request: Request,
+    tenant_id: str,
+):
+    from ...config.context import resolve_effective_tenant_id
+    from ...config.utils import get_tenant_working_dir_strict
+    from ..workspace.tenant_initializer import TenantInitializer
+
+    validated_tenant_id = _validate_target_tenant_id(tenant_id)
+    effective_tid = resolve_effective_tenant_id(
+        validated_tenant_id,
+        _request_source_id(request),
+    )
+    tenant_working_dir = get_tenant_working_dir_strict(effective_tid)
+    initializer = TenantInitializer(
+        tenant_working_dir.parent,
+        validated_tenant_id,
+        source_id=_request_source_id(request),
+    )
+    was_bootstrapped = initializer.has_seeded_bootstrap()
+    if not was_bootstrapped:
+        initializer.ensure_seeded_bootstrap()
+
+    effective_target_tenant_id = getattr(
+        initializer,
+        "effective_tenant_id",
+        validated_tenant_id,
+    )
+    return validated_tenant_id, effective_target_tenant_id, was_bootstrapped
+
+
+@router.get(
+    "/channels/distribution/tenants",
+    summary="列出可分发通道配置的目标租户",
+)
+async def list_channel_distribution_tenants(
+    request: Request,
+) -> dict:
+    """返回当前 source 下的所有租户 ID 列表，供通道配置分发选择。"""
+    from ...config.utils import list_logical_tenant_ids
+
+    tenant_ids = await list_logical_tenant_ids(
+        _request_source_id(request),
+        source_filter=True,
+    )
+    return {"tenant_ids": tenant_ids}
+
+
+@router.post(
+    "/channels/{channel_name}/distribute",
+    response_model=ChannelDistributionResponse,
+    summary="将通道配置分发到目标租户",
+)
+async def distribute_channel_config(
+    request: Request,
+    channel_name: str = Path(..., description="通道名称", min_length=1),
+    body: ChannelDistributionRequest = Body(...),
+) -> ChannelDistributionResponse:
+    """从源租户读取通道配置，按字段级分发到目标租户的 default agent。
+
+    非覆盖模式下仅填充目标租户中为空或不存在的字段。
+    """
+    from ..agent_context import get_agent_for_request
+    from ...config.config import load_agent_config, save_agent_config
+
+    if not body.target_tenant_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No target tenant IDs provided",
+        )
+
+    # fields 为空列表时无意义，直接返回
+    if body.fields is not None and len(body.fields) == 0:
+        return ChannelDistributionResponse(
+            source_agent_id="",
+            results=[],
+        )
+
+    available = get_available_channels()
+    if channel_name not in available:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Channel '{channel_name}' not found",
+        )
+
+    # 加载源租户通道配置
+    source_agent = await get_agent_for_request(request)
+    source_config = load_agent_config(
+        source_agent.agent_id,
+        tenant_id=source_agent.tenant_id,
+    )
+    source_channels = source_config.channels
+    if source_channels is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Source agent has no channel config",
+        )
+    source_channel = _extract_source_channel_config(
+        source_channels,
+        channel_name,
+    )
+    if source_channel is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source agent has no '{channel_name}' channel config",
+        )
+
+    # 确定要分发的字段（fields 仅控制"分发哪些字段"）
+    fields_to_distribute = _build_fields_to_distribute(
+        source_channel,
+        body.fields,
+    )
+
+    # 去重并排除源租户自身
+    source_tenant_id = source_agent.tenant_id
+    unique_tenant_ids = list(dict.fromkeys(body.target_tenant_ids))
+    target_tenant_ids = [
+        tid for tid in unique_tenant_ids if tid != source_tenant_id
+    ]
+
+    results: List[ChannelDistributionTenantResult] = []
+
+    for tenant_id in target_tenant_ids:
+        try:
+            (
+                validated_tenant_id,
+                effective_target_tenant_id,
+                was_bootstrapped,
+            ) = _prepare_target_tenant(request, tenant_id)
+
+            target_config = load_agent_config(
+                "default",
+                tenant_id=effective_target_tenant_id,
+            )
+            original_target_config = target_config.model_copy(deep=True)
+
+            if target_config.channels is None:
+                target_config.channels = ChannelConfig()
+
+            _apply_distributed_channel_values(
+                target_config.channels,
+                channel_name,
+                fields_to_distribute,
+                body.overwrite,
+            )
+
+            try:
+                save_agent_config(
+                    "default",
+                    target_config,
+                    tenant_id=effective_target_tenant_id,
+                )
+                schedule_agent_reload(
+                    request,
+                    "default",
+                    tenant_id=effective_target_tenant_id,
+                )
+            except Exception:
+                try:
+                    save_agent_config(
+                        "default",
+                        original_target_config,
+                        tenant_id=effective_target_tenant_id,
+                    )
+                except Exception:
+                    pass
+                schedule_agent_reload(
+                    request,
+                    "default",
+                    tenant_id=effective_target_tenant_id,
+                )
+                raise
+
+            results.append(
+                ChannelDistributionTenantResult(
+                    tenant_id=validated_tenant_id,
+                    success=True,
+                    bootstrapped=not was_bootstrapped,
+                ),
+            )
+        except Exception as exc:
+            results.append(
+                ChannelDistributionTenantResult(
+                    tenant_id=str(tenant_id),
+                    success=False,
+                    error=str(exc),
+                ),
+            )
+
+    return ChannelDistributionResponse(
+        source_agent_id=source_agent.agent_id,
+        results=results,
+    )
 
 
 @router.get(

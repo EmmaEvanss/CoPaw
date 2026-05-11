@@ -656,7 +656,15 @@
     "weixinScanHint": "Scan the QR code with WeChat, then click Save",
     "weixinQrcodeFailed": "Failed to fetch QR code, please try again",
     "weixinLoginSuccess": "WeChat login successful, token has been filled in",
-    "weixinQrcodeExpired": "QR code expired, please get a new one"
+    "weixinQrcodeExpired": "QR code expired, please get a new one",
+    "distributeToTenants": "Distribute to Tenants",
+    "distributeTitle": "Distribute Channel Config to Tenants",
+    "distributeHint": "Distribute the current channel config to target tenants' default agent.",
+    "distributeOverwrite": "Overwrite existing values",
+    "distribute": "Distribute",
+    "distributeSuccess": "Distributed successfully to {{count}} tenant(s)",
+    "distributeFailed": "Distribution failed",
+    "distributePartialFailure": "Partial distribution failure"
   },
   "sessions": {
     "title": "Sessions",

@@ -8,12 +8,15 @@ import {
   DatePicker,
   Tooltip,
   message,
+  Select,
 } from "antd";
 import { Download } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { tracingApi, UserMessageItem } from "../../../api/modules/tracing";
-import { getBbkDisplayName } from "../../../constants/bbk";
+import { getBbkDisplayName, BBK_ID_MAP } from "../../../constants/bbk";
+import { useIframeStore } from "../../../stores/iframeStore";
+import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -28,16 +31,24 @@ export default function MessagesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [userIdFilter, setUserIdFilter] = useState("");
   const [sessionIdFilter, setSessionIdFilter] = useState("");
+  const [bbkIdFilter, setBbkIdFilter] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
     [dayjs().subtract(7, "day"), dayjs()],
   );
   const [exporting, setExporting] = useState(false);
+
+  // 获取用户权限和来源信息
+  const isSuperManager = useIframeStore((state) => state.isSuperManager);
+  const userSource = useIframeStore((state) => state.source);
+  // 非 iframe 模式下使用默认 source，超级管理员不传 sourceId（查询全部）
+  const effectiveSourceId = isSuperManager ? undefined : (userSource || DEFAULT_SOURCE_ID);
 
   // 用于追踪筛选条件变化，避免 useEffect 重复触发
   const filtersRef = useRef({
     searchQuery: "",
     userIdFilter: "",
     sessionIdFilter: "",
+    bbkIdFilter: undefined as string | undefined,
     dateRange: [dayjs().subtract(7, "day"), dayjs()] as [dayjs.Dayjs, dayjs.Dayjs] | null,
   });
 
@@ -47,6 +58,7 @@ export default function MessagesPage() {
       filtersRef.current.searchQuery !== searchQuery ||
       filtersRef.current.userIdFilter !== userIdFilter ||
       filtersRef.current.sessionIdFilter !== sessionIdFilter ||
+      filtersRef.current.bbkIdFilter !== bbkIdFilter ||
       filtersRef.current.dateRange !== dateRange;
 
     // 更新 ref
@@ -54,6 +66,7 @@ export default function MessagesPage() {
       searchQuery,
       userIdFilter,
       sessionIdFilter,
+      bbkIdFilter,
       dateRange,
     };
 
@@ -64,7 +77,7 @@ export default function MessagesPage() {
     }
 
     fetchMessages();
-  }, [page, pageSize, dateRange]);
+  }, [page, pageSize, bbkIdFilter, dateRange]);
 
   const handleSearch = () => {
     setPage(1);
@@ -77,9 +90,11 @@ export default function MessagesPage() {
       const data = await tracingApi.getUserMessages(page, pageSize, {
         user_id: userIdFilter || undefined,
         session_id: sessionIdFilter || undefined,
+        bbk_id: bbkIdFilter,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
         query: searchQuery || undefined,
+        source_id: effectiveSourceId,
       });
       setMessages(data.items || []);
       setTotal(data.total || 0);
@@ -97,9 +112,11 @@ export default function MessagesPage() {
         {
           user_id: userIdFilter || undefined,
           session_id: sessionIdFilter || undefined,
+          bbk_id: bbkIdFilter,
           start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
           end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
           query: searchQuery || undefined,
+          source_id: effectiveSourceId,
         },
         "xlsx",
       );
@@ -127,12 +144,6 @@ export default function MessagesPage() {
     return `${(ms / 60000).toFixed(1)}m`;
   };
 
-  const formatTokens = (tokens: number) => {
-    if (tokens < 1000) return tokens.toString();
-    if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`;
-    return `${(tokens / 1000000).toFixed(2)}M`;
-  };
-
   const truncateMessage = (msg: string | null, maxLen: number = 100) => {
     if (!msg) return "-";
     if (msg.length <= maxLen) return msg;
@@ -141,10 +152,10 @@ export default function MessagesPage() {
 
   const columns: ColumnsType<UserMessageItem> = [
     {
-      title: t("analytics.traceId", "Trace ID"),
+      title: t("analytics.traceId"),
       dataIndex: "trace_id",
       key: "trace_id",
-      width: 200,
+      width: 140,
       ellipsis: true,
       render: (v) => (
         <Tooltip title={v}>
@@ -165,14 +176,14 @@ export default function MessagesPage() {
       title: t("analytics.userName", "用户姓名"),
       dataIndex: "user_name",
       key: "user_name",
-      width: 80,
+      width: 100,
       render: (v) => v || "-",
     },
     {
       title: t("analytics.bbkId", "所属机构"),
       dataIndex: "bbk_id",
       key: "bbk_id",
-      width: 80,
+      width: 100,
       render: (v) => getBbkDisplayName(v),
     },
     {
@@ -202,20 +213,6 @@ export default function MessagesPage() {
           </Tooltip>
         );
       },
-    },
-    {
-      title: t("analytics.inputTokens", "Input"),
-      dataIndex: "input_tokens",
-      key: "input_tokens",
-      width: 70,
-      render: (v) => formatTokens(v),
-    },
-    {
-      title: t("analytics.outputTokens", "Output"),
-      dataIndex: "output_tokens",
-      key: "output_tokens",
-      width: 70,
-      render: (v) => formatTokens(v),
     },
     {
       title: t("analytics.model", "Model"),
@@ -265,6 +262,17 @@ export default function MessagesPage() {
           />
         </div>
         <div className={styles.filters}>
+          <Select
+            placeholder={t("analytics.filterBbk")}
+            value={bbkIdFilter}
+            onChange={(v) => {
+              setBbkIdFilter(v);
+              setPage(1);
+            }}
+            allowClear
+            style={{ width: 150 }}
+            options={BBK_ID_MAP}
+          />
           <Input
             placeholder={t("analytics.filterUser", "User ID")}
             value={userIdFilter}

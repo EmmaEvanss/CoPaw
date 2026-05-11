@@ -23,8 +23,6 @@ _EXPORT_HEADERS = [
     "session_id",
     "channel",
     "user_message",
-    "input_tokens",
-    "output_tokens",
     "model_name",
     "start_time",
     "duration_ms",
@@ -62,6 +60,7 @@ class TracingExportService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         query_text: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> StreamingResponse:
         """导出用户消息为 CSV 格式.
 
@@ -72,6 +71,7 @@ class TracingExportService:
             start_date: 开始时间筛选
             end_date: 结束时间筛选
             query_text: 消息内容搜索关键字
+            bbk_id: 分行号筛选
 
         Returns:
             StreamingResponse 包含 CSV 文件
@@ -84,6 +84,7 @@ class TracingExportService:
             end_date=end_date,
             query_text=query_text,
             export=True,
+            bbk_id=bbk_id,
         )
 
         output = io.StringIO()
@@ -110,6 +111,7 @@ class TracingExportService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         query_text: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> StreamingResponse:
         """导出用户消息为 JSON 格式.
 
@@ -120,6 +122,7 @@ class TracingExportService:
             start_date: 开始时间筛选
             end_date: 结束时间筛选
             query_text: 消息内容搜索关键字
+            bbk_id: 分行号筛选
 
         Returns:
             StreamingResponse 包含 JSON 文件
@@ -132,6 +135,7 @@ class TracingExportService:
             end_date=end_date,
             query_text=query_text,
             export=True,
+            bbk_id=bbk_id,
         )
 
         data = [message.model_dump() for message in messages]
@@ -157,6 +161,7 @@ class TracingExportService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         query_text: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> StreamingResponse:
         """导出用户消息为 XLSX 格式.
 
@@ -167,6 +172,7 @@ class TracingExportService:
             start_date: 开始时间筛选
             end_date: 结束时间筛选
             query_text: 消息内容搜索关键字
+            bbk_id: 分行号筛选
 
         Returns:
             StreamingResponse 包含 XLSX 文件
@@ -197,6 +203,7 @@ class TracingExportService:
             end_date=end_date,
             query_text=query_text,
             export=True,
+            bbk_id=bbk_id,
         )
 
         wb = Workbook()
@@ -225,8 +232,6 @@ class TracingExportService:
             "Session ID",
             "Channel",
             "User Message",
-            "Input Tokens",
-            "Output Tokens",
             "Model Name",
             "Start Time",
             "Duration (ms)",
@@ -249,7 +254,7 @@ class TracingExportService:
 
         # 设置列宽
         for column, width in enumerate(
-            [36, 20, 36, 15, 60, 12, 12, 25, 22, 12],
+            [36, 20, 36, 15, 60, 25, 22, 12],
             1,
         ):
             ws.column_dimensions[get_column_letter(column)].width = width
@@ -283,8 +288,6 @@ class TracingExportService:
             message.session_id,
             message.channel,
             message.user_message or "",
-            message.input_tokens,
-            message.output_tokens,
             message.model_name or "",
             message.start_time.isoformat() if message.start_time else "",
             message.duration_ms or "",

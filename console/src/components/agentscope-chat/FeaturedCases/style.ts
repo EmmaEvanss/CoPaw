@@ -35,7 +35,11 @@ export default createGlobalStyle`
     gap: 4px;
     font-size: 13px;
     color: ${DESIGN_TOKENS.colorTextSecondary};
+    background: transparent;
+    border: 0;
+    padding: 0;
     cursor: pointer;
+    font-family: inherit;
 
     &:hover {
       opacity: 0.7;

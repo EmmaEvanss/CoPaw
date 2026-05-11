@@ -26,7 +26,7 @@ export const BROWSER_PREVIEWABLE_EXTS = [
   // 文本
   "txt",
   // Markdown（显示源码）
-  "md", "mdx",
+  "md", "mdx", "json",
 ];
 
 // Content-Type 映射
@@ -55,6 +55,7 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
   txt: "text/plain",
   md: "text/plain",
   mdx: "text/plain",
+  json: "text/plain",
 };
 
 const DEFAULT_ICON_COLOR = "#8c8c8c";

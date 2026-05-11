@@ -425,6 +425,7 @@ class TracingQueryService:
         end_date: Optional[datetime] = None,
         sort_by: Optional[str] = None,
         filter_user_type: Optional[str] = "filtered",
+        bbk_id: Optional[str] = None,
     ) -> tuple[list[UserListItem], int]:
         """获取用户列表.
 
@@ -459,6 +460,9 @@ class TracingQueryService:
         if user_id:
             where_clauses.append("user_id LIKE %s")
             params.append(f"%{user_id}%")
+        if bbk_id:
+            where_clauses.append("bbk_id = %s")
+            params.append(bbk_id)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -1344,6 +1348,7 @@ class TracingQueryService:
         session_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        bbk_id: Optional[str] = None,
     ) -> tuple[list[SessionListItem], int]:
         """获取会话列表."""
         if source_id == "all":
@@ -1359,6 +1364,9 @@ class TracingQueryService:
         if session_id:
             where_clauses.append("session_id LIKE %s")
             params.append(f"%{session_id}%")
+        if bbk_id:
+            where_clauses.append("bbk_id = %s")
+            params.append(bbk_id)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -1722,6 +1730,7 @@ class TracingQueryService:
         status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        bbk_id: Optional[str] = None,
     ) -> tuple[list[TraceListItem], int]:
         """获取对话列表."""
         if source_id == "all":
@@ -1740,6 +1749,9 @@ class TracingQueryService:
         if status:
             where_clauses.append("status = %s")
             params.append(status)
+        if bbk_id:
+            where_clauses.append("bbk_id = %s")
+            params.append(bbk_id)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -1939,6 +1951,7 @@ class TracingQueryService:
         end_date: Optional[datetime] = None,
         query_text: Optional[str] = None,
         export: bool = False,
+        bbk_id: Optional[str] = None,
     ) -> tuple[list[UserMessageItem], int]:
         """获取用户消息列表."""
         if start_date is None:
@@ -1969,6 +1982,9 @@ class TracingQueryService:
         if query_text:
             where_clauses.append("user_message LIKE %s")
             params.append(f"%{query_text}%")
+        if bbk_id:
+            where_clauses.append("bbk_id = %s")
+            params.append(bbk_id)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -1979,7 +1995,7 @@ class TracingQueryService:
         if export:
             sql_query = f"""
                 SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.user_message,
-                       t.total_input_tokens, t.total_output_tokens, t.model_name,
+                       t.model_name,
                        t.start_time, t.duration_ms,
                        COALESCE(t.user_name, (
                            SELECT t2.user_name FROM swe_tracing_traces t2
@@ -2000,7 +2016,7 @@ class TracingQueryService:
             offset = (page - 1) * page_size
             sql_query = f"""
                 SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.user_message,
-                       t.total_input_tokens, t.total_output_tokens, t.model_name,
+                       t.model_name,
                        t.start_time, t.duration_ms,
                        COALESCE(t.user_name, (
                            SELECT t2.user_name FROM swe_tracing_traces t2
@@ -2030,8 +2046,6 @@ class TracingQueryService:
                 session_id=row["session_id"],
                 channel=row["channel"],
                 user_message=row["user_message"],
-                input_tokens=row["total_input_tokens"] or 0,
-                output_tokens=row["total_output_tokens"] or 0,
                 model_name=row["model_name"],
                 start_time=row["start_time"],
                 duration_ms=row["duration_ms"],

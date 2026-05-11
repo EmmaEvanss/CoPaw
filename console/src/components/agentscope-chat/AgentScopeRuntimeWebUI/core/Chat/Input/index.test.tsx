@@ -17,6 +17,7 @@ const attachmentState = {
   setFileList: vi.fn((next: UploadFile[]) => {
     attachmentState.currentFileList = next;
   }),
+  handlePasteFile: vi.fn<(file: File) => void>(),
 };
 
 vi.mock("@/components/agentscope-chat", () => ({
@@ -55,9 +56,10 @@ vi.mock("../../Context/ChatAnywhereInputContext", () => ({
 
 vi.mock("./useAttachments", () => ({
   default: () => ({
+    fileList: attachmentState.currentFileList,
     getFileList: attachmentState.getFileList,
     setFileList: attachmentState.setFileList,
-    handlePasteFile: undefined,
+    handlePasteFile: attachmentState.handlePasteFile,
     uploadIconButton: null,
     uploadFileListHeader: null,
   }),
@@ -71,6 +73,7 @@ describe("Chat Input restore flow", () => {
     );
     attachmentState.getFileList.mockClear();
     attachmentState.setFileList.mockClear();
+    attachmentState.handlePasteFile.mockClear();
   });
 
   afterEach(() => {
@@ -111,7 +114,9 @@ describe("Chat Input restore flow", () => {
     });
     expect(attachmentState.setFileList).toHaveBeenCalledWith(restoredFiles);
 
-    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "submit", hidden: true }),
+    );
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith({
@@ -156,7 +161,9 @@ describe("Chat Input restore flow", () => {
       ).toBe("normal prompt");
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "submit", hidden: true }),
+    );
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith({
@@ -189,7 +196,9 @@ describe("Chat Input restore flow", () => {
     fireEvent.change(screen.getByTestId("chat-input"), {
       target: { value: "another question" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "submit" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "submit", hidden: true }),
+    );
 
     await waitFor(() => {
       expect(onSubmit).toHaveBeenCalledWith({
@@ -198,5 +207,19 @@ describe("Chat Input restore flow", () => {
         biz_params: undefined,
       });
     });
+  });
+
+  it("handles files dispatched by the chat drag-and-drop bridge", async () => {
+    const file = new File(["hello"], "demo.txt", { type: "text/plain" });
+
+    render(<Input onCancel={vi.fn()} onSubmit={vi.fn()} />);
+
+    document.dispatchEvent(
+      new CustomEvent("pasteFile", {
+        detail: { file },
+      }),
+    );
+
+    expect(attachmentState.handlePasteFile).toHaveBeenCalledWith(file);
   });
 });

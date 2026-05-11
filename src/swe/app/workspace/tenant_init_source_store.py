@@ -190,6 +190,79 @@ class TenantInitSourceStore:
             logger.warning(f"Failed to query all init_source mappings: {e}")
             return [], 0
 
+    async def get_by_tenant_prefix(
+        self,
+        prefixes: list[str],
+    ) -> list[dict]:
+        """Query tenants whose tenant_id starts with given prefixes.
+
+        Args:
+            prefixes: List of prefixes to filter (e.g., ["80", "0"]).
+
+        Returns:
+            List of dicts with tenant_id, source_id, tenant_name, bbk_id.
+        """
+        if not self._use_db or not prefixes:
+            return []
+
+        # 构建 OR 条件
+        conditions = " OR ".join([f"tenant_id LIKE '{p}%'" for p in prefixes])
+        query = (
+            "SELECT tenant_id, source_id, tenant_name, bbk_id, init_source "
+            "FROM swe_tenant_init_source WHERE " + conditions
+        )
+        try:
+            rows = await self.db.fetch_all(query)
+            return list(rows)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query tenants by prefixes {prefixes}: {e}",
+            )
+            return []
+
+    async def update_tenant_info(
+        self,
+        tenant_id: str,
+        source_id: str,
+        tenant_name: str | None = None,
+        bbk_id: str | None = None,
+    ) -> bool:
+        """Update tenant_name and bbk_id for a tenant-source combination.
+
+        Args:
+            tenant_id: The tenant identifier.
+            source_id: The source identifier.
+            tenant_name: The tenant name to update (optional).
+            bbk_id: The BBK ID to update (optional).
+
+        Returns:
+            True if update succeeded, False otherwise.
+        """
+        if not self._use_db:
+            return False
+
+        try:
+            query = (
+                "UPDATE swe_tenant_init_source "
+                "SET tenant_name = %s, bbk_id = %s "
+                "WHERE tenant_id = %s AND source_id = %s"
+            )
+            await self.db.execute(
+                query,
+                (tenant_name, bbk_id, tenant_id, source_id),
+            )
+            logger.info(
+                f"Updated tenant info: tenant={tenant_id}, "
+                f"source={source_id}, tenant_name={tenant_name}, "
+                f"bbk_id={bbk_id}",
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to update tenant info for {tenant_id}: {e}",
+            )
+            return False
+
 
 def init_tenant_init_source_module(db=None) -> None:
     """Initialize tenant init source module with database connection.

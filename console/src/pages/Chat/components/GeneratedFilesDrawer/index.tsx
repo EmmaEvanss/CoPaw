@@ -101,13 +101,13 @@ export default function GeneratedFilesDrawer() {
 
   return (
     <>
-      <Tooltip title="聊天文件">
+      <Tooltip title="文件预览">
         <Button
           type="text"
           className={styles.triggerButton}
           icon={<SparkLocalFileLine />}
           onClick={() => setOpen(true)}
-          aria-label="查看聊天文件"
+          aria-label="文件预览"
         />
       </Tooltip>
 
@@ -115,7 +115,7 @@ export default function GeneratedFilesDrawer() {
         title={
           <div className={styles.drawerTitle}>
             <SparkLocalFileLine />
-            <span>聊天文件</span>
+            <span>文件预览</span>
           </div>
         }
         open={open}
@@ -135,7 +135,7 @@ export default function GeneratedFilesDrawer() {
       >
         <div className={styles.summary}>
           <div>
-            <div className={styles.summaryTitle}>当前聊天相关文件</div>
+            <div className={styles.summaryTitle}>聊天相关文件</div>
             <div className={styles.summaryMeta}>
               共 {files.length} 个文件，点击条目可预览
             </div>

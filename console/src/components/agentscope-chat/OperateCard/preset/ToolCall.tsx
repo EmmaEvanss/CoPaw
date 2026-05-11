@@ -294,7 +294,7 @@ export default function (props: IToolCallProps) {
               content={props.input}
               language={props.inputBlock?.language}
               expandEnabled={true}
-              defaultExpanded={false}
+              defaultExpanded={true}
             />
             <Block
               title="输出"

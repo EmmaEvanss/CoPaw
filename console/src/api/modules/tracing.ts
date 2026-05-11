@@ -258,8 +258,6 @@ export interface UserMessageItem {
   session_id: string;
   channel: string;
   user_message: string | null;
-  input_tokens: number;
-  output_tokens: number;
   model_name: string | null;
   start_time: string;
   duration_ms: number | null;
@@ -289,6 +287,7 @@ export const tracingApi = {
       source_id?: string;
       sort_by?: string;
       filter_user_type?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -337,6 +336,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -394,6 +394,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -437,7 +438,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserMessageItem[];
@@ -463,7 +465,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      sourceId?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
     format: string = "xlsx",
   ): Promise<Blob> => {

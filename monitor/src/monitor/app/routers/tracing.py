@@ -155,6 +155,7 @@ async def get_users(
         "filtered",
         description="用户过滤类型: filtered(过滤80/IT开头用户), all(仅过滤default用户)",
     ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户列表及其统计信息.
 
@@ -186,6 +187,7 @@ async def get_users(
         end,
         sort_by,
         filter_user_type,
+        bbk_id,
     )
     return {
         "items": [u.model_dump() for u in users],
@@ -246,6 +248,7 @@ async def get_traces(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取对话列表.
 
@@ -277,6 +280,7 @@ async def get_traces(
         status=status,
         start_date=start,
         end_date=end,
+        bbk_id=bbk_id,
     )
     return {
         "items": [t.model_dump() for t in traces],
@@ -372,6 +376,7 @@ async def get_sessions(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取会话列表及其统计信息.
 
@@ -401,6 +406,7 @@ async def get_sessions(
         session_id=session_id,
         start_date=start,
         end_date=end,
+        bbk_id=bbk_id,
     )
     return {
         "items": [s.model_dump() for s in sessions],
@@ -469,6 +475,7 @@ async def get_user_messages(
         None,
         description="搜索用户消息内容",
     ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户消息列表（含 Token 信息）.
 
@@ -503,6 +510,7 @@ async def get_user_messages(
         end_date=end,
         query_text=query,
         export=False,
+        bbk_id=bbk_id,
     )
     return {
         "items": [m.model_dump() for m in messages],
@@ -535,6 +543,7 @@ async def export_user_messages(
         description="导出格式: csv, json 或 xlsx",
         alias="format",
     ),
+    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> StreamingResponse:
     """导出用户消息.
 
@@ -564,6 +573,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
+            bbk_id=bbk_id,
         )
     if export_format == "xlsx":
         return await export_service.export_user_messages_xlsx(
@@ -573,6 +583,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
+            bbk_id=bbk_id,
         )
     return await export_service.export_user_messages_csv(
         source_id=actual_source_id,
@@ -581,6 +592,7 @@ async def export_user_messages(
         start_date=start,
         end_date=end,
         query_text=query,
+        bbk_id=bbk_id,
     )
 
 

@@ -29,9 +29,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
 const HIDDEN_TOOL_NAMES = new Set(["update_task_progress"]);
 
 function getToolDisplayName(toolName?: string, serverLabel?: string) {
-  const label = toolName
-    ? TOOL_DISPLAY_NAMES[toolName] || "工具操作"
-    : "工具操作";
+  const label = toolName ? TOOL_DISPLAY_NAMES[toolName] || toolName : "工具操作";
   return serverLabel ? `[${serverLabel}] ${label}` : label;
 }
 
@@ -60,7 +58,6 @@ const Tool = React.memo(function ({
 
   const serverLabel = content[0].data.server_label;
   const defaultTitle = getToolDisplayName(toolName, serverLabel);
-  const title = content[0].data.summary || defaultTitle;
   const input = content[0]?.data?.arguments;
   const output = content[1]?.data?.output;
   const outputSummary = content[1]?.data?.output_summary;
@@ -76,8 +73,7 @@ const Tool = React.memo(function ({
         loading={loading}
         msgStatus={data.status}
         defaultOpen={false}
-        title={title === "undefined" ? defaultTitle : title}
-        subTitle={defaultTitle}
+        title={loading ? `正在调用：${defaultTitle}` : `调用工具：${defaultTitle}`}
         input={input}
         output={output}
         outputSummary={outputSummary}

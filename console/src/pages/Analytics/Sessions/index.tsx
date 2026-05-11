@@ -12,6 +12,7 @@ import {
   Timeline,
   Empty,
   Drawer,
+  Select,
 } from "antd";
 import {
   Search,
@@ -33,7 +34,9 @@ import {
   TraceListItem,
   TraceDetail,
 } from "../../../api/modules/tracing";
-import { getBbkDisplayName } from "../../../constants/bbk";
+import { getBbkDisplayName, BBK_ID_MAP } from "../../../constants/bbk";
+import { useIframeStore } from "../../../stores/iframeStore";
+import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -46,6 +49,7 @@ export default function SessionsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [searchQuery, setSearchQuery] = useState("");
+  const [bbkIdFilter, setBbkIdFilter] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
     [dayjs().subtract(30, "day"), dayjs()],
   );
@@ -69,9 +73,16 @@ export default function SessionsPage() {
   const [traceDetail, setTraceDetail] = useState<TraceDetail | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
 
+  // 获取用户权限和来源信息
+  const isSuperManager = useIframeStore((state) => state.isSuperManager);
+  const userSource = useIframeStore((state) => state.source);
+  // 非 iframe 模式下使用默认 source，超级管理员不传 source_id（查询全部）
+  const effectiveSourceId = isSuperManager ? undefined : (userSource || DEFAULT_SOURCE_ID);
+
   // 用于追踪筛选条件变化，避免 useEffect 重复触发
   const filtersRef = useRef({
     searchQuery: "",
+    bbkIdFilter: undefined as string | undefined,
     dateRange: [dayjs().subtract(30, "day"), dayjs()] as [dayjs.Dayjs, dayjs.Dayjs] | null,
   });
 
@@ -79,10 +90,11 @@ export default function SessionsPage() {
     // 检查筛选条件是否变化
     const filtersChanged =
       filtersRef.current.searchQuery !== searchQuery ||
+      filtersRef.current.bbkIdFilter !== bbkIdFilter ||
       filtersRef.current.dateRange !== dateRange;
 
     // 更新 ref
-    filtersRef.current = { searchQuery, dateRange };
+    filtersRef.current = { searchQuery, bbkIdFilter, dateRange };
 
     // 如果筛选条件变化且不是第一页，只重置页码不查询
     if (filtersChanged && page !== 1) {
@@ -91,7 +103,7 @@ export default function SessionsPage() {
     }
 
     fetchSessions();
-  }, [page, pageSize, dateRange]);
+  }, [page, pageSize, bbkIdFilter, dateRange]);
 
   const handleSearch = () => {
     setPage(1);
@@ -103,8 +115,10 @@ export default function SessionsPage() {
     try {
       const data = await tracingApi.getSessions(page, pageSize, {
         user_id: searchQuery || undefined,
+        bbk_id: bbkIdFilter,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
+        source_id: effectiveSourceId,
       });
       setSessions(data.items || []);
       setTotal(data.total || 0);
@@ -125,15 +139,25 @@ export default function SessionsPage() {
 
     try {
       // 获取会话统计
-      const stats = await tracingApi.getSessionStats(session.session_id);
+      const stats = await tracingApi.getSessionStats(
+        session.session_id,
+        dateRange?.[0]?.format("YYYY-MM-DD"),
+        dateRange?.[1]?.format("YYYY-MM-DD"),
+        effectiveSourceId,
+      );
       setSessionStats(stats);
 
       // 获取会话下的对话列表
       setTracesLoading(true);
       const tracesData = await tracingApi.getTraces(1, 20, {
         session_id: session.session_id,
+        source_id: effectiveSourceId,
       });
-      setTraces(tracesData.items || []);
+      // 按时间升序排列
+      const sortedTraces = (tracesData.items || []).sort((a, b) =>
+        dayjs(a.start_time).valueOf() - dayjs(b.start_time).valueOf()
+      );
+      setTraces(sortedTraces);
       setTracesTotal(tracesData.total || 0);
     } catch (error) {
       console.error("Failed to fetch session detail:", error);
@@ -271,6 +295,17 @@ export default function SessionsPage() {
               setDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs] | null)
             }
             allowClear
+          />
+          <Select
+            placeholder={t("analytics.filterBbk")}
+            value={bbkIdFilter}
+            onChange={(v) => {
+              setBbkIdFilter(v);
+              setPage(1);
+            }}
+            allowClear
+            style={{ width: 150 }}
+            options={BBK_ID_MAP}
           />
           <Input
             placeholder={t("analytics.searchUser", "Search user...")}
@@ -453,7 +488,7 @@ export default function SessionsPage() {
             <div className={styles.section}>
               <h4>
                 <FileText size={14} />
-                {t("analytics.traces", "Traces")} ({tracesTotal})
+                {t("analytics.traces")} ({tracesTotal})
               </h4>
 
               {tracesLoading ? (

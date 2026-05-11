@@ -453,7 +453,7 @@ class SessionStats(BaseModel):
 
 
 class UserMessageItem(BaseModel):
-    """User message with token info for cost analysis."""
+    """User message for cost analysis."""
 
     trace_id: str
     source_id: str
@@ -463,8 +463,6 @@ class UserMessageItem(BaseModel):
     session_id: str
     channel: str
     user_message: Optional[str] = None
-    input_tokens: int = 0
-    output_tokens: int = 0
     model_name: Optional[str] = None
     start_time: datetime
     duration_ms: Optional[int] = None

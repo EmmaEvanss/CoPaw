@@ -15,6 +15,10 @@ import {
   fetchUserInfo,
   extractUserInfo,
 } from "../api/modules/userInfo";
+import {
+  ensureValidToken,
+  isExternalTokenEnabled,
+} from "../api/externalToken";
 import { getTargetCookie } from "./cookie-utils";
 import { authApi } from "../api/modules/auth";
 import { buildAuthHeaders } from "../api/authHeaders";
@@ -39,6 +43,12 @@ let isListenerRegistered = false;
 
 /** 清理函数 */
 let cleanupFn: (() => void) | null = null;
+
+/** 当前正在查询用户信息的 userId，用于合并初始化和 iframe 消息触发的并发请求 */
+let pendingUserInfoUserId: string | null = null;
+
+/** 当前正在执行的用户信息查询任务 */
+let pendingUserInfoRequest: Promise<boolean> | null = null;
 
 /**
  * 将值转换为布尔值，用于处理父窗口可能传递的字符串 "true"/"false"
@@ -151,9 +161,11 @@ function handleUserDataMessage(
 ): void {
   const store = useIframeStore.getState();
   const authHeaders = buildIframeAuthHeaders(message);
+  const nextUserId = message.data.sapId ?? null;
 
   store.setContext({
-    userId: message.data.sapId ?? null,
+    userId: nextUserId,
+    ...(store.userId !== nextUserId ? { userName: null } : {}),
     clawName: message.data.clawName ?? null,
     space: message.data.space ?? null,
     source: message.data.source ?? null,
@@ -166,6 +178,7 @@ function handleUserDataMessage(
   });
 
   store.markInitialized();
+  void fetchAndSetUserName();
   // sendMessageToParent({ type: "READY_RESPONSE", initialized: true });
   // 用户首次进入系统时，发起cron-auth请求
   // const headers = buildCookieHeaders(message);
@@ -278,6 +291,30 @@ export function initIframeMessageListener(): void {
 }
 
 /**
+ * 清理独立访问时残留的 iframe 上下文
+ *
+ * 同一个浏览器标签页可能先以 iframe 方式打开，再以普通页面方式访问。
+ * 这时 sessionStorage 中的 iframe 身份会污染后续请求头，因此独立访问时主动清理。
+ */
+export function resetIframeContextForStandalone(): void {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (isInIframe() || urlParams.get("origin") === "Y") {
+    return;
+  }
+
+  const store = useIframeStore.getState();
+  if (
+    store.userId ||
+    store.userName ||
+    store.source ||
+    store.bbk ||
+    store.authHeaders.length > 0
+  ) {
+    store.clearContext();
+  }
+}
+
+/**
  * 处理 URL 参数 origin=Y 的场景
  * 当父应用通过 URL 传递参数时，从 cookie 读取用户信息并初始化
  */
@@ -309,6 +346,7 @@ export async function handleUrlOriginParam(): Promise<void> {
   // 设置初始上下文，hideMenu=true 隐藏 MainLayout 侧边栏
   store.setContext({
     userId,
+    ...(store.userId !== userId ? { userName: null } : {}),
     sysId: sysId ?? null,
     bbk: vbbk ?? null,
     orgCode: vorgcode ?? null,
@@ -467,9 +505,36 @@ export async function fetchAndSetUserName(): Promise<boolean> {
     return false;
   }
 
+  if (pendingUserInfoRequest && pendingUserInfoUserId === userId) {
+    return pendingUserInfoRequest;
+  }
+
+  pendingUserInfoUserId = userId;
+  pendingUserInfoRequest = fetchAndApplyUserName(userId);
+
   try {
+    return await pendingUserInfoRequest;
+  } finally {
+    if (pendingUserInfoRequest && pendingUserInfoUserId === userId) {
+      pendingUserInfoRequest = null;
+      pendingUserInfoUserId = null;
+    }
+  }
+}
+
+async function fetchAndApplyUserName(userId: string): Promise<boolean> {
+  try {
+    if (isExternalTokenEnabled()) {
+      await ensureValidToken();
+    }
+
     const userInfoData = await fetchUserInfo(userId);
     const { userName, bbk } = extractUserInfo(userInfoData);
+
+    const store = useIframeStore.getState();
+    if (store.userId !== userId) {
+      return false;
+    }
 
     // 更新 store，只更新有值的字段
     // 如果 store 中已存在 bbk，则不覆盖

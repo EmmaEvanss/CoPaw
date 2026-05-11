@@ -163,8 +163,9 @@ def _extract_common_object(arguments: Any) -> str:
                     if browser_target:
                         return browser_target
                 return _clean_object_text(value)
+        return ""
 
-    if isinstance(arguments, str):
+    if isinstance(arguments, str) and not isinstance(parsed, (dict, list)):
         return _clean_object_text(arguments)
     return ""
 

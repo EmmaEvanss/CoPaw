@@ -3,7 +3,6 @@ import { Image, Modal, Spin, Tooltip, message } from "antd";
 import { FullscreenOutlined } from "@ant-design/icons";
 import {
   SparkCopyLine,
-  SparkDownloadLine,
   SparkFalseLine,
   SparkTrueLine,
 } from "@agentscope-ai/icons";
@@ -94,7 +93,7 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
       })
       .catch(() => {
         if (!cancelled) {
-          setBlobError("文件暂时无法预览，请尝试下载查看");
+          setBlobError("文件暂时无法预览");
         }
       })
       .finally(() => {
@@ -141,7 +140,7 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
       })
       .catch(() => {
         if (!cancelled) {
-          setTextError("文件暂时无法预览，请尝试下载查看");
+          setTextError("文件暂时无法预览");
         }
       })
       .finally(() => {
@@ -166,37 +165,15 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
     }
   }, [fileUrl]);
 
-  const handleDownload = useCallback(async () => {
-    try {
-      const res = await fetch(fileUrl, { headers: buildAuthHeaders() });
-      if (!res.ok) throw new Error("下载失败");
-
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(objectUrl);
-    } catch {
-      message.error("下载失败");
-    }
-  }, [fileName, fileUrl]);
-
   const renderPreviewError = useCallback(
     (errorText: string | null) => (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "24px" }}>
-        <div style={{ color: "#8c8c8c", marginBottom: "16px", fontSize: "14px" }}>
-          {errorText || "文件暂时无法预览，请尝试下载查看"}
+        <div style={{ color: "#8c8c8c", fontSize: "14px" }}>
+          {errorText || "文件暂时无法预览"}
         </div>
-        <IconButton icon={<SparkDownloadLine />} onClick={handleDownload}>
-          下载文件查看
-        </IconButton>
       </div>
     ),
-    [handleDownload],
+    [],
   );
 
   const renderPreviewContent = useMemo(() => {
@@ -288,9 +265,6 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
         <div style={{ fontSize: "12px", color: "#8c8c8c", marginBottom: "16px" }}>
           该文件类型不支持预览
         </div>
-        <IconButton icon={<SparkDownloadLine />} onClick={handleDownload}>
-          下载文件
-        </IconButton>
       </div>
     );
   }, [
@@ -298,7 +272,6 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
     blobLoading,
     color,
     fileName,
-    handleDownload,
     icon,
     previewHeight,
     previewType,
@@ -319,16 +292,9 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
           bordered={false}
         />
       </Tooltip>,
-      <Tooltip key="download" title="下载文件">
-        <IconButton
-          size="small"
-          icon={<SparkDownloadLine />}
-          onClick={handleDownload}
-          bordered={false}
-        />
-      </Tooltip>,
     ];
 
+    // 下载入口按当前需求临时隐藏，避免影响原通用预览组件。
     if (FULLSCREEN_PREVIEW_TYPES.includes(previewType)) {
       actions.unshift(
         <Tooltip key="fullscreen" title={fullscreen ? "退出全屏" : "全屏预览"}>
@@ -343,7 +309,7 @@ function ChatFilePreviewModal(props: ChatFilePreviewModalProps) {
     }
 
     return actions;
-  }, [copied, fullscreen, handleCopy, handleDownload, previewType]);
+  }, [copied, fullscreen, handleCopy, previewType]);
 
   return (
     <Modal

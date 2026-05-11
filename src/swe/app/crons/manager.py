@@ -1553,7 +1553,9 @@ class CronManager:  # pylint: disable=too-many-public-methods
             logger.warning("Failed to save system_job_ids", exc_info=True)
 
     async def _restore_external_job_ids(self) -> None:
-        """从 jobs.json 的 meta 中恢复 external_job_id 到内存 _states。"""
+        """恢复 external_job_id，缺失的补注册到外部调度平台。"""
+        if isinstance(self._scheduler_adapter, NoopSchedulerAdapter):
+            return
         try:
             for job in await self._repo.list_jobs():
                 ext_id = (job.meta or {}).get("external_job_id", "")
@@ -1561,6 +1563,44 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     st = self._states.get(job.id, CronJobState())
                     st.external_job_id = ext_id
                     self._states[job.id] = st
+                    continue
+                # 老任务尚未注册到外部平台，补注册
+                callback_url = self._build_callback_url("job", job.id)
+                cron = (
+                    job.schedule.cron
+                    if job.schedule and job.schedule.cron
+                    else "0 0 1 1 *"
+                )
+                try:
+                    ext_id = await self._scheduler_adapter.register_job(
+                        tenant_id=job.tenant_id or self._tenant_id or "",
+                        agent_id=self._agent_id or "",
+                        task_type="job",
+                        job_id=job.id,
+                        job_name=job.name,
+                        cron=cron,
+                        callback_url=callback_url,
+                    )
+                    if ext_id:
+                        st = self._states.get(job.id, CronJobState())
+                        st.external_job_id = ext_id
+                        self._states[job.id] = st
+                        await self._persist_external_job_id(job.id, ext_id)
+                        if not job.enabled:
+                            await self._scheduler_adapter.pause_job(
+                                ext_id,
+                            )
+                        logger.info(
+                            "Migrated job %s to external scheduler: ext_id=%s",
+                            job.id,
+                            ext_id,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to migrate job %s to external scheduler",
+                        job.id,
+                        exc_info=True,
+                    )
         except Exception:
             logger.debug("Failed to restore external_job_ids from jobs.json")
 

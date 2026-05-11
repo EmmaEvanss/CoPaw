@@ -45,7 +45,7 @@ _TEXT_PREVIEW_MIME_TYPES = {
     "application/x-yaml",
     "application/toml",
 }
-_PREVIEW_TYPES = (
+PreviewType = Literal[
     "image",
     "video",
     "audio",
@@ -55,6 +55,71 @@ _PREVIEW_TYPES = (
     "text",
     "html",
     "other",
+]
+_PREVIEW_TYPES: tuple[PreviewType, ...] = (
+    "image",
+    "video",
+    "audio",
+    "office",
+    "pdf",
+    "markdown",
+    "text",
+    "html",
+    "other",
+)
+_PREVIEW_TYPE_BY_EXTENSION: dict[str, PreviewType] = {
+    **dict.fromkeys(
+        ("png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"),
+        "image",
+    ),
+    **dict.fromkeys(
+        ("mp4", "avi", "mov", "wmv", "flv", "mkv", "webm"),
+        "video",
+    ),
+    **dict.fromkeys(
+        ("mp3", "wav", "flac", "ape", "aac", "ogg", "m4a"),
+        "audio",
+    ),
+    **dict.fromkeys(("doc", "docx", "xls", "xlsx", "ppt", "pptx"), "office"),
+    "pdf": "pdf",
+    "md": "markdown",
+    "mdx": "markdown",
+    "html": "html",
+    "htm": "html",
+    "xhtml": "html",
+    **dict.fromkeys(
+        (
+            "txt",
+            "json",
+            "xml",
+            "csv",
+            "log",
+            "yaml",
+            "yml",
+            "toml",
+            "ini",
+            "conf",
+            "config",
+            "env",
+            "sh",
+            "bash",
+            "zsh",
+            "ps1",
+            "bat",
+            "cmd",
+        ),
+        "text",
+    ),
+}
+_PREVIEW_TYPE_BY_MIME: dict[str, PreviewType] = {
+    "application/pdf": "pdf",
+    "text/html": "html",
+    "application/xhtml+xml": "html",
+}
+_PREVIEW_MIME_PREFIXES: tuple[tuple[str, PreviewType], ...] = (
+    ("image/", "image"),
+    ("video/", "video"),
+    ("audio/", "audio"),
 )
 _UPLOADED_STORED_NAME_PATTERN = re.compile(r"^[0-9a-f]{32}_(?P<name>.+)$")
 
@@ -122,73 +187,43 @@ def _resolve_display_name(
     return match.group("name") or file_name
 
 
+def _resolve_preview_type_from_mime(
+    mime_type: str | None,
+) -> PreviewType | None:
+    """在后缀无法判断时，根据 MIME 推断前端预览类型。"""
+    if not mime_type:
+        return None
+
+    for prefix, preview_type in _PREVIEW_MIME_PREFIXES:
+        if mime_type.startswith(prefix):
+            return preview_type
+
+    preview_type = _PREVIEW_TYPE_BY_MIME.get(mime_type)
+    if preview_type is not None:
+        return preview_type
+
+    if (
+        mime_type.startswith(_TEXT_PREVIEW_MIME_PREFIX)
+        or mime_type in _TEXT_PREVIEW_MIME_TYPES
+    ):
+        return "text"
+    return None
+
+
 def _resolve_preview_type(
     path: Path,
     mime_type: str | None,
-) -> Literal[
-    "image",
-    "video",
-    "audio",
-    "office",
-    "pdf",
-    "markdown",
-    "text",
-    "html",
-    "other",
-]:
+) -> PreviewType:
     """根据后缀、MIME 与内容嗅探给前端提供稳定预览类型。"""
     ext = path.suffix.lower().lstrip(".")
-    if ext in {"png", "jpg", "jpeg", "gif", "bmp", "webp", "svg"}:
-        return "image"
-    if ext in {"mp4", "avi", "mov", "wmv", "flv", "mkv", "webm"}:
-        return "video"
-    if ext in {"mp3", "wav", "flac", "ape", "aac", "ogg", "m4a"}:
-        return "audio"
-    if ext in {"doc", "docx", "xls", "xlsx", "ppt", "pptx"}:
-        return "office"
-    if ext == "pdf":
-        return "pdf"
-    if ext in {"md", "mdx"}:
-        return "markdown"
-    if ext in {"html", "htm", "xhtml"}:
-        return "html"
-    if ext in {
-        "txt",
-        "json",
-        "xml",
-        "csv",
-        "log",
-        "yaml",
-        "yml",
-        "toml",
-        "ini",
-        "conf",
-        "config",
-        "env",
-        "sh",
-        "bash",
-        "zsh",
-        "ps1",
-        "bat",
-        "cmd",
-    }:
-        return "text"
-    if mime_type:
-        if mime_type.startswith("image/"):
-            return "image"
-        if mime_type.startswith("video/"):
-            return "video"
-        if mime_type.startswith("audio/"):
-            return "audio"
-        if mime_type == "application/pdf":
-            return "pdf"
-        if mime_type in {"text/html", "application/xhtml+xml"}:
-            return "html"
-        if (
-            mime_type.startswith(_TEXT_PREVIEW_MIME_PREFIX)
-            or mime_type in _TEXT_PREVIEW_MIME_TYPES
-        ):
-            return "text"
+    preview_type = _PREVIEW_TYPE_BY_EXTENSION.get(ext)
+    if preview_type is not None:
+        return preview_type
+
+    preview_type = _resolve_preview_type_from_mime(mime_type)
+    if preview_type is not None:
+        return preview_type
+
     if _looks_like_text_file(path):
         return "text"
     return "other"

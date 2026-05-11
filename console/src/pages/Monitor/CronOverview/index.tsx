@@ -64,7 +64,7 @@ export default function CronOverviewPage() {
   const [jobs, setJobs] = useState<CronJobItem[]>([]);
   const [jobsTotal, setJobsTotal] = useState(0);
   const [jobsPage, setJobsPage] = useState(1);
-  const [jobsPageSize, setJobsPageSize] = useState(20);
+  const [jobsPageSize, setJobsPageSize] = useState(10);
   const [jobsTenantFilter, setJobsTenantFilter] = useState<string>("");
   const [jobsBbkFilter, setJobsBbkFilter] = useState<string>("");
   const [jobsSourceFilter, setJobsSourceFilter] = useState<string>("");
@@ -75,7 +75,7 @@ export default function CronOverviewPage() {
   const [executions, setExecutions] = useState<ExecutionItem[]>([]);
   const [execsTotal, setExecsTotal] = useState(0);
   const [execsPage, setExecsPage] = useState(1);
-  const [execsPageSize, setExecsPageSize] = useState(20);
+  const [execsPageSize, setExecsPageSize] = useState(10);
   const [execsJobIdFilter, setExecsJobIdFilter] = useState<string>("");
   const [execsTenantFilter, setExecsTenantFilter] = useState<string>("");
   const [execsStatusFilter, setExecsStatusFilter] = useState<string>("");

@@ -316,7 +316,7 @@ class CronJobQueryParams(BaseModel):
     status: Optional[str] = Field(default=None, description="状态筛选")
     enabled: Optional[bool] = Field(default=None, description="是否启用筛选")
     page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
 
 
 class ExecutionQueryParams(BaseModel):
@@ -332,7 +332,7 @@ class ExecutionQueryParams(BaseModel):
         default=None, description="结束时间范围"
     )
     page: int = Field(default=1, ge=1, description="页码")
-    page_size: int = Field(default=20, ge=1, le=100, description="每页数量")
+    page_size: int = Field(default=10, ge=1, le=100, description="每页数量")
 
 
 class ExportQueryParams(BaseModel):
@@ -362,7 +362,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
     items: List[T] = Field(default_factory=list, description="数据列表")
     total: int = Field(default=0, description="总数量")
     page: int = Field(default=1, description="当前页码")
-    page_size: int = Field(default=20, description="每页数量")
+    page_size: int = Field(default=10, description="每页数量")
 
 
 class SyncJobResponse(BaseModel):

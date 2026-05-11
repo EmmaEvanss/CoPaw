@@ -39,7 +39,7 @@ async def list_jobs(
     status: str | None = Query(default=None, description="状态筛选"),
     enabled: bool | None = Query(default=None, description="是否启用筛选"),
     page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
     service: QueryService = Depends(get_query_service),
 ) -> PaginatedResponse[CronJobModel]:
     """List cron jobs with pagination and filters.
@@ -106,7 +106,7 @@ async def list_executions(
         default=None, description="结束时间范围"
     ),
     page: int = Query(default=1, ge=1, description="页码"),
-    page_size: int = Query(default=20, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
     service: QueryService = Depends(get_query_service),
 ) -> PaginatedResponse[ExecutionModel]:
     """List execution history with pagination and filters.

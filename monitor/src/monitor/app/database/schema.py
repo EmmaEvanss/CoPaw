@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS swe_cron_jobs (
     id              VARCHAR(64) PRIMARY KEY COMMENT '任务ID (UUID)',
     name            VARCHAR(255) NOT NULL COMMENT '任务名称',
     tenant_id       VARCHAR(64) NOT NULL COMMENT '租户ID (分行号)',
+    tenant_name     VARCHAR(255) DEFAULT '' COMMENT '租户姓名 (X-User-Name header)',
     bbk_id          VARCHAR(64) DEFAULT '' COMMENT '分行号 (X-Bbk-Id header)',
     source_id       VARCHAR(64) DEFAULT '' COMMENT '来源标识 (X-Source-Id header)',
     enabled         TINYINT(1) DEFAULT 1 COMMENT '是否启用',
@@ -64,6 +65,13 @@ CREATE TABLE IF NOT EXISTS swe_cron_jobs (
     INDEX idx_enabled (enabled),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务定义表';
+"""
+
+# SQL for adding tenant_name column to existing table
+ALTER_CRON_JOBS_ADD_TENANT_NAME = """
+ALTER TABLE swe_cron_jobs
+ADD COLUMN tenant_name VARCHAR(255) DEFAULT '' COMMENT '租户姓名 (X-User-Name header)'
+AFTER tenant_id;
 """
 
 # SQL for creating cron_executions table

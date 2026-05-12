@@ -8,6 +8,7 @@ export interface CronJobItem {
   id: string;
   name: string;
   tenant_id: string;
+  tenant_name: string;
   bbk_id: string;
   source_id: string;
   enabled: boolean;

@@ -1,7 +1,12 @@
 import React, { useMemo, useState } from "react";
 import { SparkDownloadLine } from "@agentscope-ai/icons";
 import FilePreviewModal from "../FilePreviewModal";
-import { getFileIcon, getFileType } from "../FilePreviewModal/fileUtils";
+import {
+  extractDecodedFileNameFromUrl,
+  getFileIcon,
+  getFileType,
+  safeDecodeFileName,
+} from "../FilePreviewModal/fileUtils";
 
 export interface DownloadFileCardProps {
   url: string;
@@ -79,15 +84,8 @@ function DownloadFileCard(props: DownloadFileCardProps) {
 
   // Extract filename from URL if not provided
   const fileName = useMemo(() => {
-    if (propFileName) return propFileName;
-    try {
-      const urlObj = new URL(url);
-      const pathname = urlObj.pathname;
-      const parts = pathname.split("/");
-      return parts[parts.length - 1] || "未知文件";
-    } catch {
-      return "未知文件";
-    }
+    if (propFileName) return safeDecodeFileName(propFileName);
+    return extractDecodedFileNameFromUrl(url, "未知文件");
   }, [url, propFileName]);
 
   const { icon } = useMemo(() => getFileIcon(fileName), [fileName]);

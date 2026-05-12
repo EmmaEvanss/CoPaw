@@ -52,6 +52,17 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
+_BINARY_PREVIEW_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".pdf",
+    ".ico",
+    ".bmp",
+}
+
 _TRACING_STATS_SQL = """
     SELECT
         COUNT(*) AS call_count,
@@ -65,7 +76,7 @@ _TRACING_STATS_SQL = """
 _TRACING_USER_STATS_SQL = """
     SELECT
         user_id,
-        MAX(COALESCE(metadata->>'$.user_name', '')) AS user_name,
+        MAX(COALESCE(user_name, '')) AS user_name,
         COUNT(*) AS call_count
     FROM swe_tracing_spans
     WHERE event_type = 'skill_invocation'
@@ -89,7 +100,7 @@ _TRACING_STATS_MCP_SQL = """
 _TRACING_USER_STATS_MCP_SQL = """
     SELECT
         user_id,
-        MAX(COALESCE(metadata->>'$.user_name', '')) AS user_name,
+        MAX(COALESCE(user_name, '')) AS user_name,
         COUNT(*) AS call_count
     FROM swe_tracing_spans
     WHERE mcp_server = %s
@@ -247,6 +258,85 @@ def _item_visible(item: MarketItem, user_bbk_id: str) -> bool:
     return "100" in item.bbk_ids or user_bbk_id in item.bbk_ids
 
 
+def _preview_sort_key(path: Path) -> tuple[int, str]:
+    """统一文件预览树排序，优先展示核心入口文件。"""
+    if path.name == "SKILL.md":
+        return (0, path.name.lower())
+    if path.name == "skill.json":
+        return (1, path.name.lower())
+    if path.is_dir():
+        return (2, path.name.lower())
+    return (3, path.name.lower())
+
+
+def _build_file_tree_entries(
+    root: Path,
+    hidden_files: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """构建文件树列表，路径统一为 POSIX 格式。"""
+    hidden_files = hidden_files or set()
+    if not root.exists():
+        return []
+
+    def build_tree(path: Path) -> dict[str, Any]:
+        relative = path.relative_to(root).as_posix()
+        if path.is_file():
+            return {
+                "name": path.name,
+                "type": "file",
+                "path": relative,
+            }
+        children = []
+        for child in sorted(path.iterdir(), key=_preview_sort_key):
+            if child.name.startswith(".") or child.name in hidden_files:
+                continue
+            children.append(build_tree(child))
+        return {
+            "name": path.name,
+            "type": "directory",
+            "path": relative,
+            "children": children,
+        }
+
+    items = sorted(root.iterdir(), key=_preview_sort_key)
+    return [
+        build_tree(item)
+        for item in items
+        if not item.name.startswith(".") and item.name not in hidden_files
+    ]
+
+
+def _read_preview_file(root: Path, file_path: str) -> tuple[str | None, str]:
+    """读取预览文件内容，返回内容与类型。"""
+    target = (root / Path(file_path)).resolve()
+
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return None, "error"
+
+    if not target.exists() or not target.is_file():
+        return None, "error"
+
+    ext = target.suffix.lower()
+    if ext == ".md":
+        file_type = "markdown"
+    elif ext == ".json":
+        file_type = "json"
+    elif ext in _BINARY_PREVIEW_SUFFIXES:
+        return None, "binary"
+    else:
+        file_type = "text"
+
+    try:
+        content = target.read_text(encoding="utf-8")
+        return content, file_type
+    except UnicodeDecodeError:
+        return None, "binary"
+    except Exception:
+        return None, "error"
+
+
 class MarketplaceService:
     def __init__(
         self,
@@ -304,6 +394,36 @@ class MarketplaceService:
         skill_dir = skills_dir / skill_name
         if skill_dir.exists():
             scan_skill_directory(skill_dir, skill_name=skill_name)
+
+    def register_skill_in_manifest(
+        self,
+        user_id: str,
+        skill_name: str,
+        agent_id: str = "default",
+        source_id: str | None = None,
+        enabled: bool = True,
+    ) -> bool:
+        """注册技能到 manifest（用于上传/分发时记录）。"""
+
+        def _update(payload: dict) -> bool:
+            skills_dict = payload.setdefault("skills", {})
+            entry = skills_dict.setdefault(skill_name, {})
+            # 只更新字段，不覆盖已有数据
+            entry.setdefault(
+                "created_at",
+                datetime.now(timezone.utc).isoformat(),
+            )
+            entry["enabled"] = enabled
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+            return True
+
+        return mutate_user_skill_manifest(
+            self.swe_root,
+            user_id,
+            agent_id,
+            _update,
+            source_id,
+        )
 
     async def enable_skill(
         self,
@@ -620,7 +740,7 @@ class MarketplaceService:
                     description=item.description,
                     version=item.version,
                     creator_id=item.creator_id,
-                    creator_name=item.creator_name,
+                    creator_name=_decode_creator_name(item.creator_name),
                     category_id=item.category_id,
                     bbk_ids=item.bbk_ids,
                     status=item.status,
@@ -639,16 +759,8 @@ class MarketplaceService:
         user_bbk_id: str,
     ) -> Optional[MarketSkillDetail]:
         """获取技能详情（含调用客户明细）。"""
-        items = load_index(self.marketplace_root, source_id)
-        item = next(
-            (
-                i
-                for i in items
-                if i.item_id == item_id and i.item_type == "skill"
-            ),
-            None,
-        )
-        if item is None or not _item_visible(item, user_bbk_id):
+        item = self._get_visible_skill_item(source_id, item_id, user_bbk_id)
+        if item is None:
             return None
 
         call_count, user_count = await self._get_stats(item.name, source_id)
@@ -660,7 +772,7 @@ class MarketplaceService:
             description=item.description,
             version=item.version,
             creator_id=item.creator_id,
-            creator_name=item.creator_name,
+            creator_name=_decode_creator_name(item.creator_name),
             category_id=item.category_id,
             bbk_ids=item.bbk_ids,
             status=item.status,
@@ -670,6 +782,26 @@ class MarketplaceService:
             user_count=user_count,
             user_stats=user_stats,
         )
+
+    def _get_visible_skill_item(
+        self,
+        source_id: str,
+        item_id: str,
+        user_bbk_id: str,
+    ) -> MarketItem | None:
+        """获取当前用户可见的市场技能条目。"""
+        items = load_index(self.marketplace_root, source_id)
+        item = next(
+            (
+                entry
+                for entry in items
+                if entry.item_id == item_id and entry.item_type == "skill"
+            ),
+            None,
+        )
+        if item is None or not _item_visible(item, user_bbk_id):
+            return None
+        return item
 
     async def distribute_skill(
         self,
@@ -705,6 +837,14 @@ class MarketplaceService:
                     skill_name=item.name,
                     distributed_by=operator_id,
                     version=item.version,
+                )
+                # 注册技能到 manifest
+                self.register_skill_in_manifest(
+                    user["tenant_id"],
+                    item.name,
+                    "default",
+                    source_id,
+                    enabled=True,
                 )
                 count += 1
             except Exception as e:
@@ -845,7 +985,7 @@ class MarketplaceService:
             return [
                 SkillUserStat(
                     user_id=r["user_id"],
-                    user_name=r.get("user_name", ""),
+                    user_name=_decode_creator_name(r.get("user_name", "")),
                     call_count=int(r["call_count"]),
                 )
                 for r in rows
@@ -902,45 +1042,10 @@ class MarketplaceService:
             source_id,
         )
         skill_dir = skills_dir / skill_name
-        if not skill_dir.exists():
-            return []
-
-        # 需要隐藏的文件名
-        HIDDEN_FILES = {"skill.json"}
-
-        def build_tree(path: Path, base: Path) -> dict:
-            relative = path.relative_to(base)
-            if path.is_file():
-                return {
-                    "name": path.name,
-                    "type": "file",
-                    "path": str(relative),
-                }
-            children = []
-            for child in sorted(path.iterdir()):
-                if child.name.startswith(".") or child.name in HIDDEN_FILES:
-                    continue
-                children.append(build_tree(child, base))
-            return {
-                "name": path.name,
-                "type": "directory",
-                "path": str(relative),
-                "children": children,
-            }
-
-        items = list(skill_dir.iterdir())
-        items.sort(
-            key=lambda p: (
-                0 if p.name == "SKILL.md" else 2 if p.is_dir() else 3,
-                p.name.lower(),
-            ),
+        return _build_file_tree_entries(
+            skill_dir,
+            hidden_files={"skill.json"},
         )
-
-        return [
-            build_tree(item, skill_dir)
-            for item in items
-            if not item.name.startswith(".") and item.name not in HIDDEN_FILES
-        ]
 
     def read_skill_file(
         self,
@@ -958,31 +1063,44 @@ class MarketplaceService:
             source_id,
         )
         skill_dir = skills_dir / skill_name
-        target = skill_dir / file_path
+        return _read_preview_file(skill_dir, file_path)
 
-        try:
-            target.resolve().relative_to(skill_dir.resolve())
-        except ValueError:
+    def list_market_skill_files(
+        self,
+        source_id: str,
+        item_id: str,
+        user_bbk_id: str,
+    ) -> list[dict] | None:
+        """列出市场技能详情页的文件树。"""
+        item = self._get_visible_skill_item(source_id, item_id, user_bbk_id)
+        if item is None:
+            return None
+
+        skill_dir = get_skill_dir(
+            self.marketplace_root,
+            source_id,
+            item.item_id,
+        )
+        return _build_file_tree_entries(skill_dir)
+
+    def read_market_skill_file(
+        self,
+        source_id: str,
+        item_id: str,
+        file_path: str,
+        user_bbk_id: str,
+    ) -> tuple[str | None, str]:
+        """读取市场技能详情页文件内容。"""
+        item = self._get_visible_skill_item(source_id, item_id, user_bbk_id)
+        if item is None:
             return None, "error"
 
-        if not target.exists() or not target.is_file():
-            return None, "error"
-
-        ext = target.suffix.lower()
-        if ext == ".md":
-            file_type = "markdown"
-        elif ext == ".json":
-            file_type = "json"
-        elif ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf"):
-            return None, "binary"
-        else:
-            file_type = "text"
-
-        try:
-            content = target.read_text(encoding="utf-8")
-            return content, file_type
-        except Exception:
-            return None, "error"
+        skill_dir = get_skill_dir(
+            self.marketplace_root,
+            source_id,
+            item.item_id,
+        )
+        return _read_preview_file(skill_dir, file_path)
 
     def save_skill_file(
         self,
@@ -1535,7 +1653,7 @@ class MarketplaceService:
             return [
                 MCPUserStat(
                     user_id=r["user_id"],
-                    user_name=r.get("user_name", ""),
+                    user_name=_decode_creator_name(r.get("user_name", "")),
                     call_count=int(r["call_count"]),
                 )
                 for r in rows

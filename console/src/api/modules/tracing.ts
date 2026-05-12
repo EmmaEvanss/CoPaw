@@ -568,4 +568,85 @@ export const tracingApi = {
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/daily-trend${query}`);
   },
+
+  // 技能调用排行榜（分页）
+  getSkills: async (
+    page = 1,
+    pageSize = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: SkillUsage[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/monitor/tracing/skills?${params.toString()}`);
+  },
+
+  // 技能调用的对话列表（分页）
+  getSkillTraces: async (
+    skillName: string,
+    page = 1,
+    pageSize = 20,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: TraceListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(
+      `/monitor/tracing/skills/${encodeURIComponent(skillName)}/traces?${params.toString()}`,
+    );
+  },
+
+  // MCP 服务调用排行榜（分页）
+  getMCPServers: async (
+    page = 1,
+    pageSize = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: MCPServerUsage[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/monitor/tracing/mcp?${params.toString()}`);
+  },
 };

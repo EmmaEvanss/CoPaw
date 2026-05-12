@@ -816,7 +816,7 @@ class ZhaohuChannel(BaseChannel):
             如果应包含链接返回 True。
         """
         try:
-            from ....workspace.tenant_init_source_store import is_tenant_source
+            from ...workspace.tenant_init_source_store import is_tenant_source
 
             return await is_tenant_source(tenant_id, "RMASSIST")
         except Exception:
@@ -1079,7 +1079,8 @@ class ZhaohuChannel(BaseChannel):
                             "task_name": raw_task.get("task_name", "未知任务"),
                             "status": raw_task.get("status", "pending"),
                             "status_text": raw_task.get(
-                                "status_text", "待开始"
+                                "status_text",
+                                "待开始",
                             ),
                             "time_info": raw_task.get("time_info", ""),
                             "task_chat_id": task_meta.get("task_chat_id", ""),
@@ -1402,7 +1403,9 @@ class ZhaohuChannel(BaseChannel):
         except Exception:
             logger.exception("zhaohu LLM processing failed: msgId=%s", msg_id)
             await self.send(
-                yst_id, "抱歉，处理您的消息时发生错误，请稍后重试。", meta
+                yst_id,
+                "抱歉，处理您的消息时发生错误，请稍后重试。",
+                meta,
             )
         finally:
             reset_current_tenant_id(tenant_token)

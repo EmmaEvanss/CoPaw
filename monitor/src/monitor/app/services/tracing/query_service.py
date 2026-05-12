@@ -218,7 +218,7 @@ class TracingQueryService:
             if row is None:
                 return {
                     "calls": 0,
-                    "tokens": 0,
+                    "tokens": 0.0,
                     "sessions": 0,
                     "users": 0,
                     "platforms": 0,
@@ -226,7 +226,7 @@ class TracingQueryService:
                 }
             return {
                 "calls": row["calls"] or 0,
-                "tokens": row["tokens"] or 0,
+                "tokens": float(row["tokens"] or 0),
                 "sessions": row["sessions"] or 0,
                 "users": row["users"] or 0,
                 "platforms": row["platforms"] or 0,
@@ -951,6 +951,268 @@ class TracingQueryService:
             for row in rows
         ]
 
+    async def get_skills_paginated(
+        self,
+        source_id: str,
+        page: int = 1,
+        page_size: int = 10,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> tuple[list[SkillUsage], int]:
+        """获取技能调用排行榜（分页）."""
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        # 构建基础查询条件
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            base_where = f"""
+                start_time >= %s AND start_time <= %s
+                AND event_type = 'skill_invocation'
+                AND skill_name IS NOT NULL
+                AND source_id NOT IN ({exclude_placeholders})
+                AND user_id != 'default'
+            """
+            count_params = [start_date, end_date, *EXCLUDED_SOURCE_IDS]
+        else:
+            base_where = """
+                source_id = %s AND start_time >= %s AND start_time <= %s
+                AND event_type = 'skill_invocation'
+                AND skill_name IS NOT NULL
+                AND user_id != 'default'
+            """
+            count_params = [source_id, start_date, end_date]
+
+        # 查询总数
+        count_query = f"""
+            SELECT COUNT(DISTINCT skill_name) as total
+            FROM swe_tracing_spans
+            WHERE {base_where}
+        """
+        count_row = await self._db.fetch_one(count_query, tuple(count_params))
+        total = count_row["total"] if count_row else 0
+
+        # 分页查询
+        offset = (page - 1) * page_size
+        data_query = f"""
+            SELECT skill_name, COUNT(*) as count,
+                   AVG(duration_ms) as avg_duration
+            FROM swe_tracing_spans
+            WHERE {base_where}
+            GROUP BY skill_name
+            ORDER BY count DESC
+            LIMIT %s OFFSET %s
+        """
+        params = count_params + [page_size, offset]
+        rows = await self._db.fetch_all(data_query, tuple(params))
+
+        skills = [
+            SkillUsage(
+                skill_name=row["skill_name"],
+                count=row["count"] or 0,
+                avg_duration_ms=int(row["avg_duration"] or 0),
+            )
+            for row in rows
+        ]
+        return skills, total
+
+    async def get_mcp_servers_paginated(
+        self,
+        source_id: str,
+        page: int = 1,
+        page_size: int = 10,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> tuple[list[MCPServerUsage], int]:
+        """获取 MCP 服务调用排行榜（分页）."""
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        # 构建基础查询条件
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            base_where = f"""
+                start_time >= %s AND start_time <= %s
+                AND event_type = 'tool_call_end'
+                AND mcp_server IS NOT NULL
+                AND source_id NOT IN ({exclude_placeholders})
+                AND user_id != 'default'
+            """
+            count_params = [start_date, end_date, *EXCLUDED_SOURCE_IDS]
+        else:
+            base_where = """
+                source_id = %s AND start_time >= %s AND start_time <= %s
+                AND event_type = 'tool_call_end'
+                AND mcp_server IS NOT NULL
+                AND user_id != 'default'
+            """
+            count_params = [source_id, start_date, end_date]
+
+        # 查询总数
+        count_query = f"""
+            SELECT COUNT(DISTINCT mcp_server) as total
+            FROM swe_tracing_spans
+            WHERE {base_where}
+        """
+        count_row = await self._db.fetch_one(count_query, tuple(count_params))
+        total = count_row["total"] if count_row else 0
+
+        # 分页查询
+        offset = (page - 1) * page_size
+        server_query = f"""
+            SELECT mcp_server,
+                   COUNT(DISTINCT tool_name) as tool_count,
+                   COUNT(*) as total_calls,
+                   AVG(duration_ms) as avg_duration,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+            FROM swe_tracing_spans
+            WHERE {base_where}
+            GROUP BY mcp_server
+            ORDER BY total_calls DESC
+            LIMIT %s OFFSET %s
+        """
+        params = count_params + [page_size, offset]
+        server_rows = await self._db.fetch_all(server_query, tuple(params))
+
+        mcp_servers = []
+        for server_row in server_rows:
+            server_name = server_row["mcp_server"]
+            mcp_servers.append(
+                MCPServerUsage(
+                    server_name=server_name,
+                    tool_count=server_row["tool_count"] or 0,
+                    total_calls=server_row["total_calls"] or 0,
+                    avg_duration_ms=int(server_row["avg_duration"] or 0),
+                    error_count=server_row["error_count"] or 0,
+                    tools=[],  # 分页查询不返回工具详情
+                ),
+            )
+        return mcp_servers, total
+
+    async def get_skill_traces(
+        self,
+        skill_name: str,
+        source_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> tuple[list[TraceListItem], int]:
+        """获取指定技能调用的对话列表（分页）."""
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        # 构建查询条件
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            base_where = f"""
+                s.start_time >= %s AND s.start_time <= %s
+                AND s.event_type = 'skill_invocation'
+                AND s.skill_name = %s
+                AND s.source_id NOT IN ({exclude_placeholders})
+                AND s.user_id != 'default'
+            """
+            count_params = [
+                start_date,
+                end_date,
+                skill_name,
+                *EXCLUDED_SOURCE_IDS,
+            ]
+        else:
+            base_where = """
+                s.source_id = %s AND s.start_time >= %s AND s.start_time <= %s
+                AND s.event_type = 'skill_invocation'
+                AND s.skill_name = %s
+                AND s.user_id != 'default'
+            """
+            count_params = [source_id, start_date, end_date, skill_name]
+
+        # 查询总数
+        count_query = f"""
+            SELECT COUNT(DISTINCT s.trace_id) as total
+            FROM swe_tracing_spans s
+            WHERE {base_where}
+        """
+        count_row = await self._db.fetch_one(count_query, tuple(count_params))
+        total = count_row["total"] if count_row else 0
+
+        # 分页查询对话列表
+        offset = (page - 1) * page_size
+        if source_id == "all":
+            data_query = f"""
+                SELECT DISTINCT t.trace_id, t.source_id, t.user_id, t.session_id,
+                       t.channel, t.start_time, t.duration_ms, t.total_tokens,
+                       t.total_input_tokens, t.total_output_tokens, t.model_name,
+                       t.status, JSON_LENGTH(t.skills_used) as skills_count,
+                       (SELECT t2.user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT t3.bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                FROM swe_tracing_spans s
+                JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
+                WHERE {base_where}
+                ORDER BY t.start_time ASC
+                LIMIT %s OFFSET %s
+            """
+            params = list(count_params) + [page_size, offset]
+        else:
+            data_query = f"""
+                SELECT DISTINCT t.trace_id, t.source_id, t.user_id, t.session_id,
+                       t.channel, t.start_time, t.duration_ms, t.total_tokens,
+                       t.total_input_tokens, t.total_output_tokens, t.model_name,
+                       t.status, JSON_LENGTH(t.skills_used) as skills_count,
+                       (SELECT t2.user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.source_id = %s
+                          AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT t3.bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.source_id = %s
+                          AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                FROM swe_tracing_spans s
+                JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
+                WHERE {base_where}
+                ORDER BY t.start_time ASC
+                LIMIT %s OFFSET %s
+            """
+            params = (
+                [source_id, source_id]
+                + list(count_params)
+                + [page_size, offset]
+            )
+
+        rows = await self._db.fetch_all(data_query, tuple(params))
+
+        traces = [
+            TraceListItem(
+                trace_id=row["trace_id"],
+                source_id=row["source_id"],
+                user_id=row["user_id"],
+                user_name=row["user_name"],
+                bbk_id=row["bbk_id"],
+                session_id=row["session_id"],
+                channel=row["channel"],
+                start_time=row["start_time"],
+                duration_ms=row["duration_ms"],
+                total_tokens=row["total_tokens"] or 0,
+                total_input_tokens=row["total_input_tokens"] or 0,
+                total_output_tokens=row["total_output_tokens"] or 0,
+                model_name=row["model_name"],
+                status=row["status"],
+                skills_count=row["skills_count"] or 0,
+            )
+            for row in rows
+        ]
+        return traces, total
+
     async def _get_mcp_stats(
         self,
         source_id: str,
@@ -1352,8 +1614,13 @@ class TracingQueryService:
     ) -> tuple[list[SessionListItem], int]:
         """获取会话列表."""
         if source_id == "all":
-            where_clauses: list[str] = []
-            params: list[Any] = []
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            where_clauses: list[str] = [
+                f"source_id NOT IN ({exclude_placeholders})",
+            ]
+            params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
             where_clauses = ["source_id = %s"]
             params = [source_id]
@@ -1376,11 +1643,22 @@ class TracingQueryService:
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
+        # 构建技能统计子查询的日期筛选条件
+        skill_date_conditions = "s.event_type = 'skill_invocation'"
+        skill_params: list[Any] = []
+        if start_date:
+            skill_date_conditions += " AND s.start_time >= %s"
+            skill_params.append(start_date)
+        if end_date:
+            skill_date_conditions += " AND s.start_time <= %s"
+            skill_params.append(end_date)
+
         count_query = f"SELECT COUNT(DISTINCT session_id) as total FROM swe_tracing_traces WHERE {where_sql}"
         count_row = await self._db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
 
         offset = (page - 1) * page_size
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
         if source_id == "all":
             query = f"""
                 SELECT t.session_id,
@@ -1392,12 +1670,15 @@ class TracingQueryService:
                        MAX(t.start_time) as last_active,
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.session_id = t.session_id
-                        AND s.event_type = 'skill_invocation') as total_skills,
+                        AND s.source_id NOT IN ({exclude_placeholders})
+                        AND {skill_date_conditions}) as total_skills,
                        (SELECT t2.user_name FROM swe_tracing_traces t2
                         WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                        AND t2.source_id NOT IN ({exclude_placeholders})
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                        AND t3.source_id NOT IN ({exclude_placeholders})
                         ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
@@ -1405,7 +1686,13 @@ class TracingQueryService:
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
-            params.extend([page_size, offset])
+            params.extend(
+                list(EXCLUDED_SOURCE_IDS)
+                + skill_params
+                + list(EXCLUDED_SOURCE_IDS)
+                + list(EXCLUDED_SOURCE_IDS)
+                + [page_size, offset],
+            )
         else:
             query = f"""
                 SELECT t.session_id,
@@ -1418,7 +1705,7 @@ class TracingQueryService:
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.source_id = %s
                         AND s.session_id = t.session_id
-                        AND s.event_type = 'skill_invocation') as total_skills,
+                        AND {skill_date_conditions}) as total_skills,
                        (SELECT t2.user_name FROM swe_tracing_traces t2
                         WHERE t2.user_id = t.user_id AND t2.source_id = %s AND t2.user_name IS NOT NULL
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
@@ -1432,7 +1719,9 @@ class TracingQueryService:
                 LIMIT %s OFFSET %s
             """
             params = (
-                [source_id, source_id, source_id]
+                [source_id]
+                + skill_params
+                + [source_id, source_id]
                 + params
                 + [page_size, offset]
             )
@@ -1734,8 +2023,13 @@ class TracingQueryService:
     ) -> tuple[list[TraceListItem], int]:
         """获取对话列表."""
         if source_id == "all":
-            where_clauses: list[str] = []
-            params: list[Any] = []
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            where_clauses: list[str] = [
+                f"source_id NOT IN ({exclude_placeholders})",
+            ]
+            params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
             where_clauses = ["source_id = %s"]
             params = [source_id]
@@ -1766,27 +2060,57 @@ class TracingQueryService:
         total = count_row["total"] if count_row else 0
 
         offset = (page - 1) * page_size
-        query = f"""
-            SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.start_time,
-                   t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
-                   t.model_name, t.status,
-                   JSON_LENGTH(t.skills_used) as skills_count,
-                   COALESCE(t.user_name, (
-                       SELECT t2.user_name FROM swe_tracing_traces t2
-                       WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
-                       ORDER BY t2.start_time DESC LIMIT 1
-                   )) as user_name,
-                   COALESCE(t.bbk_id, (
-                       SELECT t3.bbk_id FROM swe_tracing_traces t3
-                       WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                       ORDER BY t3.start_time DESC LIMIT 1
-                   )) as bbk_id
-            FROM swe_tracing_traces t
-            WHERE {where_sql}
-            ORDER BY t.start_time DESC
-            LIMIT %s OFFSET %s
-        """
-        params.extend([page_size, offset])
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+        if source_id == "all":
+            query = f"""
+                SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.start_time,
+                       t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
+                       t.model_name, t.status,
+                       JSON_LENGTH(t.skills_used) as skills_count,
+                       COALESCE(t.user_name, (
+                           SELECT t2.user_name FROM swe_tracing_traces t2
+                           WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                           AND t2.source_id NOT IN ({exclude_placeholders})
+                           ORDER BY t2.start_time DESC LIMIT 1
+                       )) as user_name,
+                       COALESCE(t.bbk_id, (
+                           SELECT t3.bbk_id FROM swe_tracing_traces t3
+                           WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                           AND t3.source_id NOT IN ({exclude_placeholders})
+                           ORDER BY t3.start_time DESC LIMIT 1
+                       )) as bbk_id
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                ORDER BY t.start_time DESC
+                LIMIT %s OFFSET %s
+            """
+            params.extend(
+                list(EXCLUDED_SOURCE_IDS)
+                + list(EXCLUDED_SOURCE_IDS)
+                + [page_size, offset],
+            )
+        else:
+            query = f"""
+                SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.start_time,
+                       t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
+                       t.model_name, t.status,
+                       JSON_LENGTH(t.skills_used) as skills_count,
+                       COALESCE(t.user_name, (
+                           SELECT t2.user_name FROM swe_tracing_traces t2
+                           WHERE t2.source_id = %s AND t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                           ORDER BY t2.start_time DESC LIMIT 1
+                       )) as user_name,
+                       COALESCE(t.bbk_id, (
+                           SELECT t3.bbk_id FROM swe_tracing_traces t3
+                           WHERE t3.source_id = %s AND t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                           ORDER BY t3.start_time DESC LIMIT 1
+                       )) as bbk_id
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                ORDER BY t.start_time DESC
+                LIMIT %s OFFSET %s
+            """
+            params = [source_id, source_id] + params + [page_size, offset]
         rows = await self._db.fetch_all(query, tuple(params))
         traces = [
             TraceListItem(

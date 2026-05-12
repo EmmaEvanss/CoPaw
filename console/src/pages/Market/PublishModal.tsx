@@ -100,12 +100,11 @@ export function PublishModal({ open, sourceId, userId, onClose, onSuccess, initi
         <Form.Item name="description" label="描述">
           <TextArea rows={2} />
         </Form.Item>
-        <Form.Item name="category_id" label="分类">
+        <Form.Item name="category_id" label="分类" rules={[{ required: true, message: "请选择分类" }]}>
           {loadingCategories ? (
             <Spin size="small" />
           ) : (
             <Select
-              allowClear
               placeholder="选择分类"
               options={categories.map((c) => ({ label: c.name, value: c.id }))}
             />

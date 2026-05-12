@@ -118,3 +118,79 @@ export function extractUserInfo(
 
   return result;
 }
+
+// =============================================================================
+// 租户来源信息查询（运维模式使用）
+// =============================================================================
+
+/** 租户来源信息 */
+export interface TenantSourceInfo {
+  /** 租户ID（用户ID） */
+  tenant_id: string;
+  /** 租户名称 */
+  tenant_name: string | null;
+  /** BBK标识 */
+  bbk_id: string | null;
+}
+
+/** 租户来源信息列表响应 */
+export interface TenantSourceInfoListResponse {
+  items: TenantSourceInfo[];
+}
+
+/**
+ * 按来源查询租户列表
+ *
+ * @param sourceId - 来源标识
+ * @returns 租户来源信息列表
+ */
+export async function fetchTenantsBySource(
+  sourceId: string,
+): Promise<TenantSourceInfo[]> {
+  try {
+    const result = await request<TenantSourceInfoListResponse>(
+      `/user-info/tenants/by-source?source_id=${encodeURIComponent(sourceId)}`,
+    );
+    return result.items ?? [];
+  } catch (error) {
+    console.error("[TenantSource] API request error:", error);
+    return [];
+  }
+}
+
+// =============================================================================
+// 机构信息查询
+// =============================================================================
+
+/** 机构信息 */
+export interface BbkInfo {
+  /** BBK标识 */
+  bbk_id: string;
+  /** 机构名称 */
+  bbk_name: string | null;
+}
+
+/** 机构列表响应 */
+export interface BbkListResponse {
+  items: BbkInfo[];
+}
+
+/**
+ * 按来源查询机构列表
+ *
+ * @param sourceId - 来源标识
+ * @returns 机构信息列表
+ */
+export async function fetchBbkBySource(
+  sourceId: string,
+): Promise<BbkInfo[]> {
+  try {
+    const result = await request<BbkListResponse>(
+      `/user-info/bbk/by-source?source_id=${encodeURIComponent(sourceId)}`,
+    );
+    return result.items ?? [];
+  } catch (error) {
+    console.error("[BbkSource] API request error:", error);
+    return [];
+  }
+}

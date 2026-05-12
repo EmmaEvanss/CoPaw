@@ -291,6 +291,7 @@ class MonitorSyncClient:
             "id": self._get_or_empty(spec_dict, "id"),
             "name": self._get_or_empty(spec_dict, "name"),
             "tenant_id": self._get_or_empty(spec_dict, "tenant_id"),
+            "tenant_name": self._get_or_empty(spec_dict, "tenant_name"),
             "bbk_id": self._get_or_empty(spec_dict, "bbk_id"),
             "source_id": self._get_or_empty(spec_dict, "source_id"),
             "enabled": self._get_or_default(spec_dict, "enabled", True),

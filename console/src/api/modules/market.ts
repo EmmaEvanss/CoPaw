@@ -1,10 +1,15 @@
 import { request } from "../request";
 import { mergeHeaders } from "../mergeHeaders";
 import { getApiUrl } from "../config";
+import type {
+  FileContentResponse,
+  FileTreeNode,
+} from "./mySkills";
 
 export interface MarketSkill {
   item_id: string;
   name: string;
+  chinese_name?: string;
   description: string;
   version: string;
   creator_id: string;
@@ -134,6 +139,33 @@ export const marketApi = {
     return request<MarketSkillDetail | null>(
       `/market/skills/${itemId}`,
       opts
+    );
+  },
+
+  listSkillFiles: async (
+    sourceId: string,
+    itemId: string,
+  ): Promise<FileTreeNode[]> => {
+    const opts = mergeHeaders({ "X-Source-Id": sourceId });
+    return request<FileTreeNode[]>(
+      `/market/skills/${itemId}/files`,
+      opts,
+    );
+  },
+
+  readSkillFile: async (
+    sourceId: string,
+    itemId: string,
+    filePath: string,
+  ): Promise<FileContentResponse> => {
+    const opts = mergeHeaders({ "X-Source-Id": sourceId });
+    const encodedPath = filePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/");
+    return request<FileContentResponse>(
+      `/market/skills/${itemId}/files/${encodedPath}`,
+      opts,
     );
   },
 

@@ -22,12 +22,11 @@ import {
 } from "@ant-design/icons";
 import { SkillCard } from "./SkillCard";
 import { SkillDetailDrawer } from "./SkillDetailDrawer";
-import { DistributeModal } from "./DistributeModal";
+import { DistributeTargetModal, DistributeTargetType } from "./DistributeTargetModal";
 import UploadSkillModal from "./components/UploadSkillModal";
 import { MCPCard } from "./MCPCard";
 import { MCPDetailDrawer } from "./MCPDetailDrawer";
 import { MCPUploadModal } from "./MCPUploadModal";
-import { MCPDistributeModal } from "./MCPDistributeModal";
 import { MCPEditModal } from "./MCPEditModal";
 import { useMarket } from "./useMarket";
 import { marketApi, MarketSkill } from "../../api/modules/market";
@@ -53,13 +52,9 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
     selectedSkill,
     detailDrawerOpen,
     setDetailDrawerOpen,
-    distributeModalOpen,
-    setDistributeModalOpen,
-    distributeTargetSkill,
     refreshCategories,
     refreshSkills,
     openSkillDetail,
-    openDistributeModal,
   } = useMarket(sourceId);
 
   // MCP 相关状态
@@ -68,10 +63,13 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
   const [selectedMCP, setSelectedMCP] = useState<MarketMCPDetail | null>(null);
   const [mcpDetailMode, setMcpDetailMode] = useState<"list" | "detail">("list");
   const [mcpUploadModalOpen, setMcpUploadModalOpen] = useState(false);
-  const [mcpDistributeModalOpen, setMcpDistributeModalOpen] = useState(false);
-  const [distributeTargetMCP, setDistributeTargetMCP] = useState<MarketMCPItem | null>(null);
   const [mcpEditModalOpen, setMcpEditModalOpen] = useState(false);
   const [editingMCP, setEditingMCP] = useState<MarketMCPDetail | null>(null);
+
+  // 统一分发弹窗状态
+  const [distributeModalOpen, setDistributeModalOpen] = useState(false);
+  const [distributeType, setDistributeType] = useState<DistributeTargetType>("skill");
+  const [distributeTarget, setDistributeTarget] = useState<MarketSkill | MarketMCPItem | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeResourceType, setActiveResourceType] = useState<ResourceType>("skill");
@@ -158,10 +156,18 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
     });
   }, [handleDeleteMCP]);
 
+  // 打开技能分发弹窗
+  const openSkillDistributeModal = useCallback((skill: MarketSkill) => {
+    setDistributeType("skill");
+    setDistributeTarget(skill);
+    setDistributeModalOpen(true);
+  }, []);
+
   // 打开 MCP 分发弹窗
   const openMCPDistributeModal = useCallback((mcp: MarketMCPItem) => {
-    setDistributeTargetMCP(mcp);
-    setMcpDistributeModalOpen(true);
+    setDistributeType("mcp");
+    setDistributeTarget(mcp);
+    setDistributeModalOpen(true);
   }, []);
 
   const openMCPEditModal = useCallback(async (target: MarketMCPItem | MarketMCPDetail) => {
@@ -228,6 +234,21 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
       return true;
     });
 
+  const isSkillDetailMode = (
+    activeResourceType === "skill" &&
+    detailDrawerOpen &&
+    !!selectedSkill
+  );
+  const isMCPDetailMode = (
+    activeResourceType === "mcp" &&
+    mcpDetailMode === "detail" &&
+    !!selectedMCP
+  );
+  const selectedSkillCategoryName = selectedSkill?.category_id
+    ? categories.find((c) => String(c.id) === String(selectedSkill.category_id))
+      ?.name
+    : undefined;
+
   // 分类计数
   const categoryCountMap = new Map<string | number, number>();
   skills.forEach((s) => {
@@ -259,18 +280,31 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
             )}
           </div>
         </div>
-        {activeResourceType === "mcp" && mcpDetailMode === "detail" ? (
+        {isSkillDetailMode || isMCPDetailMode ? (
           <div style={{ display: "flex", gap: 12 }}>
             <Button
               icon={<ArrowLeftOutlined />}
               onClick={() => {
+                if (activeResourceType === "skill") {
+                  setDetailDrawerOpen(false);
+                  return;
+                }
                 setMcpDetailMode("list");
                 setSelectedMCP(null);
               }}
             >
               返回列表
             </Button>
-            <Button icon={<ReloadOutlined />} onClick={refreshMCP}>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => {
+                if (activeResourceType === "skill") {
+                  refreshSkills();
+                  return;
+                }
+                refreshMCP();
+              }}
+            >
               刷新
             </Button>
           </div>
@@ -345,124 +379,140 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
       {/* Content */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
         {activeResourceType === "skill" ? (
-          <>
-            {/* Sidebar - Categories */}
-            <div
-              style={{
-                width: 200,
-                borderRight: "1px solid #f0f0f0",
-                padding: 16,
-                overflow: "auto",
-              }}
-            >
-              <div style={{ marginBottom: 12 }}>
-                <Text strong style={{ fontSize: 14 }}>分类</Text>
-                {selectedCategory !== null && (
-                  <Button
-                    type="link"
-                    size="small"
-                    style={{ fontSize: 12, padding: "0 0 0 8px" }}
-                    onClick={() => setSelectedCategory(null)}
-                  >
-                    清除
-                  </Button>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div
-                  onClick={() => setSelectedCategory(null)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "8px 12px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    backgroundColor: selectedCategory === null ? "#e6f7ff" : "transparent",
-                    color: selectedCategory === null ? "#1890ff" : "inherit",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <span>全部</span>
-                  <Tag style={{ margin: 0 }}>{skills.length}</Tag>
-                </div>
-                {categories.map((cat) => {
-                  const isActive = String(selectedCategory) === String(cat.id);
-                  const count = categoryCountMap.get(cat.id) || 0;
-                  return (
-                    <div
-                      key={cat.id}
-                      onClick={() => setSelectedCategory(isActive ? null : cat.id)}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "8px 12px",
-                        borderRadius: 6,
-                        cursor: "pointer",
-                        backgroundColor: isActive ? "#e6f7ff" : "transparent",
-                        color: isActive ? "#1890ff" : "inherit",
-                        transition: "all 0.15s ease",
-                      }}
-                    >
-                      <span>{cat.name}</span>
-                      <Tag style={{ margin: 0 }}>{count}</Tag>
-                    </div>
-                  );
-                })}
-              </div>
+          isSkillDetailMode && selectedSkill ? (
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <SkillDetailDrawer
+                open={detailDrawerOpen}
+                skill={selectedSkill}
+                onClose={() => setDetailDrawerOpen(false)}
+                isManager={isManager}
+                onDistribute={
+                  isManager
+                    ? () => openSkillDistributeModal(selectedSkill)
+                    : undefined
+                }
+                sourceId={sourceId}
+                onRefresh={refreshSkills}
+                categoryName={selectedSkillCategoryName}
+              />
             </div>
-
-            {/* 技能卡片列表 */}
-            <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
-              <div style={{ marginBottom: 12 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {selectedCategory !== null
-                    ? `当前分类：${categories.find((c) => String(c.id) === String(selectedCategory))?.name || "未知"}`
-                    : "全部技能"}
-                  {" · 筛选结果 "}
-                  {displayedSkills.length} 个
-                </Text>
-              </div>
-
-              {skillsLoading ? (
-                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 200 }}>
-                  <Spin />
+          ) : (
+            <>
+              {/* Sidebar - Categories */}
+              <div
+                style={{
+                  width: 200,
+                  borderRight: "1px solid #f0f0f0",
+                  padding: 16,
+                  overflow: "auto",
+                }}
+              >
+                <div style={{ marginBottom: 12 }}>
+                  <Text strong style={{ fontSize: 14 }}>分类</Text>
+                  {selectedCategory !== null && (
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12, padding: "0 0 0 8px" }}
+                      onClick={() => setSelectedCategory(null)}
+                    >
+                      清除
+                    </Button>
+                  )}
                 </div>
-              ) : displayedSkills.length === 0 ? (
-                <Empty description={searchQuery ? "未找到匹配的技能" : "暂无技能"} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 16 }}>
-                  {displayedSkills.map((skill) => {
-                    const catName = skill.category_id
-                      ? categories.find((c) => String(c.id) === String(skill.category_id))?.name
-                      : undefined;
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div
+                    onClick={() => setSelectedCategory(null)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 12px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      backgroundColor: selectedCategory === null ? "#e6f7ff" : "transparent",
+                      color: selectedCategory === null ? "#1890ff" : "inherit",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <span>全部</span>
+                    <Tag style={{ margin: 0 }}>{skills.length}</Tag>
+                  </div>
+                  {categories.map((cat) => {
+                    const isActive = String(selectedCategory) === String(cat.id);
+                    const count = categoryCountMap.get(cat.id) || 0;
                     return (
-                      <SkillCard
-                        key={skill.item_id}
-                        skill={skill}
-                        categoryName={catName}
-                        onClick={() => openSkillDetail(skill.item_id)}
-                        onDistribute={isManager ? () => openDistributeModal(skill) : undefined}
-                        onUnpublish={isManager ? () => handleUnpublish(skill) : undefined}
-                        isManager={isManager}
-                      />
+                      <div
+                        key={cat.id}
+                        onClick={() => setSelectedCategory(isActive ? null : cat.id)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          backgroundColor: isActive ? "#e6f7ff" : "transparent",
+                          color: isActive ? "#1890ff" : "inherit",
+                          transition: "all 0.15s ease",
+                        }}
+                      >
+                        <span>{cat.name}</span>
+                        <Tag style={{ margin: 0 }}>{count}</Tag>
+                      </div>
                     );
                   })}
                 </div>
-              )}
-            </div>
-          </>
+              </div>
+
+              {/* 技能卡片列表 */}
+              <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
+                <div style={{ marginBottom: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {selectedCategory !== null
+                      ? `当前分类：${categories.find((c) => String(c.id) === String(selectedCategory))?.name || "未知"}`
+                      : "全部技能"}
+                    {" · 筛选结果 "}
+                    {displayedSkills.length} 个
+                  </Text>
+                </div>
+
+                {skillsLoading ? (
+                  <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 200 }}>
+                    <Spin />
+                  </div>
+                ) : displayedSkills.length === 0 ? (
+                  <Empty description={searchQuery ? "未找到匹配的技能" : "暂无技能"} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 16 }}>
+                    {displayedSkills.map((skill) => {
+                      const catName = skill.category_id
+                        ? categories.find((c) => String(c.id) === String(skill.category_id))?.name
+                        : undefined;
+                      return (
+                        <SkillCard
+                          key={skill.item_id}
+                          skill={skill}
+                          categoryName={catName}
+                          onClick={() => openSkillDetail(skill.item_id)}
+                          onDistribute={isManager ? () => openSkillDistributeModal(skill) : undefined}
+                          onUnpublish={isManager ? () => handleUnpublish(skill) : undefined}
+                          isManager={isManager}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+          )
         ) : (
           /* MCP 分支 */
           <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
             {mcpDetailMode === "detail" && selectedMCP ? (
               <MCPDetailDrawer
                 mcp={selectedMCP}
-                onDistribute={() => {
-                  setDistributeTargetMCP(selectedMCP);
-                  setMcpDistributeModalOpen(true);
-                }}
+                onDistribute={() => openMCPDistributeModal(selectedMCP)}
                 onEdit={() => void openMCPEditModal(selectedMCP)}
                 onDelete={() => confirmDeleteMCP(selectedMCP)}
                 canEdit={isManager}
@@ -489,10 +539,7 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                         key={mcp.item_id}
                         mcp={mcp}
                         onOpenDetail={() => openMCPDetail(mcp.item_id)}
-                        onDistribute={() => {
-                          setDistributeTargetMCP(mcp);
-                          setMcpDistributeModalOpen(true);
-                        }}
+                        onDistribute={() => openMCPDistributeModal(mcp)}
                         onEdit={() => void openMCPEditModal(mcp)}
                         onDelete={() => confirmDeleteMCP(mcp)}
                         canEdit={isManager}
@@ -506,16 +553,6 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
         )}
       </div>
 
-      {/* 技能详情抽屉 */}
-      <SkillDetailDrawer
-        open={detailDrawerOpen}
-        skill={selectedSkill}
-        onClose={() => setDetailDrawerOpen(false)}
-        isManager={isManager}
-        sourceId={sourceId}
-        onRefresh={refreshSkills}
-      />
-
       {/* 技能上传弹窗 */}
       <UploadSkillModal
         open={uploadModalOpen}
@@ -524,14 +561,26 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
         onSuccess={refreshSkills}
       />
 
-      {/* 技能分发弹窗 */}
+      {/* 统一分发弹窗 */}
       {isManager && (
-        <DistributeModal
+        <DistributeTargetModal
           open={distributeModalOpen}
-          skill={distributeTargetSkill}
+          type={distributeType}
+          item={distributeTarget}
           sourceId={sourceId}
-          onClose={() => setDistributeModalOpen(false)}
-          onSuccess={refreshSkills}
+          onClose={() => {
+            setDistributeModalOpen(false);
+            setDistributeTarget(null);
+          }}
+          onSuccess={() => {
+            setDistributeModalOpen(false);
+            setDistributeTarget(null);
+            if (distributeType === "skill") {
+              refreshSkills();
+            } else {
+              refreshMCP();
+            }
+          }}
         />
       )}
 
@@ -540,18 +589,6 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
         open={mcpUploadModalOpen}
         onClose={() => setMcpUploadModalOpen(false)}
         onSuccess={refreshMCP}
-      />
-
-      {/* MCP 分发弹窗 */}
-      <MCPDistributeModal
-        open={mcpDistributeModalOpen}
-        mcp={distributeTargetMCP}
-        onClose={() => { setMcpDistributeModalOpen(false); setDistributeTargetMCP(null); }}
-        onSuccess={() => {
-          setMcpDistributeModalOpen(false);
-          setDistributeTargetMCP(null);
-          refreshMCP();
-        }}
       />
 
       <MCPEditModal

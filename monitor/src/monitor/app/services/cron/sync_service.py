@@ -58,6 +58,7 @@ class SyncService:
                 UPDATE swe_cron_jobs SET
                     name = %s,
                     tenant_id = %s,
+                    tenant_name = %s,
                     bbk_id = %s,
                     source_id = %s,
                     enabled = %s,
@@ -85,6 +86,7 @@ class SyncService:
                 (
                     request.name,
                     request.tenant_id,
+                    request.tenant_name,
                     request.bbk_id,
                     request.source_id,
                     request.enabled,
@@ -120,20 +122,21 @@ class SyncService:
             await db.execute(
                 """
                 INSERT INTO swe_cron_jobs (
-                    id, name, tenant_id, bbk_id, source_id, enabled, task_type,
+                    id, name, tenant_id, tenant_name, bbk_id, source_id, enabled, task_type,
                     cron_expr, timezone, channel, target_user_id, target_session_id,
                     timeout_seconds, max_concurrency, misfire_grace_seconds,
                     text_content, request_input,
                     creator_user_id, task_chat_id, task_session_id, meta,
                     status, pause_reason, created_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
                     request.id,
                     request.name,
                     request.tenant_id,
+                    request.tenant_name,
                     request.bbk_id,
                     request.source_id,
                     request.enabled,

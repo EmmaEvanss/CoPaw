@@ -14,18 +14,16 @@ import {
   Typography,
   message,
 } from "antd";
-import {
-  DeleteOutlined,
-  EditOutlined,
-  RocketOutlined,
-  ThunderboltOutlined,
-} from "@ant-design/icons";
+import { ThunderboltOutlined } from "@ant-design/icons";
 import {
   Calendar,
   GitBranch,
   Info,
   Link as LinkIcon,
   TerminalSquare,
+  Send,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { marketMcpApi } from "../../api/modules/marketMcp";
 import type { MarketMCPDetail, MCPTestResult } from "../../api/types";
@@ -50,6 +48,16 @@ function formatDateTime(value?: string | null): string {
     date.getHours(),
   )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
+
+const footerButtonStyle = {
+  height: 28,
+  padding: "0 12px",
+  borderRadius: 8,
+  fontSize: 12,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+};
 
 export function MCPDetailDrawer({
   mcp,
@@ -280,15 +288,26 @@ export function MCPDetailDrawer({
 
               <Space wrap size={8}>
                 <Button
-                  icon={<RocketOutlined />}
+                  size="small"
                   type="primary"
                   onClick={onDistribute}
-                  style={{ borderRadius: 10, background: "#c4956a", borderColor: "#c4956a" }}
+                  style={{ ...footerButtonStyle }}
                 >
+                  <Send size={12} />
                   分发
                 </Button>
                 {canEdit ? (
-                  <Button icon={<EditOutlined />} onClick={onEdit} style={{ borderRadius: 10 }}>
+                  <Button
+                    size="small"
+                    onClick={onEdit}
+                    style={{
+                      ...footerButtonStyle,
+                      color: "#5e5d59",
+                      border: "1px solid #e8e6dc",
+                      backgroundColor: "#f5f4ed",
+                    }}
+                  >
+                    <Pencil size={12} />
                     编辑
                   </Button>
                 ) : null}
@@ -296,7 +315,12 @@ export function MCPDetailDrawer({
                   title="确认删除此 MCP？删除后不影响已分发用户"
                   onConfirm={onDelete}
                 >
-                  <Button danger icon={<DeleteOutlined />} style={{ borderRadius: 10 }}>
+                  <Button
+                    size="small"
+                    danger
+                    style={{ ...footerButtonStyle }}
+                  >
+                    <Trash2 size={12} />
                     删除
                   </Button>
                 </Popconfirm>

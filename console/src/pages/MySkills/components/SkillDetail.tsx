@@ -1,12 +1,49 @@
 import { Typography, Tag, Button, Spin, message } from "antd";
 import { DeleteOutlined, CheckCircleOutlined, StopOutlined } from "@ant-design/icons";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { MySkill } from "../../../api/modules/mySkills";
 import { SkillFileEditor } from "./SkillFileEditor";
 
 const { Title, Text } = Typography;
+
+/**
+ * 将 Markdown 文件内容分割为 frontmatter 和正文。
+ * frontmatter（位于 --- 分隔符之间）作为 protectedPrefix 被保护，
+ * 只允许编辑后面的正文内容 editableContent。
+ */
+function splitMarkdownFrontmatter(
+  filePath: string | null,
+  content: string | null
+): { protectedPrefix: string; editableContent: string; hasFrontmatter: boolean } {
+  const isMarkdown = !!filePath && /\.md$/i.test(filePath);
+  if (!isMarkdown || typeof content !== "string") {
+    return { protectedPrefix: "", editableContent: content ?? "", hasFrontmatter: false };
+  }
+
+  const match = content.match(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!match) {
+    return { protectedPrefix: "", editableContent: content, hasFrontmatter: false };
+  }
+
+  return {
+    protectedPrefix: match[0],
+    editableContent: content.slice(match[0].length),
+    hasFrontmatter: true,
+  };
+}
+
+/**
+ * 将 protectedPrefix (frontmatter) 和 editableContent 合并为完整文件内容。
+ */
+function mergeMarkdownFrontmatter(protectedPrefix: string, editableContent: string): string {
+  if (!protectedPrefix) return editableContent;
+  if (!editableContent || protectedPrefix.endsWith("\n") || protectedPrefix.endsWith("\r\n")) {
+    return `${protectedPrefix}${editableContent}`;
+  }
+  return `${protectedPrefix}\n${editableContent}`;
+}
 
 interface Props {
   skill: MySkill | null;
@@ -35,6 +72,11 @@ export function SkillDetail({
   const [draftContent, setDraftContent] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const markdownFrontmatter = useMemo(
+    () => splitMarkdownFrontmatter(filePath, fileContent),
+    [filePath, fileContent]
+  );
+
   if (!skill) {
     return (
       <div
@@ -57,19 +99,23 @@ export function SkillDetail({
   }
 
   const handleStartEdit = () => {
-    setDraftContent(fileContent || "");
+    setDraftContent(markdownFrontmatter.editableContent);
     setEditing(true);
   };
 
   const handleCancelEdit = () => {
     setEditing(false);
-    setDraftContent("");
+    setDraftContent(markdownFrontmatter.editableContent);
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const ok = await onSaveContent(draftContent);
+      const fullContent = mergeMarkdownFrontmatter(
+        markdownFrontmatter.protectedPrefix,
+        draftContent
+      );
+      const ok = await onSaveContent(fullContent);
       if (ok) {
         setEditing(false);
         message.success("保存成功");
@@ -80,6 +126,15 @@ export function SkillDetail({
   };
 
   const isLoading = filePath && fileContent === null;
+
+  const previewContent =
+    fileType === "markdown" && markdownFrontmatter.hasFrontmatter
+      ? markdownFrontmatter.editableContent.trim()
+      : fileContent;
+
+  const editNote = markdownFrontmatter.hasFrontmatter
+    ? "Markdown 顶部元信息受保护，此处只编辑正文内容。"
+    : null;
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -149,13 +204,29 @@ export function SkillDetail({
             onSave={handleSave}
             onCancel={handleCancelEdit}
             saving={saving}
+            note={editNote}
           />
-        ) : fileContent === null ? (
+        ) : previewContent === null ? (
           <Text type="secondary">选择文件查看内容</Text>
         ) : fileType === "markdown" ? (
           <div style={{ background: "#fafafa", padding: 16, borderRadius: 8 }}>
+            {markdownFrontmatter.hasFrontmatter && (
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "#874d00",
+                  marginBottom: 12,
+                  padding: "4px 8px",
+                  backgroundColor: "#fff7e6",
+                  border: "1px solid #ffd591",
+                  borderRadius: 4,
+                }}
+              >
+                文件顶部包含受保护的元信息，此处只显示正文内容。
+              </p>
+            )}
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {fileContent}
+              {previewContent}
             </ReactMarkdown>
           </div>
         ) : fileType === "json" ? (
@@ -168,7 +239,7 @@ export function SkillDetail({
               fontSize: 12,
             }}
           >
-            {JSON.stringify(JSON.parse(fileContent), null, 2)}
+            {JSON.stringify(JSON.parse(previewContent), null, 2)}
           </pre>
         ) : (
           <pre
@@ -180,7 +251,7 @@ export function SkillDetail({
               fontSize: 12,
             }}
           >
-            {fileContent}
+            {previewContent}
           </pre>
         )}
       </div>

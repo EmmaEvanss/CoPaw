@@ -53,7 +53,16 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
               <Text strong style={{ fontSize: 15, color: "#141413" }}>
-                {skill.name}
+                {skill.chinese_name ? (
+                  <>
+                    {skill.chinese_name}
+                    <span style={{ marginLeft: 6, color: "#87867f", fontWeight: 400, fontSize: 14 }}>
+                      ({skill.name})
+                    </span>
+                  </>
+                ) : (
+                  skill.name
+                )}
               </Text>
               {isFeatured && (
                 <Tag
@@ -113,8 +122,7 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
               )}
             </div>
             {skill.description && (
-              <Text
-                type="secondary"
+              <p
                 style={{
                   display: "-webkit-box",
                   WebkitLineClamp: 2,
@@ -123,10 +131,13 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
                   fontSize: 14,
                   color: "#87867f",
                   marginTop: 8,
+                  lineHeight: "22px",
+                  margin: "8px 0 0",
+                  wordBreak: "break-word",
                 }}
               >
                 {skill.description || "暂无描述"}
-              </Text>
+              </p>
             )}
           </div>
           {/* Stats badges */}

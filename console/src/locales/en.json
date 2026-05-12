@@ -214,7 +214,7 @@
     "deleteSuccess": "Agent deleted successfully",
     "deleteFailed": "Failed to delete agent",
     "selectAgent": "Select Agent",
-    "defaultDisplayName": "小助 Claw",
+    "defaultDisplayName": "AI 伙伴",
     "currentWorkspace": "Current Agent",
     "switchSuccess": "Agent switched successfully",
     "switchFailed": "Failed to switch agent",
@@ -626,7 +626,7 @@
     "welcomeGreeting": "Welcome Greeting",
     "welcomeText": "Welcome Message",
     "welcomeTextTooltip": "Message automatically sent when a user enters a single chat session with the bot for the first time that day",
-    "welcomeTextPlaceholder": "e.g. Hello! I'm CoPaw. How can I help you?",
+    "welcomeTextPlaceholder": "e.g. Hello! I'm SWE. How can I help you?",
     "loginWeCom": "Authorize WeCom Bot via QR Code",
     "wecomAuthHint": "Click the button to open the WeCom QR code window. After scanning and confirming, Bot ID and Secret will be filled in automatically.",
     "wecomAuthSuccess": "WeCom bot authorized successfully",
@@ -1391,7 +1391,7 @@
     }
   },
   "login": {
-    "title": "Login to CoPaw",
+    "title": "Login to SWE",
     "registerTitle": "Create Account",
     "firstUserHint": "Create your admin account to get started",
     "usernamePlaceholder": "Username",

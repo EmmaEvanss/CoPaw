@@ -130,13 +130,35 @@ def _check_zip_size(zf: zipfile.ZipFile) -> None:
 
 
 def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
-    """Security check for path traversal in zip entries."""
+    """Security check for path traversal and invalid characters in zip entries.
+
+    Windows 文件系统不允许路径段包含空格、斜杠等特殊字符，
+    需要在解压前检测并拒绝此类 zip 文件。
+    """
+    import re
+
     root_path = tmp_dir.resolve()
+    _SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
     for info in zf.infolist():
         decoded_name = _decode_zip_filename(info.filename, info)
         target = (tmp_dir / decoded_name).resolve()
+
+        # 检查路径遍历
         if not target.is_relative_to(root_path):
             raise ValueError(f"Unsafe path in zip: {info.filename}")
+
+        # 检查路径段是否只包含安全字符（Windows 文件系统兼容）
+        # 仅检查目录部分，不检查文件名（文件名可以有扩展名中的特殊字符）
+        path_parts = decoded_name.split("/")
+        for i, part in enumerate(
+            path_parts[:-1],
+        ):  # 检查所有目录段，不检查最后一段（可能是文件名）
+            if part and not _SAFE_SEGMENT_RE.match(part):
+                raise ValueError(
+                    f"Zip 文件中的目录名 '{part}' 包含非法字符（空格、斜杠等）。"
+                    "Windows 文件系统不支持此类路径。请修改 zip 文件中的目录名。",
+                )
 
 
 def _extract_zip_entries(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
@@ -152,7 +174,10 @@ def _extract_zip_entries(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
             target.write_bytes(zf.read(info))
 
 
-def _find_skill_directories(tmp_dir: Path) -> list[tuple[Path, str]]:
+def _find_skill_directories(
+    tmp_dir: Path,
+    zip_filename: str | None = None,
+) -> list[tuple[Path, str]]:
     """Find valid skill directories in extracted path."""
     real_entries = [
         path
@@ -168,7 +193,7 @@ def _find_skill_directories(tmp_dir: Path) -> list[tuple[Path, str]]:
     )
 
     if (extract_root / "SKILL.md").exists():
-        skill_name = _resolve_skill_name(extract_root)
+        skill_name = _resolve_skill_name(extract_root, zip_filename)
         return [(extract_root, skill_name)]
 
     return [
@@ -181,7 +206,10 @@ def _find_skill_directories(tmp_dir: Path) -> list[tuple[Path, str]]:
     ]
 
 
-def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
+def _extract_zip_skills(
+    data: bytes,
+    zip_filename: str | None = None,
+) -> tuple[Path, list[tuple[Path, str]]]:
     """Extract and validate a skill zip.
 
     Returns ``(tmp_dir, found_skills)`` where each skill is ``(skill_dir, skill_name)``.
@@ -195,7 +223,7 @@ def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
             _validate_zip_paths(zf, tmp_dir)
             _extract_zip_entries(zf, tmp_dir)
 
-        found = _find_skill_directories(tmp_dir)
+        found = _find_skill_directories(tmp_dir, zip_filename)
         if not found:
             raise ValueError(
                 "No valid skills found in uploaded zip (missing SKILL.md)",
@@ -206,19 +234,43 @@ def _extract_zip_skills(data: bytes) -> tuple[Path, list[tuple[Path, str]]]:
         raise
 
 
-def _resolve_skill_name(skill_dir: Path) -> str:
-    """Resolve skill name from SKILL.md frontmatter or directory name."""
+def _infer_skill_name_from_zip_filename(filename: str) -> str:
+    """从 zip 文件名推导技能名（去掉 .zip 和版本号）。"""
+    if not filename:
+        return ""
+    # 去掉 .zip 后缀
+    name = filename.lower()
+    if name.endswith(".zip"):
+        name = name[:-4]
+    # 去掉版本号后缀（如 -1.0.0, -v1.0.0）
+    import re
+
+    name = re.sub(r"-v?\d+\.\d+\.\d+$", "", name)
+    name = re.sub(r"-v?\d+$", "", name)
+    return name or filename
+
+
+def _resolve_skill_name(
+    skill_dir: Path,
+    zip_filename: str | None = None,
+) -> str:
+    """Resolve skill name from SKILL.md frontmatter, zip filename, or directory name."""
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
-        return skill_dir.name
+        # 尝试使用 zip 文件名
+        inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+        return inferred or skill_dir.name
 
     try:
         content = skill_md.read_text(encoding="utf-8")
     except Exception:
-        return skill_dir.name
+        inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+        return inferred or skill_dir.name
 
     if not content.startswith("---"):
-        return skill_dir.name
+        # 没有 frontmatter，尝试使用 zip 文件名
+        inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+        return inferred or skill_dir.name
 
     # Parse YAML frontmatter
     for line in content.split("\n")[1:]:
@@ -229,7 +281,9 @@ def _resolve_skill_name(skill_dir: Path) -> str:
             if name:
                 return name
 
-    return skill_dir.name
+    # frontmatter 中没有 name 字段，尝试使用 zip 文件名
+    inferred = _infer_skill_name_from_zip_filename(zip_filename or "")
+    return inferred or skill_dir.name
 
 
 def _import_skill_dir(
@@ -239,6 +293,15 @@ def _import_skill_dir(
     overwrite: bool,
 ) -> bool:
     """Import a skill directory to the user skills folder."""
+    # 验证技能名是否合法（Windows 文件系统兼容）
+    import re
+
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", skill_name):
+        raise ValueError(
+            f"技能名 '{skill_name}' 包含非法字符，"
+            "仅允许字母、数字、下划线、连字符和点号。请修改 SKILL.md 中的 name 字段或 zip 文件名。",
+        )
+
     target_dir = skills_root / skill_name
     if target_dir.exists() and not overwrite:
         return False
@@ -255,6 +318,28 @@ def _get_existing_skill_names(skills_dir: Path) -> set[str]:
     if not skills_dir.exists():
         return set()
     return {p.name for p in skills_dir.iterdir() if p.is_dir()}
+
+
+def _parse_frontmatter_description(skill_md_path: Path) -> str:
+    """从 SKILL.md frontmatter 中提取 description."""
+    if not skill_md_path.exists():
+        return ""
+    try:
+        content = skill_md_path.read_text(encoding="utf-8")
+        if not content.startswith("---"):
+            return ""
+        end_idx = content.index("---", 3)
+        fm_text = content[3:end_idx].strip()
+        for line in fm_text.split("\n"):
+            if ":" in line:
+                key, val = line.split(":", 1)
+                key = key.strip().lower()
+                val = val.strip()
+                if key == "description":
+                    return val
+    except (ValueError, OSError):
+        pass
+    return ""
 
 
 def _update_skill_json(
@@ -276,7 +361,16 @@ def _update_skill_json(
             pass
 
     skill_data["name"] = skill_data.get("name") or skill_name
-    skill_data.setdefault("description", "")
+
+    # 优先从 skill.json 获取 description，其次从 SKILL.md frontmatter
+    if not skill_data.get("description"):
+        skill_md_path = skill_json_path.parent / "SKILL.md"
+        desc_from_md = _parse_frontmatter_description(skill_md_path)
+        if desc_from_md:
+            skill_data["description"] = desc_from_md
+        else:
+            skill_data.setdefault("description", "")
+
     skill_data["source"] = "customized"
     skill_data["creator_id"] = user_id
     skill_data["creator_name"] = user_name
@@ -333,7 +427,9 @@ def _import_skill_from_zip(
     bbk_id: str,
     overwrite: bool = False,
     target_name: str = "",
+    rename_map: dict[str, str] | None = None,
     category_id: int | None = None,
+    zip_filename: str | None = None,
 ) -> dict[str, Any]:
     """Import skill from zip data to user skills directory."""
     imported: list[str] = []
@@ -343,11 +439,14 @@ def _import_skill_from_zip(
     parsed_description: str | None = None
 
     try:
-        tmp_dir, found_skills = _extract_zip_skills(data)
+        tmp_dir, found_skills = _extract_zip_skills(data, zip_filename)
         existing_names = _get_existing_skill_names(skills_dir)
 
         for skill_dir, skill_name in found_skills:
-            if target_name and len(found_skills) == 1:
+            # 应用 rename_map 映射
+            if rename_map and skill_name in rename_map:
+                skill_name = rename_map[skill_name]
+            elif target_name and len(found_skills) == 1:
                 skill_name = target_name.strip()
 
             success, conflict = _process_single_skill(
@@ -471,6 +570,54 @@ async def get_skill_detail(
     return detail
 
 
+@router.get(
+    "/market/skills/{item_id}/files",
+    response_model=list[FileTreeNode],
+)
+async def list_market_skill_files(
+    item_id: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_bbk_id: Optional[str] = Header(default=None, alias="X-Bbk-Id"),
+):
+    """获取市场技能详情页文件树。"""
+    source_id = require_source_id(x_source_id)
+    user_bbk_id = x_bbk_id or "100"
+    svc = request.app.state.marketplace
+    files = svc.list_market_skill_files(source_id, item_id, user_bbk_id)
+    if files is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return files
+
+
+@router.get(
+    "/market/skills/{item_id}/files/{file_path:path}",
+    response_model=FileContentResponse,
+)
+async def read_market_skill_file(
+    item_id: str,
+    file_path: str,
+    request: Request,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_bbk_id: Optional[str] = Header(default=None, alias="X-Bbk-Id"),
+):
+    """读取市场技能详情页文件内容。"""
+    source_id = require_source_id(x_source_id)
+    user_bbk_id = x_bbk_id or "100"
+    svc = request.app.state.marketplace
+    content, file_type = svc.read_market_skill_file(
+        source_id,
+        item_id,
+        file_path,
+        user_bbk_id,
+    )
+    if file_type == "binary":
+        return FileContentResponse(content="", file_type=file_type)
+    if content is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileContentResponse(content=content, file_type=file_type)
+
+
 @router.post("/market/skills/upload", response_model=UploadSkillResponse)
 async def upload_skill_to_workspace(
     request: Request,
@@ -482,6 +629,7 @@ async def upload_skill_to_workspace(
     enable: bool = True,
     overwrite: bool = False,
     target_name: str = "",
+    rename_map: str = "",
     category_id: Optional[int] = None,
 ):
     """上传技能到工作区，记录 user_id, bbk_id, user_name。可选指定分类。"""
@@ -491,6 +639,14 @@ async def upload_skill_to_workspace(
             status_code=400,
             detail="X-User-Id header is required",
         )
+
+    # 解析 rename_map JSON
+    parsed_rename_map: dict[str, str] = {}
+    if rename_map:
+        try:
+            parsed_rename_map = json.loads(rename_map)
+        except json.JSONDecodeError:
+            logger.warning("Invalid rename_map JSON: %s", rename_map)
 
     svc = request.app.state.marketplace
     swe_root = svc.swe_root
@@ -515,7 +671,9 @@ async def upload_skill_to_workspace(
         bbk_id,
         overwrite=overwrite,
         target_name=target_name,
+        rename_map=parsed_rename_map,
         category_id=category_id,
+        zip_filename=file.filename,
     )
 
     # Log upload operation
@@ -544,6 +702,17 @@ async def upload_skill_to_workspace(
             )
         except Exception as e:
             logger.warning("Failed to log upload operation: %s", e)
+
+    # 注册技能到 manifest
+    if result.get("imported"):
+        for skill_name in result["imported"]:
+            svc.register_skill_in_manifest(
+                x_user_id,
+                skill_name,
+                agent_id,
+                source_id,
+                enabled=enable,
+            )
 
     result["enabled"] = enable
     return result

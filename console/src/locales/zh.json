@@ -185,7 +185,7 @@
     "deleteSuccess": "智能体删除成功",
     "deleteFailed": "智能体删除失败",
     "selectAgent": "选择智能体",
-    "defaultDisplayName": "小助 Claw",
+    "defaultDisplayName": "AI 伙伴",
     "currentWorkspace": "当前智能体",
     "switchSuccess": "智能体切换成功",
     "switchFailed": "智能体切换失败",
@@ -1187,16 +1187,16 @@
   },
   "chat": {
     "modelSelectTooltip": "模型选择",
-    "newChatTooltip": "新建聊天",
+    "newChatTooltip": "新建会话",
     "chatHistoryTooltip": "聊天历史",
     "allChats": "全部聊天",
     "createNewChat": "创建新聊天",
     "disclaimer": "懂你所需，伴你左右",
     "greeting": "你好，我今天能帮你做什么？",
-    "description": "我是你的AI伙伴，不只是辅助，更能干活。",
+    "description": "你好，有什么可以帮您？",
     "prompt1": "让我们开启一段新的旅程吧！",
     "prompt2": "能告诉我你有哪些技能吗？",
-    "inputPlaceholder": "输入 / 查看快捷指令；审批时可使用 /approve 或 /deny ...",
+    "inputPlaceholder": "请输入你的问题...",
     "commands": {
       "clear": {
         "description": "清空对话上下文"
@@ -1369,7 +1369,7 @@
     }
   },
   "login": {
-    "title": "登录 CoPaw",
+    "title": "登录SWE",
     "registerTitle": "创建账户",
     "firstUserHint": "创建管理员账户以开始使用",
     "usernamePlaceholder": "用户名",

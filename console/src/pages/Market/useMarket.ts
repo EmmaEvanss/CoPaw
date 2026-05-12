@@ -9,8 +9,6 @@ export function useMarket(sourceId: string) {
   const [selectedSkill, setSelectedSkill] = useState<MarketSkillDetail | null>(null);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [publishModalOpen, setPublishModalOpen] = useState(false);
-  const [distributeModalOpen, setDistributeModalOpen] = useState(false);
-  const [distributeTargetSkill, setDistributeTargetSkill] = useState<MarketSkill | null>(null);
 
   const refreshCategories = useCallback(async () => {
     try {
@@ -48,11 +46,6 @@ export function useMarket(sourceId: string) {
     [sourceId]
   );
 
-  const openDistributeModal = useCallback((skill: MarketSkill) => {
-    setDistributeTargetSkill(skill);
-    setDistributeModalOpen(true);
-  }, []);
-
   return {
     categories,
     skills,
@@ -64,12 +57,8 @@ export function useMarket(sourceId: string) {
     setDetailDrawerOpen,
     publishModalOpen,
     setPublishModalOpen,
-    distributeModalOpen,
-    setDistributeModalOpen,
-    distributeTargetSkill,
     refreshCategories,
     refreshSkills,
     openSkillDetail,
-    openDistributeModal,
   };
 }

@@ -816,31 +816,100 @@ async def get_tool_usage(
 @router.get("/skills", response_model=dict)
 async def get_skill_usage(
     request: Request,
-    source_id: Optional[str] = Query(None, description="数据源标识"),
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量"),
     start_date: Optional[str] = Query(
         None,
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
 ) -> dict:
-    """获取技能使用统计.
+    """获取技能调用排行榜（分页）.
 
     Args:
-        source_id: 数据源标识（可选，默认从请求头获取）
+        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+        page: 页码
+        page_size: 每页数量
         start_date: 开始日期筛选
         end_date: 结束日期筛选
 
     Returns:
-        技能使用统计
+        分页的技能调用排行榜
     """
-    actual_source_id = _get_source_id(request, source_id)
+    actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await service.get_overview_stats(actual_source_id, start, end)
-    return {"skills": [s.model_dump() for s in stats.top_skills]}
+    skills, total = await service.get_skills_paginated(
+        actual_source_id,
+        page,
+        page_size,
+        start,
+        end,
+    )
+    return {
+        "items": [s.model_dump() for s in skills],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+@router.get("/skills/{skill_name}/traces", response_model=dict)
+async def get_skill_traces(
+    skill_name: str,
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+) -> dict:
+    """获取指定技能调用的对话列表（分页）.
+
+    Args:
+        skill_name: 技能名称
+        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+        page: 页码
+        page_size: 每页数量
+        start_date: 开始日期筛选
+        end_date: 结束日期筛选
+
+    Returns:
+        分页的对话列表
+    """
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    traces, total = await service.get_skill_traces(
+        skill_name,
+        actual_source_id,
+        page,
+        page_size,
+        start,
+        end,
+    )
+    return {
+        "items": [t.model_dump() for t in traces],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # ===== MCP 使用 =====
@@ -849,33 +918,48 @@ async def get_skill_usage(
 @router.get("/mcp", response_model=dict)
 async def get_mcp_usage(
     request: Request,
-    source_id: Optional[str] = Query(None, description="数据源标识"),
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量"),
     start_date: Optional[str] = Query(
         None,
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
 ) -> dict:
-    """获取 MCP 工具和服务器使用统计.
+    """获取 MCP 服务调用排行榜（分页）.
 
     Args:
-        source_id: 数据源标识（可选，默认从请求头获取）
+        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+        page: 页码
+        page_size: 每页数量
         start_date: 开始日期筛选
         end_date: 结束日期筛选
 
     Returns:
-        MCP 使用统计
+        分页的 MCP 服务调用排行榜
     """
-    actual_source_id = _get_source_id(request, source_id)
+    actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    stats = await service.get_overview_stats(actual_source_id, start, end)
+    servers, total = await service.get_mcp_servers_paginated(
+        actual_source_id,
+        page,
+        page_size,
+        start,
+        end,
+    )
     return {
-        "mcp_tools": [t.model_dump() for t in stats.top_mcp_tools],
-        "mcp_servers": [s.model_dump() for s in stats.mcp_servers],
+        "items": [s.model_dump() for s in servers],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 

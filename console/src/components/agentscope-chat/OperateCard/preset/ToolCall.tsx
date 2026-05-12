@@ -73,11 +73,7 @@ function Block(props: {
 }) {
   const { getPrefixCls } = useProviderContext();
   const prefixCls = getPrefixCls("operate-card");
-  const {
-    expandEnabled = false,
-    defaultExpanded = true,
-    summary,
-  } = props;
+  const { expandEnabled = false, defaultExpanded = true, summary } = props;
   const { contentString, displayLanguage } = stringifyContent(props.content);
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(defaultExpanded);

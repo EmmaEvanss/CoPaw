@@ -112,3 +112,4 @@ src/.hypothesis/
 
 .playwright-mcp
 .agents
+/venv_market/

@@ -258,6 +258,7 @@ class TraceManager:
         user_message: Optional[str] = None,
         user_name: Optional[str] = None,
         bbk_id: Optional[str] = None,
+        model_output: Optional[str] = None,
     ) -> str:
         """Start a new trace.
 
@@ -270,6 +271,7 @@ class TraceManager:
             user_message: Optional user's input message
             user_name: Optional user name
             bbk_id: Optional BBK identifier
+            model_output: Optional model output (for text-type cron jobs)
 
         Returns:
             Trace ID
@@ -286,6 +288,13 @@ class TraceManager:
                 self.config.max_output_length,
             )
 
+        # Sanitize model output
+        if self.config.sanitize_output and model_output:
+            model_output = sanitize_string(
+                model_output,
+                self.config.max_output_length,
+            )
+
         trace = Trace(
             trace_id=trace_id,
             source_id=source_id,
@@ -297,6 +306,7 @@ class TraceManager:
             start_time=datetime.now(),
             status=TraceStatus.RUNNING,
             user_message=user_message,
+            model_output=model_output,
         )
 
         await self.store.create_trace(trace)

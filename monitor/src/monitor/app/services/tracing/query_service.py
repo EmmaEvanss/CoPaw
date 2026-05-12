@@ -1660,6 +1660,13 @@ class TracingQueryService:
         offset = (page - 1) * page_size
         exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
         if source_id == "all":
+            # SQL 占位符顺序（按在 SQL 字符串中出现顺序）：
+            # 1. SELECT 子查询1: s.source_id NOT IN (...)
+            # 2. SELECT 子查询1: {skill_date_conditions} 的日期参数
+            # 3. SELECT 子查询2: t2.source_id NOT IN (...)
+            # 4. SELECT 子查询3: t3.source_id NOT IN (...)
+            # 5. WHERE {where_sql} 的参数
+            # 6. LIMIT %s OFFSET %s
             query = f"""
                 SELECT t.session_id,
                        t.user_id,
@@ -1686,12 +1693,15 @@ class TracingQueryService:
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
-            params.extend(
-                list(EXCLUDED_SOURCE_IDS)
-                + skill_params
-                + list(EXCLUDED_SOURCE_IDS)
-                + list(EXCLUDED_SOURCE_IDS)
-                + [page_size, offset],
+            # 参数按 SQL 占位符出现顺序构建：
+            # 子查询1参数 + 子查询2参数 + 子查询3参数 + WHERE参数 + LIMIT/OFFSET
+            params = (
+                list(EXCLUDED_SOURCE_IDS)  # 子查询1: s.source_id NOT IN
+                + skill_params  # 子查询1: 日期条件
+                + list(EXCLUDED_SOURCE_IDS)  # 子查询2: t2.source_id NOT IN
+                + list(EXCLUDED_SOURCE_IDS)  # 子查询3: t3.source_id NOT IN
+                + params  # WHERE 子句参数
+                + [page_size, offset]
             )
         else:
             query = f"""
@@ -1718,6 +1728,7 @@ class TracingQueryService:
                 ORDER BY last_active DESC
                 LIMIT %s OFFSET %s
             """
+            # 参数顺序: 子查询1 + 子查询2 + 子查询3 + WHERE参数 + LIMIT/OFFSET
             params = (
                 [source_id]
                 + skill_params

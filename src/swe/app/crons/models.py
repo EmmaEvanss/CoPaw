@@ -151,6 +151,10 @@ class CronJobSpec(BaseModel):
         default=None,
         description="来源标识 (from X-Source-Id header)",
     )
+    tenant_name: Optional[str] = Field(
+        default=None,
+        description="租户姓名 (from X-User-Name header)",
+    )
 
     schedule: ScheduleSpec
     task_type: TaskType = "agent"

@@ -234,6 +234,12 @@ export default function CronOverviewPage() {
       width: 150,
     },
     {
+      title: "租户姓名",
+      dataIndex: "tenant_name",
+      key: "tenant_name",
+      width: 150,
+    },
+    {
       title: "分行号",
       dataIndex: "bbk_id",
       key: "bbk_id",
@@ -459,7 +465,7 @@ export default function CronOverviewPage() {
                         setJobsPageSize(pageSize);
                       },
                     }}
-                    scroll={{ x: 1700 }}
+                    scroll={{ x: 1850 }}
                   />
                 </>
               ),

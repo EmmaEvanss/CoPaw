@@ -493,4 +493,70 @@ describe("useChatRequest", () => {
     expect(responseCardData.output?.[0]?.content?.[0]?.text).toBe("hello");
     expect(onFinish).toHaveBeenCalledWith(createOwner());
   });
+
+  it("does not render backend task cancellation errors", async () => {
+    mocks.fetch.mockResolvedValue({
+      ok: true,
+      body: {},
+    } as Response);
+    mocks.streamChunks[1] = {
+      data: JSON.stringify({
+        object: "message",
+        id: "error",
+        role: "assistant",
+        type: "error",
+        status: "failed",
+        code: "AGENT_ERROR",
+        message: "Task has been cancelled!",
+        content: [],
+      }),
+    };
+
+    const updateMessage = vi.fn();
+    const onFinish = vi.fn();
+    const currentQARef = {
+      current: {
+        response: {
+          id: "ui-response-a",
+          msgStatus: "generating",
+          cards: [
+            {
+              code: "AgentScopeRuntimeResponseCard",
+              data: {
+                id: "response-1",
+                status: "created",
+                created_at: 0,
+                output: [],
+              },
+            },
+          ],
+        },
+        activeRequestOwner: createOwner(),
+      },
+    } as CurrentQARef;
+
+    render(
+      <Harness
+        currentQARef={currentQARef}
+        updateMessage={updateMessage}
+        onFinish={onFinish}
+      />,
+    );
+
+    const requestPromise = hookApi.request([], undefined, createOwner());
+    mocks.streamGate.resolve();
+
+    await act(async () => {
+      await requestPromise;
+    });
+
+    const responseCardData = currentQARef.current.response?.cards?.[0]
+      ?.data as { output?: Array<{ type?: string; message?: string }> };
+
+    expect(responseCardData.output).toHaveLength(1);
+    expect(responseCardData.output?.[0]?.type).toBe("message");
+    expect(responseCardData.output?.[0]?.message).toBeUndefined();
+    expect(updateMessage).toHaveBeenCalledTimes(1);
+    expect(onFinish).toHaveBeenCalledWith(createOwner());
+  });
 });

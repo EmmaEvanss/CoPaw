@@ -30,6 +30,31 @@ function isAbortLikeError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+function isTaskCancellationMessage(message: unknown) {
+  return (
+    typeof message === "string" &&
+    /^task has been cancell?ed!?$/i.test(message.trim())
+  );
+}
+
+function isTaskCancellationFrame(data: unknown) {
+  if (!data || typeof data !== "object") {
+    return false;
+  }
+
+  const frame = data as {
+    code?: unknown;
+    message?: unknown;
+    error?: { code?: unknown; message?: unknown };
+  };
+
+  return (
+    (frame.code === "AGENT_ERROR" &&
+      isTaskCancellationMessage(frame.message)) ||
+    (frame.error?.code === "AGENT_ERROR" &&
+      isTaskCancellationMessage(frame.error.message))
+  );
+}
 
 function getUserVisibleErrorMessage(error: unknown) {
   return error instanceof Error
@@ -289,6 +314,12 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           const responseParser =
             apiOptionsRef.current.responseParser || JSON.parse;
           const chunkData = responseParser(chunk.data);
+          if (isTaskCancellationFrame(chunkData)) {
+            emitTaskProgressUpdate(null);
+            onFinish(owner);
+            return;
+          }
+
           const streamedTaskProgress = extractTaskProgress(chunkData);
           if (streamedTaskProgress !== undefined) {
             emitTaskProgressUpdate(streamedTaskProgress);

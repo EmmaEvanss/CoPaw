@@ -1902,7 +1902,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         meta = dict(job.dispatch.meta or {})
 
         # 仅 RMASSIST 来源的租户包含跳转链接
-        from ...workspace.tenant_init_source_store import is_tenant_source
+        from ..workspace.tenant_init_source_store import is_tenant_source
 
         if creator_id and await is_tenant_source(str(creator_id), "RMASSIST"):
             meta["link_url"] = wplus_link

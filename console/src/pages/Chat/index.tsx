@@ -10,7 +10,14 @@ import {
 import AgentScopeRuntimeRequestCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Request/Card";
 import AgentScopeRuntimeResponseCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Card";
 // ==================== 组件引入方式变更结束 ====================
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { flushSync } from "react-dom";
 import { Button, Modal, Result, Tooltip } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
@@ -25,7 +32,11 @@ import { cronJobApi } from "../../api/modules/cronjob";
 import { getApiUrl } from "../../api/config";
 import { buildAuthHeaders } from "../../api/authHeaders";
 import { providerApi } from "../../api/modules/provider";
-import type { ProviderInfo, ModelInfo, CronJobSpecOutput } from "../../api/types";
+import type {
+  ProviderInfo,
+  ModelInfo,
+  CronJobSpecOutput,
+} from "../../api/types";
 import ModelSelector from "./ModelSelector";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAgentStore } from "../../stores/agentStore";
@@ -128,7 +139,9 @@ function createTimedAbortSignal(
   const timeoutId = window.setTimeout(() => {
     const elapsedSeconds = Math.ceil(timeoutMs / 1000);
     abortWithReason(
-      new Error(`⏰ 任务执行超时（${elapsedSeconds}s > ${elapsedSeconds}s），已自动终止。`),
+      new Error(
+        `⏰ 任务执行超时（${elapsedSeconds}s > ${elapsedSeconds}s），已自动终止。`,
+      ),
     );
   }, timeoutMs);
 
@@ -433,9 +446,9 @@ export default function ChatPage() {
       }
       setTaskProgress((previous) => {
         if (
-          previous
-          && previous.turn_id === detail.turn_id
-          && previous.version > detail.version
+          previous &&
+          previous.turn_id === detail.turn_id &&
+          previous.version > detail.version
         ) {
           return previous;
         }
@@ -686,8 +699,8 @@ export default function ChatPage() {
     const pollMs = hasRunningTask
       ? TASK_RUNNING_POLL_MS
       : currentTask?.task?.has_scheduled_result === false
-        ? TASK_PENDING_POLL_MS
-        : TASK_PAGE_POLL_MS;
+      ? TASK_PENDING_POLL_MS
+      : TASK_PAGE_POLL_MS;
 
     const intervalId = window.setInterval(() => {
       void refreshJobs();
@@ -788,14 +801,83 @@ export default function ChatPage() {
     [message, refreshJobs],
   );
 
+  const handleTaskPause = useCallback(
+    async (task: CronJobSpecOutput) => {
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === task.id
+            ? {
+                ...job,
+                enabled: false,
+                task: job.task
+                  ? {
+                      ...job.task,
+                      is_paused: true,
+                      pause_reason: "manual",
+                    }
+                  : job.task,
+              }
+            : job,
+        ),
+      );
+
+      try {
+        await cronJobApi.pauseCronJob(task.id);
+        message.success("任务已停止");
+        void refreshJobs();
+      } catch {
+        message.error("停止失败");
+        void refreshJobs();
+      }
+    },
+    [message, refreshJobs],
+  );
+
+  const handleTaskRun = useCallback(
+    async (task: CronJobSpecOutput) => {
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === task.id
+            ? {
+                ...job,
+                state: {
+                  ...job.state,
+                  last_status: "running",
+                  last_error: null,
+                },
+                task: job.task
+                  ? {
+                      ...job.task,
+                      is_running: true,
+                    }
+                  : job.task,
+              }
+            : job,
+        ),
+      );
+
+      try {
+        await cronJobApi.runCronJob(task.id);
+        message.success("任务已开始执行");
+        void refreshJobs();
+      } catch {
+        message.error("执行失败");
+        void refreshJobs();
+      }
+    },
+    [message, refreshJobs],
+  );
+
   const handleTaskDelete = useCallback(
     (task: CronJobSpecOutput) => {
       Modal.confirm({
-        title: "删除暂停任务",
-        content: `确认删除任务“${task.name || task.id}”？`,
+        title: "删除任务",
+        content: `确认删除任务“${task.name || task.id}”？删除后无法恢复。`,
+        centered: true,
         okText: "删除",
         okType: "danger",
         cancelText: "取消",
+        cancelButtonProps: { type: "text" },
         onOk: async () => {
           setJobs((prev) => prev.filter((job) => job.id !== task.id));
           if (task.task?.chat_id && task.task.chat_id === chatIdRef.current) {
@@ -862,26 +944,23 @@ export default function ChatPage() {
   );
 
   const resolveLogicalRequestSessionId = useCallback(
-    (
-      target: ChatRequestTarget,
-      session?: SessionInfo,
-    ): string => {
+    (target: ChatRequestTarget, session?: SessionInfo): string => {
       if (target.logical_session_id) {
         return target.logical_session_id;
       }
 
       return sessionApi.getLogicalSessionId(
-        target.session_id || window.currentSessionId || session?.session_id || "",
+        target.session_id ||
+          window.currentSessionId ||
+          session?.session_id ||
+          "",
       );
     },
     [],
   );
 
   const resolveRequestChatId = useCallback(
-    (
-      target: ChatRequestTarget,
-      logicalSessionId: string,
-    ): string => {
+    (target: ChatRequestTarget, logicalSessionId: string): string => {
       return (
         target.chat_id ||
         sessionApi.getChatIdForSession(logicalSessionId) ||
@@ -1113,7 +1192,9 @@ export default function ChatPage() {
   // ==================== Drag & drop end ====================
 
   const options = useMemo(() => {
-    const i18nConfig = getDefaultConfig(t) as unknown as Partial<IAgentScopeRuntimeWebUIOptions>;
+    const i18nConfig = getDefaultConfig(
+      t,
+    ) as unknown as Partial<IAgentScopeRuntimeWebUIOptions>;
     const commandSuggestions: CommandSuggestion[] = [
       {
         command: "/clear",
@@ -1180,9 +1261,7 @@ export default function ChatPage() {
         render: ({ greeting, onSubmit }) => (
           <WelcomeCenterLayout
             greeting={
-              typeof greeting === "string"
-                ? greeting
-                : "你好，有什么可以帮您？"
+              typeof greeting === "string" ? greeting : "你好，有什么可以帮您？"
             }
             onSubmit={(data) => onSubmit(data)}
           />
@@ -1369,22 +1448,27 @@ export default function ChatPage() {
           tasks={tasks}
           onCreateSession={handleCreateSessionFromSidebar}
           onTaskClick={handleTaskOpen}
+          onTaskPause={handleTaskPause}
+          onTaskRun={handleTaskRun}
           onTaskResume={handleTaskResume}
           onTaskDelete={handleTaskDelete}
         />
         {/* ==================== 首页改版结束 ==================== */}
-          <div
-            className={styles.chatMessagesArea}
-            style={{ flex: 1, minWidth: 0, position: "relative" }}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-          >
-            <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
-            <DragUploadOverlay visible={isDragging} onClose={handleDragOverlayClose} />
-            <ConversationQuickNav />
-          </div>
+        <div
+          className={styles.chatMessagesArea}
+          style={{ flex: 1, minWidth: 0, position: "relative" }}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
+          <DragUploadOverlay
+            visible={isDragging}
+            onClose={handleDragOverlayClose}
+          />
+          <ConversationQuickNav />
+        </div>
 
         <Modal
           open={showModelPrompt}
@@ -1393,7 +1477,10 @@ export default function ChatPage() {
           width={480}
           styles={{
             content: isDark
-              ? { background: "#1f1f1f", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }
+              ? {
+                  background: "#1f1f1f",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                }
               : undefined,
           }}
         >

@@ -198,6 +198,21 @@
   transition: opacity 0.2s;
 }
 
+.deleteIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--colorTextSecondary, rgba(26, 23, 22, 0.55));
+  transition:
+    color 0.15s ease,
+    transform 0.15s ease;
+
+  &:hover {
+    color: #fe2842;
+    transform: translateY(-1px);
+  }
+}
+
 /* Dark mode */
 :global(.dark-mode) {
   .chatSessionItem {

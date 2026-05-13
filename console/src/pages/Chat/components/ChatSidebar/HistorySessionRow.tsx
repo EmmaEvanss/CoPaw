@@ -4,7 +4,6 @@ import type { HistorySession } from "./historySessions";
 import { getHistorySessionTargetId } from "./historySessions";
 import { formatListTime } from "../../listTimeFormat";
 
-
 export interface HistorySessionRowProps {
   name?: string;
   session: HistorySession & {
@@ -12,11 +11,14 @@ export interface HistorySessionRowProps {
   };
   active: boolean;
   onSessionClick: (sessionId: string) => void;
-  onSessionDelete: (sessionId: string, backendId: string | null) => void;
+  onSessionDelete: (
+    sessionId: string,
+    backendId: string | null,
+    sessionName: string,
+  ) => void;
   /** Custom style for virtual scrolling positioning */
   style?: React.CSSProperties;
 }
-
 
 function resolveBackendChatId(
   session: HistorySession & {
@@ -32,26 +34,23 @@ function resolveBackendChatId(
   return session.id;
 }
 
-
 function HistorySessionRowInner(props: HistorySessionRowProps) {
   const { session, active, onSessionClick, onSessionDelete } = props;
   const targetId = getHistorySessionTargetId(session);
   const backendId = resolveBackendChatId(session);
-
+  const sessionName = session.name || "新会话";
 
   const handleClick = React.useCallback(() => {
     onSessionClick(targetId);
   }, [onSessionClick, targetId]);
 
-
   const handleDelete = React.useCallback(() => {
-    onSessionDelete(targetId, backendId);
-  }, [backendId, onSessionDelete, targetId]);
-
+    onSessionDelete(targetId, backendId, sessionName);
+  }, [backendId, onSessionDelete, sessionName, targetId]);
 
   return (
     <ChatSessionItem
-      name={session.name || "新会话"}
+      name={sessionName}
       time={formatListTime(session.createdAt)}
       active={active}
       onClick={handleClick}
@@ -63,7 +62,6 @@ function HistorySessionRowInner(props: HistorySessionRowProps) {
     />
   );
 }
-
 
 function areEqual(
   prevProps: HistorySessionRowProps,
@@ -80,6 +78,5 @@ function areEqual(
     prevProps.style === nextProps.style
   );
 }
-
 
 export const HistorySessionRow = React.memo(HistorySessionRowInner, areEqual);

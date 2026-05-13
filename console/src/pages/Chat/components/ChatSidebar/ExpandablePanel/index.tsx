@@ -1,25 +1,28 @@
-import React, { useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import type { CronJobSpecOutput } from '@/api/types';
-import type { IAgentScopeRuntimeWebUISession } from '@/components/agentscope-chat';
-import { useChatAnywhereSessionsState } from '@/components/agentscope-chat';
-import { TasksIconSmall, HistoryIconSmall } from '../CollapsedToolbar/icons';
-import Style from './style';
-import { getTaskNextRunText, getTaskSidebarMeta } from '../../../taskJobs';
-import { formatListTime } from '../../../listTimeFormat';
+import React, { useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import type { CronJobSpecOutput } from "@/api/types";
+import type { IAgentScopeRuntimeWebUISession } from "@/components/agentscope-chat";
+import { useChatAnywhereSessionsState } from "@/components/agentscope-chat";
+import { TasksIconSmall, HistoryIconSmall } from "../CollapsedToolbar/icons";
+import Style from "./style";
+import { getTaskNextRunText, getTaskSidebarMeta } from "../../../taskJobs";
+import { formatListTime } from "../../../listTimeFormat";
 import {
   getHistorySessionTargetId,
   isHistorySessionActive,
   type HistorySession,
-} from '../historySessions';
+} from "../historySessions";
+import TaskActionMenu from "../../TaskActionMenu";
 
 export interface ExpandablePanelProps {
   visible: boolean;
-  type: 'tasks' | 'history';
+  type: "tasks" | "history";
   onClose: () => void;
   tasks: CronJobSpecOutput[];
   sessions: IAgentScopeRuntimeWebUISession[];
   onTaskClick: (task: CronJobSpecOutput) => void;
+  onTaskPause?: (task: CronJobSpecOutput) => void;
+  onTaskRun?: (task: CronJobSpecOutput) => void;
   onTaskResume?: (task: CronJobSpecOutput) => void;
   onTaskDelete?: (task: CronJobSpecOutput) => void;
   toolbarRef: React.RefObject<HTMLElement | null>;
@@ -32,6 +35,8 @@ export default function ExpandablePanel({
   tasks,
   sessions,
   onTaskClick,
+  onTaskPause,
+  onTaskRun,
   onTaskResume,
   onTaskDelete,
   toolbarRef,
@@ -54,22 +59,22 @@ export default function ExpandablePanel({
     };
 
     const timer = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener("mousedown", handleClickOutside);
     }, 0);
 
     return () => {
       clearTimeout(timer);
-      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [visible, onClose, toolbarRef]);
 
   useEffect(() => {
     if (!visible) return;
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === "Escape") onClose();
     };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
   }, [visible, onClose]);
 
   if (!visible) return null;
@@ -78,10 +83,12 @@ export default function ExpandablePanel({
     <>
       <Style />
       <div className="expandable-panel" ref={panelRef}>
-        {type === 'tasks' ? (
+        {type === "tasks" ? (
           <TasksContent
             tasks={tasks}
             onTaskClick={onTaskClick}
+            onTaskPause={onTaskPause}
+            onTaskRun={onTaskRun}
             onTaskResume={onTaskResume}
             onTaskDelete={onTaskDelete}
           />
@@ -96,11 +103,15 @@ export default function ExpandablePanel({
 function TasksContent({
   tasks,
   onTaskClick,
+  onTaskPause,
+  onTaskRun,
   onTaskResume,
   onTaskDelete,
 }: {
   tasks: CronJobSpecOutput[];
   onTaskClick: (task: CronJobSpecOutput) => void;
+  onTaskPause?: (task: CronJobSpecOutput) => void;
+  onTaskRun?: (task: CronJobSpecOutput) => void;
   onTaskResume?: (task: CronJobSpecOutput) => void;
   onTaskDelete?: (task: CronJobSpecOutput) => void;
 }) {
@@ -108,7 +119,9 @@ function TasksContent({
     <>
       <div className="expandable-panel-header">
         <TasksIconSmall />
-        <span className="expandable-panel-header-title">我的任务({tasks.length})</span>
+        <span className="expandable-panel-header-title">
+          我的任务({tasks.length})
+        </span>
       </div>
       <div className="expandable-panel-content">
         {tasks.length === 0 ? (
@@ -122,14 +135,14 @@ function TasksContent({
               <div
                 key={task.id}
                 className={`expandable-panel-task-card${
-                  sidebarMeta.state !== 'active' &&
-                  sidebarMeta.state !== 'running'
-                    ? ' expandable-panel-task-card--paused'
-                    : ''
+                  sidebarMeta.state !== "active" &&
+                  sidebarMeta.state !== "running"
+                    ? " expandable-panel-task-card--paused"
+                    : ""
                 }${
-                  sidebarMeta.state === 'auto-paused'
-                    ? ' expandable-panel-task-card--auto-paused'
-                    : ''
+                  sidebarMeta.state === "auto-paused"
+                    ? " expandable-panel-task-card--auto-paused"
+                    : ""
                 }`}
                 onClick={() => onTaskClick(task)}
                 role="button"
@@ -139,53 +152,45 @@ function TasksContent({
                   <span className="expandable-panel-task-title">
                     {task.name || task.id}
                   </span>
-                  {sidebarMeta.canResume ? (
+                  {sidebarMeta.canPause ||
+                  sidebarMeta.canRun ||
+                  sidebarMeta.canResume ||
+                  sidebarMeta.canDelete ? (
                     <div className="expandable-panel-task-actions">
-                      <button
-                        type="button"
-                        className="expandable-panel-task-action expandable-panel-task-action--delete"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onTaskDelete?.(task);
-                        }}
-                      >
-                        删除
-                      </button>
-                      <button
-                        type="button"
-                        className="expandable-panel-task-action"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onTaskResume?.(task);
-                        }}
-                      >
-                        恢复
-                      </button>
+                      <TaskActionMenu
+                        task={task}
+                        sidebarMeta={sidebarMeta}
+                        classNamePrefix="expandable-panel-task"
+                        onTaskPause={onTaskPause}
+                        onTaskRun={onTaskRun}
+                        onTaskResume={onTaskResume}
+                        onTaskDelete={onTaskDelete}
+                      />
                     </div>
                   ) : (
                     sidebarMeta.unreadCount > 0 && (
                       <span className="expandable-panel-task-badge">
                         {sidebarMeta.unreadCount > 99
-                          ? '99+'
+                          ? "99+"
                           : sidebarMeta.unreadCount}
                       </span>
                     )
                   )}
                 </div>
-                {sidebarMeta.state !== 'active' &&
-                  sidebarMeta.state !== 'running' && (
-                  <div
-                    className={`expandable-panel-task-status ${
-                      sidebarMeta.state === 'auto-paused'
-                        ? 'expandable-panel-task-status--auto'
-                        : 'expandable-panel-task-status--manual'
-                    }`}
-                  >
-                    {sidebarMeta.state === 'auto-paused'
-                      ? `已自动暂停 · 连续 ${sidebarMeta.unreadCount} 次未读`
-                      : '已手动暂停'}
-                  </div>
-                )}
+                {sidebarMeta.state !== "active" &&
+                  sidebarMeta.state !== "running" && (
+                    <div
+                      className={`expandable-panel-task-status ${
+                        sidebarMeta.state === "auto-paused"
+                          ? "expandable-panel-task-status--auto"
+                          : "expandable-panel-task-status--manual"
+                      }`}
+                    >
+                      {sidebarMeta.state === "auto-paused"
+                        ? `已自动暂停 · 连续 ${sidebarMeta.unreadCount} 次未读`
+                        : "已手动暂停"}
+                    </div>
+                  )}
                 {(task.task?.latest_scheduled_preview ||
                   task.task?.last_scheduled_run_at) && (
                   <div className="expandable-panel-task-subtitle">
@@ -219,7 +224,8 @@ function HistoryContent({
   onClose: () => void;
 }) {
   const navigate = useNavigate();
-  const { currentSessionId, setSessionLoading } = useChatAnywhereSessionsState();
+  const { currentSessionId, setSessionLoading } =
+    useChatAnywhereSessionsState();
 
   const handleSessionClick = useCallback(
     (session: IAgentScopeRuntimeWebUISession) => {
@@ -261,7 +267,7 @@ function HistoryContent({
               tabIndex={0}
             >
               <div className="expandable-panel-history-title">
-                {session.name || '新会话'}
+                {session.name || "新会话"}
               </div>
               <div className="expandable-panel-history-time">
                 {formatListTime((session as any).createdAt)}

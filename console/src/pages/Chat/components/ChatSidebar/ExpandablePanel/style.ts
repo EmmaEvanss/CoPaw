@@ -80,10 +80,15 @@ export default createGlobalStyle`
   border: 0.5px solid ${DESIGN_TOKENS.colorCardBorder};
   border-radius: ${DESIGN_TOKENS.radiusPanel}px;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 
   &:hover {
     background-color: rgba(0, 0, 0, 0.02);
+    border-color: rgba(55, 105, 252, 0.18);
+    box-shadow: 0 4px 14px rgba(17, 20, 45, 0.06);
   }
 
   & + & {
@@ -110,7 +115,7 @@ export default createGlobalStyle`
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
 }
 
 .expandable-panel-task-title {
@@ -140,40 +145,50 @@ export default createGlobalStyle`
   text-align: center;
 }
 
-.expandable-panel-task-action {
+.expandable-panel-task-action-trigger {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
   height: 24px;
-  padding: 0 10px;
+  padding: 0;
   border: none;
-  border-radius: 999px;
-  background: rgba(55, 105, 252, 0.1);
-  color: ${DESIGN_TOKENS.colorPrimary};
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 24px;
+  border-radius: 7px;
+  background: transparent;
+  color: ${DESIGN_TOKENS.colorTextMuted};
   cursor: pointer;
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
 
-  &:hover {
-    background: rgba(55, 105, 252, 0.16);
+  &:hover,
+  &--open {
+    background: rgba(132, 130, 231, 0.14);
+    color: ${DESIGN_TOKENS.colorPrimary};
   }
 
-  &--delete {
-    background: rgba(254, 40, 66, 0.1);
-    color: ${DESIGN_TOKENS.colorBadgeRed};
-
-    &:hover {
-      background: rgba(254, 40, 66, 0.16);
-    }
+  &:focus-visible {
+    outline: 2px solid rgba(55, 105, 252, 0.32);
+    outline-offset: 2px;
   }
 }
 
 .expandable-panel-task-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.expandable-panel-task-card:hover .expandable-panel-task-actions,
+.expandable-panel-task-card:focus-within .expandable-panel-task-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .expandable-panel-task-status {

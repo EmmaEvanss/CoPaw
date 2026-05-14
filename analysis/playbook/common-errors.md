@@ -135,3 +135,26 @@
 - 这只能避免“前端默认超时或断流误杀任务”
 - 后端仍可能被配置型超时中止，例如 `SWE_QUERY_TIMEOUT_SECONDS`、`SWE_MCP_PER_NOTIFICATION_TIMEOUT`、`SWE_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT` 或 shell tool 的 `timeout` 参数
 - 若要允许超长 MCP tool，MCP server 应定期发送 progress notification，或调大 per-notification timeout
+
+## BeforeStop 预算耗尽提示流出但历史缺失
+
+### 症状
+
+- `BeforeStop` 持续返回 `block` 后，前端能看到“任务未完成”提示
+- 刷新或重新加载会话后，历史最后一条仍是上一轮模型回复，看不到预算耗尽提示
+- Trace 或 Monitor 里最终输出也可能只记录模型回复，缺少用户实际看到的未完成状态
+
+### 典型原因
+
+- Runner 手动构造并 `yield` 预算耗尽提示，但没有写入 `agent.memory`
+- `finally` 阶段保存 session state 时只保存 memory 内容，stream-only 消息会丢失
+
+### 第一落点
+
+- [src/swe/app/runner/runner.py](/Users/shixiangyi/code/Swe/src/swe/app/runner/runner.py)
+- 重点看 `_stream_completion_lifecycle()` 的 BeforeStop 预算耗尽分支，以及 `_save_regular_session_state()` 保存前 memory 中是否包含同一条提示
+
+### 第一阶段处理
+
+- 对用户可见、需要进入历史的 runner 合成消息，先写入 `runtime.agent.memory`，再 `yield`
+- 测试同时断言 stream 输出和 session state 末尾内容，避免只验证前端当次可见

@@ -51,7 +51,7 @@ class _FakeAgent:
     last_env_context = ""
 
     def __init__(self, **kwargs):
-        self.memory = SimpleNamespace(content=[])
+        self.memory = _FakeMemory()
         self.env_context = kwargs.get("env_context", "")
         _FakeAgent.last_env_context = self.env_context
 
@@ -80,6 +80,20 @@ class _FakeAgent:
                 ],
             },
         }
+
+
+class _FakeMemory:
+    def __init__(self):
+        self.content = []
+
+    async def add(self, msg, marks=None):
+        if marks is None:
+            normalized_marks = []
+        elif isinstance(marks, list):
+            normalized_marks = marks
+        else:
+            normalized_marks = [marks]
+        self.content.append((msg, normalized_marks))
 
 
 async def _fake_stream_printing_messages(*, agents, coroutine_task):
@@ -787,6 +801,60 @@ async def test_query_handler_before_stop_budget_exhaustion_finalizes_trace(
     runner._generate_backend_suggestions_if_needed.assert_not_awaited()
     runner._index_model_output_if_needed.assert_awaited_once()
     runner._end_trace_if_needed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_query_handler_before_stop_budget_exhaustion_persists_notice(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+
+    async def fake_emit_runner_hook(event_name, **kwargs):
+        if event_name == HookEventName.BEFORE_STOP:
+            return MergedHookResult(
+                decision=HookDecision.BLOCK,
+                reason="still incomplete",
+            )
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+    notice_text = outputs[-1][0].get_text_content()
+    stored_state = await runner.session.get_session_state_dict(
+        session_id="session-1",
+        user_id="user-1",
+    )
+    stored_content = stored_state["agent"]["memory"]["content"]
+    stored_texts = [entry[0]["content"] for entry in stored_content]
+
+    assert "任务未完成" in notice_text
+    assert stored_texts[-1] == notice_text
 
 
 @pytest.mark.asyncio

@@ -2067,7 +2067,9 @@ class AgentRunner(Runner):
                 outcome.completion_block_reason = reason
                 outcome.completion_marked_incomplete = True
                 outcome.stop_hook_active = False
-                yield _build_before_stop_incomplete_msg(reason), True
+                incomplete_msg = _build_before_stop_incomplete_msg(reason)
+                await runtime.agent.memory.add(incomplete_msg)
+                yield incomplete_msg, True
                 return
 
             if (

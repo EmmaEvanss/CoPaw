@@ -24,7 +24,10 @@ from swe.agents.hook_runtime.models import (
     PromptHookHandlerConfig,
     HookMatcherGroupConfig,
 )
-from swe.agents.hook_runtime.output import normalize_prompt_judgment_output
+from swe.agents.hook_runtime.output import (
+    normalize_hook_output,
+    normalize_prompt_judgment_output,
+)
 from swe.config.context import tenant_context
 
 
@@ -380,6 +383,171 @@ def test_prompt_judgment_output_repairs_malformed_json() -> None:
 
     assert result.decision == HookDecision.ALLOW
     assert result.reason == "ok"
+
+
+@pytest.mark.parametrize(
+    ("text", "decision"),
+    [
+        ('{"decision":"allow","reason":"ok"}', HookDecision.ALLOW),
+        ('{"decision":"block","reason":"继续完成测试"}', HookDecision.BLOCK),
+    ],
+)
+def test_before_stop_prompt_judgment_accepts_gate_decisions(
+    text: str,
+    decision: HookDecision,
+) -> None:
+    result = normalize_prompt_judgment_output(
+        handler_id="policy",
+        order=0,
+        text=text,
+        event_name=HookEventName.BEFORE_STOP,
+    )
+
+    assert result.decision == decision
+    assert result.reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"decision":"deny","reason":"no"}',
+        '{"decision":"ask","reason":"review"}',
+        '{"decision":"allow","reason":"ok","continue":false}',
+        (
+            '{"decision":"allow","reason":"ok",'
+            '"hookSpecificOutput":{"permissionDecision":"ask"}}'
+        ),
+        (
+            '{"decision":"allow","reason":"ok",'
+            '"hookSpecificOutput":{"updatedInput":{"command":"echo hi"}}}'
+        ),
+        (
+            '{"decision":"allow","reason":"ok",'
+            '"hookSpecificOutput":{"sessionTitle":"Done"}}'
+        ),
+        (
+            '{"decision":"allow","reason":"ok",'
+            '"hookSpecificOutput":{"additionalContext":"extra"}}'
+        ),
+    ],
+)
+def test_before_stop_prompt_judgment_rejects_unsupported_outputs(
+    text: str,
+) -> None:
+    with pytest.raises(ValueError):
+        normalize_prompt_judgment_output(
+            handler_id="policy",
+            order=0,
+            text=text,
+            event_name=HookEventName.BEFORE_STOP,
+        )
+
+
+@pytest.mark.parametrize(
+    ("raw_output", "decision"),
+    [
+        ({"decision": "allow", "reason": "ok"}, HookDecision.ALLOW),
+        ({"decision": "block", "reason": "run tests"}, HookDecision.BLOCK),
+    ],
+)
+def test_before_stop_hook_output_accepts_gate_decisions(
+    raw_output: dict,
+    decision: HookDecision,
+) -> None:
+    result = normalize_hook_output(
+        handler_id="policy",
+        order=0,
+        raw_output=raw_output,
+        event_name=HookEventName.BEFORE_STOP,
+    )
+
+    assert result.decision == decision
+    assert result.reason
+
+
+@pytest.mark.parametrize(
+    "raw_output",
+    [
+        {"decision": "deny", "reason": "no"},
+        {"decision": "ask", "reason": "review"},
+        {"continue": False, "stopReason": "stop"},
+        {"hookSpecificOutput": {"permissionDecision": "ask"}},
+        {"hookSpecificOutput": {"updatedInput": {"command": "echo hi"}}},
+        {"hookSpecificOutput": {"sessionTitle": "Done"}},
+        {"hookSpecificOutput": {"additionalContext": "extra"}},
+    ],
+)
+def test_before_stop_hook_output_rejects_unsupported_fields(
+    raw_output: dict,
+) -> None:
+    with pytest.raises(ValueError):
+        normalize_hook_output(
+            handler_id="policy",
+            order=0,
+            raw_output=raw_output,
+            event_name=HookEventName.BEFORE_STOP,
+        )
+
+
+@pytest.mark.parametrize(
+    "event_name",
+    [
+        HookEventName.SESSION_START,
+        HookEventName.USER_PROMPT_SUBMIT,
+        HookEventName.PRE_TOOL_USE,
+        HookEventName.STOP,
+    ],
+)
+def test_non_before_stop_prompt_judgment_still_accepts_deny(
+    event_name: HookEventName,
+) -> None:
+    result = normalize_prompt_judgment_output(
+        handler_id="policy",
+        order=0,
+        text='{"decision":"deny","reason":"policy denied"}',
+        event_name=event_name,
+    )
+
+    assert result.decision == HookDecision.DENY
+    assert result.reason == "policy denied"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fail_policy", "expected_decision"),
+    [
+        (FailPolicy.BLOCK, HookDecision.BLOCK),
+        (FailPolicy.ALLOW, HookDecision.NONE),
+    ],
+)
+async def test_before_stop_prompt_handler_invalid_output_uses_fail_policy(
+    monkeypatch,
+    tmp_path: Path,
+    fail_policy: FailPolicy,
+    expected_decision: HookDecision,
+) -> None:
+    async def fake_model(messages):
+        del messages
+        return '{"decision":"deny","reason":"not a gate decision"}'
+
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.executor.create_model_and_formatter",
+        lambda agent_id=None: (fake_model, object()),
+    )
+
+    result = await execute_handler(
+        PromptHookHandlerConfig(
+            id="policy",
+            prompt="检查是否可以停止。",
+            failPolicy=fail_policy,
+        ),
+        _context(HookEventName.BEFORE_STOP),
+        workspace_dir=tmp_path,
+    )
+
+    assert result.failed is True
+    assert result.failure_type == "execution_error"
+    assert result.decision == expected_decision
 
 
 @pytest.mark.parametrize(

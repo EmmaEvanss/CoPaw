@@ -11,6 +11,7 @@ Hook Runtime 用于在 Agent 的关键生命周期事件上执行自定义策略
 - 在工具执行前检查命令、文件路径、网络目标或其他高风险输入。
 - 在工具执行后记录审计信息，或把关键结果补充给后续对话。
 - 在工具失败后收集诊断信息。
+- 在回复停止前运行完成度、测试、构建或 lint 检查，必要时驱动 Agent 继续。
 - 在回复完成前做最终检查或记录结束事件。
 - 对高风险操作返回 `ask`，让用户在界面上手动批准或拒绝。
 
@@ -23,6 +24,7 @@ Hook Runtime 用于在 Agent 的关键生命周期事件上执行自定义策略
 | `PreToolUse` | 工具执行前 | 允许、拒绝、请求审批、修改工具输入 |
 | `PostToolUse` | 工具执行成功后 | 记录工具结果、补充后续上下文 |
 | `PostToolUseFailure` | 工具执行失败后 | 记录错误、补充诊断信息 |
+| `BeforeStop` | Agent 已流出候选回复后、`Stop` 前 | 判断是否允许停止；阻断时自动续跑当前任务 |
 | `Stop` | Agent 生成最终回复后、当前轮次结束前 | 记录结束事件、补充后续上下文 |
 
 ## 配置位置
@@ -230,10 +232,11 @@ Skill 级 `hooks/hooks.json` 不需要再包一层 `hooks`，直接从 `enabled`
 
 限制：
 
-- 只能配置在 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`Stop` 上。
+- 只能配置在 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`BeforeStop`、`Stop` 上。
 - `prompt` 只表示业务规则片段，不是完整模型提示词。
 - 默认 `failPolicy` 是 `block`；模型缺失、调用失败、超时或输出非法时会默认失败关闭。
 - 发送给模型的 HookContext 会先按现有 hook 脱敏规则处理。
+- `BeforeStop` 事件会携带原始用户 `prompt` 和正在检查的候选 `assistant_response`。
 - `Stop` 事件会额外携带正在完成的 `assistant_response`，用于最终回复检查。
 
 运行时会按固定顺序拼装模型输入：
@@ -254,7 +257,34 @@ handler.prompt 业务规则
 }
 ```
 
-`decision` 只能是 `allow`、`deny` 或 `block`，`reason` 必须是非空字符串。prompt handler 不支持完整 HookOutput 字段，例如 `hookSpecificOutput`、`updatedInput`、`additionalContext`、`sessionTitle`、`systemMessage` 或 `continue`；出现这些字段会按非法输出处理。
+普通 prompt handler 的 `decision` 只能是 `allow`、`deny` 或 `block`，`reason` 必须是非空字符串。`BeforeStop` prompt handler 是完成门禁，只支持 `allow` 或 `block`；返回 `deny`、`ask`、`continue`、`permissionDecision`、`updatedInput`、`additionalContext` 或 `sessionTitle` 会按非法输出处理，并遵循该 handler 的 `failPolicy`。prompt handler 不支持完整 HookOutput 字段，例如 `hookSpecificOutput`、`updatedInput`、`additionalContext`、`sessionTitle`、`systemMessage` 或 `continue`；出现这些字段会按非法输出处理。
+
+## BeforeStop 完成门禁
+
+`BeforeStop` 与 `Stop` 的语义不同：
+
+- `BeforeStop` 在候选回复已经流出后执行，用来判断“现在能不能停止”。如果返回 `block`，系统不会为该候选回复触发 `Stop`，而是把阻断原因转换成内部续跑指令，让 Agent 在同一个请求内继续。
+- `Stop` 在停止已经被允许后执行，用于最终审计、记录或补充上下文。`Stop` 返回阻断时会结束本轮，不会驱动 Agent 继续。
+
+第一版不会隐藏候选回复：用户会先看到候选回复；如果 `BeforeStop` 随后阻断停止，后续续跑输出会继续正常流出。
+
+`BeforeStop` 支持的返回结果只有两类：
+
+```json
+{
+  "decision": "allow",
+  "reason": "测试、构建和 lint 均已完成"
+}
+```
+
+```json
+{
+  "decision": "block",
+  "reason": "尚未运行单元测试，请先执行目标测试并修复失败"
+}
+```
+
+如果持续返回 `block`，Runner 会使用自动续跑预算保护当前请求。预算耗尽时，系统会展示包含最新阻断原因的未完成消息，避免无限循环。
 
 ## Handler 通用字段
 
@@ -362,6 +392,8 @@ handler 返回值必须是 JSON 对象。下面是常见返回结果。
   "reason": "blocked by tenant policy"
 }
 ```
+
+在 `BeforeStop` 上，`block` 表示“暂时不要停止，继续完成任务”；在 `Stop` 和其他事件上，`block` 仍表示阻断当前流程。
 
 ### 停止当前流程
 
@@ -510,6 +542,40 @@ handler 返回值必须是 JSON 对象。下面是常见返回结果。
 ```
 
 适合用于在工具失败时补充日志位置、常见原因、下一步排查建议。诊断 hook 通常建议使用 `failPolicy: "allow"`，避免诊断失败影响正常对话。
+
+### 示例 4：停止前要求完成检查
+
+```json
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "BeforeStop": [
+        {
+          "id": "completion-gate",
+          "hooks": [
+            {
+              "id": "task-completion-check",
+              "type": "prompt",
+              "prompt": "如果候选回复没有说明已运行必要测试、构建或 lint，返回 block 并指出还缺哪一步；如果检查已经完成，返回 allow。",
+              "timeout": 8,
+              "failPolicy": "block"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+适合用于：
+
+- 要求实现任务结束前必须运行目标测试。
+- 要求发布类任务完成 build 或 lint。
+- 要求文档、迁移或脚本变更完成对应校验。
+
+对于耗时检查，建议使用 command 或 HTTP handler 执行范围明确的命令，例如只运行当前变更相关的测试，而不是全量 CI。
 
 ## Skill Hook 注意事项
 

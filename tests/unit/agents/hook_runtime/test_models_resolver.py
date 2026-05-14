@@ -19,6 +19,7 @@ from swe.agents.hook_runtime.models import (
     HookSessionOverlay,
     PromptHookHandlerConfig,
     LoadedSkillHookSource,
+    PROMPT_HANDLER_BLOCKABLE_EVENTS,
 )
 from swe.agents.hook_runtime.resolver import HookResolver
 
@@ -184,6 +185,103 @@ def test_prompt_handler_default_fail_policy_is_block() -> None:
     handler = _prompt_handler("policy", "Reject secrets.")
 
     assert handler.fail_policy == "block"
+
+
+def test_before_stop_is_blockable_and_accepts_prompt_handlers() -> None:
+    assert HookEventName.BEFORE_STOP.value == "BeforeStop"
+    assert HookEventName.BEFORE_STOP in PROMPT_HANDLER_BLOCKABLE_EVENTS
+
+    config = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.BEFORE_STOP: [
+                HookMatcherGroupConfig(
+                    id="before-stop-policy",
+                    hooks=[
+                        _prompt_handler(
+                            "policy",
+                            "只允许完成前检查通过后停止。",
+                        ),
+                    ],
+                ),
+            ],
+        },
+    )
+
+    assert config.events[HookEventName.BEFORE_STOP][0].hooks[0].type == (
+        "prompt"
+    )
+
+
+def test_resolver_loads_before_stop_prompt_handlers_from_all_levels() -> None:
+    tenant = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.BEFORE_STOP: [
+                HookMatcherGroupConfig(
+                    id="tenant-before-stop",
+                    hooks=[_prompt_handler("tenant-policy", "tenant")],
+                ),
+            ],
+        },
+    )
+    agent = HookConfig(
+        enabled=True,
+        events={
+            HookEventName.BEFORE_STOP: [
+                HookMatcherGroupConfig(
+                    id="agent-before-stop",
+                    hooks=[_prompt_handler("agent-policy", "agent")],
+                ),
+            ],
+        },
+    )
+    state = HookSessionState(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:qa",
+                skill_name="qa",
+                skill_root="/workspace/skills/qa",
+                source_path="/workspace/skills/qa/hooks/hooks.json",
+                hook_config=HookConfig(
+                    enabled=True,
+                    events={
+                        HookEventName.BEFORE_STOP: [
+                            HookMatcherGroupConfig(
+                                id="skill:qa:before-stop",
+                                hooks=[
+                                    _prompt_handler(
+                                        "skill:qa:policy",
+                                        "skill",
+                                    ),
+                                ],
+                            ),
+                        ],
+                    },
+                ),
+            ),
+        ],
+    )
+
+    plan = HookResolver(
+        tenant_config=tenant,
+        agent_config=agent,
+        session_overlay=state,
+    ).resolve_event_plan(
+        _context(
+            HookEventName.BEFORE_STOP,
+            prompt="原始提示词",
+            assistant_response="候选回复",
+        ),
+    )
+
+    assert [item.handler.id for item in plan.handlers] == [
+        "tenant-policy",
+        "agent-policy",
+        "skill:qa:policy",
+    ]
+    assert plan.context.prompt == "原始提示词"
+    assert plan.context.assistant_response == "候选回复"
 
 
 def test_resolver_does_not_dedupe_prompt_handlers_with_different_rules() -> (

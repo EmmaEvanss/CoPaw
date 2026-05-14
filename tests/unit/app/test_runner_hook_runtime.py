@@ -16,6 +16,7 @@ from swe.agents.hook_runtime.models import (
     HookEventName,
     HookMatcherGroupConfig,
     HookSessionState,
+    HookSessionOverlay,
     AdditionalContext,
     MergedHookResult,
 )
@@ -23,6 +24,9 @@ from swe.app.runner.runner import (
     AgentRunner,
     _create_session_skill_detector,
     _hook_config_enabled,
+    _QueryRuntime,
+    _TurnPlan,
+    _QueryTurnOutcome,
 )
 from swe.app.runner.session import SafeJSONSession
 from swe.config.config import SuggestionMode
@@ -399,6 +403,7 @@ async def test_query_handler_loads_session_skill_hooks_for_media_message(
     assert HookEventName.USER_PROMPT_SUBMIT not in emitted_events
     assert emitted_events == [
         HookEventName.SESSION_START,
+        HookEventName.BEFORE_STOP,
         HookEventName.STOP,
     ]
 
@@ -445,6 +450,7 @@ async def test_query_handler_injects_prompt_additional_context(
                         ),
                     ],
                 ),
+                MergedHookResult(),
                 MergedHookResult(),
             ],
         ),
@@ -558,6 +564,399 @@ async def test_query_handler_session_start_block_yields_before_cleanup(
 
 
 @pytest.mark.asyncio
+async def test_query_handler_before_stop_allow_emits_stop_and_completes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+    emit_hook = AsyncMock()
+
+    async def fake_emit_runner_hook(event_name, **kwargs):
+        await emit_hook(event_name, **kwargs)
+        if event_name == HookEventName.BEFORE_STOP:
+            assert kwargs["assistant_response"] == "agent reply"
+            return MergedHookResult(
+                decision=HookDecision.ALLOW,
+                reason="completion approved",
+            )
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+
+    assert [item[0].get_text_content() for item in outputs] == [
+        "agent reply",
+    ]
+    assert [call.args[0] for call in emit_hook.await_args_list] == [
+        HookEventName.USER_PROMPT_SUBMIT,
+        HookEventName.SESSION_START,
+        HookEventName.BEFORE_STOP,
+        HookEventName.STOP,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_query_handler_before_stop_block_continues_without_stop(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+    before_stop_calls = 0
+    stop_calls = 0
+
+    async def fake_emit_runner_hook(event_name, **kwargs):
+        nonlocal before_stop_calls, stop_calls
+        if event_name == HookEventName.BEFORE_STOP:
+            before_stop_calls += 1
+            if before_stop_calls == 1:
+                return MergedHookResult(
+                    decision=HookDecision.BLOCK,
+                    reason="test tests before stopping",
+                )
+            return MergedHookResult(
+                decision=HookDecision.ALLOW,
+                reason="completion approved",
+            )
+        if event_name == HookEventName.STOP:
+            stop_calls += 1
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+
+    assert [item[0].get_text_content() for item in outputs] == [
+        "agent reply",
+        "agent reply",
+    ]
+    assert before_stop_calls == 2
+    assert stop_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_query_handler_before_stop_block_exhausts_default_budget(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+    before_stop_calls = 0
+
+    async def fake_emit_runner_hook(event_name, **kwargs):
+        nonlocal before_stop_calls
+        if event_name == HookEventName.BEFORE_STOP:
+            before_stop_calls += 1
+            return MergedHookResult(
+                decision=HookDecision.BLOCK,
+                reason=f"reason-{before_stop_calls}",
+            )
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+    output_texts = [item[0].get_text_content() for item in outputs]
+
+    assert output_texts[:3] == ["agent reply", "agent reply", "agent reply"]
+    assert "任务未完成" in output_texts[-1]
+    assert "reason-3" in output_texts[-1]
+    assert before_stop_calls == 3
+
+
+@pytest.mark.asyncio
+async def test_query_handler_before_stop_defers_completion_side_effects(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+    runner._store_pending_validation_if_needed = AsyncMock()
+    runner._generate_backend_suggestions_if_needed = AsyncMock()
+    runner._index_model_output_if_needed = AsyncMock()
+    runner._end_trace_if_needed = AsyncMock()
+    before_stop_calls = 0
+
+    async def fake_emit_runner_hook(event_name, **kwargs):
+        nonlocal before_stop_calls
+        if event_name == HookEventName.BEFORE_STOP:
+            before_stop_calls += 1
+            if before_stop_calls == 1:
+                runner._store_pending_validation_if_needed.assert_not_awaited()
+                runner._generate_backend_suggestions_if_needed.assert_not_awaited()
+                runner._index_model_output_if_needed.assert_not_awaited()
+                runner._end_trace_if_needed.assert_not_awaited()
+                return MergedHookResult(
+                    decision=HookDecision.BLOCK,
+                    reason="run checks first",
+                )
+            return MergedHookResult(decision=HookDecision.ALLOW, reason="ok")
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+
+    assert [item[0].get_text_content() for item in outputs] == [
+        "agent reply",
+        "agent reply",
+    ]
+    runner._store_pending_validation_if_needed.assert_awaited_once()
+    runner._generate_backend_suggestions_if_needed.assert_awaited_once()
+    runner._index_model_output_if_needed.assert_awaited_once()
+    runner._end_trace_if_needed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_query_handler_aggregate_budget_counts_validation_and_before_stop(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    agent_config = _agent_config(HookConfig(enabled=True))
+    agent_config.running.post_turn_validation = SimpleNamespace(
+        enabled=True,
+        max_auto_turns=1,
+        timeout_seconds=5.0,
+        user_message_max_length=300,
+        assistant_response_max_length=1200,
+    )
+    agent_config.running.max_before_stop_turns = 2
+    agent_config.running.max_automatic_follow_up_turns = 2
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: agent_config,
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.validate_task_completion",
+        AsyncMock(
+            side_effect=[
+                SimpleNamespace(
+                    completed=False,
+                    reason="validation wants more",
+                    follow_up_prompt="继续完成剩余步骤。",
+                ),
+                SimpleNamespace(
+                    completed=True,
+                    reason="validation ok",
+                    follow_up_prompt="",
+                ),
+                SimpleNamespace(
+                    completed=True,
+                    reason="validation ok",
+                    follow_up_prompt="",
+                ),
+            ],
+        ),
+    )
+    before_stop_calls = 0
+
+    async def fake_emit_runner_hook(event_name, **kwargs):
+        nonlocal before_stop_calls
+        if event_name == HookEventName.BEFORE_STOP:
+            before_stop_calls += 1
+            return MergedHookResult(
+                decision=HookDecision.BLOCK,
+                reason=f"gate-{before_stop_calls}",
+            )
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+    output_texts = [item[0].get_text_content() for item in outputs]
+
+    assert output_texts == [
+        "agent reply",
+        "agent reply",
+        "agent reply",
+        output_texts[-1],
+    ]
+    assert "任务未完成" in output_texts[-1]
+    assert "gate-2" in output_texts[-1]
+    assert before_stop_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_emit_before_stop_hook_respects_active_guard(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    runtime = _QueryRuntime(
+        agent=_FakeAgent(),
+        agent_config=_agent_config(
+            HookConfig(
+                enabled=True,
+                events={
+                    HookEventName.BEFORE_STOP: [
+                        HookMatcherGroupConfig(
+                            hooks=[
+                                CommandHookHandlerConfig(
+                                    id="policy",
+                                    command="unused",
+                                ),
+                            ],
+                        ),
+                    ],
+                },
+            ),
+        ),
+        tenant_hooks=HookConfig(enabled=True),
+        hook_overlay=HookSessionOverlay(),
+        chat=SimpleNamespace(id="chat-1"),
+        session_skill_detector=None,
+        mcp_clients=[],
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        skip_history=False,
+    )
+    plan = _TurnPlan(
+        original_user_message="hello",
+        confirmed_turn_index=0,
+        turn_msgs=[],
+        validation_config=None,
+    )
+    outcome = _QueryTurnOutcome(
+        assistant_response="agent reply",
+        stop_hook_active=True,
+    )
+    emit_hook = AsyncMock()
+    monkeypatch.setattr("swe.app.runner.runner._emit_runner_hook", emit_hook)
+
+    result = await runner._emit_before_stop_hook_if_needed(
+        request=SimpleNamespace(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            channel_meta={},
+        ),
+        runtime=runtime,
+        plan=plan,
+        outcome=outcome,
+    )
+
+    assert result is None
+    emit_hook.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_query_handler_stop_hook_blocks_completion(
     monkeypatch,
     tmp_path,
@@ -576,6 +975,7 @@ async def test_query_handler_stop_hook_blocks_completion(
     )
     emit_hook = AsyncMock(
         side_effect=[
+            MergedHookResult(),
             MergedHookResult(),
             MergedHookResult(),
             MergedHookResult(

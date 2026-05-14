@@ -4,6 +4,8 @@ import { formatListTime } from "./listTimeFormat.ts";
 export interface TaskSidebarMeta {
   state: "active" | "running" | "auto-paused" | "manual-paused";
   unreadCount: number;
+  canPause: boolean;
+  canRun: boolean;
   canResume: boolean;
   canDelete: boolean;
 }
@@ -15,7 +17,10 @@ export function isVisibleTask(job: CronJobSpecOutput): boolean {
 }
 
 export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
-  const unreadCount = Math.max(0, Number(job.task?.unread_execution_count || 0));
+  const unreadCount = Math.max(
+    0,
+    Number(job.task?.unread_execution_count || 0),
+  );
   const pauseReason = job.task?.pause_reason;
   const isPaused = Boolean(job.task?.is_paused || pauseReason);
   const isRunning = Boolean(job.task?.is_running);
@@ -24,6 +29,8 @@ export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
     return {
       state: "running",
       unreadCount,
+      canPause: false,
+      canRun: false,
       canResume: false,
       canDelete: false,
     };
@@ -33,6 +40,8 @@ export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
     return {
       state: "auto-paused",
       unreadCount,
+      canPause: false,
+      canRun: false,
       canResume: true,
       canDelete: true,
     };
@@ -42,6 +51,8 @@ export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
     return {
       state: "manual-paused",
       unreadCount,
+      canPause: false,
+      canRun: false,
       canResume: true,
       canDelete: true,
     };
@@ -50,8 +61,10 @@ export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
   return {
     state: "active",
     unreadCount,
+    canPause: true,
+    canRun: true,
     canResume: false,
-    canDelete: false,
+    canDelete: true,
   };
 }
 

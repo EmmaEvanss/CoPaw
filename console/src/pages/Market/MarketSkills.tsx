@@ -84,10 +84,10 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
   const handleUnpublish = async (skill: MarketSkill) => {
     try {
       await marketApi.unpublishSkill(sourceId, skill.item_id);
-      message.success("下架成功");
+      message.success("删除成功");
       refreshSkills();
     } catch (err) {
-      message.error("下架失败");
+      message.error("删除失败");
     }
   };
 
@@ -268,12 +268,12 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
             <Title level={4} style={{ margin: 0 }}>应用市场</Title>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            {activeResourceType === "mcp" && (
-              <Button icon={<UploadOutlined />} onClick={() => setMcpUploadModalOpen(true)}>
+            {isManager && activeResourceType === "mcp" && (
+              <Button type="primary" icon={<UploadOutlined />} onClick={() => setMcpUploadModalOpen(true)}>
                 上传连接器
               </Button>
             )}
-            {activeResourceType === "skill" && (
+            {isManager && activeResourceType === "skill" && (
               <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadModalOpen(true)}>
                 上传技能
               </Button>
@@ -484,7 +484,7 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                 ) : displayedSkills.length === 0 ? (
                   <Empty description={searchQuery ? "未找到匹配的技能" : "暂无技能"} image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(360px, 1fr))", gap: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                     {displayedSkills.map((skill) => {
                       const catName = skill.category_id
                         ? categories.find((c) => String(c.id) === String(skill.category_id))?.name
@@ -512,10 +512,11 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
             {mcpDetailMode === "detail" && selectedMCP ? (
               <MCPDetailDrawer
                 mcp={selectedMCP}
-                onDistribute={() => openMCPDistributeModal(selectedMCP)}
+                onDistribute={isManager ? () => openMCPDistributeModal(selectedMCP) : undefined}
                 onEdit={() => void openMCPEditModal(selectedMCP)}
-                onDelete={() => confirmDeleteMCP(selectedMCP)}
+                onDelete={isManager ? () => confirmDeleteMCP(selectedMCP) : undefined}
                 canEdit={isManager}
+                isManager={isManager}
               />
             ) : (
               <>
@@ -533,16 +534,17 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                 ) : displayedMCP.length === 0 ? (
                   <Empty description={searchQuery ? "未找到匹配的 MCP" : "暂无 MCP"} image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 ) : (
-                  <div style={{ display: "grid", gap: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }}>
                     {displayedMCP.map((mcp) => (
                       <MCPCard
                         key={mcp.item_id}
                         mcp={mcp}
                         onOpenDetail={() => openMCPDetail(mcp.item_id)}
-                        onDistribute={() => openMCPDistributeModal(mcp)}
+                        onDistribute={isManager ? () => openMCPDistributeModal(mcp) : undefined}
                         onEdit={() => void openMCPEditModal(mcp)}
-                        onDelete={() => confirmDeleteMCP(mcp)}
+                        onDelete={isManager ? () => confirmDeleteMCP(mcp) : undefined}
                         canEdit={isManager}
+                        isManager={isManager}
                       />
                     ))}
                   </div>

@@ -1,7 +1,8 @@
 import React from "react";
 import { Input } from "antd";
+import { Trash2 } from "lucide-react";
 import { IconButton } from "@agentscope-ai/design";
-import { SparkEditLine, SparkDeleteLine } from "@agentscope-ai/icons";
+import { SparkEditLine } from "@agentscope-ai/icons";
 import { getChannelIconUrl } from "../../../Control/Channels/components";
 import styles from "./index.module.less";
 
@@ -83,27 +84,28 @@ const ChatSessionItem: React.FC<ChatSessionItemProps> = (props) => {
         )}
         <div className={styles.metaRow}>
           <span className={styles.time}>{props.time}</span>
-          {props.showChannel !== false && (props.channelKey || props.channelLabel) && (
-            <span
-              className={styles.channelTag}
-              title={props.channelLabel || props.channelKey}
-            >
-              {props.channelKey ? (
-                <img
-                  className={styles.channelIcon}
-                  src={getChannelIconUrl(props.channelKey)}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                />
-              ) : null}
-              {props.channelLabel ? (
-                <span className={styles.channelTagText}>
-                  {props.channelLabel}
-                </span>
-              ) : null}
-            </span>
-          )}
+          {props.showChannel !== false &&
+            (props.channelKey || props.channelLabel) && (
+              <span
+                className={styles.channelTag}
+                title={props.channelLabel || props.channelKey}
+              >
+                {props.channelKey ? (
+                  <img
+                    className={styles.channelIcon}
+                    src={getChannelIconUrl(props.channelKey)}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : null}
+                {props.channelLabel ? (
+                  <span className={styles.channelTagText}>
+                    {props.channelLabel}
+                  </span>
+                ) : null}
+              </span>
+            )}
         </div>
       </div>
       {/* Action buttons visible on hover */}
@@ -123,7 +125,11 @@ const ChatSessionItem: React.FC<ChatSessionItemProps> = (props) => {
           <IconButton
             bordered={false}
             size="small"
-            icon={<SparkDeleteLine />}
+            icon={
+              <span className={styles.deleteIcon}>
+                <Trash2 size={15} strokeWidth={1.9} />
+              </span>
+            }
             onClick={(e) => {
               e.stopPropagation();
               props.onDelete?.();

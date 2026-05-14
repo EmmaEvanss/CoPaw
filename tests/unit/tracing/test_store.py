@@ -320,6 +320,8 @@ class TestQueryOperations:
         mock_db.fetch_all.return_value = [
             {
                 "user_id": "user-1",
+                "user_name": "User One",
+                "bbk_id": "branch-001",
                 "total_sessions": 10,
                 "total_conversations": 15,
                 "total_tokens": 1000,
@@ -328,6 +330,8 @@ class TestQueryOperations:
             },
             {
                 "user_id": "user-2",
+                "user_name": None,
+                "bbk_id": None,
                 "total_sessions": 5,
                 "total_conversations": 8,
                 "total_tokens": 500,
@@ -348,6 +352,8 @@ class TestQueryOperations:
         mock_db.fetch_all.return_value = [
             {
                 "user_id": "user-1",
+                "user_name": None,
+                "bbk_id": None,
                 "total_sessions": 10,
                 "total_conversations": 15,
                 "total_tokens": 1000,
@@ -393,6 +399,8 @@ class TestQueryOperations:
                 "trace_id": "trace-1",
                 "source_id": "test-source",
                 "user_id": "user-1",
+                "user_name": None,
+                "bbk_id": None,
                 "session_id": "session-1",
                 "channel": "console",
                 "start_time": now,
@@ -421,6 +429,8 @@ class TestQueryOperations:
                 "trace_id": "trace-1",
                 "source_id": "test-source",
                 "user_id": "user-1",
+                "user_name": None,
+                "bbk_id": None,
                 "session_id": "session-1",
                 "channel": "console",
                 "start_time": now,
@@ -449,6 +459,8 @@ class TestQueryOperations:
                 "trace_id": "trace-1",
                 "source_id": "test-source",
                 "user_id": "user-1",
+                "user_name": None,
+                "bbk_id": None,
                 "session_id": "session-1",
                 "channel": "console",
                 "start_time": now,
@@ -508,7 +520,10 @@ class TestQueryOperations:
         mock_db.fetch_all.return_value = [
             {
                 "session_id": "session-1",
+                "session_name": None,
                 "user_id": "user-1",
+                "user_name": None,
+                "bbk_id": None,
                 "channel": "console",
                 "total_traces": 5,
                 "total_tokens": 1000,
@@ -532,6 +547,8 @@ class TestQueryOperations:
                 "trace_id": "trace-1",
                 "source_id": "test-source",
                 "user_id": "user-1",
+                "user_name": None,
+                "bbk_id": None,
                 "session_id": "session-1",
                 "channel": "console",
                 "user_message": "Hello",

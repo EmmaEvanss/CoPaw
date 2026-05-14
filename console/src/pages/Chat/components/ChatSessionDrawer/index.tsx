@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { Drawer } from "antd";
+import { Drawer, Modal } from "antd";
 import { IconButton } from "@agentscope-ai/design";
 import { SparkOperateRightLine } from "@agentscope-ai/icons";
 // ==================== 组件引入方式变更 (Kun He) ====================
@@ -107,19 +107,30 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
 
   /** Delete a session and clear any persisted identity mapping */
   const handleDelete = useCallback(
-    async (sessionId: string) => {
+    (sessionId: string, sessionName: string = "新会话") => {
       const nextSessionId =
         currentSessionId === sessionId
           ? sessions.filter((s) => s.id !== sessionId)[0]?.id
           : currentSessionId;
 
-      await sessionApi.removeSession({ id: sessionId });
+      Modal.confirm({
+        title: "删除历史记录",
+        content: `确认删除会话“${sessionName}”？删除后无法恢复。`,
+        centered: true,
+        okText: "删除",
+        okType: "danger",
+        cancelText: "取消",
+        cancelButtonProps: { type: "text" },
+        onOk: async () => {
+          await sessionApi.removeSession({ id: sessionId });
 
-      if (currentSessionId === sessionId) {
-        setCurrentSessionId(nextSessionId);
-      }
+          if (currentSessionId === sessionId) {
+            setCurrentSessionId(nextSessionId);
+          }
 
-      await refreshSessions();
+          await refreshSessions();
+        },
+      });
     },
     [sessions, currentSessionId, setCurrentSessionId, refreshSessions],
   );
@@ -241,7 +252,9 @@ const ChatSessionDrawer: React.FC<ChatSessionDrawerProps> = (props) => {
                 onEdit={() =>
                   handleEditStart(session.id!, session.name || "新会话")
                 }
-                onDelete={() => handleDelete(session.id!)}
+                onDelete={() =>
+                  handleDelete(session.id!, session.name || "新会话")
+                }
                 onEditChange={handleEditChange}
                 onEditSubmit={handleEditSubmit}
                 onEditCancel={handleEditCancel}

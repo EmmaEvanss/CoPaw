@@ -109,6 +109,7 @@ export interface TraceListItem {
 
 export interface SessionListItem {
   session_id: string;
+  session_name?: string;
   user_id: string;
   user_name?: string;
   bbk_id?: string;

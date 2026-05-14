@@ -238,6 +238,7 @@ export const marketApi = {
     conflicts?: Array<{
       reason: string;
       skill_name: string;
+      original_name?: string;
       suggested_name: string;
     }>;
   }> => {

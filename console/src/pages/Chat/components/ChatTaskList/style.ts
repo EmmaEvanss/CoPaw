@@ -48,16 +48,14 @@ export default createGlobalStyle`
     cursor: pointer;
     border-radius: 4px;
     background-color: transparent;
-    transition: background-color 0.15s ease;
+    transition:
+      background-color 0.15s ease,
+      box-shadow 0.15s ease;
     overflow: hidden;
 
     &:hover {
       background: rgba(55, 105, 252, 0.03);
-
-      .chat-task-list-item-actions {
-        opacity: 1;
-        pointer-events: auto;
-      }
+      box-shadow: inset 0 0 0 1px rgba(55, 105, 252, 0.08);
     }
 
     &--paused {
@@ -74,7 +72,8 @@ export default createGlobalStyle`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 4px;
+    gap: 8px;
+    margin-bottom: 6px;
   }
 
   &-item-title {
@@ -86,7 +85,7 @@ export default createGlobalStyle`
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
-    margin-right: 8px;
+    min-width: 0;
   }
 
   &-item-badge {
@@ -103,45 +102,48 @@ export default createGlobalStyle`
   }
 
   &-item-actions {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: flex-end;
+    gap: 4px;
+    flex: 0 0 auto;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.2s;
+    transition: opacity 0.15s ease;
   }
 
-  &-item-action {
+  &-item:hover &-item-actions,
+  &-item:focus-within &-item-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  &-item-action-trigger {
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
     height: 24px;
-    padding: 0 10px;
+    padding: 0;
     border: none;
-    border-radius: 999px;
-    background: rgba(55, 105, 252, 0.1);
-    color: ${DESIGN_TOKENS.colorPrimary};
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 24px;
+    border-radius: 7px;
+    background: transparent;
+    color: ${DESIGN_TOKENS.colorTextMuted};
     cursor: pointer;
     transition:
       background-color 0.15s ease,
       color 0.15s ease;
 
-    &:hover {
-      background: rgba(55, 105, 252, 0.16);
+    &:hover,
+    &--open {
+      background: rgba(132, 130, 231, 0.14);
+      color: ${DESIGN_TOKENS.colorPrimary};
     }
 
-    &--delete {
-      background: rgba(254, 40, 66, 0.1);
-      color: ${DESIGN_TOKENS.colorBadgeRed};
-
-      &:hover {
-        background: rgba(254, 40, 66, 0.16);
-      }
+    &:focus-visible {
+      outline: 2px solid rgba(55, 105, 252, 0.32);
+      outline-offset: 2px;
     }
   }
 

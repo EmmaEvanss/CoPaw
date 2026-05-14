@@ -11,6 +11,7 @@ interface SessionTracesFlowProps {
   page: number;
   pageSize: number;
   loading: boolean;
+  hasSelectedSession: boolean;
   onPageChange: (page: number) => void;
 }
 
@@ -20,6 +21,7 @@ export default function SessionTracesFlow({
   page,
   pageSize,
   loading,
+  hasSelectedSession,
   onPageChange,
 }: SessionTracesFlowProps) {
   const [expandedTraces, setExpandedTraces] = useState<Set<string>>(new Set());
@@ -94,6 +96,17 @@ export default function SessionTracesFlow({
     );
   }
 
+  // 未选择会话时显示提示
+  if (!hasSelectedSession) {
+    return (
+      <div className={styles.tracesFlow}>
+        <div className={styles.tracesTitle}>对话流</div>
+        <Empty description="请选择左侧会话卡片查看对话详情" />
+      </div>
+    );
+  }
+
+  // 已选择会话但无数据
   if (traces.length === 0) {
     return (
       <div className={styles.tracesFlow}>

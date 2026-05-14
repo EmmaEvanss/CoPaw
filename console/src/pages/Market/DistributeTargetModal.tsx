@@ -4,12 +4,12 @@
  * 支持技能和 MCP 分发，统一交互和布局。
  */
 import { useEffect, useMemo, useState } from "react";
-import { Modal, message, Radio, Select, Spin, Button } from "antd";
-import { CheckOutlined } from "@ant-design/icons";
-import api from "../../api";
+import { Modal, message, Radio, Select, Spin, Button, Collapse } from "antd";
+import { CheckOutlined, UserOutlined } from "@ant-design/icons";
 import { marketApi, DistributeRequest } from "../../api/modules/market";
 import { marketMcpApi } from "../../api/modules/marketMcp";
-import { fetchBbkBySource, fetchTenantsBySource, BbkInfo, TenantSourceInfo } from "../../api/modules/userInfo";
+import { fetchTenantsBySource, TenantSourceInfo } from "../../api/modules/userInfo";
+import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../constants/bbk";
 import { useIframeStore } from "../../stores/iframeStore";
 import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 import type { MarketSkill } from "../../api/modules/market";
@@ -37,7 +37,7 @@ export function DistributeTargetModal({
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [targetMode, setTargetMode] = useState<"bbk_id" | "user_id">("bbk_id");
-  const [bbkOptions, setBbkOptions] = useState<BbkInfo[]>([]);
+  const [bbkOptions, setBbkOptions] = useState<{ label: string; value: string }[]>([]);
   const [tenantOptions, setTenantOptions] = useState<TenantSourceInfo[]>([]);
   const [selectedBbkIds, setSelectedBbkIds] = useState<string[]>([]);
   const [selectedTenantIds, setSelectedTenantIds] = useState<string[]>([]);
@@ -45,19 +45,17 @@ export function DistributeTargetModal({
 
   const resolvedSourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID || sourceId;
 
-  // 加载机构/用户列表
+  // 加载用户列表（机构列表使用本地 BBK_ID_MAP）
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     setSelectedBbkIds([]);
     setSelectedTenantIds([]);
     setManualTenantIdsText("");
-    Promise.all([
-      fetchBbkBySource(resolvedSourceId),
-      fetchTenantsBySource(resolvedSourceId),
-    ])
-      .then(([bbkList, tenantList]) => {
-        setBbkOptions(bbkList);
+    // 直接使用本地 BBK_ID_MAP 作为机构选项
+    setBbkOptions(BBK_ID_MAP);
+    fetchTenantsBySource(resolvedSourceId)
+      .then((tenantList) => {
         setTenantOptions(tenantList);
       })
       .catch(console.error)
@@ -75,6 +73,21 @@ export function DistributeTargetModal({
         .map((t) => t.tenant_id);
     }
     return tenantOptions.map((t) => t.tenant_id);
+  }, [targetMode, selectedBbkIds, tenantOptions]);
+
+  // 按机构分组用户列表（用于展示具体用户）
+  const groupedTenants = useMemo(() => {
+    if (targetMode !== "bbk_id" || selectedBbkIds.length === 0) return [];
+    return selectedBbkIds
+      .map((bbkId) => {
+        const users = tenantOptions.filter((t) => t.bbk_id === bbkId);
+        return {
+          bbkId,
+          bbkName: BBK_ID_TO_NAME_MAP[bbkId] || bbkId,
+          users,
+        };
+      })
+      .filter((group) => group.users.length > 0);
   }, [targetMode, selectedBbkIds, tenantOptions]);
 
   // 手动输入的租户 ID
@@ -122,8 +135,16 @@ export function DistributeTargetModal({
           target_type: "user_id",
           target_values: finalTenantIds,
         };
-        await marketApi.distributeSkill(sourceId, (item as MarketSkill).item_id, payload);
-        message.success(`分发成功，共 ${finalTenantIds.length} 个用户`);
+        const result = await marketApi.distributeSkill(sourceId, (item as MarketSkill).item_id, payload);
+        const distributedCount = result.distributed_count ?? 0;
+
+        if (distributedCount === 0) {
+          message.warning("分发未生效，无用户实际收到该技能");
+        } else if (distributedCount < finalTenantIds.length) {
+          message.warning(`部分分发成功，实际分发 ${distributedCount} 个用户（预期 ${finalTenantIds.length} 个）`);
+        } else {
+          message.success(`分发成功，共 ${distributedCount} 个用户`);
+        }
       } else {
         const result = await marketMcpApi.distributeMCP(
           (item as MarketMCPItem).item_id,
@@ -231,15 +252,58 @@ export function DistributeTargetModal({
                   placeholder="选择机构"
                   value={selectedBbkIds}
                   onChange={setSelectedBbkIds}
-                  options={bbkOptions.map((b) => ({
-                    label: b.bbk_name || b.bbk_id,
-                    value: b.bbk_id,
-                  }))}
+                  options={bbkOptions}
                   style={{ width: "100%" }}
                 />
                 <div style={{ color: "#666", fontSize: 12 }}>
                   已选择 {selectedBbkIds.length} 个机构，涉及 {filteredTenantIds.length} 个用户
                 </div>
+                {/* 机构下用户明细 */}
+                {groupedTenants.length > 0 && (
+                  <Collapse
+                    size="small"
+                    items={groupedTenants.map((group) => ({
+                      key: group.bbkId,
+                      label: (
+                        <span style={{ fontSize: 13 }}>
+                          <UserOutlined style={{ marginRight: 6, color: "#1677ff" }} />
+                          {group.bbkName}
+                          <span style={{ color: "#999", marginLeft: 8 }}>
+                            {group.users.length} 人
+                          </span>
+                        </span>
+                      ),
+                      children: (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                            gap: 4,
+                          }}
+                        >
+                          {group.users.map((u) => (
+                            <div
+                              key={u.tenant_id}
+                              style={{
+                                fontSize: 12,
+                                color: "#333",
+                                padding: "2px 0",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                              title={u.tenant_name ? `${u.tenant_name} (${u.tenant_id})` : u.tenant_id}
+                            >
+                              {u.tenant_name
+                                ? `${u.tenant_name} (${u.tenant_id})`
+                                : u.tenant_id}
+                            </div>
+                          ))}
+                        </div>
+                      ),
+                    }))}
+                  />
+                )}
               </div>
             )}
 

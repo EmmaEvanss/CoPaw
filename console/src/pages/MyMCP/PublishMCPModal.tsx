@@ -1,5 +1,5 @@
 /**
- * 发布 MCP 到市场弹窗
+ * 同步 MCP 到市场弹窗
  */
 import { useState } from "react";
 import { Modal, Form, Select, Button, message, Typography, Alert } from "antd";
@@ -29,7 +29,7 @@ export function PublishMCPModal({
 
   const handleSubmit = async () => {
     if (!clientKey) {
-      message.warning("未找到可上架的 MCP");
+      message.warning("未找到可同步的 MCP");
       return;
     }
 
@@ -40,12 +40,12 @@ export function PublishMCPModal({
       await myMcpApi.publishSingleToMarket(clientKey, {
         bbk_ids: values.bbk_ids,
       });
-      message.success("上架成功");
+      message.success("同步成功");
       onSuccess();
     } catch (err) {
-      console.error("上架失败:", err);
+      console.error("同步失败:", err);
       const errorMessage =
-        err instanceof Error && err.message ? err.message : "上架失败";
+        err instanceof Error && err.message ? err.message : "同步失败";
       message.error(errorMessage);
     } finally {
       setLoading(false);
@@ -56,20 +56,20 @@ export function PublishMCPModal({
     <Modal
       open={open}
       onCancel={onClose}
-      title={<><RocketOutlined /> 发布到市场</>}
+      title={<><RocketOutlined /> 同步到市场</>}
       width={500}
       footer={[
         <Button key="cancel" onClick={onClose}>
           关闭
         </Button>,
         <Button key="submit" type="primary" loading={loading} onClick={handleSubmit}>
-          发布
+          同步
         </Button>,
       ]}
     >
       <Alert
         type="info"
-        message="将当前 MCP 上架到应用市场"
+        message="将当前 MCP 同步到应用市场"
         style={{ marginBottom: 16 }}
         showIcon
       />

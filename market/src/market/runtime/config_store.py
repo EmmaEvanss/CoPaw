@@ -45,7 +45,7 @@ class MCPClientConfig(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
-    name: str
+    name: str = Field(default="", description="客户端名称，默认取 client_key")
     description: str = ""
     enabled: bool = True
     transport: Literal["stdio", "streamable_http", "sse"] = "stdio"
@@ -122,6 +122,25 @@ class MCPConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     clients: Dict[str, MCPClientConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_client_names(cls, data):
+        """自动填充每个 client 的 name 字段（使用 client_key）。"""
+        if not isinstance(data, dict):
+            return data
+
+        clients = data.get("clients", {})
+        if isinstance(clients, dict):
+            for client_key, client_config in clients.items():
+                if isinstance(client_config, dict):
+                    # 如果没有 name 字段，用 client_key 填充
+                    if (
+                        "name" not in client_config
+                        or not client_config["name"]
+                    ):
+                        client_config["name"] = client_key
+        return data
 
 
 class AgentProfileConfig(BaseModel):

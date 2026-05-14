@@ -2,7 +2,8 @@ import { request } from "../request";
 import { mergeHeaders } from "../mergeHeaders";
 
 export interface MySkill {
-  skill_name: string;
+  skill_name: string;  // 目录名，用于 API 操作标识
+  display_name: string;  // 展示名称
   source: string;
   description: string;
   version: string | null;

@@ -1,17 +1,10 @@
-export async function copy(text: string): Promise<void> {
-  if (window.isSecureContext && navigator.clipboard) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
+import { copyToClipboard } from "@/utils/clipboard";
 
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.style.cssText = "position:fixed;left:-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    document.execCommand("copy", true);
-  } finally {
-    document.body.removeChild(textarea);
+const COPY_FAILED_MESSAGE = "复制失败";
+
+export async function copy(text: string): Promise<void> {
+  const copied = await copyToClipboard(text);
+  if (!copied) {
+    throw new Error(COPY_FAILED_MESSAGE);
   }
 }

@@ -1194,6 +1194,13 @@ class AgentRunner(Runner):
                         None,
                     )
 
+                    # 提取 session_name：从第一条消息中提取前 10 个字符
+                    session_name_for_trace = None
+                    if msgs and len(msgs) > 0:
+                        content = msgs[0].get_text_content()
+                        if content:
+                            session_name_for_trace = content[:10]
+
                     trace_id = await trace_mgr.start_trace(
                         user_id=user_id_for_trace,
                         session_id=session_id_for_trace,
@@ -1202,6 +1209,7 @@ class AgentRunner(Runner):
                         user_message=user_message,
                         user_name=user_name_for_trace,
                         bbk_id=bbk_id_for_trace,
+                        session_name=session_name_for_trace,
                     )
             except Exception as e:
                 logger.warning("Failed to start trace: %s", e)

@@ -2,6 +2,13 @@
 
 按问题类型给出优先查看的路径，减少无效搜索。
 
+## Console 复制 / Clipboard 权限策略
+
+- 通用复制工具：[console/src/utils/clipboard.ts](../../console/src/utils/clipboard.ts)
+- Chat 工具卡片复制入口：[console/src/components/agentscope-chat/Util/copy.ts](../../console/src/components/agentscope-chat/Util/copy.ts)
+- 工具调用卡片渲染：[console/src/components/agentscope-chat/OperateCard/preset/ToolCall.tsx](../../console/src/components/agentscope-chat/OperateCard/preset/ToolCall.tsx)
+- 复制兼容性测试：[console/src/components/agentscope-chat/Util/copy.test.ts](../../console/src/components/agentscope-chat/Util/copy.test.ts)
+
 ## Console 流式会话切换 / reconnect
 
 - 后端入口：[src/swe/app/routers/console.py](/Users/shixiangyi/code/Swe/src/swe/app/routers/console.py)

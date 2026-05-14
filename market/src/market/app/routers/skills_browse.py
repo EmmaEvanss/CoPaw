@@ -21,7 +21,7 @@ from fastapi import (
     UploadFile,
 )
 
-from ...marketplace.fs import get_user_skills_dir
+from ...marketplace.fs import get_user_skills_dir, sanitize_skill_name
 from ...marketplace.schemas import (
     BatchOperationRequest,
     BatchOperationResponse,
@@ -130,15 +130,16 @@ def _check_zip_size(zf: zipfile.ZipFile) -> None:
 
 
 def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
-    """Security check for path traversal and invalid characters in zip entries.
+    """Zip 路径安全检查：拒绝危险字符，允许 Unicode 目录名。
 
-    Windows 文件系统不允许路径段包含空格、斜杠等特殊字符，
-    需要在解压前检测并拒绝此类 zip 文件。
+    只拒绝 Windows/NTFS 真正保留的字符和控制字符，
+    中文等 Unicode 目录名在后续步骤会通过 sanitize_skill_name 转为拼音。
     """
     import re
 
     root_path = tmp_dir.resolve()
-    _SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+    # Windows/NTFS 保留字符 + 控制字符（禁止用于目录/文件名）
+    _UNSAFE_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
     for info in zf.infolist():
         decoded_name = _decode_zip_filename(info.filename, info)
@@ -148,16 +149,15 @@ def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
         if not target.is_relative_to(root_path):
             raise ValueError(f"Unsafe path in zip: {info.filename}")
 
-        # 检查路径段是否只包含安全字符（Windows 文件系统兼容）
-        # 仅检查目录部分，不检查文件名（文件名可以有扩展名中的特殊字符）
+        # 检查目录段是否包含非法字符（仅拒绝真正危险的字符）
         path_parts = decoded_name.split("/")
         for i, part in enumerate(
             path_parts[:-1],
         ):  # 检查所有目录段，不检查最后一段（可能是文件名）
-            if part and not _SAFE_SEGMENT_RE.match(part):
+            if part and _UNSAFE_CHARS_RE.search(part):
                 raise ValueError(
                     f"Zip 文件中的目录名 '{part}' 包含非法字符（空格、斜杠等）。"
-                    "Windows 文件系统不支持此类路径。请修改 zip 文件中的目录名。",
+                    "请修改 zip 文件中的目录名。",
                 )
 
 
@@ -197,7 +197,7 @@ def _find_skill_directories(
         return [(extract_root, skill_name)]
 
     return [
-        (path, _resolve_skill_name(path))
+        (path, _resolve_skill_name(path, zip_filename))
         for path in sorted(extract_root.iterdir())
         if not path.name.startswith(".")
         and not path.name.startswith("_")
@@ -290,16 +290,22 @@ def _import_skill_dir(
     skill_dir: Path,
     skills_root: Path,
     skill_name: str,
+    original_name: str,
     overwrite: bool,
 ) -> bool:
-    """Import a skill directory to the user skills folder."""
-    # 验证技能名是否合法（Windows 文件系统兼容）
+    """Import a skill directory to the user skills folder.
+
+    Args:
+        skill_name: 安全的目录名（sanitize 后）
+        original_name: 原始技能名称（用于 skill.json 的 name 字段）
+    """
+    # 验证目录名是否合法（Windows 文件系统兼容）
     import re
 
     if not re.match(r"^[a-zA-Z0-9_\-\.]+$", skill_name):
         raise ValueError(
-            f"技能名 '{skill_name}' 包含非法字符，"
-            "仅允许字母、数字、下划线、连字符和点号。请修改 SKILL.md 中的 name 字段或 zip 文件名。",
+            f"技能目录名 '{skill_name}' 包含非法字符，"
+            "仅允许字母、数字、下划线、连字符和点号。",
         )
 
     target_dir = skills_root / skill_name
@@ -345,12 +351,18 @@ def _parse_frontmatter_description(skill_md_path: Path) -> str:
 def _update_skill_json(
     skill_json_path: Path,
     skill_name: str,
+    original_name: str,
     user_id: str,
     user_name: str,
     bbk_id: str,
     category_id: int | None,
 ) -> dict[str, Any]:
-    """Update skill.json with metadata, return parsed data."""
+    """Update skill.json with metadata, return parsed data.
+
+    Args:
+        skill_name: 安全的目录名
+        original_name: 原始技能名称（用于前端展示）
+    """
     skill_data: dict[str, Any] = {}
     if skill_json_path.exists():
         try:
@@ -360,7 +372,8 @@ def _update_skill_json(
         except (json.JSONDecodeError, OSError):
             pass
 
-    skill_data["name"] = skill_data.get("name") or skill_name
+    # name 字段优先使用用户指定的名称（original_name），其次保留已有名称
+    skill_data["name"] = original_name or skill_data.get("name") or skill_name
 
     # 优先从 skill.json 获取 description，其次从 SKILL.md frontmatter
     if not skill_data.get("description"):
@@ -389,6 +402,7 @@ def _process_single_skill(
     skill_dir: Path,
     skills_dir: Path,
     skill_name: str,
+    original_name: str,
     existing_names: set[str],
     user_id: str,
     user_name: str,
@@ -396,21 +410,42 @@ def _process_single_skill(
     overwrite: bool,
     category_id: int | None,
 ) -> tuple[bool, dict[str, str] | None]:
-    """Process single skill import. Returns (imported, conflict_or_none)."""
+    """Process single skill import. Returns (imported, conflict_or_none).
+
+    Args:
+        skill_name: 安全的目录名
+        original_name: 原始技能名称
+    """
     if skill_name in existing_names and not overwrite:
+        # 递增计数器直到找到不冲突的建议名
+        counter = 1
+        while True:
+            suggested = f"{original_name}_{counter}"
+            safe_suggested = sanitize_skill_name(suggested)
+            if safe_suggested not in existing_names:
+                break
+            counter += 1
         return False, {
             "reason": "already_exists",
             "skill_name": skill_name,
-            "suggested_name": f"{skill_name}_1",
+            "original_name": original_name,
+            "suggested_name": suggested,
         }
 
-    if not _import_skill_dir(skill_dir, skills_dir, skill_name, overwrite):
+    if not _import_skill_dir(
+        skill_dir,
+        skills_dir,
+        skill_name,
+        original_name,
+        overwrite,
+    ):
         return False, None
 
     skill_json_path = skills_dir / skill_name / "skill.json"
     _update_skill_json(
         skill_json_path,
         skill_name,
+        original_name,
         user_id,
         user_name,
         bbk_id,
@@ -442,17 +477,32 @@ def _import_skill_from_zip(
         tmp_dir, found_skills = _extract_zip_skills(data, zip_filename)
         existing_names = _get_existing_skill_names(skills_dir)
 
-        for skill_dir, skill_name in found_skills:
-            # 应用 rename_map 映射
-            if rename_map and skill_name in rename_map:
-                skill_name = rename_map[skill_name]
+        for skill_dir, original_name in found_skills:
+            # original_name 来自 SKILL.md frontmatter 或 zip 文件名
+            # 将原始名称转换为安全的目录名（处理中文、空格、斜杠等）
+            safe_skill_name = sanitize_skill_name(original_name)
+
+            # 应用 rename_map 映射（用户手动指定的重命名）
+            # 需要传递解析：rename_map 可能包含链式映射
+            # 如 {A→B, B→C}，表示最终要将 A 重命名为 C
+            if rename_map and original_name in rename_map:
+                resolved = original_name
+                seen = {resolved}
+                while resolved in rename_map:
+                    resolved = rename_map[resolved]
+                    if resolved in seen:
+                        break  # 防止循环引用
+                    seen.add(resolved)
+                original_name = resolved
+                safe_skill_name = sanitize_skill_name(original_name)
             elif target_name and len(found_skills) == 1:
-                skill_name = target_name.strip()
+                safe_skill_name = sanitize_skill_name(target_name.strip())
 
             success, conflict = _process_single_skill(
                 skill_dir,
                 skills_dir,
-                skill_name,
+                safe_skill_name,
+                original_name,
                 existing_names,
                 user_id,
                 user_name,
@@ -466,9 +516,11 @@ def _import_skill_from_zip(
                 continue
 
             if success:
-                imported.append(skill_name)
+                imported.append(safe_skill_name)
                 if parsed_name is None:
-                    skill_json_path = skills_dir / skill_name / "skill.json"
+                    skill_json_path = (
+                        skills_dir / safe_skill_name / "skill.json"
+                    )
                     skill_data = json.loads(
                         skill_json_path.read_text(encoding="utf-8"),
                     )

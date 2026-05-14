@@ -9,7 +9,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: 70vh;
+  height: 80vh;
 }
 
 .topSection {
@@ -90,8 +90,33 @@
   font-family: monospace;
   font-size: 12px;
   color: #262626;
+  word-break: break-all;
+}
+
+.sessionIdRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.copyIcon {
+  cursor: pointer;
+  color: #999;
+  flex-shrink: 0;
+  transition: color 0.2s;
+
+  &:hover {
+    color: #1890ff;
+  }
+}
+
+.sessionName {
+  font-size: 12px;
+  color: #666;
   margin-bottom: 6px;
   word-break: break-all;
+  line-height: 1.4;
 }
 
 .sessionMeta {

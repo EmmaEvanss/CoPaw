@@ -1,9 +1,10 @@
-import React, { useState, useCallback } from 'react';
-import type { CronJobSpecOutput } from '@/api/types';
-import Style from './style';
-import { DESIGN_TOKENS } from '@/config/designTokens';
-import { getTaskNextRunText, getTaskSidebarMeta } from '../../taskJobs';
-import { formatListTime } from '../../listTimeFormat';
+import React, { useState, useCallback } from "react";
+import type { CronJobSpecOutput } from "@/api/types";
+import Style from "./style";
+import { DESIGN_TOKENS } from "@/config/designTokens";
+import { getTaskNextRunText, getTaskSidebarMeta } from "../../taskJobs";
+import { formatListTime } from "../../listTimeFormat";
+import TaskActionMenu from "../TaskActionMenu";
 
 function TaskIcon() {
   return (
@@ -43,12 +44,21 @@ function ToggleIcon({ collapsed }: { collapsed: boolean }) {
 export interface ChatTaskListProps {
   tasks: CronJobSpecOutput[];
   onTaskClick?: (task: CronJobSpecOutput) => void;
+  onTaskPause?: (task: CronJobSpecOutput) => void;
+  onTaskRun?: (task: CronJobSpecOutput) => void;
   onTaskResume?: (task: CronJobSpecOutput) => void;
   onTaskDelete?: (task: CronJobSpecOutput) => void;
 }
 
 export default function ChatTaskList(props: ChatTaskListProps) {
-  const { tasks, onTaskClick, onTaskResume, onTaskDelete } = props;
+  const {
+    tasks,
+    onTaskClick,
+    onTaskPause,
+    onTaskRun,
+    onTaskResume,
+    onTaskDelete,
+  } = props;
   const [collapsed, setCollapsed] = useState(false);
 
   const handleToggle = useCallback(() => {
@@ -60,22 +70,6 @@ export default function ChatTaskList(props: ChatTaskListProps) {
       onTaskClick?.(task);
     },
     [onTaskClick],
-  );
-
-  const handleTaskResume = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>, task: CronJobSpecOutput) => {
-      event.stopPropagation();
-      onTaskResume?.(task);
-    },
-    [onTaskResume],
-  );
-
-  const handleTaskDelete = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>, task: CronJobSpecOutput) => {
-      event.stopPropagation();
-      onTaskDelete?.(task);
-    },
-    [onTaskDelete],
   );
 
   return (
@@ -107,18 +101,18 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                   <div
                     key={task.id}
                     className={`chat-task-list-item${
-                      sidebarMeta.state !== 'active' &&
-                      sidebarMeta.state !== 'running'
-                        ? ' chat-task-list-item--paused'
-                        : ''
+                      sidebarMeta.state !== "active" &&
+                      sidebarMeta.state !== "running"
+                        ? " chat-task-list-item--paused"
+                        : ""
                     }${
-                      sidebarMeta.state === 'running'
-                        ? ' chat-task-list-item--running'
-                        : ''
+                      sidebarMeta.state === "running"
+                        ? " chat-task-list-item--running"
+                        : ""
                     }${
-                      sidebarMeta.state === 'auto-paused'
-                        ? ' chat-task-list-item--auto-paused'
-                        : ''
+                      sidebarMeta.state === "auto-paused"
+                        ? " chat-task-list-item--auto-paused"
+                        : ""
                     }`}
                     onClick={() => handleTaskClick(task)}
                     role="button"
@@ -128,47 +122,45 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                       <span className="chat-task-list-item-title">
                         {task.name || task.id}
                       </span>
-                      {sidebarMeta.canResume ? (
+                      {sidebarMeta.canPause ||
+                      sidebarMeta.canRun ||
+                      sidebarMeta.canResume ||
+                      sidebarMeta.canDelete ? (
                         <div className="chat-task-list-item-actions">
-                          <button
-                            type="button"
-                            className="chat-task-list-item-action chat-task-list-item-action--delete"
-                            onClick={(event) => handleTaskDelete(event, task)}
-                          >
-                            删除
-                          </button>
-                          <button
-                            type="button"
-                            className="chat-task-list-item-action"
-                            onClick={(event) => handleTaskResume(event, task)}
-                          >
-                            恢复
-                          </button>
+                          <TaskActionMenu
+                            task={task}
+                            sidebarMeta={sidebarMeta}
+                            classNamePrefix="chat-task-list-item"
+                            onTaskPause={onTaskPause}
+                            onTaskRun={onTaskRun}
+                            onTaskResume={onTaskResume}
+                            onTaskDelete={onTaskDelete}
+                          />
                         </div>
                       ) : (
                         sidebarMeta.unreadCount > 0 && (
                           <span className="chat-task-list-item-badge">
                             {sidebarMeta.unreadCount > 99
-                              ? '99+'
+                              ? "99+"
                               : sidebarMeta.unreadCount}
                           </span>
                         )
                       )}
                     </div>
-                    {sidebarMeta.state !== 'active' &&
-                      sidebarMeta.state !== 'running' && (
-                      <div
-                        className={`chat-task-list-item-status ${
-                          sidebarMeta.state === 'auto-paused'
-                            ? 'chat-task-list-item-status--auto'
-                            : 'chat-task-list-item-status--manual'
-                        }`}
-                      >
-                        {sidebarMeta.state === 'auto-paused'
-                          ? `已自动暂停 · 连续 ${sidebarMeta.unreadCount} 次未读`
-                          : '已手动暂停'}
-                      </div>
-                    )}
+                    {sidebarMeta.state !== "active" &&
+                      sidebarMeta.state !== "running" && (
+                        <div
+                          className={`chat-task-list-item-status ${
+                            sidebarMeta.state === "auto-paused"
+                              ? "chat-task-list-item-status--auto"
+                              : "chat-task-list-item-status--manual"
+                          }`}
+                        >
+                          {sidebarMeta.state === "auto-paused"
+                            ? `已自动暂停 · 连续 ${sidebarMeta.unreadCount} 次未读`
+                            : "已手动暂停"}
+                        </div>
+                      )}
                     {(task.task?.latest_scheduled_preview ||
                       task.task?.last_scheduled_run_at) && (
                       <div className="chat-task-list-item-subtitle">

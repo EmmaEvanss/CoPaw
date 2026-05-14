@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS `swe_tracing_traces` (
     `user_name` VARCHAR(256) DEFAULT NULL COMMENT '用户名称',
     `bbk_id` VARCHAR(64) DEFAULT NULL COMMENT 'BBK标识符',
     `session_id` VARCHAR(36) DEFAULT NULL COMMENT '会话标识，同一会话的多次请求共享此ID',
+    `session_name` VARCHAR(256) DEFAULT NULL COMMENT '会话名称（从第一条消息提取）',
     `channel` VARCHAR(32) DEFAULT NULL COMMENT '通道来源，如 console/webhook/api 等',
     `start_time` DATETIME DEFAULT NULL COMMENT '追踪开始时间，用户请求发起时刻',
     `end_time` DATETIME DEFAULT NULL COMMENT '追踪结束时间，请求完成时刻',

@@ -62,7 +62,8 @@ class MarketSkillDetail(MarketSkillResponse):
 class MySkillItem(BaseModel):
     """我的技能列表条目."""
 
-    skill_name: str
+    skill_name: str  # 目录名，用于 API 操作标识
+    display_name: str = ""  # 展示名称，从 skill.json 的 name 字段读取
     source: str
     description: str = ""
     version: Optional[str] = None
@@ -71,6 +72,8 @@ class MySkillItem(BaseModel):
     is_received: bool = False
     has_update: bool = False
     enabled: bool = True
+    category: Optional[str] = None
+    creator_name: Optional[str] = None
 
 
 class BatchOperationRequest(BaseModel):

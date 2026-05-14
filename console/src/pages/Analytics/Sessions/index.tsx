@@ -225,8 +225,10 @@ export default function SessionsPage() {
       key: "session_id",
       width: 160,
       ellipsis: true,
-      render: (v) => (
-        <span style={{ cursor: "pointer", color: "#1890ff" }}>{v}</span>
+      render: (v, record) => (
+        <span style={{ cursor: "pointer", color: "#1890ff" }}>
+          {record.session_name || v}
+        </span>
       ),
     },
     {
@@ -351,7 +353,8 @@ export default function SessionsPage() {
         title={
           <span>
             <MessageSquare size={18} style={{ marginRight: 8 }} />
-            {selectedSession?.session_id ||
+            {selectedSession?.session_name ||
+              selectedSession?.session_id ||
               t("analytics.sessionDetails", "Session Details")}
           </span>
         }

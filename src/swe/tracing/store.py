@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-public-methods
 """Trace store module.
 
 Provides database storage operations for traces and spans.
@@ -122,17 +123,18 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_traces (
-                trace_id, source_id, user_id, session_id, channel, start_time,
+                trace_id, source_id, user_id, session_id, session_name, channel, start_time,
                 end_time, duration_ms, model_name, total_input_tokens,
                 total_output_tokens, total_tokens, tools_used, skills_used,
                 status, error, user_message, user_name, bbk_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             trace.trace_id,
             trace.source_id,
             trace.user_id,
             trace.session_id,
+            trace.session_name,
             trace.channel,
             trace.start_time,
             trace.end_time,
@@ -226,6 +228,98 @@ class TraceStore:
         if row is None:
             return None
         return self._row_to_trace(row)
+
+    async def has_session_name(
+        self,
+        session_id: str,
+        source_id: Optional[str] = None,
+    ) -> bool:
+        """Check if a session already has session_name.
+
+        Args:
+            session_id: Session identifier
+            source_id: Optional source identifier for data isolation
+
+        Returns:
+            True if the session has existing session_name
+        """
+        if self.db is None:
+            return False
+
+        if source_id:
+            query = (
+                "SELECT COUNT(*) as count FROM swe_tracing_traces "
+                "WHERE session_id = %s AND source_id = %s AND session_name IS NOT NULL"
+            )
+            row = await self.db.fetch_one(query, (session_id, source_id))
+        else:
+            query = (
+                "SELECT COUNT(*) as count FROM swe_tracing_traces "
+                "WHERE session_id = %s AND session_name IS NOT NULL"
+            )
+            row = await self.db.fetch_one(query, (session_id,))
+        return row is not None and row.get("count", 0) > 0
+
+    async def has_session_traces(
+        self,
+        session_id: str,
+        source_id: Optional[str] = None,
+    ) -> bool:
+        """Check if a session already has trace records.
+
+        Args:
+            session_id: Session identifier
+            source_id: Optional source identifier for data isolation
+
+        Returns:
+            True if the session has existing traces
+        """
+        if self.db is None:
+            return False
+
+        if source_id:
+            query = (
+                "SELECT COUNT(*) as count FROM swe_tracing_traces "
+                "WHERE session_id = %s AND source_id = %s"
+            )
+            row = await self.db.fetch_one(query, (session_id, source_id))
+        else:
+            query = "SELECT COUNT(*) as count FROM swe_tracing_traces WHERE session_id = %s"
+            row = await self.db.fetch_one(query, (session_id,))
+        return row is not None and row.get("count", 0) > 0
+
+    async def get_session_first_message(
+        self,
+        session_id: str,
+        source_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Get the first trace's user_message of a session.
+
+        Args:
+            session_id: Session identifier
+            source_id: Optional source identifier for data isolation
+
+        Returns:
+            The first user_message or None
+        """
+        if self.db is None:
+            return None
+
+        if source_id:
+            query = (
+                "SELECT user_message FROM swe_tracing_traces "
+                "WHERE session_id = %s AND source_id = %s AND user_message IS NOT NULL "
+                "ORDER BY start_time ASC LIMIT 1"
+            )
+            row = await self.db.fetch_one(query, (session_id, source_id))
+        else:
+            query = (
+                "SELECT user_message FROM swe_tracing_traces "
+                "WHERE session_id = %s AND user_message IS NOT NULL "
+                "ORDER BY start_time ASC LIMIT 1"
+            )
+            row = await self.db.fetch_one(query, (session_id,))
+        return row.get("user_message") if row else None
 
     # Span operations
 
@@ -1663,7 +1757,8 @@ class TraceStore:
         total = count_row["total"] if count_row else 0
 
         # Get sessions with skill counts from spans
-        # 同时获取 user_name 和 bbk_id（取最近一条有值的记录）
+        # 同时获取 user_name、bbk_id 和 session_name
+        # session_name 优先取已有值，若为空则从第一条消息的 user_message 中提取前10个字符
         offset = (page - 1) * page_size
         if source_id == "all":
             query = f"""
@@ -1682,7 +1777,18 @@ class TraceStore:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       COALESCE(
+                           (SELECT t4.session_name FROM swe_tracing_traces t4
+                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                            ORDER BY t4.start_time ASC LIMIT 1),
+                           SUBSTRING(
+                               (SELECT t5.user_message FROM swe_tracing_traces t5
+                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
+                                ORDER BY t5.start_time ASC LIMIT 1),
+                               1, 10
+                           )
+                       ) as session_name
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.session_id, t.user_id, t.channel
@@ -1708,7 +1814,20 @@ class TraceStore:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       COALESCE(
+                           (SELECT t4.session_name FROM swe_tracing_traces t4
+                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                            AND t4.source_id = %s
+                            ORDER BY t4.start_time ASC LIMIT 1),
+                           SUBSTRING(
+                               (SELECT t5.user_message FROM swe_tracing_traces t5
+                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
+                                AND t5.source_id = %s
+                                ORDER BY t5.start_time ASC LIMIT 1),
+                               1, 10
+                           )
+                       ) as session_name
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.session_id, t.user_id, t.channel
@@ -1717,7 +1836,7 @@ class TraceStore:
             """
             # 子查询的 source_id 参数必须在最前面，因为 SQL 中子查询先出现
             params = (
-                [source_id, source_id, source_id]
+                [source_id, source_id, source_id, source_id, source_id]
                 + params
                 + [page_size, offset]
             )
@@ -1725,6 +1844,7 @@ class TraceStore:
         sessions = [
             SessionListItem(
                 session_id=row["session_id"],
+                session_name=row.get("session_name"),
                 user_id=row["user_id"],
                 user_name=row["user_name"],
                 bbk_id=row["bbk_id"],
@@ -2698,6 +2818,7 @@ class TraceStore:
             source_id=row["source_id"],
             user_id=row["user_id"],
             session_id=row["session_id"],
+            session_name=row.get("session_name"),
             channel=row["channel"],
             start_time=row["start_time"],
             end_time=row["end_time"],

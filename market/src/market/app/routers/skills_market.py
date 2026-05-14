@@ -48,6 +48,7 @@ class _InitUserSkillsResult(TypedDict):
 
     dry_run: bool
     processed_users: int
+    processed_workspaces: int
     processed_skills: int
     created_skill_json: int
     updated_source: int
@@ -149,11 +150,14 @@ def _copy_skill_to_market(
     if skill_md:
         (market_skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
 
-    # 复制其他文件
+    # 复制其他文件（处理已存在的目录）
     for f in skill_dir.iterdir():
         if f.name not in ("skill.json", "SKILL.md"):
             target = market_skill_dir / f.name
             if f.is_dir():
+                # 目标目录已存在时先删除，再复制
+                if target.exists():
+                    shutil.rmtree(target)
                 shutil.copytree(f, target)
             else:
                 shutil.copy2(f, target)
@@ -317,7 +321,11 @@ async def publish_skill_upload(
     data = await _read_validated_zip_upload(file)
 
     # 解压 zip 文件
-    tmp_dir, found_skills = await asyncio.to_thread(_extract_zip_skills, data)
+    tmp_dir, found_skills = await asyncio.to_thread(
+        _extract_zip_skills,
+        data,
+        file.filename,
+    )
     if not found_skills:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -577,7 +585,7 @@ def _process_workspace_skills(
     if not skills_dir.exists():
         return
 
-    results["processed_users"] += 1
+    results["processed_workspaces"] += 1
 
     for skill_dir in skills_dir.iterdir():
         if not skill_dir.is_dir():
@@ -599,8 +607,6 @@ def _process_workspace_skills(
 )
 async def init_user_skills(
     request: Request,
-    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
-    x_manager: Optional[str] = Header(default=None, alias="X-Manager"),
     dry_run: bool = True,
 ):
     """初始化所有租户的历史技能数据为「我创建的」.
@@ -615,14 +621,13 @@ async def init_user_skills(
     Args:
         dry_run: True 仅预览变更，不实际写入；False 执行写入
     """
-    source_id = require_source_id(x_source_id)
-    _require_manager(x_manager)
     svc = request.app.state.marketplace
     swe_root = svc.swe_root
 
     results: _InitUserSkillsResult = {
         "dry_run": dry_run,
         "processed_users": 0,
+        "processed_workspaces": 0,
         "processed_skills": 0,
         "created_skill_json": 0,
         "updated_source": 0,
@@ -636,6 +641,7 @@ async def init_user_skills(
         if not user_dir.is_dir():
             continue
         user_id = user_dir.name
+        results["processed_users"] += 1
 
         workspace_base = user_dir / "workspaces"
         if not workspace_base.exists():

@@ -30,6 +30,7 @@ from .fs import (
     load_mcp_config,
     save_index,
     save_mcp_config,
+    sanitize_skill_name,
 )
 from .models import MarketItem
 from .schemas import (
@@ -824,6 +825,9 @@ class MarketplaceService:
         if item is None:
             raise ValueError(f"Item {item_id} not found in source {source_id}")
 
+        # 将技能名称转换为安全的目录名（处理空格、斜杠等非法字符）
+        safe_skill_name = sanitize_skill_name(item.name)
+
         target_users = await self._resolve_target_users(source_id, req)
         count = 0
         for user in target_users:
@@ -834,14 +838,16 @@ class MarketplaceService:
                     item_id=item_id,
                     swe_root=self.swe_root,
                     user_id=user["tenant_id"],
-                    skill_name=item.name,
+                    skill_name=safe_skill_name,
+                    original_name=item.name,
+                    description=item.description,
                     distributed_by=operator_id,
                     version=item.version,
                 )
-                # 注册技能到 manifest
+                # 注册技能到 manifest（使用安全名称）
                 self.register_skill_in_manifest(
                     user["tenant_id"],
-                    item.name,
+                    safe_skill_name,
                     "default",
                     source_id,
                     enabled=True,
@@ -920,10 +926,13 @@ class MarketplaceService:
                 continue
 
             skill_name = skill_dir.name
+            # 从 skill.json 的 name 字段获取展示名称，如果没有则用目录名
+            display_name = data.get("name") or skill_name
             source = data.get("source", "customized")
             is_received = source.startswith("marketplace:")
             received_version = data.get("received_version")
-            market_version = market_versions.get(skill_name)
+            # 用展示名称匹配市场版本（市场技能用 name 字段）
+            market_version = market_versions.get(display_name)
             has_update = (
                 is_received
                 and received_version is not None
@@ -938,6 +947,7 @@ class MarketplaceService:
             result.append(
                 MySkillItem(
                     skill_name=skill_name,
+                    display_name=display_name,
                     source=source,
                     description=data.get("description", ""),
                     version=data.get("version"),
@@ -946,6 +956,10 @@ class MarketplaceService:
                     is_received=is_received,
                     has_update=has_update,
                     enabled=enabled,
+                    category=data.get("category"),
+                    creator_name=_decode_creator_name(
+                        data.get("creator_name", ""),
+                    ),
                 ),
             )
         return result

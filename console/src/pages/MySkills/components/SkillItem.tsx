@@ -79,7 +79,7 @@ export function SkillItem({
             color: disabled ? "#8c8c8c" : "#262626",
           }}
         >
-          {skill.skill_name}
+          {skill.display_name || skill.skill_name}
         </Text>
         {skill.version && <Tag style={{ marginLeft: 4 }}>v{skill.version}</Tag>}
         {skill.is_received && <Tag color="orange">接收的</Tag>}

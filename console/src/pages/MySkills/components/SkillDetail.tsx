@@ -1,5 +1,5 @@
 import { Typography, Tag, Button, Spin, message } from "antd";
-import { DeleteOutlined, CheckCircleOutlined, StopOutlined } from "@ant-design/icons";
+import { Power, Trash2, Pencil } from "lucide-react";
 import { useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -149,25 +149,33 @@ export function SkillDetail({
           }}
         >
           <Title level={4} style={{ margin: 0 }}>
-            {skill.skill_name}
+            {skill.display_name || skill.skill_name}
           </Title>
           <div style={{ display: "flex", gap: 8 }}>
             {!editing && canEdit && fileContent !== null && (
-              <Button size="small" onClick={handleStartEdit}>
+              <Button
+                size="small"
+                icon={<Pencil style={{ width: 12, height: 12 }} />}
+                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+                onClick={handleStartEdit}
+              >
                 编辑
               </Button>
             )}
             <Button
               size="small"
-              icon={disabled ? <CheckCircleOutlined /> : <StopOutlined />}
+              type={skill.enabled ? "primary" : "default"}
+              icon={<Power style={{ width: 12, height: 12 }} />}
+              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
               onClick={onToggleEnabled}
             >
-              {disabled ? "启用" : "禁用"}
+              {skill.enabled ? "已启用" : "已禁用"}
             </Button>
             <Button
               size="small"
               danger
-              icon={<DeleteOutlined />}
+              icon={<Trash2 style={{ width: 12, height: 12 }} />}
+              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
               onClick={onDelete}
             >
               删除

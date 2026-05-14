@@ -1,5 +1,5 @@
 import { Input, Button, Space } from "antd";
-import { SaveOutlined, CloseOutlined, PencilLine } from "@ant-design/icons";
+import { SaveOutlined, CloseOutlined, EditOutlined } from "@ant-design/icons";
 
 const { TextArea } = Input;
 
@@ -48,7 +48,7 @@ export function SkillFileEditor({
               padding: "2px 8px",
             }}
           >
-            <PencilLine style={{ fontSize: 12 }} />
+            <EditOutlined style={{ fontSize: 12 }} />
             编辑模式
           </span>
           <span style={{ fontSize: 12, color: "#8c8c8c" }}>

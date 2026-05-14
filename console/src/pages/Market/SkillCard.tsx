@@ -1,6 +1,6 @@
 import { Card, Tag, Typography, Button, Space, Popconfirm } from "antd";
 import { MarketSkill } from "../../api/modules/market";
-import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon, FileText, Trash2, Send } from "lucide-react";
+import { Users, PhoneCall, Calendar, GitBranch, CheckCircle, Sparkles, Tag as TagIcon, Eye, Trash2, Send } from "lucide-react";
 
 const { Text } = Typography;
 
@@ -31,18 +31,18 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
         padding: 20,
         borderRadius: 16,
         border: "1px solid #f0eee6",
-        backgroundColor: "#faf9f5",
+        backgroundColor: "#fff",
         cursor: "pointer",
         transition: "all 0.2s ease",
       }}
       onClick={onClick}
       onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "#fff";
+        e.currentTarget.style.backgroundColor = "#faf9f5";
         e.currentTarget.style.borderColor = "#e8e6dc";
         e.currentTarget.style.boxShadow = "rgba(0,0,0,0.06) 0px 4px 20px";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "#faf9f5";
+        e.currentTarget.style.backgroundColor = "#fff";
         e.currentTarget.style.borderColor = "#f0eee6";
         e.currentTarget.style.boxShadow = "none";
       }}
@@ -232,7 +232,7 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
               gap: 4,
             }}
           >
-            <FileText size={12} />
+            <Eye size={12} />
             详情
           </Button>
           {isManager && onDistribute && (
@@ -256,8 +256,8 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
           )}
           {isManager && onUnpublish && (
             <Popconfirm
-              title="下架技能"
-              description={`确定下架技能「${skill.name}」？下架后用户将无法查看。`}
+              title="删除技能"
+              description={`确定删除技能「${skill.name}」？删除后用户将无法查看。`}
               onConfirm={onUnpublish}
               okText="确定"
               cancelText="取消"
@@ -276,7 +276,7 @@ export function SkillCard({ skill, onClick, onDistribute, onUnpublish, isManager
                 }}
               >
                 <Trash2 size={12} />
-                下架
+                删除
               </Button>
             </Popconfirm>
           )}

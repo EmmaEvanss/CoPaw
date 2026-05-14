@@ -32,10 +32,10 @@ const FRONTMATTER_PATTERN = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
 
 const BASE_META_TAG_STYLE = {
   margin: 0,
-  backgroundColor: "#f5f4ed",
+  backgroundColor: "#f5f5f5",
   color: "#5e5d59",
   borderRadius: 999,
-  border: "1px solid #e8e6dc",
+  border: "1px solid #e8e8e8",
   paddingInline: 10,
   paddingBlock: 1,
   fontSize: 12,
@@ -91,10 +91,10 @@ function renderPreviewContent(
         style={{
           width: "100%",
           boxSizing: "border-box",
-          border: "1px dashed #d9cbb8",
+          border: "1px dashed #d9d9d9",
           borderRadius: 12,
           padding: 24,
-          backgroundColor: "#fffdf8",
+          backgroundColor: "#fafafa",
           textAlign: "center",
         }}
       >
@@ -111,10 +111,10 @@ function renderPreviewContent(
           width: "100%",
           maxWidth: "100%",
           boxSizing: "border-box",
-          backgroundColor: "#fffdf8",
+          backgroundColor: "#fff",
           borderRadius: 10,
-          padding: 10,
-          border: "1px solid #eee5d8",
+          padding: 12,
+          border: "1px solid #f0f0f0",
           lineHeight: 1.7,
           overflow: "hidden",
           wordBreak: "break-word",
@@ -169,10 +169,10 @@ function renderPreviewContent(
         margin: 0,
         width: "100%",
         boxSizing: "border-box",
-        backgroundColor: "#fffdf8",
+        backgroundColor: "#fafafa",
         borderRadius: 10,
         padding: 10,
-        border: "1px solid #eee5d8",
+        border: "1px solid #f0f0f0",
         overflow: "auto",
         fontSize: 12,
         lineHeight: 1.6,
@@ -268,8 +268,8 @@ export function SkillDetailDrawer({
           style={{
             flex: "1 1 720px",
             minWidth: 0,
-            backgroundColor: "#faf9f5",
-            border: "1px solid #e8e6dc",
+            backgroundColor: "#fff",
+            border: "1px solid #f0f0f0",
             borderRadius: 16,
             overflow: "hidden",
             boxShadow: "rgba(0, 0, 0, 0.04) 0px 4px 16px",
@@ -278,8 +278,8 @@ export function SkillDetailDrawer({
           <div
             style={{
               padding: "10px 14px",
-              borderBottom: "1px solid #ece8dc",
-              backgroundColor: "#faf9f5",
+              borderBottom: "1px solid #f0f0f0",
+              backgroundColor: "#fff",
             }}
           >
             <Title
@@ -298,8 +298,8 @@ export function SkillDetailDrawer({
           <div
             style={{
               padding: "8px 14px",
-              borderBottom: "1px solid #ece8dc",
-              backgroundColor: "#faf9f5",
+              borderBottom: "1px solid #f0f0f0",
+              backgroundColor: "#fff",
             }}
           >
             <Text
@@ -326,8 +326,8 @@ export function SkillDetailDrawer({
                 flex: "1 1 auto",
                 width: "100%",
                 minWidth: 0,
-                padding: 10,
-                backgroundColor: "#fcfbf7",
+                padding: 12,
+                backgroundColor: "#fafafa",
                 height: "100%",
               }}
             >
@@ -376,8 +376,8 @@ export function SkillDetailDrawer({
           <div
             style={{
               borderRadius: 16,
-              border: "1px solid #e8e6dc",
-              backgroundColor: "#faf9f5",
+              border: "1px solid #f0f0f0",
+              backgroundColor: "#fff",
               padding: 12,
               boxShadow: "rgba(0, 0, 0, 0.04) 0px 4px 16px",
             }}
@@ -454,7 +454,7 @@ export function SkillDetailDrawer({
                   paddingInline: 12,
                 }}
               >
-                {skill.status === "active" ? "上架中" : "已下架"}
+                {skill.status === "active" ? "已发布" : "已删除"}
               </Tag>
               <Tag
                 bordered={false}
@@ -516,8 +516,8 @@ export function SkillDetailDrawer({
           <div
             style={{
               borderRadius: 16,
-              border: "1px solid #e8e6dc",
-              backgroundColor: "#faf9f5",
+              border: "1px solid #f0f0f0",
+              backgroundColor: "#fff",
               padding: 12,
               boxShadow: "rgba(0, 0, 0, 0.03) 0px 2px 10px",
             }}

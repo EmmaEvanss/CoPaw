@@ -4,7 +4,7 @@
 import { useMemo } from "react";
 import { Button, Popconfirm, Tag } from "antd";
 import { RocketOutlined } from "@ant-design/icons";
-import { Database, Plug, Power, Trash2 } from "lucide-react";
+import { Database, Plug, Power, Trash2, Pencil } from "lucide-react";
 import type { MyMCPDetail, MCPTestResult } from "../../api/types";
 
 function getConnectorSummary(mcp: MyMCPDetail): string {
@@ -32,6 +32,7 @@ interface MCPDetailPanelProps {
   testing: boolean;
   testResult: MCPTestResult | null;
   isManager: boolean;
+  togglingClientKey?: string | null;
   onEdit: (clientKey: string) => void;
   onDelete: (mcp: MyMCPDetail) => void;
   onToggle: (clientKey: string, enabled: boolean) => void;
@@ -69,6 +70,7 @@ export function MCPDetailPanel({
   testing,
   testResult,
   isManager,
+  togglingClientKey,
   onEdit,
   onDelete,
   onToggle,
@@ -301,6 +303,7 @@ export function MCPDetailPanel({
           {!isDistributed && (
             <Button
               size="small"
+              icon={<Pencil style={{ width: 12, height: 12 }} />}
               style={{ height: 28, fontSize: 12, borderRadius: 8 }}
               onClick={() => onEdit(mcp.client_key)}
             >
@@ -313,18 +316,25 @@ export function MCPDetailPanel({
             icon={<Power style={{ width: 12, height: 12 }} />}
             style={{ height: 28, fontSize: 12, borderRadius: 8 }}
             onClick={() => onToggle(mcp.client_key, !mcp.enabled)}
+            loading={togglingClientKey === mcp.client_key}
           >
             {mcp.enabled ? "已启用" : "已禁用"}
           </Button>
           {isManager && !isDistributed && (
             <Button
               size="small"
-              type="primary"
               icon={<RocketOutlined style={{ fontSize: 12 }} />}
-              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
+              style={{
+                height: 28,
+                fontSize: 12,
+                borderRadius: 8,
+                background: "linear-gradient(135deg, #c4956a 0%, #b85a3a 100%)",
+                border: "none",
+                color: "#fff",
+              }}
               onClick={() => onPublish(mcp.client_key)}
             >
-              上架
+              同步到市场
             </Button>
           )}
         </div>

@@ -94,16 +94,22 @@ export default function MyMCPPage() {
     [deleteMCP]
   );
 
+  const [togglingClientKey, setTogglingClientKey] = useState<string | null>(null);
+
   const handleToggle = useCallback(
     async (clientKey: string, enabled: boolean) => {
+      if (togglingClientKey) return;
+      setTogglingClientKey(clientKey);
       try {
         await toggleMCP(clientKey);
         message.success(enabled ? "已启用" : "已禁用");
       } catch {
         message.error("操作失败");
+      } finally {
+        setTogglingClientKey(null);
       }
     },
-    [toggleMCP]
+    [toggleMCP, togglingClientKey]
   );
 
   const handleTest = useCallback(async () => {
@@ -344,6 +350,7 @@ export default function MyMCPPage() {
             testing={testing}
             testResult={testResult}
             isManager={!!canManage}
+            togglingClientKey={togglingClientKey}
             onEdit={openEditModal}
             onDelete={(mcp) => void handleDelete(mcp.client_key)}
             onToggle={handleToggle}

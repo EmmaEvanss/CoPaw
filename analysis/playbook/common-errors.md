@@ -2,6 +2,34 @@
 
 本文档只收录仓库中已经出现过、且有明确入口可追的高频报错。
 
+## Console 复制工具输入时触发 Clipboard 权限策略报错
+
+### 症状
+
+- 聊天回答里的工具调用卡片点击“复制输入”或“复制输出”
+- 浏览器控制台出现：
+  - `[Violation] Permissions policy violation: The Clipboard API has been blocked because of a permissions policy applied to the current document`
+- 常见于 Console 被嵌入 iframe，且父页面未授予 `clipboard-write` 权限的场景
+
+### 典型原因
+
+- 前端直接调用 `navigator.clipboard.writeText()`
+- 当前文档的 `Permissions-Policy` 或 iframe `allow` 未允许 Clipboard API
+- 浏览器会在调用被拦截 API 时输出 violation，即使后续业务代码捕获异常也可能留下控制台报错
+
+### 第一落点
+
+- [console/src/utils/clipboard.ts](../../console/src/utils/clipboard.ts)
+- 重点看是否通过 `document.permissionsPolicy` / `document.featurePolicy` 先判断 `clipboard-write`
+- [console/src/components/agentscope-chat/Util/copy.ts](../../console/src/components/agentscope-chat/Util/copy.ts)
+- 重点看聊天内复制入口是否复用通用复制工具
+
+### 第一阶段处理
+
+- 权限策略明确禁止 `clipboard-write` 时，不要调用 `navigator.clipboard.writeText()`
+- 直接降级到 textarea + `document.execCommand("copy")`
+- Clipboard API 运行时失败时，也要降级复制；所有方式失败时返回失败状态，由调用方提示“复制失败”
+
 ## 长 MCP 调用期间 console SSE 被静默断开
 
 ### 症状

@@ -3,18 +3,76 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+import httpx
 
 from .auth_state import resolve_auth_token_for_execution
 from .models import CronJobSpec
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
+from ...tracing import has_trace_manager, get_trace_manager
+from ...tracing.models import TraceStatus
 
 logger = logging.getLogger(__name__)
 
 CONSOLE_CHANNEL = "console"
+
+
+async def _index_model_output_to_monitor(
+    trace_id: str,
+    model_output: str,
+) -> None:
+    """通过 Monitor API 写入 model_output 到 ES.
+
+    Args:
+        trace_id: 追踪 ID
+        model_output: 模型输出文本
+    """
+    monitor_url = os.environ.get(
+        "SWE_MONITOR_API_URL",
+        "http://127.0.0.1:9090",
+    )
+    url = f"{monitor_url}/monitor/tracing/model-output"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                json={
+                    "trace_id": trace_id,
+                    "model_output": model_output,
+                },
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("status") == "success":
+                    logger.info(
+                        "Model output indexed via Monitor API: trace_id=%s",
+                        trace_id,
+                    )
+                else:
+                    logger.info(
+                        "Model output write skipped: trace_id=%s, reason=%s",
+                        trace_id,
+                        result.get("reason", "unknown"),
+                    )
+            else:
+                logger.warning(
+                    "Monitor API returned %s: trace_id=%s",
+                    response.status_code,
+                    trace_id,
+                )
+    except httpx.TimeoutException:
+        logger.warning("Monitor API timeout: trace_id=%s", trace_id)
+    except Exception as e:
+        logger.warning(
+            "Failed to call Monitor API for model_output: %s",
+            e,
+        )
 
 
 class CronExecutor:
@@ -109,20 +167,56 @@ class CronExecutor:
             job.dispatch.channel,
             len(job.text or ""),
         )
-        await self._channel_manager.send_text(
-            channel=job.dispatch.channel,
-            user_id=target_user_id,
-            session_id=target_session_id,
-            text=job.text.strip(),
-            meta=dispatch_meta,
-        )
-        task_chat_id: Optional[str] = (job.meta or {}).get("task_chat_id")
-        if job.dispatch.channel != CONSOLE_CHANNEL and task_chat_id:
-            await self._push_to_console(
-                task_chat_id,
-                job.text.strip(),
-                tenant_id,
+
+        # 为 text 类型任务也创建 trace 记录
+        trace_id = None
+        if has_trace_manager():
+            try:
+                trace_mgr = get_trace_manager()
+                if trace_mgr.enabled:
+                    source_id = job.source_id or "default"
+                    trace_id = await trace_mgr.start_trace(
+                        user_id=target_user_id or "cron",
+                        session_id=target_session_id or f"cron:{job.id}",
+                        channel=job.dispatch.channel,
+                        source_id=source_id,
+                        user_message=None,  # text 任务无用户输入
+                        user_name=job.tenant_name,
+                        bbk_id=job.bbk_id,
+                        session_name=job.name,  # 使用任务名称作为会话名称
+                    )
+                    # 写入 model_output 到 ES
+                    if trace_id and job.text:
+                        await _index_model_output_to_monitor(
+                            trace_id,
+                            job.text.strip(),
+                        )
+            except Exception as e:
+                logger.warning("Failed to start trace for text job: %s", e)
+
+        try:
+            await self._channel_manager.send_text(
+                channel=job.dispatch.channel,
+                user_id=target_user_id,
+                session_id=target_session_id,
+                text=job.text.strip(),
+                meta=dispatch_meta,
             )
+            task_chat_id: Optional[str] = (job.meta or {}).get("task_chat_id")
+            if job.dispatch.channel != CONSOLE_CHANNEL and task_chat_id:
+                await self._push_to_console(
+                    task_chat_id,
+                    job.text.strip(),
+                    tenant_id,
+                )
+        finally:
+            # 结束 trace
+            if trace_id and has_trace_manager():
+                try:
+                    trace_mgr = get_trace_manager()
+                    await trace_mgr.end_trace(trace_id, TraceStatus.COMPLETED)
+                except Exception as e:
+                    logger.warning("Failed to end trace for text job: %s", e)
 
     async def _execute_agent_job(
         self,
@@ -205,6 +299,15 @@ class CronExecutor:
             req.get("session_id") or target_session_id or f"cron:{job.id}"
         )
         req["skip_history"] = True  # 标记定时任务不加载历史会话
+        # 传递 source_id 用于 tracing 数据隔离
+        if job.source_id:
+            req["source_id"] = job.source_id
+        # 传递 bbk_id 用于 tracing 用户标识
+        if job.bbk_id:
+            req["bbk_id"] = job.bbk_id
+        # 传递 user_name（从 tenant_name 字段获取）
+        if job.tenant_name:
+            req["user_name"] = job.tenant_name
         return req
 
     def _apply_auth_token(
@@ -215,7 +318,6 @@ class CronExecutor:
     ) -> None:
         """Resolve and apply auth token to request."""
         try:
-            logger.info("开始执行定时任务")
             resolved = resolve_auth_token_for_execution(
                 tenant_id=getattr(job, "tenant_id", None),
                 workspace_dir=dispatch_meta.get("workspace_dir"),

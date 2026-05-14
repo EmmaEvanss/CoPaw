@@ -422,6 +422,10 @@ class SessionListItem(BaseModel):
     """Session list item with stats."""
 
     session_id: str
+    session_name: Optional[str] = Field(
+        default=None,
+        description="Session name (from first message)",
+    )
     user_id: str
     user_name: Optional[str] = Field(default=None, description="User name")
     bbk_id: Optional[str] = Field(default=None, description="BBK identifier")

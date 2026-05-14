@@ -35,7 +35,7 @@ def _get_source_id(
     优先级：
     1. 查询参数 source_id
     2. X-Source-Id 请求头
-    3. 默认值 "default"
+    3. 默认值 "all"（查询所有平台）
 
     查询参数优先级更高，因为 UI 中用户显式选择平台时使用查询参数，
     请求头来自 iframe 上下文，仅作为回退。
@@ -52,7 +52,7 @@ def _get_source_id(
     header_source_id = request.headers.get("X-Source-Id")
     if header_source_id:
         return header_source_id
-    return "default"
+    return "all"
 
 
 def _parse_date(

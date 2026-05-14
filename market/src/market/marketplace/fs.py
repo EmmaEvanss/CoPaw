@@ -31,6 +31,68 @@ DEFAULT_AGENT_ID = "default"
 _SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
 
 
+def sanitize_skill_name(name: str) -> str:
+    """将技能名称转换为安全的目录名（参考 CmbCoworkAgent sanitizeSkillId）.
+
+    处理流程：
+    1. 转为小写
+    2. 去除前后空格
+    3. 中文转拼音（如 "数据分析" → "shu-ju-fen-xi"）
+    4. 将非 [a-z0-9-_] 的字符替换为 -
+    5. 合并连续的 -
+    6. 去除开头和结尾的 -
+    7. 截断到 64 个字符
+
+    Args:
+        name: 原始技能名称，如 "Word / DOCX" 或 "数据分析"
+
+    Returns:
+        安全的目录名，如 "word-docx" 或 "shu-ju-fen-xi"
+
+    Examples:
+        >>> sanitize_skill_name("Word / DOCX")
+        'word-docx'
+        >>> sanitize_skill_name("数据分析")
+        'shu-ju-fen-xi'
+    """
+    if not name:
+        return "unnamed-skill"
+
+    # 转为小写并去除前后空格
+    sanitized = name.lower().strip()
+
+    # 中文转拼音（尝试导入 pypinyin，失败时跳过）
+    try:
+        from pypinyin import lazy_pinyin, Style
+
+        # 检测是否包含中文字符
+        if any("一" <= c <= "鿿" for c in sanitized):
+            # 转为拼音，使用Style.NORMAL（不带声调），用 "-" 连接
+            pinyin_parts = lazy_pinyin(sanitized, style=Style.NORMAL)
+            sanitized = "-".join(pinyin_parts)
+    except ImportError:
+        # pypinyin 未安装，继续使用原有逻辑（中文会被替换为 -）
+        pass
+
+    # 将非 [a-z0-9-_] 的字符替换为 -
+    sanitized = re.sub(r"[^a-z0-9\-_]", "-", sanitized)
+
+    # 合并连续的 -
+    sanitized = re.sub(r"-+", "-", sanitized)
+
+    # 去除开头和结尾的 -
+    sanitized = sanitized.strip("-")
+
+    # 截断到 64 个字符
+    sanitized = sanitized[:64]
+
+    # 如果结果为空，使用默认名称
+    if not sanitized:
+        sanitized = "unnamed-skill"
+
+    return sanitized
+
+
 def _validate_path_segment(value: str, name: str = "segment") -> None:
     """Raise ValueError if value contains path traversal or unsafe characters."""
     if not _SAFE_SEGMENT_RE.match(value):
@@ -139,11 +201,19 @@ def copy_skill_to_user(
     swe_root: Path,
     user_id: str,
     skill_name: str,
+    original_name: str,
+    description: str,
     distributed_by: str,
     version: str,
     agent_id: str = DEFAULT_AGENT_ID,
 ) -> None:
-    """将市场技能复制到用户工作目录，并写入分发元数据."""
+    """将市场技能复制到用户工作目录，并写入分发元数据.
+
+    Args:
+        skill_name: 安全的目录名（sanitize 后）
+        original_name: 原始技能名称（用于前端展示）
+        description: 技能描述（用于前端展示）
+    """
     _validate_path_segment(skill_name, "skill_name")
     src_dir = get_skill_dir(marketplace_root, source_id, item_id)
     dst_dir = (
@@ -167,6 +237,14 @@ def copy_skill_to_user(
                 src_skill_json,
                 e,
             )
+
+    # 确保 name 字段存在（用于前端展示）
+    if "name" not in skill_data:
+        skill_data["name"] = original_name
+
+    # 确保 description 字段存在（用于前端展示）
+    if not skill_data.get("description"):
+        skill_data["description"] = description
 
     skill_data["source"] = f"marketplace:{item_id}"
     skill_data["distributed_by"] = distributed_by

@@ -76,7 +76,7 @@ export default function UploadSkillModal({
       if (conflicts.length > 0) {
         message.destroy("upload");
         const conflictNames = conflicts.map((c) => c.skill_name).join(", ");
-        message.warning(`以下技能已存在：${conflictNames}，请先下架同名技能后再上传`);
+        message.warning(`以下技能已存在：${conflictNames}，请先删除同名技能后再上传`);
         return;
       }
 

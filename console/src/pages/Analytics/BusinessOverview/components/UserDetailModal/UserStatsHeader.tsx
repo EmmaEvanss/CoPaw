@@ -1,10 +1,25 @@
 import { Descriptions, Tag, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
-import { UserStats } from "../../../../../api/modules/tracing";
+import { UserStats, SessionStats, ModelUsage, ToolUsage, SkillUsage, MCPToolUsage } from "../../../../../api/modules/tracing";
 import { useMemo } from "react";
 
 interface UserStatsHeaderProps {
   userStats: UserStats;
+  sessionStats?: SessionStats | null;
+}
+
+/** 获取使用统计数据的活跃来源（用于模型、工具、技能） */
+function getActiveUsageStats(
+  sessionStats: SessionStats | null | undefined,
+  userStats: UserStats
+): { model_usage: ModelUsage[]; mcp_tools_used: MCPToolUsage[]; skills_used: SkillUsage[] } {
+  // 如果选中了会话，使用会话级数据；否则使用用户级数据
+  const active = sessionStats || userStats;
+  return {
+    model_usage: active.model_usage || [],
+    mcp_tools_used: active.mcp_tools_used || [],
+    skills_used: active.skills_used || [],
+  };
 }
 
 /** 计算内容是否超过指定行数 */
@@ -122,42 +137,52 @@ function TagList({
   );
 }
 
-export default function UserStatsHeader({ userStats }: UserStatsHeaderProps) {
+export default function UserStatsHeader({
+  userStats,
+  sessionStats,
+}: UserStatsHeaderProps) {
   const { t } = useTranslation();
+
+  // 是否选中会话（用于切换模型、工具、技能的显示数据）
+  const isSessionSelected = sessionStats !== null && sessionStats !== undefined;
+
+  // 获取模型、工具、技能的活跃数据源（根据是否选中会话决定）
+  const activeUsageStats = getActiveUsageStats(sessionStats, userStats);
 
   // 准备模型使用数据
   const modelItems = useMemo(
     () =>
-      userStats.model_usage.map((m) => ({
+      activeUsageStats.model_usage.map((m) => ({
         name: m.model_name,
         count: m.count,
       })),
-    [userStats.model_usage]
+    [activeUsageStats.model_usage]
   );
 
   // 准备 MCP 工具使用数据
   const mcpToolItems = useMemo(
     () =>
-      (userStats.mcp_tools_used || []).map((tool) => ({
+      (activeUsageStats.mcp_tools_used || []).map((tool) => ({
         name: `${tool.tool_name} (${tool.mcp_server})`,
         count: tool.count,
         error_count: tool.error_count,
       })),
-    [userStats.mcp_tools_used]
+    [activeUsageStats.mcp_tools_used]
   );
 
   // 准备技能使用数据
   const skillItems = useMemo(
     () =>
-      userStats.skills_used.map((s) => ({
+      activeUsageStats.skills_used.map((s) => ({
         name: s.skill_name,
         count: s.count,
       })),
-    [userStats.skills_used]
+    [activeUsageStats.skills_used]
   );
 
   return (
     <div>
+      {/* 表格始终显示用户级别数据 */}
       <Descriptions column={2} bordered size="small">
         <Descriptions.Item label={t("analytics.totalSessions", "总会话数")} span={1}>
           {userStats.total_sessions}
@@ -179,18 +204,22 @@ export default function UserStatsHeader({ userStats }: UserStatsHeaderProps) {
         </Descriptions.Item>
       </Descriptions>
 
-      {/* 模型使用 */}
+      {/* 模型使用 - 根据会话选中状态切换数据来源 */}
       {modelItems.length > 0 && (
         <div style={{ marginTop: 12 }}>
-          <span style={{ fontWeight: 500, marginRight: 8 }}>模型使用:</span>
+          <span style={{ fontWeight: 500, marginRight: 8 }}>
+            模型使用{isSessionSelected ? "（当前会话）" : ""}:
+          </span>
           <TagList items={modelItems} />
         </div>
       )}
 
-      {/* MCP 工具使用 */}
+      {/* MCP 工具使用 - 根据会话选中状态切换数据来源 */}
       {mcpToolItems.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <span style={{ fontWeight: 500, marginRight: 8 }}>工具使用:</span>
+          <span style={{ fontWeight: 500, marginRight: 8 }}>
+            工具使用{isSessionSelected ? "（当前会话）" : ""}:
+          </span>
           <TagList
             items={mcpToolItems}
             colorFn={(item) => (item.error_count && item.error_count > 0 ? "error" : "default")}
@@ -198,10 +227,12 @@ export default function UserStatsHeader({ userStats }: UserStatsHeaderProps) {
         </div>
       )}
 
-      {/* 技能使用 */}
+      {/* 技能使用 - 根据会话选中状态切换数据来源 */}
       {skillItems.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <span style={{ fontWeight: 500, marginRight: 8 }}>技能使用:</span>
+          <span style={{ fontWeight: 500, marginRight: 8 }}>
+            技能使用{isSessionSelected ? "（当前会话）" : ""}:
+          </span>
           <TagList items={skillItems} colorFn={() => "blue"} />
         </div>
       )}

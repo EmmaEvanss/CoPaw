@@ -112,6 +112,10 @@ class Trace(BaseModel):
     user_name: Optional[str] = Field(default=None, description="User name")
     bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     session_id: str = Field(description="Session identifier")
+    session_name: Optional[str] = Field(
+        default=None,
+        description="Session name (derived from first message)",
+    )
     channel: str = Field(description="Channel identifier")
     start_time: datetime = Field(description="Trace start timestamp")
     end_time: Optional[datetime] = Field(
@@ -421,6 +425,10 @@ class SessionListItem(BaseModel):
     """Session list item with stats."""
 
     session_id: str
+    session_name: Optional[str] = Field(
+        default=None,
+        description="Session name (from first message)",
+    )
     user_id: str
     user_name: Optional[str] = Field(default=None, description="User name")
     bbk_id: Optional[str] = Field(default=None, description="BBK identifier")

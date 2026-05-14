@@ -19,12 +19,12 @@ _BEFORE_STOP_PROMPT_JUDGMENT_DECISIONS = {
     "allow": HookDecision.ALLOW,
     "block": HookDecision.BLOCK,
 }
-_BEFORE_STOP_UNSUPPORTED_SPECIFIC_KEYS = {
-    "additionalContext",
-    "permissionDecision",
-    "sessionTitle",
-    "updatedInput",
-}
+_BEFORE_STOP_UNSUPPORTED_TOP_LEVEL_EFFECT_FIELDS = (
+    ("continue_", "continue"),
+    ("stop_reason", "stopReason"),
+    ("suppress_output", "suppressOutput"),
+    ("system_message", "systemMessage"),
+)
 
 
 def _event_name_value(event_name: HookEventName | str | None) -> str:
@@ -40,15 +40,23 @@ def _prompt_judgment_decisions(
 
 
 def _validate_before_stop_hook_output(output: HookOutput) -> None:
-    if output.continue_ is False:
-        raise ValueError(
-            "BeforeStop hook output does not support continue=false",
-        )
     if output.decision and output.decision not in {"allow", "block"}:
         raise ValueError("BeforeStop hook output has unsupported decision")
 
+    unsupported_effect_fields = [
+        field_name
+        for attr_name, field_name in (
+            _BEFORE_STOP_UNSUPPORTED_TOP_LEVEL_EFFECT_FIELDS
+        )
+        if getattr(output, attr_name) is not None
+    ]
+    if unsupported_effect_fields:
+        raise ValueError(
+            "BeforeStop hook output has unsupported output fields",
+        )
+
     specific = output.hook_specific_output or {}
-    if _BEFORE_STOP_UNSUPPORTED_SPECIFIC_KEYS.intersection(specific):
+    if specific:
         raise ValueError(
             "BeforeStop hook output has unsupported hookSpecificOutput",
         )

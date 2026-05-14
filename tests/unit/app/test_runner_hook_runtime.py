@@ -736,6 +736,60 @@ async def test_query_handler_before_stop_block_exhausts_default_budget(
 
 
 @pytest.mark.asyncio
+async def test_query_handler_before_stop_budget_exhaustion_finalizes_trace(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    setattr(runner, "_chat_manager", None)
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(HookConfig(enabled=True)),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(enabled=True),
+    )
+    runner._store_pending_validation_if_needed = AsyncMock()
+    runner._generate_backend_suggestions_if_needed = AsyncMock()
+    runner._index_model_output_if_needed = AsyncMock()
+    runner._end_trace_if_needed = AsyncMock()
+
+    async def fake_emit_runner_hook(event_name, **kwargs):
+        if event_name == HookEventName.BEFORE_STOP:
+            return MergedHookResult(
+                decision=HookDecision.BLOCK,
+                reason="still incomplete",
+            )
+        return MergedHookResult()
+
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        fake_emit_runner_hook,
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    outputs = [
+        item async for item in runner.query_handler(msgs, request=request)
+    ]
+
+    assert "任务未完成" in outputs[-1][0].get_text_content()
+    runner._store_pending_validation_if_needed.assert_not_awaited()
+    runner._generate_backend_suggestions_if_needed.assert_not_awaited()
+    runner._index_model_output_if_needed.assert_awaited_once()
+    runner._end_trace_if_needed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_query_handler_before_stop_defers_completion_side_effects(
     monkeypatch,
     tmp_path,

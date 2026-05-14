@@ -194,6 +194,7 @@ class _QueryTurnOutcome:
     stop_hook_active: bool = False
     completion_blocked: bool = False
     completion_block_reason: str = ""
+    completion_marked_incomplete: bool = False
 
 
 def _match_command_with_optional_id(
@@ -2064,6 +2065,7 @@ class AgentRunner(Runner):
                 outcome.task_completed = False
                 outcome.completion_blocked = True
                 outcome.completion_block_reason = reason
+                outcome.completion_marked_incomplete = True
                 outcome.stop_hook_active = False
                 yield _build_before_stop_incomplete_msg(reason), True
                 return
@@ -2643,6 +2645,15 @@ class AgentRunner(Runner):
                 yield msg, last
 
             if outcome.completion_blocked:
+                if outcome.completion_marked_incomplete:
+                    await self._index_model_output_if_needed(
+                        trace_id=trace_id,
+                        agent=runtime.agent,
+                    )
+                    await self._end_trace_if_needed(
+                        trace_id,
+                        TraceStatus.COMPLETED,
+                    )
                 return
 
             await self._store_pending_validation_if_needed(

@@ -49,14 +49,11 @@ export default createGlobalStyle`
     cursor: pointer;
     border-radius: 4px;
     background-color: transparent;
-    transition:
-      background-color 0.15s ease,
-      box-shadow 0.15s ease;
+    transition: background-color 0.15s ease;
     overflow: hidden;
 
     &:hover {
-      background: rgba(55, 105, 252, 0.03);
-      box-shadow: inset 0 0 0 1px rgba(55, 105, 252, 0.08);
+      background: rgba(55, 105, 252, 0.04);
     }
 
     &--paused {
@@ -65,12 +62,21 @@ export default createGlobalStyle`
 
     &--running {
       background: rgba(55, 105, 252, 0.06);
-      box-shadow: inset 0 0 0 1px rgba(55, 105, 252, 0.12);
     }
 
     &--selected {
-      background: rgba(55, 105, 252, 0.08);
-      box-shadow: inset 0 0 0 1px rgba(55, 105, 252, 0.16);
+      background: rgba(55, 105, 252, 0.10);
+
+      &::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 4px;
+        bottom: 4px;
+        width: 3px;
+        border-radius: 0 2px 2px 0;
+        background-color: #3769FC;
+      }
     }
   }
 
@@ -199,5 +205,18 @@ export default createGlobalStyle`
     color: ${DESIGN_TOKENS.colorTextMuted};
     font-size: 13px;
   }
+}
+
+/* Dark mode support */
+.dark-mode .chat-task-list-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dark-mode .chat-task-list-item--selected {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.dark-mode .chat-task-list-item--selected::before {
+  background-color: #5B8AFF;
 }
 `;

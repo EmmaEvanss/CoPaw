@@ -26,7 +26,7 @@ interface ExtendedChatSession extends IAgentScopeRuntimeWebUISession {
   channel?: string;
   createdAt?: string | null;
   meta?: Record<string, unknown>;
-  status?: "idle" | "running";
+  status?: "idle" | "running" | "stopping";
 }
 
 interface ChatSessionDrawerProps {

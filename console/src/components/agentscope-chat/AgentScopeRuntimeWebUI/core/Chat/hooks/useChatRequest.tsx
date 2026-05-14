@@ -18,16 +18,16 @@ import {
   isActiveChatRequestOwner,
   type ChatRequestOwner,
 } from "./requestOwnership";
+import {
+  createChatStreamAbortReason,
+  isAbortLikeError,
+} from "./abortReasons";
 
 interface UseChatRequestOptions {
   currentQARef: CurrentQARef;
   updateMessage: (message: IAgentScopeRuntimeWebUIMessage) => void;
   getCurrentSessionId: () => string;
   onFinish: (owner: ChatRequestOwner) => void;
-}
-
-function isAbortLikeError(error: unknown) {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function isTaskCancellationMessage(message: unknown) {
@@ -188,7 +188,9 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       };
 
       const cancelActiveRequest = async () => {
-        currentQARef.current.abortController?.abort();
+        currentQARef.current.abortController?.abort(
+          createChatStreamAbortReason("stop"),
+        );
 
         const currentApiOptions = apiOptionsRef.current;
         if (currentApiOptions.cancel) {
@@ -508,15 +510,19 @@ export default function useChatRequest(options: UseChatRequestOptions) {
       responseBuilder.handle(responseData as never);
     }
 
-    currentQARef.current.abortController?.abort();
+    currentQARef.current.abortController?.abort(
+      createChatStreamAbortReason("stop"),
+    );
 
     const currentApiOptions = apiOptionsRef.current;
-    const activeSessionId =
-      currentQARef.current.activeRequestOwner?.sessionId ?? getCurrentSessionId();
+    const activeOwner = currentQARef.current.activeRequestOwner;
+    const activeSessionId = activeOwner?.sessionId ?? getCurrentSessionId();
     if (currentApiOptions.cancel) {
       await Promise.resolve(
         currentApiOptions.cancel({
           session_id: activeSessionId,
+          logical_session_id: activeOwner?.logicalSessionId,
+          chat_id: activeOwner?.chatId,
         }),
       ).catch((error) => {
         console.error(error);

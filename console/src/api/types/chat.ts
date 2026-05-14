@@ -1,4 +1,4 @@
-export type ChatStatus = "idle" | "running";
+export type ChatStatus = "idle" | "running" | "stopping";
 
 export interface ChatSpec {
   id: string; // Chat UUID identifier
@@ -9,7 +9,7 @@ export interface ChatSpec {
   created_at: string | null; // Chat creation timestamp (ISO 8601)
   updated_at: string | null; // Chat last update timestamp (ISO 8601)
   meta?: Record<string, unknown>; // Additional metadata
-  status?: ChatStatus; // Conversation status: idle or running
+  status?: ChatStatus; // Conversation status: idle, running, or stopping
 }
 
 export interface Message {
@@ -21,7 +21,7 @@ export interface Message {
 
 export interface ChatHistory {
   messages: Message[];
-  status?: ChatStatus; // Conversation status: idle or running
+  status?: ChatStatus; // Conversation status: idle, running, or stopping
 }
 
 export interface ChatDeleteResponse {

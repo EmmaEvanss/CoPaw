@@ -441,7 +441,7 @@ async def get_chat(
         session: SafeJSONSession dependency
 
     Returns:
-        ChatHistory with messages and status (idle/running)
+        ChatHistory with messages and status (idle/running/stopping)
 
     Raises:
         HTTPException: If chat not found (404)

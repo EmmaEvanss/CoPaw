@@ -26,6 +26,7 @@ import {
 import { shouldEnqueueFollowUpSubmission } from "./followUpSubmitState";
 import type { CurrentQARef } from "./currentQARef";
 import { createChatRequestOwner, type ChatRequestOwner } from "./requestOwnership";
+import { createChatStreamAbortReason } from "./abortReasons";
 // import mockdata from '../../mock/mock.json'
 
 /**
@@ -483,7 +484,9 @@ export default function useChatController() {
   // 监听会话切换，断开当前 SSE 连接（不通知后端取消）并重置状态
   useEffect(() => {
     followUpSessionIdRef.current = undefined;
-    currentQARef.current.abortController?.abort();
+    currentQARef.current.abortController?.abort(
+      createChatStreamAbortReason("detach"),
+    );
     currentQARef.current = {
       request: undefined,
       response: undefined,

@@ -44,7 +44,7 @@ class ChatSpec(BaseModel):
     )
     status: str = Field(
         default="idle",
-        description="Conversation status: idle or running",
+        description="Conversation status: idle, running, or stopping",
     )
 
 
@@ -63,7 +63,7 @@ class ChatHistory(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     status: str = Field(
         default="idle",
-        description="Conversation status: idle or running",
+        description="Conversation status: idle, running, or stopping",
     )
 
 

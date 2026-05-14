@@ -87,6 +87,10 @@ import { matchesResolvedChatId } from "./sessionApi/resolvedSessionMapping";
 
 import RuntimeRequestCard from "./components/RuntimeRequestCard";
 import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
+import {
+  createChatStreamAbortReason,
+  shouldStopBackendForFetchAbort,
+} from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/abortReasons";
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
 import ApprovalActionCard from "./components/ApprovalActionCard";
 import TaskRunGroupCard from "./components/TaskRunGroupCard";
@@ -104,14 +108,13 @@ import {
 } from "./taskProgressEvents";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
-const CHAT_REQUEST_TIMEOUT_MS = 300_000;
 const TASK_RUNNING_POLL_MS = 30_000;
 const TASK_PAGE_POLL_MS = 30_000;
 const TASK_PENDING_POLL_MS = 30_000;
 
 function createTimedAbortSignal(
   externalSignal?: AbortSignal,
-  timeoutMs: number = CHAT_REQUEST_TIMEOUT_MS,
+  timeoutMs: number | null = null,
 ) {
   const controller = new AbortController();
 
@@ -136,19 +139,25 @@ function createTimedAbortSignal(
     });
   }
 
-  const timeoutId = window.setTimeout(() => {
-    const elapsedSeconds = Math.ceil(timeoutMs / 1000);
-    abortWithReason(
-      new Error(
-        `⏰ 任务执行超时（${elapsedSeconds}s > ${elapsedSeconds}s），已自动终止。`,
-      ),
-    );
-  }, timeoutMs);
+  const timeoutId =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? window.setTimeout(() => {
+          const elapsedSeconds = Math.ceil(timeoutMs / 1000);
+          abortWithReason(
+            createChatStreamAbortReason(
+              "timeout",
+              `任务执行超时（${elapsedSeconds}s），已自动终止。`,
+            ),
+          );
+        }, timeoutMs)
+      : undefined;
 
   return {
     signal: controller.signal,
     cleanup: () => {
-      window.clearTimeout(timeoutId);
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
       if (externalSignal) {
         externalSignal.removeEventListener("abort", handleExternalAbort);
       }
@@ -1075,8 +1084,7 @@ export default function ChatPage() {
 
         return response;
       } catch (error) {
-        // 如果是超时导致的abort,调用cancel API终止后端任务
-        if (error instanceof DOMException && error.name === "AbortError") {
+        if (shouldStopBackendForFetchAbort(error, timeoutSignal.signal)) {
           const backendChatId = resolveRequestChatId(
             {
               session_id: data.session_id,

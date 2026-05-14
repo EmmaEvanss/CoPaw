@@ -93,3 +93,45 @@
 - reconnect 不要只查一次；在短窗口内重试解析 `session_id -> chat.id` 并附着 active run
 - 保持 run_key 统一为 `ChatSpec.id`，不要把前端本地时间戳直接当作 `TaskTracker` key
 - 如果问题仍出现，抓取同一请求的 `session_id`、解析出的 `chat_id`、`TaskTracker.list_active_tasks()` 三项证据
+
+## 长 Tool 执行后会话出现用户中断且 Chat 状态卡在 running
+
+### 症状
+
+- Tool 执行时间较长时，前端会话出现类似 `The tool call has been interrupted by the user` 的中断提示
+- 查询 `GET /api/chats/{chat_id}` 或 `/api/chats/{chat_id}` 时，返回 `status=running`
+- 实际上用户未主动点击停止，或停止已经发出但后端仍在清理资源
+
+### 典型原因
+
+- 前端流式请求存在客户端侧绝对超时，超时后 abort fetch，外层 agent 可能把它解释为用户中断
+- 前端 abort 没有区分 `detach`、`stop` 和 `timeout`，切换会话等纯断流动作可能与停止任务混淆
+- `TaskTracker.get_status()` 只看 producer task 是否 `done()`，当 stop/timeout 已发出但 producer 仍在 `finally` 清理时会继续返回 `running`
+- 旧 producer 的 `finally` 如果无条件删除 `_runs[chat_id]`，可能误删同一 chat 后续新 run 的状态
+
+### 第一落点
+
+- [console/src/pages/Chat/index.tsx](/Users/shixiangyi/code/Swe/console/src/pages/Chat/index.tsx)
+- 重点看 `/console/chat` fetch、`createTimedAbortSignal()` 和 stop 调用
+- [console/src/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/useChatRequest.tsx](/Users/shixiangyi/code/Swe/console/src/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/useChatRequest.tsx)
+- 重点看 `cancelActiveRequest()` 是否传递真实 `chat_id`
+- [src/swe/app/runner/task_tracker.py](/Users/shixiangyi/code/Swe/src/swe/app/runner/task_tracker.py)
+- 重点看 `request_stop()`、`mark_stopping()`、`get_status()` 和 producer `finally`
+- [src/swe/app/runner/runner.py](/Users/shixiangyi/code/Swe/src/swe/app/runner/runner.py)
+- 重点看 `_enforce_query_timeout()` 是否在 interrupt 前把 run 标为 `stopping`
+
+### 第一阶段处理
+
+- 默认不要给 chat stream 设置前端绝对超时；只在用户显式 stop 时调用 `/console/chat/stop`
+- 用 abort reason 区分：
+  - `detach`：切换会话或断开 SSE，只断前端流，不停止后端任务
+  - `stop`：用户主动停止，调用后端 stop
+  - `timeout`：显式配置的客户端超时，按配置决定是否 stop
+- 后端状态使用 `idle/running/stopping`；stop 或 query timeout 发出后先返回 `stopping`，清理完成后再变 `idle`
+- producer 清理 `_runs` 时必须确认当前 `_runs[chat_id]` 仍是自己，避免旧 run 清理误删新 run
+
+### 边界说明
+
+- 这只能避免“前端默认超时或断流误杀任务”
+- 后端仍可能被配置型超时中止，例如 `SWE_QUERY_TIMEOUT_SECONDS`、`SWE_MCP_PER_NOTIFICATION_TIMEOUT`、`SWE_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT` 或 shell tool 的 `timeout` 参数
+- 若要允许超长 MCP tool，MCP server 应定期发送 progress notification，或调大 per-notification timeout

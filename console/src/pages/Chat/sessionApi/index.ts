@@ -517,6 +517,7 @@ function createLocalSessionId(): string {
 /** Detect if backend is still generating content for this chat. */
 const isGenerating = (chatHistory: ChatHistory): boolean => {
   if (chatHistory.status === "running") return true;
+  if (chatHistory.status === "stopping") return true;
   if (chatHistory.status === "idle") return false;
   const msgs = chatHistory.messages || [];
   if (msgs.length === 0) return false;
@@ -530,6 +531,7 @@ const mergeGeneratingState = (
   localGenerating?: boolean,
 ): boolean => {
   if (backendStatus === "running") return true;
+  if (backendStatus === "stopping") return true;
   if (backendStatus === "idle") return false;
   if (typeof backendGenerating === "boolean") return backendGenerating;
   return Boolean(localGenerating);

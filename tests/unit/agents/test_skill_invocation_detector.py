@@ -531,6 +531,28 @@ class TestSkillInvocationDetector:
         assert context_manager.current_skill == "xlsx"
 
     @pytest.mark.asyncio
+    async def test_start_skill_invokes_session_hook_loader_without_tracing(
+        self,
+    ):
+        """Skill hook loading should not depend on trace emission."""
+        loaded = []
+
+        async def load_skill_hooks(skill_name: str) -> None:
+            loaded.append(skill_name)
+
+        detector = SkillInvocationDetector(
+            skill_hook_loader=load_skill_hooks,
+        )
+
+        await detector.start_skill(
+            "xlsx",
+            trigger_tool="user_message",
+            trigger_reason="declared",
+        )
+
+        assert loaded == ["xlsx"]
+
+    @pytest.mark.asyncio
     async def test_no_attribution_for_unknown_tool(self):
         """Test no attribution for unknown tool."""
         detector = SkillInvocationDetector()

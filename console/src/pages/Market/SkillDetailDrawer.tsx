@@ -113,7 +113,7 @@ function renderPreviewContent(
           boxSizing: "border-box",
           backgroundColor: "#fff",
           borderRadius: 10,
-          padding: 10,
+          padding: 12,
           border: "1px solid #f0f0f0",
           lineHeight: 1.7,
           overflow: "hidden",
@@ -326,7 +326,7 @@ export function SkillDetailDrawer({
                 flex: "1 1 auto",
                 width: "100%",
                 minWidth: 0,
-                padding: 10,
+                padding: 12,
                 backgroundColor: "#fafafa",
                 height: "100%",
               }}

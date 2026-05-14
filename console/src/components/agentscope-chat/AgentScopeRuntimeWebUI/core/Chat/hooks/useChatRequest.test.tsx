@@ -2,6 +2,7 @@ import React from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import useChatRequest from "./useChatRequest";
+import { isChatStreamAbortReason } from "./abortReasons";
 import type { CurrentQARef } from "./currentQARef";
 import type { ChatRequestOwner } from "./requestOwnership";
 
@@ -367,6 +368,52 @@ describe("useChatRequest", () => {
         logical_session_id: "logical-a",
         chat_id: "chat-real-a",
       }),
+    );
+  });
+
+  it("cancels the active backend run with the owning chat identifiers", async () => {
+    const abortController = new AbortController();
+    const currentQARef = {
+      current: {
+        abortController,
+        activeRequestOwner: createOwner(),
+        response: {
+          id: "ui-response-a",
+          msgStatus: "generating",
+          cards: [
+            {
+              code: "AgentScopeRuntimeResponseCard",
+              data: {
+                id: "response-1",
+                status: "in_progress",
+                created_at: 0,
+                output: [],
+              },
+            },
+          ],
+        },
+      },
+    } as CurrentQARef;
+
+    render(
+      <Harness
+        currentQARef={currentQARef}
+        updateMessage={vi.fn()}
+        onFinish={vi.fn()}
+      />,
+    );
+
+    await act(async () => {
+      await hookApi.cancelActiveRequest();
+    });
+
+    expect(mocks.cancel).toHaveBeenCalledWith({
+      session_id: "chat-a",
+      logical_session_id: "logical-a",
+      chat_id: "chat-real-a",
+    });
+    expect(isChatStreamAbortReason(abortController.signal.reason, "stop")).toBe(
+      true,
     );
   });
 

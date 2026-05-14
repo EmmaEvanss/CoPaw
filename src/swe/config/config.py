@@ -40,6 +40,7 @@ from ..constant import (
 )
 from ..providers.models import ModelSlotConfig
 from ..tracing.config import TracingConfig
+from ..agents.hook_runtime.models import HookConfig
 
 LEGACY_DEFAULT_SYSTEM_PROMPT_FILES = (
     "AGENTS.md",
@@ -878,6 +879,10 @@ class AgentProfileConfig(BaseModel):
         default=None,
         description="Security configuration for this agent",
     )
+    hooks: HookConfig = Field(
+        default_factory=HookConfig,
+        description="Agent-scoped lifecycle hook configuration",
+    )
 
     @model_validator(mode="after")
     def _normalize_system_prompt_files(self):
@@ -1314,6 +1319,17 @@ class ProcessLimitsConfig(BaseModel):
         return self
 
 
+class SkillHookHttpConfig(BaseModel):
+    """Tenant-approved destinations for skill-owned HTTP hooks."""
+
+    approved_urls: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Exact HTTP endpoint URLs that skill-owned hook handlers may call."
+        ),
+    )
+
+
 class SecurityConfig(BaseModel):
     """Top-level ``security`` section in config.json."""
 
@@ -1321,6 +1337,9 @@ class SecurityConfig(BaseModel):
     file_guard: FileGuardConfig = Field(default_factory=FileGuardConfig)
     skill_scanner: SkillScannerConfig = Field(
         default_factory=SkillScannerConfig,
+    )
+    skill_hook_http: SkillHookHttpConfig = Field(
+        default_factory=SkillHookHttpConfig,
     )
     process_limits: ProcessLimitsConfig = Field(
         default_factory=ProcessLimitsConfig,
@@ -1531,6 +1550,10 @@ class Config(BaseModel):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     last_dispatch: Optional[LastDispatchConfig] = None
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    hooks: HookConfig = Field(
+        default_factory=HookConfig,
+        description="Tenant-scoped lifecycle hook configuration",
+    )
     service_heartbeat: ServiceHeartbeatConfig = Field(
         default_factory=ServiceHeartbeatConfig,
         description="服务心跳配置",

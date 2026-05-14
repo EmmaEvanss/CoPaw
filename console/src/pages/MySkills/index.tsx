@@ -1,8 +1,13 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm } from "antd";
+import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm, Tooltip } from "antd";
 import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, RocketOutlined } from "@ant-design/icons";
-import { Power, Trash2, Pencil } from "lucide-react";
+import { Power, Trash2, Pencil, Sparkles, CheckCircle, PencilLine } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
+dayjs.extend(relativeTime);
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
@@ -11,8 +16,75 @@ import { MySkill, mySkillsApi, FileTreeNode } from "../../api/modules/mySkills";
 import { marketApi } from "../../api/modules/market";
 import { PublishModal } from "../Market/PublishModal";
 import { useConflictRenameModal } from "../Agent/Skills/components";
+import styles from "./index.module.less";
 
 const { Title, Text } = Typography;
+
+/**
+ * 将 Markdown 文件内容分割为 frontmatter 和正文。
+ * frontmatter（位于 --- 分隔符之间）作为 protectedPrefix 被保护，
+ * 只允许编辑后面的正文内容 editableContent。
+ */
+function splitMarkdownFrontmatter(
+  filePath: string | null,
+  content: string | null
+): { protectedPrefix: string; editableContent: string; hasFrontmatter: boolean } {
+  const isMarkdown = !!filePath && /\.md$/i.test(filePath);
+  if (!isMarkdown || typeof content !== "string") {
+    return { protectedPrefix: "", editableContent: content ?? "", hasFrontmatter: false };
+  }
+
+  const match = content.match(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!match) {
+    return { protectedPrefix: "", editableContent: content, hasFrontmatter: false };
+  }
+
+  return {
+    protectedPrefix: match[0],
+    editableContent: content.slice(match[0].length),
+    hasFrontmatter: true,
+  };
+}
+
+/**
+ * 将 protectedPrefix (frontmatter) 和 editableContent 合并为完整文件内容。
+ */
+function mergeMarkdownFrontmatter(protectedPrefix: string, editableContent: string): string {
+  if (!protectedPrefix) return editableContent;
+  if (!editableContent || protectedPrefix.endsWith("\n") || protectedPrefix.endsWith("\r\n")) {
+    return `${protectedPrefix}${editableContent}`;
+  }
+  return `${protectedPrefix}\n${editableContent}`;
+}
+
+/**
+ * 文件树排序：SKILL.md 置顶、templates 目录优先、目录优先于文件、其余字母排序
+ */
+function sortFileTreeNodes(nodes: FileTreeNode[], isRoot: boolean): FileTreeNode[] {
+  const sorted = [...nodes].sort((a, b) => {
+    if (isRoot) {
+      // SKILL.md 置顶
+      if (a.type === "file" && a.name.toUpperCase() === "SKILL.MD") return -1;
+      if (b.type === "file" && b.name.toUpperCase() === "SKILL.MD") return 1;
+      // templates 目录次优先
+      if (a.type === "directory" && a.name.toLowerCase() === "templates") return -1;
+      if (b.type === "directory" && b.name.toLowerCase() === "templates") return 1;
+    }
+    // 目录优先于文件
+    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+    // 字母排序
+    return a.name.localeCompare(b.name);
+  });
+
+  // 递归排序子节点
+  for (const node of sorted) {
+    if (node.type === "directory" && node.children && node.children.length > 0) {
+      node.children = sortFileTreeNodes(node.children, false);
+    }
+  }
+
+  return sorted;
+}
 
 export default function MySkillsPage() {
   const navigate = useNavigate();
@@ -181,7 +253,9 @@ export default function MySkillsPage() {
 
     // Load skill files if not cached
     try {
-      const files = skillFiles[skillName] || await mySkillsApi.listSkillFiles(skillName);
+      let files = skillFiles[skillName] || await mySkillsApi.listSkillFiles(skillName);
+      // 对文件树排序：SKILL.md 置顶、templates 目录优先
+      files = sortFileTreeNodes(files, true);
       setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
 
       // 自动选择 SKILL.md（如果存在）
@@ -310,16 +384,22 @@ export default function MySkillsPage() {
     if (!selectedSkill || !selectedFile || !isEditing) return;
     setIsSaving(true);
     try {
-      await mySkillsApi.saveSkillFile(selectedSkill.skill_name, selectedFile, draftContent);
-      setFileContent(draftContent);
+      // 对于 Markdown 文件，合并 frontmatter
+      const frontmatter = splitMarkdownFrontmatter(selectedFile, fileContent);
+      const contentToSave = frontmatter.hasFrontmatter
+        ? mergeMarkdownFrontmatter(frontmatter.protectedPrefix, draftContent)
+        : draftContent;
+
+      await mySkillsApi.saveSkillFile(selectedSkill.skill_name, selectedFile, contentToSave);
+      setFileContent(contentToSave);
       setIsEditing(false);
-      message.success("保存成功");
+      message.success("保存成功，可新开会话试一试效果。");
     } catch (err) {
       message.error("保存失败");
     } finally {
       setIsSaving(false);
     }
-  }, [selectedSkill, selectedFile, isEditing, draftContent]);
+  }, [selectedSkill, selectedFile, isEditing, draftContent, fileContent]);
 
   // Navigate to marketplace
   const goToMarketplace = () => {
@@ -534,25 +614,25 @@ export default function MySkillsPage() {
     const headerStyle = (() => {
       if (title.includes("创建")) {
         return {
-          borderColor: "#d6e4ff",
-          backgroundColor: "#e6f4ff",
-          color: "#1d39c4",
-          dotColor: "#1890ff",
+          borderColor: "#d7e2f5",
+          backgroundColor: "#eef4ff",
+          color: "#365d97",
+          dotColor: "#365d97",
         };
       }
       if (title.includes("接收")) {
         return {
-          borderColor: "#b7eb8f",
-          backgroundColor: "#f6ffed",
-          color: "#389e0d",
-          dotColor: "#52c41a",
+          borderColor: "#c4e8d1",
+          backgroundColor: "#edf7f0",
+          color: "#2e7d4f",
+          dotColor: "#2e7d4f",
         };
       }
       return {
-        borderColor: "#d9d9d9",
-        backgroundColor: "#f5f5f5",
-        color: "#595959",
-        dotColor: "#8c8c8c",
+        borderColor: "#e8e6dc",
+        backgroundColor: "#f5f4ed",
+        color: "#5e5d59",
+        dotColor: "#87867f",
       };
     })();
 
@@ -697,6 +777,20 @@ export default function MySkillsPage() {
                   创建者: {skill.creator_name}
                 </Text>
               )}
+              {skill.created_at && (
+                <Tooltip title={dayjs(skill.created_at).format("YYYY-MM-DD HH:mm:ss")}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    创建: {dayjs(skill.created_at).fromNow()}
+                  </Text>
+                </Tooltip>
+              )}
+              {skill.updated_at && (
+                <Tooltip title={dayjs(skill.updated_at).format("YYYY-MM-DD HH:mm:ss")}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    更新: {dayjs(skill.updated_at).fromNow()}
+                  </Text>
+                </Tooltip>
+              )}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
@@ -721,7 +815,12 @@ export default function MySkillsPage() {
                 size="small"
                 icon={<Pencil style={{ width: 12, height: 12 }} />}
                 style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-                onClick={() => { setIsEditing(true); setDraftContent(fileContent || ""); }}
+                onClick={() => {
+                  setIsEditing(true);
+                  // 对于 Markdown 文件，只编辑正文部分
+                  const frontmatter = splitMarkdownFrontmatter(selectedFile, fileContent);
+                  setDraftContent(frontmatter.editableContent);
+                }}
               >
                 编辑
               </Button>
@@ -758,7 +857,12 @@ export default function MySkillsPage() {
                 <Button
                   size="small"
                   style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-                  onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }}
+                  onClick={() => {
+                    setIsEditing(false);
+                    // 重置为原始内容的正文部分
+                    const frontmatter = splitMarkdownFrontmatter(selectedFile, fileContent);
+                    setDraftContent(frontmatter.editableContent);
+                  }}
                   disabled={isSaving}
                 >
                   取消
@@ -791,52 +895,69 @@ export default function MySkillsPage() {
               <Spin />
             </div>
           ) : isEditing ? (
-            <textarea
-              value={draftContent}
-              onChange={(e) => setDraftContent(e.target.value)}
-              style={{
-                width: "100%",
-                height: "100%",
-                fontFamily: "monospace",
-                fontSize: 13,
-                padding: 12,
-                borderRadius: 8,
-                border: "1px solid #d9d9d9",
-                resize: "none",
-                boxSizing: "border-box",
-              }}
-            />
+            <div className={styles.editModeContainer}>
+              {/* 编辑模式标签 */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <div className={styles.editModeTag}>
+                  <PencilLine style={{ width: 12, height: 12 }} />
+                  编辑模式
+                </div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  可使用 Ctrl/Cmd + S 快速保存
+                </Text>
+              </div>
+              {/* Frontmatter 保护提示 */}
+              {selectedFile && /\.md$/i.test(selectedFile) && splitMarkdownFrontmatter(selectedFile, fileContent).hasFrontmatter && (
+                <p className={styles.frontmatterNote}>
+                  Markdown 顶部元信息受保护，此处只编辑正文内容。
+                </p>
+              )}
+              {/* 编辑区域 */}
+              <textarea
+                value={draftContent}
+                onChange={(e) => setDraftContent(e.target.value)}
+                onKeyDown={(e) => {
+                  // Ctrl/Cmd + S 快捷保存
+                  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+                    e.preventDefault();
+                    handleSaveContent();
+                  }
+                }}
+                className={styles.editModeTextarea}
+                placeholder="输入内容..."
+                spellCheck={false}
+              />
+            </div>
           ) : fileContent === null ? (
-            <div
-              style={{
-                borderRadius: 8,
-                border: "1px solid #f0f0f0",
-                backgroundColor: "#f5f5f5",
-                padding: 16,
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                boxSizing: "border-box",
-              }}
-            >
+            <div className={styles.detailPanelEmpty}>
               <Text type="secondary">选择文件查看内容</Text>
             </div>
+          ) : fileType === "markdown" ? (
+            <div className={styles.previewContainerMarkdown}>
+              {/* Frontmatter 提示 */}
+              {splitMarkdownFrontmatter(selectedFile, fileContent).hasFrontmatter && (
+                <p className={styles.frontmatterPreviewNote}>
+                  文件顶部包含受保护的元信息，此处只显示正文内容。
+                </p>
+              )}
+              <div className={styles.streamingMarkdown}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {splitMarkdownFrontmatter(selectedFile, fileContent).editableContent.trim()}
+                </ReactMarkdown>
+              </div>
+            </div>
+          ) : fileType === "json" ? (
+            <pre className={styles.previewContainerJson}>
+              {(() => {
+                try {
+                  return JSON.stringify(JSON.parse(fileContent), null, 2);
+                } catch {
+                  return fileContent;
+                }
+              })()}
+            </pre>
           ) : (
-            <pre
-              style={{
-                borderRadius: 8,
-                border: "1px solid #f0f0f0",
-                backgroundColor: "#fafafa",
-                padding: 16,
-                margin: 0,
-                overflow: "auto",
-                fontSize: 12,
-                fontFamily: "monospace",
-                height: "100%",
-                boxSizing: "border-box",
-              }}
-            >
+            <pre className={styles.previewContainer}>
               {fileContent}
             </pre>
           )}

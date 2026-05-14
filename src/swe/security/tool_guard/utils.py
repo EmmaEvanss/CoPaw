@@ -4,6 +4,7 @@
 * Configuration resolution – which tools to guard and which to deny.
 * Structured logging for guard findings.
 """
+
 from __future__ import annotations
 
 import logging

@@ -121,6 +121,12 @@ export interface IAgentScopeRuntimeResponse {
   usage?: Record<string, any>;
   error?: IAgentScopeRuntimeError;
   suggestions?: string[]; // 猜你想问建议列表
+  post_turn_validation?: {
+    id: string;
+    status: "needs_confirmation" | "dismissed" | "consumed";
+    reason?: string;
+    expires_at?: number;
+  };
 }
 
 export interface IAgentScopeRuntimeError {

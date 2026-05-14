@@ -124,32 +124,10 @@ function DownloadFileCard(props: DownloadFileCardProps) {
 
   const mergedHintStyle = {
     ...hintStyle,
-    color: fileType === "image" ? "#1677ff" : fileType === "video" ? "#faad14" : fileType === "office" ? "#1677ff" : fileType === "pdf" ? "#ff4d4f" : fileType === "markdown" ? "#52c41a" : fileType === "text" ? "#52c41a" : fileType === "html" ? "#722ed1" : "#8c8c8c",
+    color: fileType === "previewable" ? "#1677ff" : "#8c8c8c",
   };
 
-  // 根据文件类型显示不同的提示
-  const hintText = useMemo(() => {
-    switch (fileType) {
-      case "image":
-        return "图片";
-      case "video":
-        return "视频";
-      case "audio":
-        return "音频";
-      case "office":
-        return "Office";
-      case "pdf":
-        return "PDF";
-      case "markdown":
-        return "Markdown";
-      case "text":
-        return "文本";
-      case "html":
-        return "HTML";
-      default:
-        return "文件";
-    }
-  }, [fileType]);
+  const hintText = fileType === "previewable" ? "点击预览" : "不支持预览";
 
   return (
     <>

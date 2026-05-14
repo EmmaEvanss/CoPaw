@@ -17,7 +17,6 @@ from .process_utils import (
     _windows_process_snapshot,
 )
 
-
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _CONSOLE_DIR = (_PROJECT_ROOT / "console").resolve()
 _SIGTERM = signal.SIGTERM

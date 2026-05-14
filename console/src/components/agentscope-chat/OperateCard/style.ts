@@ -42,6 +42,13 @@ export default createGlobalStyle`
       color: ${(p) => p.theme.colorTextTertiary};
     }
 
+    &-extra {
+      display: inline-flex;
+      align-items: center;
+      margin-left: auto;
+      font-size: 14px;
+    }
+
     &-arrow {
       opacity: 0;
     }

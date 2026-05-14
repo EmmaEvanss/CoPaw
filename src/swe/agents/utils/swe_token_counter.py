@@ -4,6 +4,7 @@
 This module provides a configurable token counter that supports dynamic
 switching between different tokenizer models based on runtime configuration.
 """
+
 import logging
 import os
 from pathlib import Path
@@ -293,8 +294,8 @@ def get_swe_token_counter(
                 f"divisor={cc.token_count_estimate_divisor}",
             )
         else:
-            _token_counter_cache[
-                config_key
-            ].token_count_estimate_divisor = cc.token_count_estimate_divisor
+            _token_counter_cache[config_key].token_count_estimate_divisor = (
+                cc.token_count_estimate_divisor
+            )
 
     return _token_counter_cache[config_key]

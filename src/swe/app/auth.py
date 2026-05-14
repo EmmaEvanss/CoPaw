@@ -15,6 +15,7 @@ Uses only Python stdlib (hashlib, hmac, secrets) to avoid adding new
 dependencies.  The password is stored as a salted SHA-256 hash in
 ``auth.json`` under ``SECRET_DIR``.
 """
+
 from __future__ import annotations
 
 import hashlib

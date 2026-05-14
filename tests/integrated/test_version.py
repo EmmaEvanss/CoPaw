@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Integrated tests for SWE version."""
+
 from __future__ import annotations
 
 import subprocess

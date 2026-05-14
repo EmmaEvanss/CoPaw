@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Table, Card, Input, Select, Button, Tag, Drawer, Descriptions, Timeline, Spin, Empty, DatePicker } from "antd";
-import { FileText, Clock, Zap } from "lucide-react";
+import { FileText, Clock, Zap, Bot, User } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { tracingApi, TraceDetail } from "../../../api/modules/tracing";
+import { getBbkDisplayName, BBK_ID_MAP } from "../../../constants/bbk";
+import { useIframeStore } from "../../../stores/iframeStore";
+import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -12,6 +15,8 @@ const { RangePicker } = DatePicker;
 interface TraceListItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -38,16 +43,23 @@ export default function TracesPage() {
   const [pageSize, setPageSize] = useState(20);
   const [userIdFilter, setUserIdFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
+  const [bbkIdFilter, setBbkIdFilter] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
-    null,
+    [dayjs().subtract(30, "day"), dayjs()],
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<TraceDetail | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
 
+  // 获取用户权限和来源信息
+  const isSuperManager = useIframeStore((state) => state.isSuperManager);
+  const userSource = useIframeStore((state) => state.source);
+  // 非 iframe 模式下使用默认 source，超级管理员不传 source_id（查询全部）
+  const effectiveSourceId = isSuperManager ? undefined : (userSource || DEFAULT_SOURCE_ID);
+
   useEffect(() => {
     fetchTraces();
-  }, [page, pageSize, statusFilter, dateRange]);
+  }, [page, pageSize, statusFilter, bbkIdFilter, dateRange]);
 
   const fetchTraces = async () => {
     setLoading(true);
@@ -55,8 +67,10 @@ export default function TracesPage() {
       const data = await tracingApi.getTraces(page, pageSize, {
         user_id: userIdFilter || undefined,
         status: statusFilter,
+        bbk_id: bbkIdFilter,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
+        source_id: effectiveSourceId,
       });
       setTraces(data.items || []);
       setTotal(data.total || 0);
@@ -125,10 +139,10 @@ export default function TracesPage() {
 
   const columns: ColumnsType<TraceListItem> = [
     {
-      title: t("analytics.traceId", "Trace ID"),
+      title: t("analytics.traceId"),
       dataIndex: "trace_id",
       key: "trace_id",
-      width: 280,
+      width: 180,
       ellipsis: true,
       render: (v) => (
         <span style={{ cursor: "pointer", color: "#1890ff", fontFamily: "monospace" }}>
@@ -140,21 +154,35 @@ export default function TracesPage() {
       title: t("analytics.userId", "User ID"),
       dataIndex: "user_id",
       key: "user_id",
-      width: 120,
+      width: 100,
       ellipsis: true,
+    },
+    {
+      title: t("analytics.userName", "用户姓名"),
+      dataIndex: "user_name",
+      key: "user_name",
+      width: 100,
+      render: (v) => v || "-",
+    },
+    {
+      title: t("analytics.bbkId", "所属机构"),
+      dataIndex: "bbk_id",
+      key: "bbk_id",
+      width: 100,
+      render: (v) => getBbkDisplayName(v),
     },
     {
       title: t("analytics.startTime", "Start Time"),
       dataIndex: "start_time",
       key: "start_time",
-      width: 160,
+      width: 150,
       render: (v) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
     },
     {
       title: t("analytics.duration", "Duration"),
       dataIndex: "duration_ms",
       key: "duration_ms",
-      width: 100,
+      width: 90,
       render: (v) => formatDuration(v),
     },
     {
@@ -168,14 +196,14 @@ export default function TracesPage() {
       title: t("analytics.tokens", "Tokens"),
       dataIndex: "total_tokens",
       key: "total_tokens",
-      width: 80,
+      width: 100,
       render: (v) => formatTokens(v),
     },
     {
       title: t("analytics.skills", "Skills"),
       dataIndex: "skills_count",
       key: "skills_count",
-      width: 60,
+      width: 80,
     },
     {
       title: t("analytics.status", "Status"),
@@ -189,7 +217,7 @@ export default function TracesPage() {
   return (
     <div className={styles.tracesPage}>
       <div className={styles.header}>
-        <h2>{t("analytics.traceDetails", "Trace Details")}</h2>
+        <h2>{t("analytics.traceDetails")}</h2>
         <div className={styles.filters}>
           <RangePicker
             value={dateRange}
@@ -205,6 +233,17 @@ export default function TracesPage() {
             onPressEnter={handleSearch}
             style={{ width: 200 }}
             allowClear
+          />
+          <Select
+            placeholder={t("analytics.filterBbk", "所属机构")}
+            value={bbkIdFilter}
+            onChange={(v) => {
+              setBbkIdFilter(v);
+              setPage(1);
+            }}
+            allowClear
+            style={{ width: 150 }}
+            options={BBK_ID_MAP}
           />
           <Select
             placeholder={t("analytics.filterStatus", "Filter status")}
@@ -257,7 +296,7 @@ export default function TracesPage() {
         title={
           <span>
             <FileText size={18} style={{ marginRight: 8 }} />
-            {t("analytics.traceDetail", "Trace Detail")}
+            {t("analytics.traceDetail")}
           </span>
         }
         placement="right"
@@ -282,7 +321,7 @@ export default function TracesPage() {
           <div className={styles.drawerContent}>
             <Descriptions column={2} bordered size="small">
               <Descriptions.Item
-                label={t("analytics.traceId", "Trace ID")}
+                label={t("analytics.traceId")}
                 span={2}
               >
                 <code>{selectedTrace.trace.trace_id}</code>
@@ -319,6 +358,32 @@ export default function TracesPage() {
                 </Tag>
               </Descriptions.Item>
             </Descriptions>
+
+            {/* 用户输入 */}
+            {selectedTrace.trace.user_message && (
+              <div className={styles.userMessageSection}>
+                <h4>
+                  <User size={14} style={{ marginRight: 8 }} />
+                  {t("analytics.userInput", "User Input")}
+                </h4>
+                <div className={styles.userMessageContent}>
+                  {selectedTrace.trace.user_message}
+                </div>
+              </div>
+            )}
+
+            {/* 模型输出 */}
+            {selectedTrace.trace.model_output && (
+              <div className={styles.modelOutputSection}>
+                <h4>
+                  <Bot size={14} style={{ marginRight: 8 }} />
+                  {t("analytics.modelOutput", "Model Output")}
+                </h4>
+                <div className={styles.modelOutputContent}>
+                  {selectedTrace.trace.model_output}
+                </div>
+              </div>
+            )}
 
             {selectedTrace.trace.error && (
               <div className={styles.errorSection}>

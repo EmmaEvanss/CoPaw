@@ -6,14 +6,19 @@ with integrated tools, skills, and memory management.
 """
 
 import asyncio
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+from enum import Enum
 import logging
 import os
 from pathlib import Path
+import time
 from typing import Any, List, Literal, Optional, Type, TYPE_CHECKING
 
 from agentscope.agent import ReActAgent
 from agentscope.memory import InMemoryMemory
 from agentscope.message import Msg
+from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import Toolkit
 from anyio import ClosedResourceError
 from pydantic import BaseModel
@@ -47,10 +52,13 @@ from .tools import (
     write_file,
     create_memory_search_tool,
     copy_file_to_static,
+    update_task_progress,
 )
 from .utils import process_file_and_media_blocks_in_message
 from ..utils.fs_text import sanitize_text_for_json
 from ..constant import (
+    AGENT_INTERRUPT_TIMEOUT,
+    AGENT_WATCHDOG_TIMEOUT,
     WORKING_DIR,
 )
 from ..agents.memory.base_memory_manager import BaseMemoryManager
@@ -62,6 +70,31 @@ logger = logging.getLogger(__name__)
 
 # Valid namesake strategies for tool registration
 NamesakeStrategy = Literal["override", "skip", "raise", "rename"]
+
+
+class AgentPhase(str, Enum):
+    """Execution phases used by the Agent watchdog policy."""
+
+    REASONING = "reasoning"
+    ACTING = "acting"
+    TOOL_EXECUTION = "tool_execution"
+    TOOL_GUARD = "tool_guard"
+    APPROVAL_REPLAY = "approval_replay"
+    SUMMARIZING = "summarizing"
+    IDLE = "idle"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class AgentPhaseState:
+    """Current Agent phase and activity metadata."""
+
+    phase: AgentPhase
+    started_at: float
+    last_activity_at: float
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    reason: str | None = None
 
 
 class SWEAgent(ToolGuardMixin, ReActAgent):
@@ -123,6 +156,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         self._namesake_strategy = namesake_strategy
         self._workspace_dir = workspace_dir
         self._task_tracker = task_tracker
+        self._init_agent_phase_state()
 
         # Extract configuration from agent_config
         running_config = agent_config.running
@@ -142,10 +176,10 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
 
         # Get model info from ProviderManager (single source of truth)
         try:
-            from swe.config.context import get_current_tenant_id
+            from swe.config.context import get_current_effective_tenant_id
             from swe.providers.provider_manager import ProviderManager
 
-            tenant_id = get_current_tenant_id()
+            tenant_id = get_current_effective_tenant_id()
             manager = ProviderManager.get_instance(tenant_id)
             active = manager.get_active_model()
             if active:
@@ -217,11 +251,13 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 }
                 # Only execute_shell_command supports async_execution
                 async_execution_tools = {
-                    "execute_shell_command": builtin_tools.get(
-                        "execute_shell_command",
-                    ).async_execution
-                    if "execute_shell_command" in builtin_tools
-                    else False,
+                    "execute_shell_command": (
+                        builtin_tools.get(
+                            "execute_shell_command",
+                        ).async_execution
+                        if "execute_shell_command" in builtin_tools
+                        else False
+                    ),
                 }
         except Exception as e:
             logger.warning(
@@ -241,6 +277,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             "set_user_timezone": set_user_timezone,
             "get_token_usage": get_token_usage,
             "copy_file_to_static": copy_file_to_static,
+            "update_task_progress": update_task_progress,
         }
 
         # Register only enabled tools
@@ -449,6 +486,29 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         if self._env_context is not None:
             sys_prompt = sys_prompt + "\n\n" + self._env_context
 
+        # 任务进度要求
+        sys_prompt += (
+            "\n\n[Task Progress Requirement]\n"
+            "You MUST call the update_task_progress tool for every non-trivial "
+            "user request. This is mandatory, not optional.\n\n"
+            "Each item in the items array has these fields:\n"
+            "- label: short Chinese step title (required)\n"
+            '- status: "todo" | "running" | "done" (required)\n'
+            "- id: unique step identifier (optional, auto-generated)\n\n"
+            "CRITICAL RULES:\n"
+            "- Call update_task_progress BEFORE your first tool call or substantive "
+            "action, with 3-6 short Chinese step titles.\n"
+            "- After finishing each step, call update_task_progress again to "
+            "mark it done and advance the next step to running.\n"
+            "- Always keep EXACTLY ONE step in 'running' status.\n"
+            '- When fully done, call with phase_status="completed" and all steps '
+            'marked "done".\n\n'
+            'SKIP ONLY for: pure chitchat ("hello"), simple knowledge questions '
+            '("what is Python"), or single-command requests ("run npm install").\n'
+            "For analysis, coding, debugging, refactoring, optimization, or any "
+            "multi-step request — ALWAYS use the tool. When in doubt, use it."
+        )
+
         return sys_prompt
 
     def _setup_memory_manager(
@@ -552,11 +612,17 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         """
         for i, client in enumerate(self._mcp_clients):
             client_name = getattr(client, "name", repr(client))
+            # Set progress callback so MCP notifications reset the watchdog.
+            if hasattr(client, "on_progress_callback"):
+                client.on_progress_callback = self._reset_watchdog
             try:
                 await self.toolkit.register_mcp_client(
                     client,
                     namesake_strategy=namesake_strategy,
                 )
+                # Wire watchdog callback into MCPToolFunction instances
+                # registered by this client.
+                self._wire_mcp_progress_callbacks(client)
             except (ClosedResourceError, asyncio.CancelledError) as error:
                 if self._should_propagate_cancelled_error(error):
                     raise
@@ -568,11 +634,16 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 recovered_client = await self._recover_mcp_client(client)
                 if recovered_client is not None:
                     self._mcp_clients[i] = recovered_client
+                    if hasattr(recovered_client, "on_progress_callback"):
+                        recovered_client.on_progress_callback = (
+                            self._reset_watchdog
+                        )
                     try:
                         await self.toolkit.register_mcp_client(
                             recovered_client,
                             namesake_strategy=namesake_strategy,
                         )
+                        self._wire_mcp_progress_callbacks(recovered_client)
                         continue
                     except asyncio.CancelledError as recover_error:
                         if self._should_propagate_cancelled_error(
@@ -603,6 +674,25 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                     e,
                     exc_info=True,
                 )
+
+    def _wire_mcp_progress_callbacks(self, client: Any) -> None:
+        """Set on_progress_callback on MCPToolFunction instances registered
+        by *client* so that MCP progress notifications reset the watchdog.
+        """
+        cb = self._reset_watchdog
+        mcp_name = getattr(client, "name", None)
+        for tool_entry in self.toolkit.tools.values():
+            func = getattr(tool_entry, "original_func", None)
+            if func is None:
+                continue
+            # original_func stores tool_func.__call__ (a bound method);
+            # extract the MCPToolFunction instance via __self__.
+            mcp_func = getattr(func, "__self__", None) or func
+            if (
+                isinstance(mcp_func, MCPToolFunction)
+                and mcp_func.mcp_name == mcp_name
+            ):
+                mcp_func.on_progress_callback = cb  # type: ignore[attr-defined]
 
     async def _recover_mcp_client(self, client: Any) -> Any | None:
         """Recover MCP client from broken session and return healthy client."""
@@ -740,6 +830,202 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             return None
 
     # ------------------------------------------------------------------
+    # Watchdog: detect and recover from agent stalls.
+    # ------------------------------------------------------------------
+
+    _watchdog_task: asyncio.Task | None = None
+    _WATCHDOG_IDLE_SENSITIVE_PHASES = {
+        AgentPhase.REASONING,
+        AgentPhase.SUMMARIZING,
+        AgentPhase.IDLE,
+        AgentPhase.UNKNOWN,
+    }
+
+    @staticmethod
+    def _phase_clock() -> float:
+        try:
+            return asyncio.get_running_loop().time()
+        except RuntimeError:
+            return time.monotonic()
+
+    def _init_agent_phase_state(self) -> None:
+        now = self._phase_clock()
+        self._agent_phase_state = AgentPhaseState(
+            phase=AgentPhase.IDLE,
+            started_at=now,
+            last_activity_at=now,
+        )
+
+    def _ensure_agent_phase_state(self) -> AgentPhaseState:
+        state = getattr(self, "_agent_phase_state", None)
+        if state is None:
+            self._init_agent_phase_state()
+            state = self._agent_phase_state
+        return state
+
+    def _record_agent_activity(self, reason: str | None = None) -> None:
+        state = self._ensure_agent_phase_state()
+        state.last_activity_at = self._phase_clock()
+        if reason:
+            state.reason = reason
+
+    @contextmanager
+    def agent_phase(
+        self,
+        phase: AgentPhase | str,
+        *,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+        reason: str | None = None,
+    ):
+        previous = replace(self._ensure_agent_phase_state())
+        now = self._phase_clock()
+        self._agent_phase_state = AgentPhaseState(
+            phase=AgentPhase(phase),
+            started_at=now,
+            last_activity_at=now,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            reason=reason,
+        )
+        try:
+            yield self._agent_phase_state
+        finally:
+            self._agent_phase_state = replace(
+                previous,
+                last_activity_at=self._phase_clock(),
+            )
+
+    def _watchdog_diagnostic_fields(
+        self,
+        state: AgentPhaseState,
+        now: float,
+        threshold: float,
+    ) -> dict[str, str | float]:
+        request_context = getattr(self, "_request_context", {}) or {}
+        return {
+            "phase": state.phase.value,
+            "phase_duration": max(now - state.started_at, 0.0),
+            "silence_duration": max(now - state.last_activity_at, 0.0),
+            "threshold": threshold,
+            "session_id": str(request_context.get("session_id") or ""),
+            "user_id": str(request_context.get("user_id") or ""),
+            "agent_id": str(request_context.get("agent_id") or ""),
+            "tool_name": state.tool_name or "",
+            "tool_call_id": state.tool_call_id or "",
+            "reason": state.reason or "",
+        }
+
+    def _log_watchdog_diagnostic(
+        self,
+        *,
+        event: str,
+        policy: str,
+        state: AgentPhaseState,
+        now: float,
+        threshold: float,
+    ) -> None:
+        fields = self._watchdog_diagnostic_fields(state, now, threshold)
+        logger.warning(
+            "Agent watchdog %s: policy=%s phase=%s "
+            "phase_duration=%.3fs silence_duration=%.3fs threshold=%.3fs "
+            "session_id=%s user_id=%s agent_id=%s tool_name=%s "
+            "tool_call_id=%s reason=%s",
+            event,
+            policy,
+            fields["phase"],
+            fields["phase_duration"],
+            fields["silence_duration"],
+            fields["threshold"],
+            fields["session_id"],
+            fields["user_id"],
+            fields["agent_id"],
+            fields["tool_name"],
+            fields["tool_call_id"],
+            fields["reason"],
+        )
+
+    def _start_watchdog(
+        self,
+        timeout: float = AGENT_WATCHDOG_TIMEOUT,
+        *,
+        check_interval: float | None = None,
+    ) -> None:
+        """Start a phase-aware watchdog for the active reply task.
+
+        Args:
+            timeout: Maximum seconds of idle-sensitive silence before interrupt
+                (default: ``AGENT_WATCHDOG_TIMEOUT``).
+            check_interval: Optional polling interval for tests and tuning.
+        """
+        self._stop_watchdog()
+        self._ensure_agent_phase_state()
+        interval = (
+            float(check_interval)
+            if check_interval is not None
+            else min(max(timeout / 4.0, 0.5), 5.0)
+        )
+        interval = max(interval, 0.001)
+
+        async def _watchdog() -> None:
+            last_non_interrupt_log_at = 0.0
+            try:
+                while True:
+                    await asyncio.sleep(interval)
+                    state = replace(self._ensure_agent_phase_state())
+                    now = self._phase_clock()
+                    silence_duration = now - state.last_activity_at
+                    if silence_duration < timeout:
+                        continue
+
+                    if state.phase in self._WATCHDOG_IDLE_SENSITIVE_PHASES:
+                        self._log_watchdog_diagnostic(
+                            event="interrupt",
+                            policy="idle_sensitive",
+                            state=state,
+                            now=now,
+                            threshold=timeout,
+                        )
+                        if self._reply_task and not self._reply_task.done():
+                            self._reply_task.cancel(
+                                asyncio.CancelledError(
+                                    "Agent watchdog: "
+                                    f"phase={state.phase.value} "
+                                    f"silent for {silence_duration:.0f}s",
+                                ),
+                            )
+                        return
+
+                    if now - last_non_interrupt_log_at >= timeout:
+                        last_non_interrupt_log_at = now
+                        self._log_watchdog_diagnostic(
+                            event="silent_phase",
+                            policy="tool_or_async_phase_non_interrupting",
+                            state=state,
+                            now=now,
+                            threshold=timeout,
+                        )
+            except asyncio.CancelledError:
+                return
+
+        self._watchdog_task = asyncio.create_task(_watchdog())
+
+    def _reset_watchdog(self, timeout: float = AGENT_WATCHDOG_TIMEOUT) -> None:
+        """Record Agent activity without changing the active phase.
+
+        Args:
+            timeout: Kept for compatibility with older call sites.
+        """
+        del timeout
+        self._record_agent_activity(reason="output")
+
+    def _stop_watchdog(self) -> None:
+        """Stop the watchdog without interrupting the agent."""
+        if self._watchdog_task is not None:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
+
+    # ------------------------------------------------------------------
     # Media-block fallback: strip unsupported media blocks (image, audio,
     # video) from memory and retry when the model rejects them.
     # ------------------------------------------------------------------
@@ -770,43 +1056,44 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         Calls ``super()._reasoning`` to keep the ToolGuardMixin
         interception active.
         """
-        # --- Proactive filtering layer ---
-        if not get_active_model_supports_multimodal():
-            n = self._proactive_strip_media_blocks()
-            if n > 0:
+        with self.agent_phase(AgentPhase.REASONING, reason="reasoning"):
+            # --- Proactive filtering layer ---
+            if not get_active_model_supports_multimodal():
+                n = self._proactive_strip_media_blocks()
+                if n > 0:
+                    logger.warning(
+                        "Proactively stripped %d media block(s) - "
+                        "model does not support multimodal.",
+                        n,
+                    )
+
+            # --- Passive fallback layer (existing logic) ---
+            try:
+                return await super()._reasoning(tool_choice=tool_choice)
+            except Exception as e:
+                if not self._is_bad_request_or_media_error(e):
+                    raise
+
+                n_stripped = self._strip_media_blocks_from_memory()
+                if n_stripped == 0:
+                    raise
+
+                # If the model is marked as multimodal but still
+                # errored, the capability flag may be wrong.
+                if get_active_model_supports_multimodal():
+                    logger.warning(
+                        "Model marked multimodal but "
+                        "rejected media. "
+                        "Capability flag may be wrong.",
+                    )
+
                 logger.warning(
-                    "Proactively stripped %d media block(s) - "
-                    "model does not support multimodal.",
-                    n,
+                    "_reasoning failed (%s). "
+                    "Stripped %d media block(s) from memory, retrying.",
+                    e,
+                    n_stripped,
                 )
-
-        # --- Passive fallback layer (existing logic) ---
-        try:
-            return await super()._reasoning(tool_choice=tool_choice)
-        except Exception as e:
-            if not self._is_bad_request_or_media_error(e):
-                raise
-
-            n_stripped = self._strip_media_blocks_from_memory()
-            if n_stripped == 0:
-                raise
-
-            # If the model is marked as multimodal but still
-            # errored, the capability flag may be wrong.
-            if get_active_model_supports_multimodal():
-                logger.warning(
-                    "Model marked multimodal but "
-                    "rejected media. "
-                    "Capability flag may be wrong.",
-                )
-
-            logger.warning(
-                "_reasoning failed (%s). "
-                "Stripped %d media block(s) from memory, retrying.",
-                e,
-                n_stripped,
-            )
-            return await super()._reasoning(tool_choice=tool_choice)
+                return await super()._reasoning(tool_choice=tool_choice)
 
     async def _summarizing(self) -> Msg:
         """Override summarizing with proactive media filtering,
@@ -823,47 +1110,48 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         no tools are provided.  We set ``_in_summarizing`` so that
         ``print`` can strip tool_use blocks from streaming chunks.
         """
-        # --- Proactive filtering layer ---
-        if not get_active_model_supports_multimodal():
-            n = self._proactive_strip_media_blocks()
-            if n > 0:
-                logger.warning(
-                    "Proactively stripped %d media block(s) - "
-                    "model does not support multimodal.",
-                    n,
-                )
-
-        # --- Passive fallback layer ---
-        self._in_summarizing = True
-        try:
-            try:
-                msg = await super()._summarizing()
-            except Exception as e:
-                if not self._is_bad_request_or_media_error(e):
-                    raise
-
-                n_stripped = self._strip_media_blocks_from_memory()
-                if n_stripped == 0:
-                    raise
-
-                if get_active_model_supports_multimodal():
+        with self.agent_phase(AgentPhase.SUMMARIZING, reason="summarizing"):
+            # --- Proactive filtering layer ---
+            if not get_active_model_supports_multimodal():
+                n = self._proactive_strip_media_blocks()
+                if n > 0:
                     logger.warning(
-                        "Model marked multimodal but "
-                        "rejected media. "
-                        "Capability flag may be wrong.",
+                        "Proactively stripped %d media block(s) - "
+                        "model does not support multimodal.",
+                        n,
                     )
 
-                logger.warning(
-                    "_summarizing failed (%s). "
-                    "Stripped %d media block(s) from memory, retrying.",
-                    e,
-                    n_stripped,
-                )
-                msg = await super()._summarizing()
-        finally:
-            self._in_summarizing = False
+            # --- Passive fallback layer ---
+            self._in_summarizing = True
+            try:
+                try:
+                    msg = await super()._summarizing()
+                except Exception as e:
+                    if not self._is_bad_request_or_media_error(e):
+                        raise
 
-        return self._strip_tool_use_from_msg(msg)
+                    n_stripped = self._strip_media_blocks_from_memory()
+                    if n_stripped == 0:
+                        raise
+
+                    if get_active_model_supports_multimodal():
+                        logger.warning(
+                            "Model marked multimodal but "
+                            "rejected media. "
+                            "Capability flag may be wrong.",
+                        )
+
+                    logger.warning(
+                        "_summarizing failed (%s). "
+                        "Stripped %d media block(s) from memory, retrying.",
+                        e,
+                        n_stripped,
+                    )
+                    msg = await super()._summarizing()
+            finally:
+                self._in_summarizing = False
+
+            return self._strip_tool_use_from_msg(msg)
 
     async def print(
         self,
@@ -879,7 +1167,11 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         round-end notice so users see it immediately instead of only
         after a page refresh.  Intermediate events that become empty
         after filtering are silently skipped to avoid blank UI flashes.
+
+        Also records Agent activity on each output event without erasing
+        the active phase metadata.
         """
+        self._record_agent_activity(reason="output")
 
         if not getattr(self, "_in_summarizing", False):
             return await super().print(msg, last, speech=speech)
@@ -1052,6 +1344,9 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         """
         # Set workspace_dir and recent_max_bytes in context for tool functions
         from ..config.context import (
+            set_current_task_progress_chat_id,
+            set_current_task_progress_tracker,
+            set_current_task_progress_turn_id,
             set_current_workspace_dir,
             set_current_recent_max_bytes,
         )
@@ -1059,6 +1354,13 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         set_current_workspace_dir(self._workspace_dir)
         set_current_recent_max_bytes(
             self._agent_config.running.tool_result_compact.recent_max_bytes,
+        )
+        set_current_task_progress_tracker(self._task_tracker)
+        set_current_task_progress_chat_id(
+            self._request_context.get("chat_id"),
+        )
+        set_current_task_progress_turn_id(
+            self._request_context.get("turn_id"),
         )
 
         # Process file and media blocks in messages
@@ -1115,18 +1417,35 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         channel_name = request_context.get("channel", "console")
         workspace_dir = Path(self._workspace_dir or WORKING_DIR)
         with apply_skill_config_env_overrides(workspace_dir, channel_name):
-            return await super().reply(
-                msg=msg,
-                structured_model=structured_model,
-            )
+            try:
+                self._start_watchdog()
+                with self.agent_phase(AgentPhase.REASONING, reason="reply"):
+                    return await super().reply(
+                        msg=msg,
+                        structured_model=structured_model,
+                    )
+            finally:
+                self._stop_watchdog()
 
     async def interrupt(self, msg: Msg | list[Msg] | None = None) -> None:
-        """Interrupt the current reply process and wait for cleanup."""
+        """Interrupt the current reply process and wait for cleanup.
+
+        If the reply task does not finish within
+        ``AGENT_INTERRUPT_TIMEOUT`` seconds, the wait is abandoned.
+        """
+        self._stop_watchdog()
         if self._reply_task and not self._reply_task.done():
             task = self._reply_task
             task.cancel(msg)
             try:
-                await task
+                await asyncio.wait_for(task, timeout=AGENT_INTERRUPT_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Agent interrupt timed out (%.0fs) for agent '%s', "
+                    "abandoning wait",
+                    AGENT_INTERRUPT_TIMEOUT,
+                    self.name,
+                )
             except asyncio.CancelledError:
                 if not task.cancelled():
                     raise

@@ -14,6 +14,11 @@ export interface ITodoListProps {
    */
   title?: string;
   /**
+   * @description 头部说明
+   * @descriptionEn Header description
+   */
+  description?: string;
+  /**
    * @description 默认展开
    * @descriptionEn Default Open
    * @default false
@@ -30,20 +35,20 @@ export interface ITodoListProps {
   }[];
 }
 
-export default function (props: ITodoListProps) {
+export default function TodoList(props: ITodoListProps) {
   const { getPrefixCls } = useProviderContext();
   const prefixCls = getPrefixCls("operate-card");
-  const { title = "Task List" } = props;
+  const { title = "Task List", description } = props;
   const doneCount = props.list.filter((item) => item.status === "done").length;
 
   return (
     <OperateCard
       header={{
         icon: <SparkProjectNoLine />,
-        title: title,
-        description: `· ${doneCount ? doneCount + " of " : ""} ${
-          props.list.length
-        }`,
+        title,
+        description:
+          description ||
+          `路 ${doneCount ? `${doneCount} of ` : ""}${props.list.length}`,
       }}
       body={{
         defaultOpen: props.defaultOpen,

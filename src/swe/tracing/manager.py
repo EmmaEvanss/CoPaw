@@ -3,6 +3,7 @@
 
 Provides the TraceManager for event collection, batching, and storage.
 """
+
 import asyncio
 import logging
 import uuid
@@ -35,10 +36,16 @@ class TraceContext:
         session_id: str,
         channel: str,
         source_id: str,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
+        session_name: Optional[str] = None,
     ):
         self.trace_id = trace_id
         self.user_id = user_id
+        self.user_name = user_name
+        self.bbk_id = bbk_id
         self.session_id = session_id
+        self.session_name = session_name
         self.channel = channel
         self.source_id = source_id
         self.start_time = datetime.now()
@@ -251,6 +258,10 @@ class TraceManager:
         source_id: str,
         trace_id: Optional[str] = None,
         user_message: Optional[str] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
+        session_name: Optional[str] = None,
+        model_output: Optional[str] = None,
     ) -> str:
         """Start a new trace.
 
@@ -261,6 +272,10 @@ class TraceManager:
             source_id: Source identifier for data isolation
             trace_id: Optional trace ID (generated if not provided)
             user_message: Optional user's input message
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
+            session_name: Optional session name (derived from first message)
+            model_output: Optional model output (for text-type cron jobs)
 
         Returns:
             Trace ID
@@ -277,22 +292,64 @@ class TraceManager:
                 self.config.max_output_length,
             )
 
+        # Sanitize model output
+        if self.config.sanitize_output and model_output:
+            model_output = sanitize_string(
+                model_output,
+                self.config.max_output_length,
+            )
+
+        # 确定 session_name 的写入逻辑：
+        # 1. 新增会话：写入当前消息作为 session_name
+        # 2. 存量会话：查询第一条消息作为 session_name
+        # 每一条 trace 都需要写入 session_name
+        effective_session_name = None
+        if session_name:
+            # 检查是否为存量会话（跨所有 source_id 查询）
+            has_traces = await self.store.has_session_traces(session_id)
+            if has_traces:
+                # 存量会话：查询第一条消息作为 session_name（跨所有 source_id 查询）
+                first_msg = await self.store.get_session_first_message(
+                    session_id,
+                )
+                if first_msg:
+                    effective_session_name = first_msg[:10]
+                else:
+                    # 如果第一条消息为空，使用当前消息作为会话名称
+                    effective_session_name = session_name
+            else:
+                # 新增会话：写入当前消息作为 session_name
+                effective_session_name = session_name
+
         trace = Trace(
             trace_id=trace_id,
             source_id=source_id,
             user_id=user_id,
+            user_name=user_name,
+            bbk_id=bbk_id,
             session_id=session_id,
+            session_name=effective_session_name,
             channel=channel,
             start_time=datetime.now(),
             status=TraceStatus.RUNNING,
             user_message=user_message,
+            model_output=model_output,
         )
 
         await self.store.create_trace(trace)
         self._active_traces[trace_id] = trace
 
         # Create context
-        ctx = TraceContext(trace_id, user_id, session_id, channel, source_id)
+        ctx = TraceContext(
+            trace_id,
+            user_id,
+            session_id,
+            channel,
+            source_id,
+            user_name=user_name,
+            bbk_id=bbk_id,
+            session_name=effective_session_name,
+        )
         ctx.trace = trace
         set_current_trace(ctx)
 
@@ -339,6 +396,8 @@ class TraceManager:
                 session_id=ctx.session_id,
                 channel=ctx.channel,
                 source_id=ctx.source_id,
+                user_name=ctx.user_name,
+                bbk_id=ctx.bbk_id,
             )
             detector.set_enabled_skills(enabled_skills)
 
@@ -437,7 +496,6 @@ class TraceManager:
         user_id: str = "",
         session_id: str = "",
         channel: str = "",
-        parent_span_id: Optional[str] = None,
         model_name: Optional[str] = None,
         input_tokens: Optional[int] = None,
         tool_name: Optional[str] = None,
@@ -445,6 +503,8 @@ class TraceManager:
         tool_input: Optional[dict[str, Any]] = None,
         start_time: Optional[datetime] = None,
         mcp_server: Optional[str] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit a new span event.
 
@@ -456,7 +516,6 @@ class TraceManager:
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
-            parent_span_id: Optional parent span ID
             model_name: Optional model name
             input_tokens: Optional input token count
             tool_name: Optional tool name
@@ -464,6 +523,8 @@ class TraceManager:
             tool_input: Optional tool input (will be sanitized)
             start_time: Optional start time
             mcp_server: Optional MCP server name if this is an MCP tool
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -472,12 +533,6 @@ class TraceManager:
             return str(uuid.uuid4())
 
         span_id = str(uuid.uuid4())
-
-        # Get parent from context if not provided
-        if parent_span_id is None:
-            ctx = get_current_trace()
-            if ctx and ctx.trace_id == trace_id:
-                parent_span_id = ctx.current_span_id
 
         # Sanitize tool input if configured
         if self.config.sanitize_output and tool_input:
@@ -490,11 +545,12 @@ class TraceManager:
             span_id=span_id,
             trace_id=trace_id,
             source_id=source_id,
-            parent_span_id=parent_span_id,
             name=name,
             event_type=event_type,
             start_time=start_time or datetime.now(),
             user_id=user_id,
+            user_name=user_name,
+            bbk_id=bbk_id,
             session_id=session_id,
             channel=channel,
             model_name=model_name,
@@ -527,7 +583,6 @@ class TraceManager:
         input_tokens: Optional[int] = None,
         tool_output: Optional[str] = None,
         error: Optional[str] = None,
-        metadata: Optional[dict[str, Any]] = None,
         span: Optional[Span] = None,
     ) -> None:
         """Update an existing span.
@@ -539,7 +594,6 @@ class TraceManager:
             input_tokens: Optional input token count (updates span if provided)
             tool_output: Optional tool output (will be sanitized)
             error: Optional error message
-            metadata: Optional metadata
             span: Optional span object (to avoid re-fetching)
         """
         if not self.enabled:
@@ -556,9 +610,13 @@ class TraceManager:
             input_tokens,
             tool_output,
             error,
-            metadata,
         )
-        self._update_trace_totals(trace_id, span, output_tokens)
+        self._update_trace_totals(
+            trace_id,
+            span,
+            output_tokens,
+            is_update=True,
+        )
 
         # Persist if not in pending cache
         if span_id not in self._pending_spans:
@@ -594,7 +652,6 @@ class TraceManager:
         input_tokens: Optional[int],
         tool_output: Optional[str],
         error: Optional[str],
-        metadata: Optional[dict[str, Any]],
     ) -> None:
         """Update span fields."""
         span.end_time = datetime.now()
@@ -610,22 +667,30 @@ class TraceManager:
             else tool_output
         )
         span.error = error
-        span.metadata = metadata
 
     def _update_trace_totals(
         self,
         trace_id: str,
         span: Span,
         output_tokens: Optional[int],
+        is_update: bool = False,
     ) -> None:
-        """Update trace statistics from span."""
+        """Update trace statistics from span.
+
+        Args:
+            trace_id: Trace identifier
+            span: Span object
+            output_tokens: Output token count
+            is_update: If True, this is an update to existing span (don't re-add input_tokens)
+        """
         trace = self._active_traces.get(trace_id)
         if not trace:
             return
 
         if output_tokens:
             trace.total_output_tokens += output_tokens
-        if span.input_tokens:
+        # Only add input_tokens when first emitting the span, not when updating
+        if span.input_tokens and not is_update:
             trace.total_input_tokens += span.input_tokens
         if span.model_name:
             trace.model_name = span.model_name
@@ -643,6 +708,8 @@ class TraceManager:
         user_id: str = "",
         session_id: str = "",
         channel: str = "",
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit LLM input event.
 
@@ -654,6 +721,8 @@ class TraceManager:
             user_id: User identifier
             session_id: Session identifier
             channel: Channel identifier
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -668,6 +737,8 @@ class TraceManager:
             channel=channel,
             model_name=model_name,
             input_tokens=input_tokens,
+            user_name=user_name,
+            bbk_id=bbk_id,
         )
 
     async def emit_llm_output(
@@ -702,6 +773,8 @@ class TraceManager:
         session_id: str = "",
         channel: str = "",
         mcp_server: Optional[str] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit tool call start event with multi-skill attribution.
 
@@ -718,6 +791,8 @@ class TraceManager:
             session_id: Session identifier
             channel: Channel identifier
             mcp_server: Optional MCP server name if this is an MCP tool
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -765,6 +840,8 @@ class TraceManager:
             tool_input=tool_input,
             mcp_server=mcp_server,
             skill_name=primary_skill,
+            user_name=user_name,
+            bbk_id=bbk_id,
         )
 
     async def emit_tool_call_end(
@@ -816,6 +893,8 @@ class TraceManager:
         session_id: str = "",
         channel: str = "",
         skill_input: Optional[dict[str, Any]] = None,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Emit skill invocation event.
 
@@ -827,6 +906,8 @@ class TraceManager:
             session_id: Session identifier
             channel: Channel identifier
             skill_input: Optional skill input parameters
+            user_name: Optional user name
+            bbk_id: Optional BBK identifier
 
         Returns:
             Span ID
@@ -841,6 +922,8 @@ class TraceManager:
             channel=channel,
             skill_name=skill_name,
             tool_input=skill_input,
+            user_name=user_name,
+            bbk_id=bbk_id,
         )
 
     async def end_skill_invocation(
@@ -898,9 +981,11 @@ class TraceManager:
                             logger.info(
                                 "[SKILL SPAN] skill='%s', type=%s",
                                 span.skill_name,
-                                span.event_type.value
-                                if hasattr(span.event_type, "value")
-                                else span.event_type,
+                                (
+                                    span.event_type.value
+                                    if hasattr(span.event_type, "value")
+                                    else span.event_type
+                                ),
                             )
                 else:
                     await self.store.batch_create_spans(spans)

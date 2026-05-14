@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant isolation tests for console push message API."""
+
 import importlib.util
 import sys
 import types
@@ -36,7 +37,9 @@ sys.modules["swe.app.agent_context"] = agent_context
 agentscope_runtime = types.ModuleType("agentscope_runtime")
 engine = types.ModuleType("agentscope_runtime.engine")
 schemas = types.ModuleType("agentscope_runtime.engine.schemas")
-agent_schemas = types.ModuleType("agentscope_runtime.engine.schemas.agent_schemas")
+agent_schemas = types.ModuleType(
+    "agentscope_runtime.engine.schemas.agent_schemas",
+)
 agent_schemas.AgentRequest = dict
 sys.modules["agentscope_runtime"] = agentscope_runtime
 sys.modules["agentscope_runtime.engine"] = engine
@@ -47,9 +50,9 @@ spec = importlib.util.spec_from_file_location(
     "swe.app.routers.console",
     _CONSOLE_FILE,
 )
+assert spec is not None and spec.loader is not None
 console_router = importlib.util.module_from_spec(spec)
 sys.modules["swe.app.routers.console"] = console_router
-assert spec is not None and spec.loader is not None
 spec.loader.exec_module(console_router)
 
 

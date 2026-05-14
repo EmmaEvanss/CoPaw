@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-outer-name
 """Unit tests for tenant-scoped agent init append API."""
+
 from __future__ import annotations
 
 from pathlib import Path

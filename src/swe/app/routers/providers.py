@@ -18,7 +18,9 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from ...config.context import get_current_tenant_id
+from ...config.context import (
+    get_current_effective_tenant_id,
+)
 from ...config.utils import (
     get_tenant_working_dir_strict,
     list_logical_tenant_ids,
@@ -27,7 +29,6 @@ from ...providers.models import ModelSlotConfig
 from ...providers.provider import ProviderInfo, ModelInfo
 from ...providers.provider_manager import ActiveModelsInfo, ProviderManager
 from ..workspace.tenant_initializer import TenantInitializer
-
 
 logger = logging.getLogger(__name__)
 
@@ -671,9 +672,12 @@ async def set_active_model(
 )
 async def list_active_model_distribution_tenants(
     request: Request,
-) -> (DistributionTenantListResponse):
+) -> DistributionTenantListResponse:
     return DistributionTenantListResponse(
-        tenant_ids=list_logical_tenant_ids(_request_source_id(request)),
+        tenant_ids=await list_logical_tenant_ids(
+            _request_source_id(request),
+            source_filter=True,
+        ),
     )
 
 
@@ -763,7 +767,7 @@ async def get_tenant_providers():
         HTTPException: 400 if tenant ID not set in context
     """
     # Get tenant ID from context
-    tenant_id = get_current_tenant_id()
+    tenant_id = get_current_effective_tenant_id()
     if tenant_id is None:
         raise HTTPException(
             status_code=400,

@@ -60,6 +60,8 @@ export default createGlobalStyle`
 }
 
 .${(p) => p.theme.prefixCls}-chat-anywhere-input-wrapper {
+  position: relative;
+  overflow: visible;
   max-width: 850px;
   min-width: 300px;
   margin: 0 auto;

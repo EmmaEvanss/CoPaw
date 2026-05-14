@@ -32,10 +32,13 @@ export default createGlobalStyle`
     display: flex;
     align-items: center;
     gap: 6px;
+    border: 0;
     padding: 6px 12px;
     background-color: ${({ theme }) => theme.colorFillQuaternary};
     border-radius: 16px;
     cursor: pointer;
+    font: inherit;
+    text-align: left;
     max-width: 400px; // 扩大宽度限制
     transition: background-color 0.2s ease;
 
@@ -61,6 +64,37 @@ export default createGlobalStyle`
     &:active {
       background-color: ${({ theme }) => theme.colorFillSecondary};
     }
+  }
+}
+
+.${(p) => p.theme.prefixCls}-post-turn-validation {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid ${({ theme }) => theme.colorBorderSecondary};
+  border-radius: 12px;
+  background: ${({ theme }) => theme.colorBgContainer};
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  &-title {
+    color: ${({ theme }) => theme.colorText};
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 22px;
+  }
+
+  &-description {
+    color: ${({ theme }) => theme.colorTextSecondary};
+    font-size: 13px;
+    line-height: 20px;
+    word-break: break-word;
+  }
+
+  &-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
   }
 }
 `;

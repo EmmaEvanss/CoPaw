@@ -4,6 +4,7 @@
 Records which default_{source} template directory was used to initialize
 each tenant, enabling source-based template isolation.
 """
+
 import logging
 from typing import Any, Optional
 
@@ -39,68 +40,61 @@ class TenantInitSourceStore:
             self._use_db = False
             logger.info("TenantInitSourceStore initialized without database")
 
-    async def get_init_source(self, tenant_id: str) -> Optional[str]:
-        """Query the init_source (template directory name) for a tenant.
-
-        Args:
-            tenant_id: The tenant identifier.
-
-        Returns:
-            The init_source value (e.g. "default_ruice"), or None if not found.
-        """
-        if not self._use_db:
-            return None
-        query = (
-            "SELECT init_source FROM swe_tenant_init_source "
-            "WHERE tenant_id = %s"
-        )
-        try:
-            row = await self.db.fetch_one(query, (tenant_id,))
-            return row["init_source"] if row else None
-        except Exception as e:
-            logger.warning(
-                f"Failed to query init_source for tenant " f"{tenant_id}: {e}",
-            )
-            return None
-
     async def get_or_create(
         self,
         tenant_id: str,
         source_id: str,
         init_source: str,
+        tenant_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ) -> str:
         """Get existing or create a new mapping record.
 
-        If the tenant already has a mapping record, returns the stored
-        init_source. Otherwise, creates a new record and returns the
-        provided init_source.
+        Each (tenant_id, source_id) combination is unique. If the
+        combination already exists, returns the stored init_source.
+        Otherwise, creates a new record and returns the provided
+        init_source.
 
         Args:
             tenant_id: The tenant identifier.
             source_id: The source identifier from X-Source-Id header.
             init_source: The template directory name used for initialization.
+            tenant_name: The tenant/user name (optional).
+            bbk_id: The BBK identifier (optional).
 
         Returns:
-            The init_source value for this tenant.
+            The init_source value for this tenant-source combination.
         """
-        existing = await self.get_init_source(tenant_id)
-        if existing:
-            return existing
-
         if self._use_db:
             query = (
+                "SELECT init_source FROM swe_tenant_init_source "
+                "WHERE tenant_id = %s AND source_id = %s"
+            )
+            try:
+                row = await self.db.fetch_one(query, (tenant_id, source_id))
+                if row:
+                    return row["init_source"]
+            except Exception as e:
+                logger.warning(
+                    f"Failed to query init_source for tenant "
+                    f"{tenant_id}: {e}",
+                )
+                return init_source
+
+            insert_query = (
                 "INSERT INTO swe_tenant_init_source "
-                "(tenant_id, source_id, init_source) "
-                "VALUES (%s, %s, %s)"
+                "(tenant_id, source_id, tenant_name, bbk_id, init_source) "
+                "VALUES (%s, %s, %s, %s, %s)"
             )
             try:
                 await self.db.execute(
-                    query,
-                    (tenant_id, source_id, init_source),
+                    insert_query,
+                    (tenant_id, source_id, tenant_name, bbk_id, init_source),
                 )
                 logger.info(
                     f"Created init_source mapping: tenant={tenant_id}, "
-                    f"source={source_id}, init_source={init_source}",
+                    f"source={source_id}, tenant_name={tenant_name}, "
+                    f"bbk_id={bbk_id}, init_source={init_source}",
                 )
             except Exception as e:
                 logger.warning(
@@ -110,6 +104,65 @@ class TenantInitSourceStore:
 
         return init_source
 
+    async def get_sources_for_tenant(self, tenant_id: str) -> list[dict]:
+        """Query all source records for a tenant.
+
+        Args:
+            tenant_id: The tenant identifier.
+
+        Returns:
+            List of dicts with source_id, tenant_name, bbk_id, init_source, created_at.
+        """
+        if not self._use_db:
+            return []
+        query = (
+            "SELECT source_id, tenant_name, bbk_id, init_source, created_at "
+            "FROM swe_tenant_init_source WHERE tenant_id = %s "
+            "ORDER BY created_at"
+        )
+        try:
+            rows = await self.db.fetch_all(query, (tenant_id,))
+            return list(rows)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query sources for tenant={tenant_id}: {e}",
+            )
+            return []
+
+    async def is_tenant_source(
+        self,
+        tenant_id: str,
+        expected_source_id: str,
+    ) -> bool:
+        """判断租户是否属于指定来源。
+
+        Args:
+            tenant_id: 租户标识。
+            expected_source_id: 期望的来源标识。
+
+        Returns:
+            如果租户在 swe_tenant_init_source 表中存在对应的 source_id 记录则返回 True。
+        """
+        if not self._use_db:
+            return False
+        query = (
+            "SELECT 1 FROM swe_tenant_init_source "
+            "WHERE tenant_id = %s AND source_id = %s LIMIT 1"
+        )
+        try:
+            row = await self.db.fetch_one(
+                query,
+                (tenant_id, expected_source_id),
+            )
+            return row is not None
+        except Exception as e:
+            logger.warning(
+                "Failed to check source for tenant=%s: %s",
+                tenant_id,
+                e,
+            )
+            return False
+
     async def get_by_source(self, source_id: str) -> list[dict]:
         """Query all tenants initialized from a given source.
 
@@ -117,12 +170,12 @@ class TenantInitSourceStore:
             source_id: The source identifier to filter by.
 
         Returns:
-            List of dicts with tenant_id, source_id, init_source, created_at.
+            List of dicts with tenant_id, source_id, tenant_name, bbk_id, init_source, created_at.
         """
         if not self._use_db:
             return []
         query = (
-            "SELECT tenant_id, source_id, init_source, created_at "
+            "SELECT tenant_id, source_id, tenant_name, bbk_id, init_source, created_at "
             "FROM swe_tenant_init_source WHERE source_id = %s "
             "ORDER BY created_at"
         )
@@ -161,7 +214,7 @@ class TenantInitSourceStore:
 
             offset = (page - 1) * page_size
             query = (
-                "SELECT tenant_id, source_id, init_source, created_at "
+                "SELECT tenant_id, source_id, tenant_name, bbk_id, init_source, created_at "
                 "FROM swe_tenant_init_source "
                 "ORDER BY created_at DESC LIMIT %s OFFSET %s"
             )
@@ -170,6 +223,104 @@ class TenantInitSourceStore:
         except Exception as e:
             logger.warning(f"Failed to query all init_source mappings: {e}")
             return [], 0
+
+    async def get_by_tenant_prefix(
+        self,
+        prefixes: list[str],
+    ) -> list[dict]:
+        """Query tenants whose tenant_id starts with given prefixes.
+
+        Args:
+            prefixes: List of prefixes to filter (e.g., ["80", "0", "IT"]).
+
+        Returns:
+            List of dicts with tenant_id, source_id, tenant_name, bbk_id.
+        """
+        if not self._use_db or not prefixes:
+            return []
+
+        # 构建 OR 条件
+        conditions = " OR ".join([f"tenant_id LIKE '{p}%'" for p in prefixes])
+        query = (
+            "SELECT tenant_id, source_id, tenant_name, bbk_id, init_source "
+            "FROM swe_tenant_init_source WHERE " + conditions
+        )
+        try:
+            rows = await self.db.fetch_all(query)
+            return list(rows)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query tenants by prefixes {prefixes}: {e}",
+            )
+            return []
+
+    async def update_tenant_info(
+        self,
+        tenant_id: str,
+        source_id: str,
+        tenant_name: str | None = None,
+        bbk_id: str | None = None,
+    ) -> bool:
+        """Update tenant_name and bbk_id for a tenant-source combination.
+
+        Args:
+            tenant_id: The tenant identifier.
+            source_id: The source identifier.
+            tenant_name: The tenant name to update (optional).
+            bbk_id: The BBK ID to update (optional).
+
+        Returns:
+            True if update succeeded, False otherwise.
+        """
+        if not self._use_db:
+            return False
+
+        try:
+            query = (
+                "UPDATE swe_tenant_init_source "
+                "SET tenant_name = %s, bbk_id = %s "
+                "WHERE tenant_id = %s AND source_id = %s"
+            )
+            await self.db.execute(
+                query,
+                (tenant_name, bbk_id, tenant_id, source_id),
+            )
+            logger.info(
+                f"Updated tenant info: tenant={tenant_id}, "
+                f"source={source_id}, tenant_name={tenant_name}, "
+                f"bbk_id={bbk_id}",
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"Failed to update tenant info for {tenant_id}: {e}",
+            )
+            return False
+
+    async def get_bbk_by_source(self, source_id: str) -> list[dict]:
+        """Query distinct bbk_ids for a given source.
+
+        Args:
+            source_id: The source identifier to filter by.
+
+        Returns:
+            List of dicts with bbk_id.
+        """
+        if not self._use_db:
+            return []
+        query = (
+            "SELECT DISTINCT bbk_id FROM swe_tenant_init_source "
+            "WHERE source_id = %s AND bbk_id IS NOT NULL AND bbk_id != '' "
+            "ORDER BY bbk_id"
+        )
+        try:
+            rows = await self.db.fetch_all(query, (source_id,))
+            return list(rows)
+        except Exception as e:
+            logger.warning(
+                f"Failed to query bbk_ids by source_id={source_id}: {e}",
+            )
+            return []
 
 
 def init_tenant_init_source_module(db=None) -> None:
@@ -199,3 +350,24 @@ def get_tenant_init_source_store() -> Optional["TenantInitSourceStore"]:
         The store instance, or None if not initialized.
     """
     return _store
+
+
+async def is_tenant_source(
+    tenant_id: str,
+    expected_source_id: str,
+) -> bool:
+    """判断租户是否属于指定来源的便捷函数。
+
+    内部调用 TenantInitSourceStore.is_tenant_source，store 为 None 时返回 False。
+
+    Args:
+        tenant_id: 租户标识。
+        expected_source_id: 期望的来源标识。
+
+    Returns:
+        如果租户在 swe_tenant_init_source 表中存在对应的 source_id 记录则返回 True。
+    """
+    store = get_tenant_init_source_store()
+    if store is None:
+        return False
+    return await store.is_tenant_source(tenant_id, expected_source_id)

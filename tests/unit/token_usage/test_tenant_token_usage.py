@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Token usage tenant isolation regression tests."""
+
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +29,7 @@ def test_token_usage_manager_uses_tenant_workspace_path(tmp_path):
                 prompt_tokens=3,
                 completion_tokens=4,
                 at_date=date(2026, 4, 2),
-            )
+            ),
         )
 
     assert scoped_manager._path == tenant_workspace / "token_usage.json"
@@ -54,7 +55,7 @@ def test_token_usage_manager_migrates_legacy_empty_list_file(tmp_path):
                 prompt_tokens=5,
                 completion_tokens=7,
                 at_date=date(2026, 4, 8),
-            )
+            ),
         )
 
     stored = (tenant_workspace / "token_usage.json").read_text(

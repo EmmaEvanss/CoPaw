@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Runner module with chat manager for coordinating repository."""
+
 from __future__ import annotations
 
 from .runner import AgentRunner
@@ -14,7 +15,6 @@ from .repo import (
     BaseChatRepository,
     JsonChatRepository,
 )
-
 
 __all__ = [
     # Core classes

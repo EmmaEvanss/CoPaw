@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=too-many-public-methods
 """Trace store module.
 
 Provides database storage operations for traces and spans.
 """
+
 import json
 import logging
 from datetime import datetime, timedelta
@@ -35,6 +37,9 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 需要从统计中排除的 source_id（测试平台等）
+EXCLUDED_SOURCE_IDS = ["default"]
 
 
 def _matches_trace_filters(
@@ -118,17 +123,18 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_traces (
-                trace_id, source_id, user_id, session_id, channel, start_time,
+                trace_id, source_id, user_id, session_id, session_name, channel, start_time,
                 end_time, duration_ms, model_name, total_input_tokens,
                 total_output_tokens, total_tokens, tools_used, skills_used,
-                status, error, user_message
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                status, error, user_message, user_name, bbk_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             trace.trace_id,
             trace.source_id,
             trace.user_id,
             trace.session_id,
+            trace.session_name,
             trace.channel,
             trace.start_time,
             trace.end_time,
@@ -139,11 +145,15 @@ class TraceStore:
             trace.total_input_tokens + trace.total_output_tokens,
             json.dumps(trace.tools_used),
             json.dumps(trace.skills_used),
-            trace.status.value
-            if isinstance(trace.status, TraceStatus)
-            else trace.status,
+            (
+                trace.status.value
+                if isinstance(trace.status, TraceStatus)
+                else trace.status
+            ),
             trace.error,
             trace.user_message,
+            trace.user_name,
+            trace.bbk_id,
         )
         await self.db.execute(query, params)
 
@@ -179,9 +189,11 @@ class TraceStore:
             trace.total_input_tokens + trace.total_output_tokens,
             json.dumps(trace.tools_used),
             json.dumps(trace.skills_used),
-            trace.status.value
-            if isinstance(trace.status, TraceStatus)
-            else trace.status,
+            (
+                trace.status.value
+                if isinstance(trace.status, TraceStatus)
+                else trace.status
+            ),
             trace.error,
             trace.trace_id,
         )
@@ -217,6 +229,98 @@ class TraceStore:
             return None
         return self._row_to_trace(row)
 
+    async def has_session_name(
+        self,
+        session_id: str,
+        source_id: Optional[str] = None,
+    ) -> bool:
+        """Check if a session already has session_name.
+
+        Args:
+            session_id: Session identifier
+            source_id: Optional source identifier for data isolation
+
+        Returns:
+            True if the session has existing session_name
+        """
+        if self.db is None:
+            return False
+
+        if source_id:
+            query = (
+                "SELECT COUNT(*) as count FROM swe_tracing_traces "
+                "WHERE session_id = %s AND source_id = %s AND session_name IS NOT NULL"
+            )
+            row = await self.db.fetch_one(query, (session_id, source_id))
+        else:
+            query = (
+                "SELECT COUNT(*) as count FROM swe_tracing_traces "
+                "WHERE session_id = %s AND session_name IS NOT NULL"
+            )
+            row = await self.db.fetch_one(query, (session_id,))
+        return row is not None and row.get("count", 0) > 0
+
+    async def has_session_traces(
+        self,
+        session_id: str,
+        source_id: Optional[str] = None,
+    ) -> bool:
+        """Check if a session already has trace records.
+
+        Args:
+            session_id: Session identifier
+            source_id: Optional source identifier for data isolation
+
+        Returns:
+            True if the session has existing traces
+        """
+        if self.db is None:
+            return False
+
+        if source_id:
+            query = (
+                "SELECT COUNT(*) as count FROM swe_tracing_traces "
+                "WHERE session_id = %s AND source_id = %s"
+            )
+            row = await self.db.fetch_one(query, (session_id, source_id))
+        else:
+            query = "SELECT COUNT(*) as count FROM swe_tracing_traces WHERE session_id = %s"
+            row = await self.db.fetch_one(query, (session_id,))
+        return row is not None and row.get("count", 0) > 0
+
+    async def get_session_first_message(
+        self,
+        session_id: str,
+        source_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Get the first trace's user_message of a session.
+
+        Args:
+            session_id: Session identifier
+            source_id: Optional source identifier for data isolation
+
+        Returns:
+            The first user_message or None
+        """
+        if self.db is None:
+            return None
+
+        if source_id:
+            query = (
+                "SELECT user_message FROM swe_tracing_traces "
+                "WHERE session_id = %s AND source_id = %s AND user_message IS NOT NULL "
+                "ORDER BY start_time ASC LIMIT 1"
+            )
+            row = await self.db.fetch_one(query, (session_id, source_id))
+        else:
+            query = (
+                "SELECT user_message FROM swe_tracing_traces "
+                "WHERE session_id = %s AND user_message IS NOT NULL "
+                "ORDER BY start_time ASC LIMIT 1"
+            )
+            row = await self.db.fetch_one(query, (session_id,))
+        return row.get("user_message") if row else None
+
     # Span operations
 
     async def create_span(self, span: Span) -> None:
@@ -230,21 +334,22 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_spans (
-                span_id, trace_id, source_id, parent_span_id, name, event_type,
+                span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error, metadata
+                tool_input, tool_output, error, user_name, bbk_id
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             span.span_id,
             span.trace_id,
             span.source_id,
-            span.parent_span_id,
             span.name,
-            span.event_type.value
-            if isinstance(span.event_type, EventType)
-            else span.event_type,
+            (
+                span.event_type.value
+                if isinstance(span.event_type, EventType)
+                else span.event_type
+            ),
             span.start_time,
             span.end_time,
             span.duration_ms,
@@ -260,7 +365,8 @@ class TraceStore:
             json.dumps(span.tool_input) if span.tool_input else None,
             span.tool_output,
             span.error,
-            json.dumps(span.metadata) if span.metadata else None,
+            span.user_name,
+            span.bbk_id,
         )
         await self.db.execute(query, params)
 
@@ -281,7 +387,6 @@ class TraceStore:
                 output_tokens = %s,
                 tool_output = %s,
                 error = %s,
-                metadata = %s,
                 event_type = %s
             WHERE span_id = %s
         """
@@ -292,10 +397,11 @@ class TraceStore:
             span.output_tokens,
             span.tool_output,
             span.error,
-            json.dumps(span.metadata) if span.metadata else None,
-            span.event_type.value
-            if hasattr(span.event_type, "value")
-            else span.event_type,
+            (
+                span.event_type.value
+                if hasattr(span.event_type, "value")
+                else span.event_type
+            ),
             span.span_id,
         )
         await self.db.execute(query, params)
@@ -332,10 +438,10 @@ class TraceStore:
 
         query = """
             INSERT INTO swe_tracing_spans (
-                span_id, trace_id, source_id, parent_span_id, name, event_type,
+                span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
                 model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
-                tool_input, tool_output, error, metadata
+                tool_input, tool_output, error, user_name, bbk_id
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params_list = []
@@ -345,11 +451,12 @@ class TraceStore:
                     span.span_id,
                     span.trace_id,
                     span.source_id,
-                    span.parent_span_id,
                     span.name,
-                    span.event_type.value
-                    if isinstance(span.event_type, EventType)
-                    else span.event_type,
+                    (
+                        span.event_type.value
+                        if isinstance(span.event_type, EventType)
+                        else span.event_type
+                    ),
                     span.start_time,
                     span.end_time,
                     span.duration_ms,
@@ -365,7 +472,8 @@ class TraceStore:
                     json.dumps(span.tool_input) if span.tool_input else None,
                     span.tool_output,
                     span.error,
-                    json.dumps(span.metadata) if span.metadata else None,
+                    span.user_name,
+                    span.bbk_id,
                 ),
             )
         await self.db.execute_many(query, params_list)
@@ -393,12 +501,12 @@ class TraceStore:
             total_tokens=token_row["total_tokens"] or 0 if token_row else 0,
             input_tokens=token_row["input_tokens"] or 0 if token_row else 0,
             output_tokens=token_row["output_tokens"] or 0 if token_row else 0,
-            total_sessions=token_row["total_sessions"] or 0
-            if token_row
-            else 0,
-            total_conversations=token_row["total_traces"] or 0
-            if token_row
-            else 0,
+            total_sessions=(
+                token_row["total_sessions"] or 0 if token_row else 0
+            ),
+            total_conversations=(
+                token_row["total_traces"] or 0 if token_row else 0
+            ),
             avg_duration_ms=(
                 int(token_row["avg_duration"] or 0)
                 if token_row and token_row["avg_duration"]
@@ -486,6 +594,328 @@ class TraceStore:
             mcp_servers,
         )
 
+    async def get_channel_distribution(
+        self,
+        source_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        """Get channel (platform) distribution statistics by source_id.
+
+        Args:
+            source_id: Source identifier (required) - if "all", returns distribution across all sources
+            start_date: Start date filter
+            end_date: End date filter
+
+        Returns:
+            Dict with platformUserDistribution, platformCallDistribution, totalPlatforms
+        """
+        if self.db is None or not self.db.is_connected:
+            logger.error("Database not connected in get_channel_distribution")
+            return {
+                "platformUserDistribution": [],
+                "platformCallDistribution": [],
+                "totalPlatforms": 0,
+            }
+
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        # If source_id is "all", get distribution across all sources
+        if source_id == "all":
+            # 排除测试平台和测试用户
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT
+                    source_id,
+                    COUNT(DISTINCT user_id) as user_count,
+                    COUNT(*) as call_count,
+                    SUM(total_tokens) as token_count
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s
+                  AND source_id IS NOT NULL AND source_id != ''
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY source_id
+                ORDER BY call_count DESC
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            # 特定平台也需要排除测试用户
+            query = """
+                SELECT
+                    source_id,
+                    COUNT(DISTINCT user_id) as user_count,
+                    COUNT(*) as call_count,
+                    SUM(total_tokens) as token_count
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
+                GROUP BY source_id
+                ORDER BY call_count DESC
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
+
+        platform_user_dist = []
+        platform_call_dist = []
+        sources = []
+
+        for row in rows:
+            src_id = row["source_id"]
+            sources.append(src_id)
+            platform_user_dist.append(
+                {
+                    "name": src_id,
+                    "value": row["user_count"] or 0,
+                },
+            )
+            platform_call_dist.append(
+                {
+                    "name": src_id,
+                    "value": row["call_count"] or 0,
+                },
+            )
+
+        return {
+            "platformUserDistribution": platform_user_dist,
+            "platformCallDistribution": platform_call_dist,
+            "totalPlatforms": len(sources),
+        }
+
+    async def get_sources(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> list[str]:
+        """Get list of all distinct source_ids.
+
+        Args:
+            start_date: Optional start date filter
+            end_date: Optional end date filter
+
+        Returns:
+            List of source_id strings (excluding test platforms)
+        """
+        if self.db is None or not self.db.is_connected:
+            logger.error("Database not connected in get_sources")
+            return []
+
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        # 构建排除测试平台的条件
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+
+        query = f"""
+            SELECT DISTINCT source_id
+            FROM swe_tracing_traces
+            WHERE start_time >= %s AND start_time <= %s
+              AND source_id IS NOT NULL AND source_id != ''
+              AND source_id NOT IN ({exclude_placeholders})
+            ORDER BY source_id
+        """
+        rows = await self.db.fetch_all(
+            query,
+            (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+        )
+        return [row["source_id"] for row in rows]
+
+    async def get_growth_stats(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        time_range: str = "day",
+    ) -> dict[str, Any]:
+        """Get growth statistics compared to previous period.
+
+        Args:
+            source_id: Source identifier (use 'all' for all platforms)
+            start_date: Start date of current period
+            end_date: End date of current period
+            time_range: day/week/month/custom (used to calculate previous period)
+
+        Returns:
+            Dict with callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth
+        """
+        if self.db is None or not self.db.is_connected:
+            logger.error("Database not connected in get_growth_stats")
+            return {
+                "callsGrowth": 0,
+                "tokensGrowth": 0,
+                "sessionGrowth": 0,
+                "userGrowth": 0,
+                "platformGrowth": 0,
+                "avgDurationGrowth": 0,
+            }
+
+        # Calculate previous period based on time_range
+        period_days = 1
+        if time_range == "week":
+            period_days = 7
+        elif time_range == "month":
+            period_days = 30
+        elif time_range == "custom":
+            period_days = (end_date - start_date).days
+
+        prev_start = start_date - timedelta(days=period_days)
+        prev_end = start_date - timedelta(seconds=1)
+
+        async def get_stats(s: datetime, e: datetime) -> dict:
+            if source_id == "all":
+                # 排除测试平台，与 get_overview_stats 保持一致
+                exclude_placeholders = ", ".join(
+                    ["%s"] * len(EXCLUDED_SOURCE_IDS),
+                )
+                query = f"""
+                    SELECT
+                        COUNT(*) as calls,
+                        COALESCE(SUM(total_tokens), 0) as tokens,
+                        COUNT(DISTINCT session_id) as sessions,
+                        COUNT(DISTINCT user_id) as users,
+                        COUNT(DISTINCT source_id) as platforms,
+                        AVG(duration_ms) as avg_duration
+                    FROM swe_tracing_traces
+                    WHERE start_time >= %s AND start_time <= %s
+                      AND source_id NOT IN ({exclude_placeholders})
+                      AND user_id != 'default'
+                """
+                row = await self.db.fetch_one(
+                    query,
+                    (s, e, *EXCLUDED_SOURCE_IDS),
+                )
+            else:
+                query = """
+                    SELECT
+                        COUNT(*) as calls,
+                        COALESCE(SUM(total_tokens), 0) as tokens,
+                        COUNT(DISTINCT session_id) as sessions,
+                        COUNT(DISTINCT user_id) as users,
+                        COUNT(DISTINCT channel) as platforms,
+                        AVG(duration_ms) as avg_duration
+                    FROM swe_tracing_traces
+                    WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                      AND user_id != 'default'
+                """
+                row = await self.db.fetch_one(query, (source_id, s, e))
+            stats_row = row or {}
+            return {
+                "calls": stats_row.get("calls") or 0,
+                "tokens": stats_row.get("tokens") or 0,
+                "sessions": stats_row.get("sessions") or 0,
+                "users": stats_row.get("users") or 0,
+                "platforms": stats_row.get("platforms") or 0,
+                "avg_duration": float(stats_row.get("avg_duration") or 0),
+            }
+
+        curr = await get_stats(start_date, end_date)
+        prev = await get_stats(prev_start, prev_end)
+
+        def calc_growth(curr_val: float, prev_val: float) -> float:
+            if prev_val == 0:
+                return 100.0 if curr_val > 0 else 0.0
+            return round(((curr_val - prev_val) / prev_val) * 100, 1)
+
+        return {
+            "callsGrowth": calc_growth(curr["calls"], prev["calls"]),
+            "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),
+            "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),
+            "userGrowth": calc_growth(curr["users"], prev["users"]),
+            "platformGrowth": calc_growth(
+                curr["platforms"],
+                prev["platforms"],
+            ),
+            "avgDurationGrowth": calc_growth(
+                curr["avg_duration"],
+                prev["avg_duration"],
+            ),
+        }
+
+    async def get_daily_trend(
+        self,
+        source_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
+        """Get daily trend data for the specified period.
+
+        Args:
+            source_id: Source identifier (use 'all' to get data across all sources)
+            start_date: Start date filter
+            end_date: End date filter
+
+        Returns:
+            List of { date, calls, tokens, users }
+        """
+        if self.db is None or not self.db.is_connected:
+            logger.error("Database not connected in get_daily_trend")
+            return []
+
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        # If source_id is "all", get trend data across all sources
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT
+                    DATE(start_time) as date,
+                    COUNT(*) as calls,
+                    COALESCE(SUM(total_tokens), 0) as tokens,
+                    COUNT(DISTINCT user_id) as users
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY DATE(start_time)
+                ORDER BY date
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT
+                    DATE(start_time) as date,
+                    COUNT(*) as calls,
+                    COALESCE(SUM(total_tokens), 0) as tokens,
+                    COUNT(DISTINCT user_id) as users
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
+                GROUP BY DATE(start_time)
+                ORDER BY date
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
+
+        return [
+            {
+                "date": (
+                    row["date"].strftime("%Y-%m-%d") if row["date"] else ""
+                ),
+                "calls": row["calls"] or 0,
+                "tokens": row["tokens"] or 0,
+                "users": row["users"] or 0,
+            }
+            for row in rows
+        ]
+
     async def get_users(
         self,
         source_id: str,
@@ -494,22 +924,43 @@ class TraceStore:
         user_id: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        sort_by: Optional[str] = None,
     ) -> tuple[list[UserListItem], int]:
         """Get list of users with stats.
 
         Args:
-            source_id: Source identifier (required)
+            source_id: Source identifier (use 'all' for all platforms)
             page: Page number
             page_size: Page size
             user_id: Filter by user ID
             start_date: Filter by start date
             end_date: Filter by end date
+            sort_by: Sort by field (conversations, last_active)
 
         Returns:
             Tuple of (users list, total count)
         """
-        where_clauses: list[str] = ["source_id = %s"]
-        params: list[Any] = [source_id]
+        # 确定排序字段
+        order_by = "last_active DESC"
+        if sort_by == "conversations":
+            order_by = "total_conversations DESC"
+        elif sort_by == "last_active":
+            order_by = "last_active DESC"
+        # Build where clauses based on source_id
+        if source_id == "all":
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            where_clauses: list[str] = [
+                f"source_id NOT IN ({exclude_placeholders})",
+            ]
+            params: list[Any] = list(EXCLUDED_SOURCE_IDS)
+        else:
+            where_clauses = ["source_id = %s"]
+            params = [source_id]
+
+        # 排除测试用户
+        where_clauses.append("user_id != 'default'")
+
         if user_id:
             where_clauses.append("user_id LIKE %s")
             params.append(f"%{user_id}%")
@@ -520,7 +971,7 @@ class TraceStore:
             where_clauses.append("start_time <= %s")
             params.append(end_date)
 
-        where_sql = " AND ".join(where_clauses)
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
         # Get total count
         count_query = f"""
@@ -532,30 +983,70 @@ class TraceStore:
         total = count_row["total"] if count_row else 0
 
         # Get users with skill counts from spans
+        # 同时获取 user_name 和 bbk_id（取最近一条有值的记录）
         offset = (page - 1) * page_size
-        query = f"""
-            SELECT t.user_id,
-                   COUNT(DISTINCT t.session_id) as total_sessions,
-                   COUNT(*) as total_conversations,
-                   SUM(t.total_tokens) as total_tokens,
-                   MAX(t.start_time) as last_active,
-                   (SELECT COUNT(*) FROM swe_tracing_spans s
-                    WHERE s.source_id = %s
-                    AND s.trace_id IN (
-                        SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id AND source_id = %s
-                    )
-                    AND s.event_type = 'skill_invocation') as total_skills
-            FROM swe_tracing_traces t
-            WHERE {where_sql}
-            GROUP BY t.user_id
-            ORDER BY last_active DESC
-            LIMIT %s OFFSET %s
-        """
-        params.extend([source_id, source_id, page_size, offset])
+        if source_id == "all":
+            query = f"""
+                SELECT t.user_id,
+                       COUNT(DISTINCT t.session_id) as total_sessions,
+                       COUNT(*) as total_conversations,
+                       SUM(t.total_tokens) as total_tokens,
+                       MAX(t.start_time) as last_active,
+                       (SELECT COUNT(*) FROM swe_tracing_spans s
+                        WHERE s.trace_id IN (
+                            SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id
+                        )
+                        AND s.event_type = 'skill_invocation') as total_skills,
+                       (SELECT user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                GROUP BY t.user_id
+                ORDER BY {order_by}
+                LIMIT %s OFFSET %s
+            """
+            params.extend([page_size, offset])
+        else:
+            query = f"""
+                SELECT t.user_id,
+                       COUNT(DISTINCT t.session_id) as total_sessions,
+                       COUNT(*) as total_conversations,
+                       SUM(t.total_tokens) as total_tokens,
+                       MAX(t.start_time) as last_active,
+                       (SELECT COUNT(*) FROM swe_tracing_spans s
+                        WHERE s.source_id = %s
+                        AND s.trace_id IN (
+                            SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id AND source_id = %s
+                        )
+                        AND s.event_type = 'skill_invocation') as total_skills,
+                       (SELECT user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.source_id = %s AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                GROUP BY t.user_id
+                ORDER BY {order_by}
+                LIMIT %s OFFSET %s
+            """
+            # 子查询参数在前，然后是 WHERE 子句参数，最后是 LIMIT/OFFSET
+            params = (
+                [source_id, source_id, source_id, source_id]
+                + params
+                + [page_size, offset]
+            )
         rows = await self.db.fetch_all(query, tuple(params))
         users = [
             UserListItem(
                 user_id=row["user_id"],
+                user_name=row["user_name"],
+                bbk_id=row["bbk_id"],
                 total_sessions=row["total_sessions"] or 0,
                 total_conversations=row["total_conversations"] or 0,
                 total_tokens=row["total_tokens"] or 0,
@@ -574,21 +1065,40 @@ class TraceStore:
         end_date: datetime,
     ) -> list[ModelUsage]:
         """Get model usage for a user."""
-        model_query = """
-            SELECT model_name, COUNT(*) as count,
-                   SUM(total_input_tokens) as input_tokens,
-                   SUM(total_output_tokens) as output_tokens,
-                   SUM(total_tokens) as total_tokens
-            FROM swe_tracing_traces
-            WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
-                  AND model_name IS NOT NULL
-            GROUP BY model_name
-            ORDER BY count DESC
-        """
-        model_rows = await self.db.fetch_all(
-            model_query,
-            (source_id, user_id, start_date, end_date),
-        )
+        if self.db is None or not self.db.is_connected:
+            return []
+        if source_id == "all":
+            model_query = """
+                SELECT model_name, COUNT(*) as count,
+                       SUM(total_input_tokens) as input_tokens,
+                       SUM(total_output_tokens) as output_tokens,
+                       SUM(total_tokens) as total_tokens
+                FROM swe_tracing_traces
+                WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+                      AND model_name IS NOT NULL
+                GROUP BY model_name
+                ORDER BY count DESC
+            """
+            model_rows = await self.db.fetch_all(
+                model_query,
+                (user_id, start_date, end_date),
+            )
+        else:
+            model_query = """
+                SELECT model_name, COUNT(*) as count,
+                       SUM(total_input_tokens) as input_tokens,
+                       SUM(total_output_tokens) as output_tokens,
+                       SUM(total_tokens) as total_tokens
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
+                      AND model_name IS NOT NULL
+                GROUP BY model_name
+                ORDER BY count DESC
+            """
+            model_rows = await self.db.fetch_all(
+                model_query,
+                (source_id, user_id, start_date, end_date),
+            )
         return [
             ModelUsage(
                 model_name=row["model_name"],
@@ -608,21 +1118,40 @@ class TraceStore:
         end_date: datetime,
     ) -> list[ToolUsage]:
         """Get tool usage for a user."""
-        tool_query = """
-            SELECT tool_name, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration,
-                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'tool_call_end'
-              AND tool_name IS NOT NULL
-            GROUP BY tool_name
-            ORDER BY count DESC
-        """
-        tool_rows = await self.db.fetch_all(
-            tool_query,
-            (source_id, user_id, start_date, end_date),
-        )
+        if self.db is None or not self.db.is_connected:
+            return []
+        if source_id == "all":
+            tool_query = """
+                SELECT tool_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND tool_name IS NOT NULL
+                GROUP BY tool_name
+                ORDER BY count DESC
+            """
+            tool_rows = await self.db.fetch_all(
+                tool_query,
+                (user_id, start_date, end_date),
+            )
+        else:
+            tool_query = """
+                SELECT tool_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND tool_name IS NOT NULL
+                GROUP BY tool_name
+                ORDER BY count DESC
+            """
+            tool_rows = await self.db.fetch_all(
+                tool_query,
+                (source_id, user_id, start_date, end_date),
+            )
         return [
             ToolUsage(
                 tool_name=row["tool_name"],
@@ -641,20 +1170,38 @@ class TraceStore:
         end_date: datetime,
     ) -> list[SkillUsage]:
         """Get skill usage for a user."""
-        skill_query = """
-            SELECT skill_name, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'skill_invocation'
-              AND skill_name IS NOT NULL
-            GROUP BY skill_name
-            ORDER BY count DESC
-        """
-        skill_rows = await self.db.fetch_all(
-            skill_query,
-            (source_id, user_id, start_date, end_date),
-        )
+        if self.db is None or not self.db.is_connected:
+            return []
+        if source_id == "all":
+            skill_query = """
+                SELECT skill_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration
+                FROM swe_tracing_spans
+                WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'skill_invocation'
+                  AND skill_name IS NOT NULL
+                GROUP BY skill_name
+                ORDER BY count DESC
+            """
+            skill_rows = await self.db.fetch_all(
+                skill_query,
+                (user_id, start_date, end_date),
+            )
+        else:
+            skill_query = """
+                SELECT skill_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'skill_invocation'
+                  AND skill_name IS NOT NULL
+                GROUP BY skill_name
+                ORDER BY count DESC
+            """
+            skill_rows = await self.db.fetch_all(
+                skill_query,
+                (source_id, user_id, start_date, end_date),
+            )
         return [
             SkillUsage(
                 skill_name=row["skill_name"],
@@ -676,16 +1223,18 @@ class TraceStore:
         return UserStats(
             user_id=user_id,
             model_usage=model_usage,
-            total_tokens=stats_row["total_tokens"] if stats_row else 0,
-            input_tokens=stats_row["input_tokens"] if stats_row else 0,
-            output_tokens=stats_row["output_tokens"] if stats_row else 0,
-            total_sessions=stats_row["total_sessions"] if stats_row else 0,
-            total_conversations=stats_row["total_conversations"]
-            if stats_row
-            else 0,
-            avg_duration_ms=int(stats_row["avg_duration"] or 0)
-            if stats_row
-            else 0,
+            total_tokens=stats_row["total_tokens"] or 0 if stats_row else 0,
+            input_tokens=stats_row["input_tokens"] or 0 if stats_row else 0,
+            output_tokens=stats_row["output_tokens"] or 0 if stats_row else 0,
+            total_sessions=(
+                stats_row["total_sessions"] or 0 if stats_row else 0
+            ),
+            total_conversations=(
+                stats_row["total_conversations"] or 0 if stats_row else 0
+            ),
+            avg_duration_ms=(
+                int(stats_row["avg_duration"] or 0) if stats_row else 0
+            ),
             tools_used=tools_used,
             skills_used=skills_used,
         )
@@ -700,7 +1249,7 @@ class TraceStore:
         """Get statistics for a specific user.
 
         Args:
-            source_id: Source identifier (required)
+            source_id: Source identifier (use 'all' for all platforms)
             user_id: User identifier
             start_date: Start date filter
             end_date: End date filter
@@ -708,27 +1257,48 @@ class TraceStore:
         Returns:
             User statistics
         """
+        if self.db is None or not self.db.is_connected:
+            logger.error("Database not connected in get_user_stats")
+            return UserStats(user_id=user_id)
+
         if start_date is None:
             start_date = datetime.now() - timedelta(days=30)
         if end_date is None:
             end_date = datetime.now()
 
-        # Get basic stats
-        stats_query = """
-            SELECT
-                COUNT(DISTINCT session_id) as total_sessions,
-                COUNT(*) as total_conversations,
-                SUM(total_input_tokens) as input_tokens,
-                SUM(total_output_tokens) as output_tokens,
-                SUM(total_tokens) as total_tokens,
-                AVG(duration_ms) as avg_duration
-            FROM swe_tracing_traces
-            WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
-        """
-        stats_row = await self.db.fetch_one(
-            stats_query,
-            (source_id, user_id, start_date, end_date),
-        )
+        # Get basic stats - support source_id = "all" for cross-platform queries
+        if source_id == "all":
+            stats_query = """
+                SELECT
+                    COUNT(DISTINCT session_id) as total_sessions,
+                    COUNT(*) as total_conversations,
+                    SUM(total_input_tokens) as input_tokens,
+                    SUM(total_output_tokens) as output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    AVG(duration_ms) as avg_duration
+                FROM swe_tracing_traces
+                WHERE user_id = %s AND start_time >= %s AND start_time <= %s
+            """
+            stats_row = await self.db.fetch_one(
+                stats_query,
+                (user_id, start_date, end_date),
+            )
+        else:
+            stats_query = """
+                SELECT
+                    COUNT(DISTINCT session_id) as total_sessions,
+                    COUNT(*) as total_conversations,
+                    SUM(total_input_tokens) as input_tokens,
+                    SUM(total_output_tokens) as output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    AVG(duration_ms) as avg_duration
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND user_id = %s AND start_time >= %s AND start_time <= %s
+            """
+            stats_row = await self.db.fetch_one(
+                stats_query,
+                (source_id, user_id, start_date, end_date),
+            )
 
         # Get usage data in parallel
         model_usage = await self._get_user_model_usage(
@@ -772,7 +1342,7 @@ class TraceStore:
         """Get list of traces.
 
         Args:
-            source_id: Source identifier (required)
+            source_id: Source identifier (use 'all' for all platforms)
             page: Page number
             page_size: Page size
             user_id: Filter by user ID
@@ -784,8 +1354,13 @@ class TraceStore:
         Returns:
             Tuple of (traces list, total count)
         """
-        where_clauses: list[str] = ["source_id = %s"]
-        params: list[Any] = [source_id]
+        # Build WHERE clauses based on source_id
+        if source_id == "all":
+            where_clauses: list[str] = []
+            params: list[Any] = []
+        else:
+            where_clauses = ["source_id = %s"]
+            params = [source_id]
 
         if user_id:
             where_clauses.append("user_id = %s")
@@ -803,7 +1378,7 @@ class TraceStore:
             where_clauses.append("start_time <= %s")
             params.append(end_date)
 
-        where_sql = " AND ".join(where_clauses)
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
         # Get total count
         count_query = f"SELECT COUNT(*) as total FROM swe_tracing_traces WHERE {where_sql}"
@@ -811,15 +1386,26 @@ class TraceStore:
         total = count_row["total"] if count_row else 0
 
         # Get traces
+        # 使用子查询获取用户名和机构，取最近一条有值的记录
         offset = (page - 1) * page_size
         query = f"""
-            SELECT trace_id, source_id, user_id, session_id, channel, start_time,
-                   duration_ms, total_tokens, total_input_tokens, total_output_tokens,
-                   model_name, status,
-                   JSON_LENGTH(skills_used) as skills_count
-            FROM swe_tracing_traces
+            SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.start_time,
+                   t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
+                   t.model_name, t.status,
+                   JSON_LENGTH(t.skills_used) as skills_count,
+                   COALESCE(t.user_name, (
+                       SELECT t2.user_name FROM swe_tracing_traces t2
+                       WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                       ORDER BY t2.start_time DESC LIMIT 1
+                   )) as user_name,
+                   COALESCE(t.bbk_id, (
+                       SELECT t3.bbk_id FROM swe_tracing_traces t3
+                       WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                       ORDER BY t3.start_time DESC LIMIT 1
+                   )) as bbk_id
+            FROM swe_tracing_traces t
             WHERE {where_sql}
-            ORDER BY start_time DESC
+            ORDER BY t.start_time DESC
             LIMIT %s OFFSET %s
         """
         params.extend([page_size, offset])
@@ -829,6 +1415,8 @@ class TraceStore:
                 trace_id=row["trace_id"],
                 source_id=row["source_id"],
                 user_id=row["user_id"],
+                user_name=row["user_name"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 start_time=row["start_time"],
@@ -977,9 +1565,9 @@ class TraceStore:
         spans = sorted(spans, key=lambda s: s.start_time)
 
         timeline: list[TimelineEvent] = []
-        skill_stack: list[
-            TimelineEvent
-        ] = []  # Track active skills for nesting
+        skill_stack: list[TimelineEvent] = (
+            []
+        )  # Track active skills for nesting
 
         for span in spans:
             if span.event_type == EventType.SKILL_INVOCATION:
@@ -991,16 +1579,8 @@ class TraceStore:
                     end_time=span.end_time,
                     duration_ms=span.duration_ms or 0,
                     skill_name=span.skill_name,
-                    confidence=(
-                        span.metadata.get("confidence", 1.0)
-                        if span.metadata
-                        else 1.0
-                    ),
-                    trigger_reason=(
-                        span.metadata.get("trigger_reason", "declared")
-                        if span.metadata
-                        else "declared"
-                    ),
+                    confidence=1.0,
+                    trigger_reason="declared",
                     children=[],
                 )
 
@@ -1110,16 +1690,8 @@ class TraceStore:
                     start_time=skill_span.start_time,
                     end_time=skill_span.end_time,
                     duration_ms=skill_span.duration_ms or 0,
-                    confidence=(
-                        skill_span.metadata.get("confidence", 1.0)
-                        if skill_span.metadata
-                        else 1.0
-                    ),
-                    trigger_reason=(
-                        skill_span.metadata.get("trigger_reason", "declared")
-                        if skill_span.metadata
-                        else "declared"
-                    ),
+                    confidence=1.0,
+                    trigger_reason="declared",
                     tools=tools,
                     total_tool_calls=len(tools),
                     tool_duration_ms=sum(t.duration_ms for t in tools),
@@ -1141,7 +1713,7 @@ class TraceStore:
         """Get list of sessions with stats.
 
         Args:
-            source_id: Source identifier (required)
+            source_id: Source identifier (use 'all' for all platforms)
             page: Page number
             page_size: Page size
             user_id: Filter by user ID
@@ -1152,8 +1724,13 @@ class TraceStore:
         Returns:
             Tuple of (sessions list, total count)
         """
-        where_clauses: list[str] = ["source_id = %s"]
-        params: list[Any] = [source_id]
+        # Build WHERE clauses based on source_id
+        if source_id == "all":
+            where_clauses: list[str] = []
+            params: list[Any] = []
+        else:
+            where_clauses = ["source_id = %s"]
+            params = [source_id]
 
         if user_id:
             where_clauses.append("user_id = %s")
@@ -1168,7 +1745,7 @@ class TraceStore:
             where_clauses.append("start_time <= %s")
             params.append(end_date)
 
-        where_sql = " AND ".join(where_clauses)
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
         # Get total count of unique sessions
         count_query = f"""
@@ -1180,31 +1757,97 @@ class TraceStore:
         total = count_row["total"] if count_row else 0
 
         # Get sessions with skill counts from spans
+        # 同时获取 user_name、bbk_id 和 session_name
+        # session_name 优先取已有值，若为空则从第一条消息的 user_message 中提取前10个字符
         offset = (page - 1) * page_size
-        query = f"""
-            SELECT t.session_id,
-                   t.user_id,
-                   t.channel,
-                   COUNT(*) as total_traces,
-                   SUM(t.total_tokens) as total_tokens,
-                   MIN(t.start_time) as first_active,
-                   MAX(t.start_time) as last_active,
-                   (SELECT COUNT(*) FROM swe_tracing_spans s
-                    WHERE s.source_id = %s
-                    AND s.session_id = t.session_id
-                    AND s.event_type = 'skill_invocation') as total_skills
-            FROM swe_tracing_traces t
-            WHERE {where_sql}
-            GROUP BY t.session_id, t.user_id, t.channel
-            ORDER BY last_active DESC
-            LIMIT %s OFFSET %s
-        """
-        params.extend([source_id, page_size, offset])
+        if source_id == "all":
+            query = f"""
+                SELECT t.session_id,
+                       t.user_id,
+                       t.channel,
+                       COUNT(*) as total_traces,
+                       SUM(t.total_tokens) as total_tokens,
+                       MIN(t.start_time) as first_active,
+                       MAX(t.start_time) as last_active,
+                       (SELECT COUNT(*) FROM swe_tracing_spans s
+                        WHERE s.session_id = t.session_id
+                        AND s.event_type = 'skill_invocation') as total_skills,
+                       (SELECT t2.user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT t3.bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       COALESCE(
+                           (SELECT t4.session_name FROM swe_tracing_traces t4
+                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                            ORDER BY t4.start_time ASC LIMIT 1),
+                           SUBSTRING(
+                               (SELECT t5.user_message FROM swe_tracing_traces t5
+                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
+                                ORDER BY t5.start_time ASC LIMIT 1),
+                               1, 10
+                           )
+                       ) as session_name
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                GROUP BY t.session_id, t.user_id, t.channel
+                ORDER BY last_active DESC
+                LIMIT %s OFFSET %s
+            """
+            params.extend([page_size, offset])
+        else:
+            query = f"""
+                SELECT t.session_id,
+                       t.user_id,
+                       t.channel,
+                       COUNT(*) as total_traces,
+                       SUM(t.total_tokens) as total_tokens,
+                       MIN(t.start_time) as first_active,
+                       MAX(t.start_time) as last_active,
+                       (SELECT COUNT(*) FROM swe_tracing_spans s
+                        WHERE s.source_id = %s
+                        AND s.session_id = t.session_id
+                        AND s.event_type = 'skill_invocation') as total_skills,
+                       (SELECT t2.user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.source_id = %s AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT t3.bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       COALESCE(
+                           (SELECT t4.session_name FROM swe_tracing_traces t4
+                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                            AND t4.source_id = %s
+                            ORDER BY t4.start_time ASC LIMIT 1),
+                           SUBSTRING(
+                               (SELECT t5.user_message FROM swe_tracing_traces t5
+                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
+                                AND t5.source_id = %s
+                                ORDER BY t5.start_time ASC LIMIT 1),
+                               1, 10
+                           )
+                       ) as session_name
+                FROM swe_tracing_traces t
+                WHERE {where_sql}
+                GROUP BY t.session_id, t.user_id, t.channel
+                ORDER BY last_active DESC
+                LIMIT %s OFFSET %s
+            """
+            # 子查询的 source_id 参数必须在最前面，因为 SQL 中子查询先出现
+            params = (
+                [source_id, source_id, source_id, source_id, source_id]
+                + params
+                + [page_size, offset]
+            )
         rows = await self.db.fetch_all(query, tuple(params))
         sessions = [
             SessionListItem(
                 session_id=row["session_id"],
+                session_name=row.get("session_name"),
                 user_id=row["user_id"],
+                user_name=row["user_name"],
+                bbk_id=row["bbk_id"],
                 channel=row["channel"],
                 total_traces=row["total_traces"] or 0,
                 total_tokens=row["total_tokens"] or 0,
@@ -1287,9 +1930,11 @@ class TraceStore:
             input_tokens=stats_row["input_tokens"] or 0,
             output_tokens=stats_row["output_tokens"] or 0,
             total_traces=stats_row["total_traces"] or 0,
-            avg_duration_ms=int(stats_row["avg_duration"] or 0)
-            if stats_row and stats_row["avg_duration"]
-            else 0,
+            avg_duration_ms=(
+                int(stats_row["avg_duration"] or 0)
+                if stats_row and stats_row["avg_duration"]
+                else 0
+            ),
             tools_used=tools_used,
             skills_used=skills_used,
             mcp_tools_used=mcp_tools_used,
@@ -1312,7 +1957,7 @@ class TraceStore:
         """Get user messages with token info for cost analysis.
 
         Args:
-            source_id: Source identifier (required)
+            source_id: Source identifier (use 'all' for all platforms)
             page: Page number
             page_size: Page size
             user_id: Filter by user ID
@@ -1330,12 +1975,20 @@ class TraceStore:
         if end_date is None:
             end_date = datetime.now()
 
-        where_clauses = [
-            "source_id = %s",
-            "start_time >= %s",
-            "start_time <= %s",
-        ]
-        params: list[Any] = [source_id, start_date, end_date]
+        # Build WHERE clauses based on source_id
+        if source_id == "all":
+            where_clauses = [
+                "start_time >= %s",
+                "start_time <= %s",
+            ]
+            params: list[Any] = [start_date, end_date]
+        else:
+            where_clauses = [
+                "source_id = %s",
+                "start_time >= %s",
+                "start_time <= %s",
+            ]
+            params = [source_id, start_date, end_date]
 
         if user_id:
             where_clauses.append("user_id = %s")
@@ -1355,25 +2008,46 @@ class TraceStore:
         total = count_row["total"] if count_row else 0
 
         # Get messages
+        # 同时获取 user_name 和 bbk_id
         if export:
             sql_query = f"""
-                SELECT trace_id, source_id, user_id, session_id, channel, user_message,
-                       total_input_tokens, total_output_tokens, model_name,
-                       start_time, duration_ms
-                FROM swe_tracing_traces
+                SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.user_message,
+                       t.total_input_tokens, t.total_output_tokens, t.model_name,
+                       t.start_time, t.duration_ms,
+                       COALESCE(t.user_name, (
+                           SELECT t2.user_name FROM swe_tracing_traces t2
+                           WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                           ORDER BY t2.start_time DESC LIMIT 1
+                       )) as user_name,
+                       COALESCE(t.bbk_id, (
+                           SELECT t3.bbk_id FROM swe_tracing_traces t3
+                           WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                           ORDER BY t3.start_time DESC LIMIT 1
+                       )) as bbk_id
+                FROM swe_tracing_traces t
                 WHERE {where_sql}
-                ORDER BY start_time DESC
+                ORDER BY t.start_time DESC
             """
             rows = await self.db.fetch_all(sql_query, tuple(params))
         else:
             offset = (page - 1) * page_size
             sql_query = f"""
-                SELECT trace_id, source_id, user_id, session_id, channel, user_message,
-                       total_input_tokens, total_output_tokens, model_name,
-                       start_time, duration_ms
-                FROM swe_tracing_traces
+                SELECT t.trace_id, t.source_id, t.user_id, t.session_id, t.channel, t.user_message,
+                       t.total_input_tokens, t.total_output_tokens, t.model_name,
+                       t.start_time, t.duration_ms,
+                       COALESCE(t.user_name, (
+                           SELECT t2.user_name FROM swe_tracing_traces t2
+                           WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                           ORDER BY t2.start_time DESC LIMIT 1
+                       )) as user_name,
+                       COALESCE(t.bbk_id, (
+                           SELECT t3.bbk_id FROM swe_tracing_traces t3
+                           WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                           ORDER BY t3.start_time DESC LIMIT 1
+                       )) as bbk_id
+                FROM swe_tracing_traces t
                 WHERE {where_sql}
-                ORDER BY start_time DESC
+                ORDER BY t.start_time DESC
                 LIMIT %s OFFSET %s
             """
             params.extend([page_size, offset])
@@ -1384,6 +2058,8 @@ class TraceStore:
                 trace_id=row["trace_id"],
                 source_id=row["source_id"],
                 user_id=row["user_id"],
+                user_name=row["user_name"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 user_message=row["user_message"],
@@ -1437,13 +2113,32 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> int:
-        """Get total users count."""
-        query = """
-            SELECT COUNT(DISTINCT user_id) as total_users
-            FROM swe_tracing_traces
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-        """
-        row = await self.db.fetch_one(query, (source_id, start_date, end_date))
+        """Get total users count (excluding test users)."""
+        if source_id == "all":
+            # 排除测试平台
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT COUNT(DISTINCT user_id) as total_users
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+            """
+            row = await self.db.fetch_one(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT COUNT(DISTINCT user_id) as total_users
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
+            """
+            row = await self.db.fetch_one(
+                query,
+                (source_id, start_date, end_date),
+            )
         result = row["total_users"] if row else 0
         return result
 
@@ -1456,13 +2151,24 @@ class TraceStore:
         Returns:
             Tuple of (count, list of user IDs)
         """
-        query = """
-            SELECT DISTINCT user_id
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND start_time >= %s AND user_id IS NOT NULL AND user_id != ''
-        """
         online_threshold = datetime.now() - timedelta(minutes=5)
-        rows = await self.db.fetch_all(query, (source_id, online_threshold))
+        if source_id == "all":
+            query = """
+                SELECT DISTINCT user_id
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND user_id IS NOT NULL AND user_id != ''
+            """
+            rows = await self.db.fetch_all(query, (online_threshold,))
+        else:
+            query = """
+                SELECT DISTINCT user_id
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND start_time >= %s AND user_id IS NOT NULL AND user_id != ''
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, online_threshold),
+            )
         user_ids = [row["user_id"] for row in rows if row["user_id"]]
         return len(user_ids), user_ids
 
@@ -1472,22 +2178,44 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> Optional[dict]:
-        """Get token statistics."""
-        query = """
-            SELECT
-                SUM(total_input_tokens) as input_tokens,
-                SUM(total_output_tokens) as output_tokens,
-                SUM(total_tokens) as total_tokens,
-                COUNT(*) as total_traces,
-                COUNT(DISTINCT session_id) as total_sessions,
-                AVG(duration_ms) as avg_duration
-            FROM swe_tracing_traces
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-        """
-        return await self.db.fetch_one(
-            query,
-            (source_id, start_date, end_date),
-        )
+        """Get token statistics (excluding test platforms and test users)."""
+        if source_id == "all":
+            # 排除测试平台和测试用户
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT
+                    SUM(total_input_tokens) as input_tokens,
+                    SUM(total_output_tokens) as output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    COUNT(*) as total_traces,
+                    COUNT(DISTINCT session_id) as total_sessions,
+                    AVG(duration_ms) as avg_duration
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+            """
+            return await self.db.fetch_one(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT
+                    SUM(total_input_tokens) as input_tokens,
+                    SUM(total_output_tokens) as output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    COUNT(*) as total_traces,
+                    COUNT(DISTINCT session_id) as total_sessions,
+                    AVG(duration_ms) as avg_duration
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
+            """
+            return await self.db.fetch_one(
+                query,
+                (source_id, start_date, end_date),
+            )
 
     async def _db_get_model_distribution(
         self,
@@ -1495,22 +2223,43 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> list[ModelUsage]:
-        """Get model distribution."""
-        query = """
-            SELECT model_name, COUNT(*) as count,
-                   SUM(total_input_tokens) as input_tokens,
-                   SUM(total_output_tokens) as output_tokens,
-                   SUM(total_tokens) as total_tokens
-            FROM swe_tracing_traces
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s AND model_name IS NOT NULL
-            GROUP BY model_name
-            ORDER BY count DESC
-            LIMIT 10
-        """
-        rows = await self.db.fetch_all(
-            query,
-            (source_id, start_date, end_date),
-        )
+        """Get model distribution (excluding test platforms and test users)."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT model_name, COUNT(*) as count,
+                       SUM(total_input_tokens) as input_tokens,
+                       SUM(total_output_tokens) as output_tokens,
+                       SUM(total_tokens) as total_tokens
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s AND model_name IS NOT NULL
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY model_name
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT model_name, COUNT(*) as count,
+                       SUM(total_input_tokens) as input_tokens,
+                       SUM(total_output_tokens) as output_tokens,
+                       SUM(total_tokens) as total_tokens
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s AND model_name IS NOT NULL
+                  AND user_id != 'default'
+                GROUP BY model_name
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             ModelUsage(
                 model_name=row["model_name"],
@@ -1528,24 +2277,47 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> list[ToolUsage]:
-        """Get top tools (non-MCP)."""
-        query = """
-            SELECT tool_name, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration,
-                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'tool_call_end'
-              AND tool_name IS NOT NULL
-              AND mcp_server IS NULL
-            GROUP BY tool_name
-            ORDER BY count DESC
-            LIMIT 10
-        """
-        rows = await self.db.fetch_all(
-            query,
-            (source_id, start_date, end_date),
-        )
+        """Get top tools (non-MCP) (excluding test platforms and test users)."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT tool_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND tool_name IS NOT NULL
+                  AND mcp_server IS NULL
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY tool_name
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT tool_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND tool_name IS NOT NULL
+                  AND mcp_server IS NULL
+                  AND user_id != 'default'
+                GROUP BY tool_name
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             ToolUsage(
                 tool_name=row["tool_name"],
@@ -1562,22 +2334,43 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> list[SkillUsage]:
-        """Get top skills."""
-        query = """
-            SELECT skill_name, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'skill_invocation'
-              AND skill_name IS NOT NULL
-            GROUP BY skill_name
-            ORDER BY count DESC
-            LIMIT 10
-        """
-        rows = await self.db.fetch_all(
-            query,
-            (source_id, start_date, end_date),
-        )
+        """Get top skills (excluding test platforms and test users)."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT skill_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time <= %s
+                  AND event_type = 'skill_invocation'
+                  AND skill_name IS NOT NULL
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY skill_name
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT skill_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'skill_invocation'
+                  AND skill_name IS NOT NULL
+                  AND user_id != 'default'
+                GROUP BY skill_name
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
         return [
             SkillUsage(
                 skill_name=row["skill_name"],
@@ -1592,7 +2385,7 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> list[SkillUsage]:
-        """Get top skills with usage counts.
+        """Get top skills with usage counts (excluding test platforms and test users).
 
         Args:
             start_date: Start date filter
@@ -1601,17 +2394,23 @@ class TraceStore:
         Returns:
             List of SkillUsage with counts
         """
-        query = """
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+        query = f"""
             SELECT skill_name, COUNT(*) as count, AVG(duration_ms) as avg_duration
             FROM swe_tracing_spans
             WHERE start_time >= %s AND start_time <= %s
               AND event_type = 'tool_call_end'
               AND skill_name IS NOT NULL
+              AND source_id NOT IN ({exclude_placeholders})
+              AND user_id != 'default'
             GROUP BY skill_name
             ORDER BY count DESC
             LIMIT 10
         """
-        rows = await self.db.fetch_all(query, (start_date, end_date))
+        rows = await self.db.fetch_all(
+            query,
+            (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+        )
 
         result = []
         for row in rows:
@@ -1668,24 +2467,46 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> tuple[list[MCPToolUsage], list[MCPServerUsage]]:
-        """Get MCP tools and server statistics."""
+        """Get MCP tools and server statistics (excluding test platforms and test users)."""
         # Get top MCP tools
-        mcp_tool_query = """
-            SELECT tool_name, mcp_server, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration,
-                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'tool_call_end'
-              AND mcp_server IS NOT NULL
-            GROUP BY tool_name, mcp_server
-            ORDER BY count DESC
-            LIMIT 10
-        """
-        mcp_tool_rows = await self.db.fetch_all(
-            mcp_tool_query,
-            (source_id, start_date, end_date),
-        )
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            mcp_tool_query = f"""
+                SELECT tool_name, mcp_server, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server IS NOT NULL
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY tool_name, mcp_server
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            mcp_tool_rows = await self.db.fetch_all(
+                mcp_tool_query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            mcp_tool_query = """
+                SELECT tool_name, mcp_server, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server IS NOT NULL
+                  AND user_id != 'default'
+                GROUP BY tool_name, mcp_server
+                ORDER BY count DESC
+                LIMIT 10
+            """
+            mcp_tool_rows = await self.db.fetch_all(
+                mcp_tool_query,
+                (source_id, start_date, end_date),
+            )
         top_mcp_tools = [
             MCPToolUsage(
                 tool_name=row["tool_name"],
@@ -1712,24 +2533,47 @@ class TraceStore:
         start_date: datetime,
         end_date: datetime,
     ) -> list[MCPServerUsage]:
-        """Get MCP server statistics with tools."""
-        query = """
-            SELECT mcp_server,
-                   COUNT(DISTINCT tool_name) as tool_count,
-                   COUNT(*) as total_calls,
-                   AVG(duration_ms) as avg_duration,
-                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'tool_call_end'
-              AND mcp_server IS NOT NULL
-            GROUP BY mcp_server
-            ORDER BY total_calls DESC
-        """
-        server_rows = await self.db.fetch_all(
-            query,
-            (source_id, start_date, end_date),
-        )
+        """Get MCP server statistics with tools (excluding test platforms and test users)."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT mcp_server,
+                       COUNT(DISTINCT tool_name) as tool_count,
+                       COUNT(*) as total_calls,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server IS NOT NULL
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY mcp_server
+                ORDER BY total_calls DESC
+            """
+            server_rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT mcp_server,
+                       COUNT(DISTINCT tool_name) as tool_count,
+                       COUNT(*) as total_calls,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server IS NOT NULL
+                  AND user_id != 'default'
+                GROUP BY mcp_server
+                ORDER BY total_calls DESC
+            """
+            server_rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
 
         mcp_servers = []
         for server_row in server_rows:
@@ -1761,21 +2605,38 @@ class TraceStore:
         server_name: str,
     ) -> list[MCPToolUsage]:
         """Get tools for a specific MCP server."""
-        query = """
-            SELECT tool_name, mcp_server, COUNT(*) as count,
-                   AVG(duration_ms) as avg_duration,
-                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
-            FROM swe_tracing_spans
-            WHERE source_id = %s AND start_time >= %s AND start_time <= %s
-              AND event_type = 'tool_call_end'
-              AND mcp_server = %s
-            GROUP BY tool_name, mcp_server
-            ORDER BY count DESC
-        """
-        rows = await self.db.fetch_all(
-            query,
-            (source_id, start_date, end_date, server_name),
-        )
+        if source_id == "all":
+            query = """
+                SELECT tool_name, mcp_server, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server = %s
+                GROUP BY tool_name, mcp_server
+                ORDER BY count DESC
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, server_name),
+            )
+        else:
+            query = """
+                SELECT tool_name, mcp_server, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server = %s
+                GROUP BY tool_name, mcp_server
+                ORDER BY count DESC
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date, server_name),
+            )
         return [
             MCPToolUsage(
                 tool_name=r["tool_name"],
@@ -1957,6 +2818,7 @@ class TraceStore:
             source_id=row["source_id"],
             user_id=row["user_id"],
             session_id=row["session_id"],
+            session_name=row.get("session_name"),
             channel=row["channel"],
             start_time=row["start_time"],
             end_time=row["end_time"],
@@ -1964,17 +2826,21 @@ class TraceStore:
             model_name=row["model_name"],
             total_input_tokens=row["total_input_tokens"] or 0,
             total_output_tokens=row["total_output_tokens"] or 0,
-            tools_used=json.loads(row["tools_used"])
-            if row["tools_used"]
-            else [],
-            skills_used=json.loads(row["skills_used"])
-            if row["skills_used"]
-            else [],
-            status=TraceStatus(row["status"])
-            if row["status"]
-            else TraceStatus.RUNNING,
+            tools_used=(
+                json.loads(row["tools_used"]) if row["tools_used"] else []
+            ),
+            skills_used=(
+                json.loads(row["skills_used"]) if row["skills_used"] else []
+            ),
+            status=(
+                TraceStatus(row["status"])
+                if row["status"]
+                else TraceStatus.RUNNING
+            ),
             error=row["error"],
             user_message=row.get("user_message"),
+            user_name=row.get("user_name"),
+            bbk_id=row.get("bbk_id"),
         )
 
     def _row_to_span(self, row: dict) -> Span:
@@ -1983,7 +2849,6 @@ class TraceStore:
             span_id=row["span_id"],
             trace_id=row["trace_id"],
             source_id=row["source_id"],
-            parent_span_id=row["parent_span_id"],
             name=row["name"],
             event_type=EventType(row["event_type"]),
             start_time=row["start_time"],
@@ -1998,10 +2863,11 @@ class TraceStore:
             tool_name=row["tool_name"],
             skill_name=row["skill_name"],
             mcp_server=row.get("mcp_server"),
-            tool_input=json.loads(row["tool_input"])
-            if row["tool_input"]
-            else None,
+            tool_input=(
+                json.loads(row["tool_input"]) if row["tool_input"] else None
+            ),
             tool_output=row["tool_output"],
             error=row["error"],
-            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+            user_name=row.get("user_name"),
+            bbk_id=row.get("bbk_id"),
         )

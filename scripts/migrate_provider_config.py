@@ -15,6 +15,7 @@ Usage:
 Options:
     --dry-run  Show what would be done without making changes
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,7 +29,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from swe.constant import SECRET_DIR
-
 
 logger = logging.getLogger(__name__)
 

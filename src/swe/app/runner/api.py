@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Chat management API."""
+
 from __future__ import annotations
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,11 +13,304 @@ from .manager import ChatManager
 from .models import (
     ChatSpec,
     ChatHistory,
+    ChatMessage,
 )
 from .utils import agentscope_msg_to_message
-
+from ..approvals import get_approval_service
 
 router = APIRouter(prefix="/chats", tags=["chats"])
+TASK_MESSAGES_STATE_KEY = "task_messages"
+TASK_RUNS_STATE_KEY = "task_runs"
+TASK_RUN_SECTION_STEP = "step"
+TASK_RUN_SECTION_FINAL = "final"
+
+
+async def _annotate_approval_action_statuses(
+    messages: list[ChatMessage],
+) -> list[ChatMessage]:
+    """Attach current approval status to messages carrying approval metadata."""
+    approval_service = get_approval_service()
+
+    for message in messages:
+        metadata = getattr(message, "metadata", None)
+        if not isinstance(metadata, dict):
+            continue
+
+        nested = metadata.get("metadata")
+        if not isinstance(nested, dict):
+            continue
+
+        approval_action = nested.get("approval_action")
+        if not isinstance(approval_action, dict):
+            continue
+
+        request_id = approval_action.get("requestId")
+        if not isinstance(request_id, str) or not request_id:
+            continue
+
+        request = await approval_service.get_request(request_id)
+        if request is None:
+            continue
+
+        approval_action["status"] = request.status
+
+    return messages
+
+
+def _task_session_messages_from_state(state: dict) -> list[ChatMessage]:
+    raw_messages = state.get(TASK_MESSAGES_STATE_KEY, [])
+    if not isinstance(raw_messages, list):
+        return []
+
+    messages: list[ChatMessage] = []
+    for raw in raw_messages:
+        if not isinstance(raw, dict):
+            continue
+        content = raw.get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        if not isinstance(content, list):
+            continue
+        messages.append(
+            ChatMessage.model_validate(
+                {
+                    "id": raw.get("id") or str(uuid4()),
+                    "type": raw.get("type") or "message",
+                    "role": raw.get("role") or "assistant",
+                    "content": content,
+                    "metadata": raw.get("metadata") or {},
+                    "timestamp": raw.get("timestamp"),
+                },
+            ),
+        )
+    return messages
+
+
+async def _messages_from_memory_state(
+    memory_state: dict,
+) -> list[ChatMessage]:
+    if not memory_state:
+        return []
+
+    memory = InMemoryMemory()
+    memory.load_state_dict(memory_state, strict=False)
+    memories = await memory.get_memory(prepend_summary=False)
+    return agentscope_msg_to_message(memories)
+
+
+def _slice_memory_state(
+    memory_state: dict,
+    start: int,
+    end: int,
+) -> dict | None:
+    content = memory_state.get("content")
+    if not isinstance(content, list):
+        return None
+
+    sliced_state = dict(memory_state)
+    sliced_state["content"] = content[start:end]
+    return sliced_state
+
+
+def _message_has_text_content(message: ChatMessage) -> bool:
+    content = getattr(message, "content", None)
+    if not isinstance(content, list):
+        return False
+
+    for block in content:
+        block_type = (
+            block.get("type")
+            if isinstance(block, dict)
+            else getattr(block, "type", None)
+        )
+        if block_type != "text":
+            continue
+        text = (
+            block.get("text")
+            if isinstance(block, dict)
+            else getattr(block, "text", None)
+        )
+        if isinstance(text, str) and text.strip():
+            return True
+    return False
+
+
+def _with_task_run_metadata(
+    message: ChatMessage,
+    *,
+    run_id: str,
+    run_index: int,
+    section: str,
+) -> ChatMessage:
+    payload = message.model_dump(mode="json")
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    metadata = {
+        **metadata,
+        "task_run_id": run_id,
+        "task_run_index": run_index,
+        "task_run_section": section,
+    }
+    payload["metadata"] = metadata
+    return ChatMessage.model_validate(payload)
+
+
+def _normalize_task_runs(
+    raw_task_runs: list[dict],
+    content_length: int,
+) -> list[tuple[int, int, int, str]] | None:
+    """校验并标准化 task_runs 索引数据。"""
+    task_runs: list[tuple[int, int, int, str]] = []
+    for run_index, raw_run in enumerate(raw_task_runs):
+        if not isinstance(raw_run, dict):
+            return None
+
+        raw_start = raw_run.get("memory_start")
+        raw_end = raw_run.get("memory_end")
+        if raw_start is None or raw_end is None:
+            return None
+
+        try:
+            start = int(raw_start)
+            end = int(raw_end)
+        except (TypeError, ValueError):
+            return None
+
+        if start < 0 or end < start or end > content_length:
+            return None
+
+        run_id = str(raw_run.get("run_id") or f"task-run-{run_index}")
+        task_runs.append((start, end, run_index, run_id))
+
+    task_runs.sort(key=lambda item: (item[0], item[2]))
+    return task_runs
+
+
+async def _messages_from_memory_range(
+    memory_state: dict,
+    start: int,
+    end: int,
+) -> list[ChatMessage] | None:
+    """读取一段 memory slice 对应的消息。"""
+    sliced_state = _slice_memory_state(memory_state, start, end)
+    if sliced_state is None:
+        return None
+    return await _messages_from_memory_state(sliced_state)
+
+
+def _find_final_text_message_index(
+    run_messages: list[ChatMessage],
+) -> int | None:
+    """返回最后一个包含文本的 assistant 消息位置。"""
+    for index in range(len(run_messages) - 1, -1, -1):
+        candidate = run_messages[index]
+        if candidate.role == "assistant" and _message_has_text_content(
+            candidate,
+        ):
+            return index
+    return None
+
+
+def _annotate_run_messages(
+    run_messages: list[ChatMessage],
+    *,
+    run_id: str,
+    run_index: int,
+) -> list[ChatMessage]:
+    """为单次 task run 的消息补齐 step/final 元数据。"""
+    final_index = _find_final_text_message_index(run_messages)
+    if final_index is None:
+        return run_messages
+
+    return [
+        _with_task_run_metadata(
+            message,
+            run_id=run_id,
+            run_index=run_index,
+            section=(
+                TASK_RUN_SECTION_FINAL
+                if index == final_index
+                else TASK_RUN_SECTION_STEP
+            ),
+        )
+        for index, message in enumerate(run_messages)
+    ]
+
+
+async def _annotate_task_run_messages(
+    memory_state: dict,
+    raw_task_runs: list[dict],
+) -> list[ChatMessage]:
+    content = memory_state.get("content")
+    if not isinstance(content, list):
+        return await _messages_from_memory_state(memory_state)
+
+    task_runs = _normalize_task_runs(raw_task_runs, len(content))
+    if task_runs is None:
+        return await _messages_from_memory_state(memory_state)
+
+    messages: list[ChatMessage] = []
+    cursor = 0
+    for start, end, run_index, run_id in task_runs:
+        if start < cursor:
+            return await _messages_from_memory_state(memory_state)
+
+        if cursor < start:
+            gap_messages = await _messages_from_memory_range(
+                memory_state,
+                cursor,
+                start,
+            )
+            if gap_messages is None:
+                return await _messages_from_memory_state(memory_state)
+            messages.extend(gap_messages)
+
+        run_messages = await _messages_from_memory_range(
+            memory_state,
+            start,
+            end,
+        )
+        if run_messages is None:
+            return await _messages_from_memory_state(memory_state)
+        messages.extend(
+            _annotate_run_messages(
+                run_messages,
+                run_id=run_id,
+                run_index=run_index,
+            ),
+        )
+
+        cursor = end
+
+    if cursor < len(content):
+        tail_messages = await _messages_from_memory_range(
+            memory_state,
+            cursor,
+            len(content),
+        )
+        if tail_messages is not None:
+            messages.extend(tail_messages)
+
+    return messages
+
+
+def _message_sort_key(message: ChatMessage) -> tuple[int, datetime]:
+    timestamp = getattr(message, "timestamp", None)
+    if isinstance(timestamp, str) and timestamp:
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(
+                    tzinfo=datetime.now().astimezone().tzinfo,
+                )
+            return (
+                0,
+                parsed,
+            )
+        except ValueError:
+            pass
+    return (1, datetime.max.replace(tzinfo=timezone.utc))
 
 
 async def get_workspace(request: Request):
@@ -163,14 +458,26 @@ async def get_chat(
         chat_spec.user_id,
     )
     status = await workspace.task_tracker.get_status(chat_id)
+    task_messages = _task_session_messages_from_state(state)
     if not state:
-        return ChatHistory(messages=[], status=status)
+        return ChatHistory(messages=task_messages, status=status)
     memory_state = state.get("agent", {}).get("memory", {})
-    memory = InMemoryMemory()
-    memory.load_state_dict(memory_state, strict=False)
-
-    memories = await memory.get_memory(prepend_summary=False)
-    messages = agentscope_msg_to_message(memories)
+    messages: list[ChatMessage] = []
+    if memory_state:
+        if (
+            (chat_spec.meta or {}).get("session_kind") == "task"
+            and isinstance(state.get(TASK_RUNS_STATE_KEY), list)
+            and state.get(TASK_RUNS_STATE_KEY)
+        ):
+            messages = await _annotate_task_run_messages(
+                memory_state,
+                state[TASK_RUNS_STATE_KEY],
+            )
+        else:
+            messages = await _messages_from_memory_state(memory_state)
+    messages.extend(task_messages)
+    messages.sort(key=_message_sort_key)
+    messages = await _annotate_approval_action_statuses(messages)
     return ChatHistory(messages=messages, status=status)
 
 

@@ -8,20 +8,50 @@ guard / approve flow.
 Separated from ``react_agent.py`` to keep the main agent class
 focused on lifecycle management.
 """
+
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import json as _json
 import logging
+import os
+import time
 import uuid as _uuid
 from typing import Any, Literal
 
-from agentscope.message import Msg
+from agentscope.message import Msg, ToolResultBlock
 
+from ..constant import AGENT_WATCHDOG_TIMEOUT, QUERY_TIMEOUT_SECONDS
 from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 from ..tracing import has_trace_manager, get_trace_manager, get_current_trace
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = min(
+    QUERY_TIMEOUT_SECONDS,
+    max(AGENT_WATCHDOG_TIMEOUT * 2.0, AGENT_WATCHDOG_TIMEOUT + 60.0),
+)
+try:
+    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = max(
+        float(
+            os.environ.get(
+                "SWE_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT",
+                str(_DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT),
+            ),
+        ),
+        1.0,
+    )
+except (TypeError, ValueError):
+    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT = (
+        _DEFAULT_LOCAL_TOOL_EXECUTION_HARD_TIMEOUT
+    )
+
+_TOOLS_WITH_SPECIFIC_TIMEOUTS = {
+    "execute_shell_command",
+    "grep_search",
+    "glob_search",
+}
 
 
 class _GuardAction:
@@ -72,6 +102,112 @@ class ToolGuardMixin:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _agent_phase_context(
+        self,
+        phase: str,
+        *,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+        reason: str | None = None,
+    ):
+        enter_phase = getattr(self, "agent_phase", None)
+        if enter_phase is None:
+            return nullcontext()
+        return enter_phase(
+            phase,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            reason=reason,
+        )
+
+    def _tool_has_specific_timeout(self, tool_name: str) -> bool:
+        if self._resolve_mcp_server(tool_name):
+            return True
+        return tool_name in _TOOLS_WITH_SPECIFIC_TIMEOUTS
+
+    async def _run_tool_call_with_hard_timeout(
+        self,
+        tool_call: dict[str, Any],
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> dict | None:
+        """Run a local tool under the generic hard timeout when applicable."""
+        tool_call_id = str(tool_call.get("id") or "")
+        with self._agent_phase_context(
+            "tool_execution",
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            reason="tool_execution",
+        ):
+            if self._tool_has_specific_timeout(tool_name):
+                return await super()._acting(tool_call)  # type: ignore[misc]
+
+            started_at = time.monotonic()
+            try:
+                return await asyncio.wait_for(
+                    super()._acting(tool_call),  # type: ignore[misc]
+                    timeout=LOCAL_TOOL_EXECUTION_HARD_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                elapsed = time.monotonic() - started_at
+                timeout_text = (
+                    f"Error: Tool {tool_name} timed out after "
+                    f"{LOCAL_TOOL_EXECUTION_HARD_TIMEOUT:.2f}s "
+                    f"(elapsed {elapsed:.2f}s)."
+                )
+                logger.warning(
+                    "Local tool hard timeout: tool_name=%s tool_call_id=%s "
+                    "elapsed=%.3fs timeout=%.3fs",
+                    tool_name,
+                    tool_call_id,
+                    elapsed,
+                    LOCAL_TOOL_EXECUTION_HARD_TIMEOUT,
+                )
+                await self._persist_local_tool_timeout_result(
+                    tool_call_id,
+                    tool_name,
+                    timeout_text,
+                )
+                return None
+
+    async def _persist_local_tool_timeout_result(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        timeout_text: str,
+    ) -> None:
+        """Print and persist the timeout result seen by the next LLM turn."""
+        timeout_msg = Msg(
+            "system",
+            [
+                ToolResultBlock(
+                    type="tool_result",
+                    id=tool_call_id,
+                    name=tool_name,
+                    output=[{"type": "text", "text": timeout_text}],
+                ),
+            ],
+            "system",
+        )
+
+        memory_content = getattr(getattr(self, "memory", None), "content", [])
+        if memory_content:
+            last_msg, marks = memory_content[-1]
+            if (
+                TOOL_GUARD_DENIED_MARK not in marks
+                and last_msg.role == "system"
+                and last_msg.get_content_blocks("tool_result")
+                and last_msg.get_content_blocks("tool_result")[0].get("id")
+                == tool_call_id
+            ):
+                last_msg.content = timeout_msg.content
+                timeout_msg = last_msg
+                await self.print(timeout_msg, True)
+                return
+
+        await self.print(timeout_msg, True)
+        await self.memory.add(timeout_msg)
 
     def _should_require_approval(self) -> bool:
         """``True`` when a ``session_id`` is available for approval."""
@@ -213,6 +349,7 @@ class ToolGuardMixin:
             tool_input = tool_call["input"]
 
         return {
+            "request_id": pending.request_id or fallback.get("request_id", ""),
             "tool_name": pending.tool_name
             or fallback.get("tool_name", "unknown"),
             "tool_input": tool_input or fallback.get("tool_input", {}),
@@ -229,6 +366,11 @@ class ToolGuardMixin:
         removes them.  When *include_denial_response* is ``True``,
         also removes the assistant message immediately following the
         last marked message (the LLM's denial explanation).
+
+        When *include_denial_response* is ``False`` (approval granted),
+        keeps the waiting-for-approval message but clears its
+        ``approval_action`` metadata so the approval card won't render
+        on reload, preserving the text content for conversation history.
         """
         ids_to_delete: list[str] = []
         last_marked_idx = -1
@@ -247,6 +389,26 @@ class ToolGuardMixin:
             if next_msg.role == "assistant":
                 ids_to_delete.append(next_msg.id)
 
+                # When approval is granted (include_denial_response=False),
+        # clear approval_action metadata from the waiting message
+        # instead of deleting it, preserving text content.
+        if (
+            not include_denial_response
+            and last_marked_idx >= 0
+            and last_marked_idx + 1 < len(self.memory.content)
+        ):
+            next_msg, marks = self.memory.content[last_marked_idx + 1]
+            if next_msg.role == "assistant":
+                metadata = getattr(next_msg, "metadata", None)
+                if metadata and isinstance(metadata, dict):
+                    # Clear approval_action so frontend won't render approval card
+                    if "approval_action" in metadata:
+                        del metadata["approval_action"]
+                        logger.info(
+                            "Tool guard: cleared approval_action metadata "
+                            "from waiting message (approval granted)",
+                        )
+
         if ids_to_delete:
             removed = await self.memory.delete(ids_to_delete)
             logger.info(
@@ -257,6 +419,29 @@ class ToolGuardMixin:
     # ------------------------------------------------------------------
     # _acting override
     # ------------------------------------------------------------------
+
+    def _resolve_mcp_server(self, tool_name: str) -> str | None:
+        """Resolve MCP server name from toolkit registration.
+
+        The tool_call dict from agentscope does not include mcp_server,
+        so we look it up from the registered tool function.
+
+        Args:
+            tool_name: Name of the tool
+
+        Returns:
+            MCP server name if the tool is an MCP tool, None otherwise
+        """
+        try:
+            toolkit = getattr(self, "toolkit", None)
+            if toolkit is None:
+                return None
+            tool_func = toolkit.tools.get(tool_name)
+            if tool_func is not None:
+                return getattr(tool_func, "mcp_name", None)
+        except Exception:
+            pass
+        return None
 
     async def _emit_tool_trace_start(
         self,
@@ -283,6 +468,8 @@ class ToolGuardMixin:
                     session_id=trace_ctx.session_id,
                     channel=trace_ctx.channel,
                     mcp_server=mcp_server,
+                    user_name=trace_ctx.user_name,
+                    bbk_id=trace_ctx.bbk_id,
                 )
         except Exception as e:
             logger.debug("Failed to emit tool start event: %s", e)
@@ -339,7 +526,10 @@ class ToolGuardMixin:
 
         tool_name = str(tool_call.get("name", ""))
         tool_input = tool_call.get("input", {})
-        mcp_server = tool_call.get("mcp_server")
+
+        # Resolve mcp_server from toolkit registration since tool_call dict
+        # (agentscope ToolUseBlock) does not carry mcp_server.
+        mcp_server = self._resolve_mcp_server(tool_name)
 
         span_id = await self._emit_tool_trace_start(
             tool_name,
@@ -348,15 +538,21 @@ class ToolGuardMixin:
         )
 
         action: _GuardAction | None = None
-        async with self._tool_guard_lock:
-            try:
-                action = await self._decide_guard_action(tool_call)
-            except Exception as exc:
-                logger.warning(
-                    "Tool guard check error (non-blocking): %s",
-                    exc,
-                    exc_info=True,
-                )
+        with self._agent_phase_context(
+            "tool_guard",
+            tool_name=tool_name,
+            tool_call_id=str(tool_call.get("id") or ""),
+            reason="guard_decision",
+        ):
+            async with self._tool_guard_lock:
+                try:
+                    action = await self._decide_guard_action(tool_call)
+                except Exception as exc:
+                    logger.warning(
+                        "Tool guard check error (non-blocking): %s",
+                        exc,
+                        exc_info=True,
+                    )
 
         if action is not None:
             result = await self._execute_guard_action(action, tool_call)
@@ -364,7 +560,11 @@ class ToolGuardMixin:
             return result
 
         try:
-            result = await super()._acting(tool_call)  # type: ignore[misc]
+            result = await self._run_tool_call_with_hard_timeout(
+                tool_call,
+                tool_name,
+                tool_input,
+            )
             await self._emit_tool_trace_end(span_id, result)
 
             if getattr(self, "_tool_guard_forced_replay_active", False):
@@ -418,7 +618,7 @@ class ToolGuardMixin:
         if guarded and await self._consume_preapproval(tool_name, tool_input):
             self._tool_guard_pending_info = None
             await self._cleanup_tool_guard_denied_messages(
-                include_denial_response=True,
+                include_denial_response=False,
             )
             return _GuardAction("preapproved", tool_name, tool_input)
 
@@ -497,7 +697,11 @@ class ToolGuardMixin:
         tool_input: dict[str, Any],
     ) -> dict | None:
         """Execute approved call and persist replay state."""
-        result = await super()._acting(tool_call)  # type: ignore[misc]
+        result = await self._run_tool_call_with_hard_timeout(
+            tool_call,
+            tool_name,
+            tool_input,
+        )
         if getattr(self, "_tool_guard_forced_replay_active", False):
             self._tool_guard_forced_replay_active = False
             self._tool_guard_replay_done = {
@@ -628,7 +832,7 @@ class ToolGuardMixin:
                         qid,
                     )
 
-        await svc.create_pending(
+        pending_request = await svc.create_pending(
             session_id=session_id,
             user_id=str(
                 self._request_context.get("user_id") or "",
@@ -643,6 +847,7 @@ class ToolGuardMixin:
             {f.guardian for f in guard_result.findings if f.guardian},
         )
         self._tool_guard_pending_info = {
+            "request_id": pending_request.request_id,
             "tool_name": tool_name,
             "tool_input": tool_call.get("input", {}),
             "guardians": guardians,
@@ -658,7 +863,7 @@ class ToolGuardMixin:
             f"`{guard_result.findings_count}`\n\n"
             f"{findings_text}\n\n"
             f"Type `/approve` to approve, "
-            f"or send any message to deny.\n"
+            f"`/deny` to deny, or send any message to deny.\n"
             f"输入 `/approve` 批准执行，或发送任意消息拒绝。"
         )
 
@@ -700,18 +905,34 @@ class ToolGuardMixin:
         completion message so the ``ReActAgent.reply`` loop exits
         naturally.
         """
-        replay_msg = await self._reason_about_replay_done()
+        with self._agent_phase_context(
+            "approval_replay",
+            reason="approval_replay_done",
+        ):
+            replay_msg = await self._reason_about_replay_done()
         if replay_msg is not None:
             return replay_msg
 
         forced_tool_call = self._pop_forced_tool_call()
         if forced_tool_call is not None:
-            replay_msg = await self._emit_forced_tool_use(forced_tool_call)
+            with self._agent_phase_context(
+                "approval_replay",
+                tool_name=str(forced_tool_call.get("name") or ""),
+                tool_call_id=str(forced_tool_call.get("id") or ""),
+                reason="forced_tool_replay",
+            ):
+                replay_msg = await self._emit_forced_tool_use(
+                    forced_tool_call,
+                )
             if replay_msg is not None:
                 return replay_msg
 
         if self._last_tool_response_is_denied():
-            return await self._emit_waiting_for_approval()
+            with self._agent_phase_context(
+                "approval_replay",
+                reason="waiting_for_approval",
+            ):
+                return await self._emit_waiting_for_approval()
 
         return await super()._reasoning(  # type: ignore[misc]
             tool_choice=tool_choice,
@@ -784,9 +1005,28 @@ class ToolGuardMixin:
         await self.memory.add(msg)
         return msg
 
-    async def _emit_assistant_msg(self, content: str) -> Msg:
+    async def _emit_assistant_msg(
+        self,
+        content: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> Msg:
         """Print and persist a plain assistant text message."""
-        msg = Msg(self.name, content, "assistant")
+        effective_metadata = metadata
+        if effective_metadata is None:
+            effective_metadata = getattr(
+                self,
+                "_tool_guard_pending_message_metadata",
+                None,
+            )
+            if hasattr(self, "_tool_guard_pending_message_metadata"):
+                self._tool_guard_pending_message_metadata = None
+        msg = Msg(
+            self.name,
+            content,
+            "assistant",
+            metadata=effective_metadata,
+        )
         await self.print(msg, True)
         await self.memory.add(msg)
         return msg
@@ -873,6 +1113,7 @@ class ToolGuardMixin:
     async def _emit_waiting_for_approval(self) -> Msg:
         """Emit waiting-for-approval guidance when call is blocked."""
         pending = await self._get_pending_info_for_display()
+        request_id = str(pending.get("request_id", "") or "")
         tool_name = pending.get("tool_name", "unknown")
         tool_input = pending.get("tool_input", {})
         guardians: list[str] = pending.get("guardians", [])
@@ -881,16 +1122,18 @@ class ToolGuardMixin:
             ensure_ascii=False,
             indent=2,
         )
-        trigger_label, settings_hint = self._guardian_trigger_hint(guardians)
+        trigger_label, _ = self._guardian_trigger_hint(guardians)
+        metadata = {
+            "approval_action": {
+                "requestId": request_id,
+                "toolName": tool_name,
+                "toolInput": tool_input,
+                "triggerLabel": trigger_label,
+                "approveCommand": "/approve",
+                "denyCommand": "/deny",
+            },
+        }
+        self._tool_guard_pending_message_metadata = metadata
         return await self._emit_assistant_msg(
-            "⏳ Waiting for approval / 等待审批\n\n"
-            f"- Tool / 工具: `{tool_name}`\n"
-            f"- Triggered by / 触发来源: `{trigger_label}`\n"
-            f"- Parameters / 参数:\n"
-            f"```json\n{params_text}\n```\n\n"
-            f"{settings_hint}\n\n"
-            "Type `/approve` to approve, "
-            "or send any message to deny.\n"
-            "输入 `/approve` 批准执行，"
-            "或发送任意消息拒绝。",
+            f"⏳ `{tool_name}`调用需要审批\n" f"```json\n{params_text}\n```\n",
         )

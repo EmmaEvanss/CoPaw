@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """CLI channel: list and interactively configure channels in config.json."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -28,7 +29,6 @@ from ..app.channels.registry import (
     BUILTIN_CHANNEL_KEYS,
     get_channel_registry,
 )
-
 
 # Fields that contain secrets — display masked in ``list``
 _SECRET_FIELDS = {

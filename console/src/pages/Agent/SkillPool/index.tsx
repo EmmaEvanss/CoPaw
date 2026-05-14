@@ -44,6 +44,8 @@ import { MarkdownCopy } from "../../../components/MarkdownCopy/MarkdownCopy";
 import { BroadcastModal } from "./components/BroadcastModal";
 import { ImportBuiltinModal } from "./components/ImportBuiltinModal";
 import { PageHeader } from "@/components/PageHeader";
+import { useIframeStore } from "../../../stores/iframeStore";
+import { getUserId } from "../../../utils/identity";
 import styles from "./index.module.less";
 
 type PoolMode = "broadcast" | "create" | "edit";
@@ -52,6 +54,9 @@ const SKILL_POOL_ZIP_MAX_MB = 100;
 
 function SkillPoolPage() {
   const { t } = useTranslation();
+  const manager = useIframeStore((state) => state.manager);
+  const userId = getUserId();
+  const canManage = manager || userId === "default";
   const [skills, setSkills] = useState<PoolSkillSpec[]>([]);
   const [broadcastTenantIds, setBroadcastTenantIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -451,15 +456,15 @@ function SkillPoolPage() {
       if (handleScanError(error, t)) return;
       const detail = parseErrorDetail(error);
       if (detail?.suggested_name) {
-        const renameMap = await showConflictRenameModal([
+        const renameResult = await showConflictRenameModal([
           {
             key: skillName,
             label: skillName,
             suggested_name: detail.suggested_name,
           },
         ]);
-        if (renameMap) {
-          const newName = Object.values(renameMap)[0];
+        if (renameResult?.renameMap) {
+          const newName = Object.values(renameResult.renameMap)[0];
           if (newName) {
             form.setFieldsValue({ name: newName });
             await handleSavePoolSkill();
@@ -513,12 +518,30 @@ function SkillPoolPage() {
     }
 
     let renameMap: Record<string, string> | undefined;
+    let overwrite = false;
     while (true) {
       try {
         const result = await api.uploadSkillPoolZip(file, {
-          overwrite: false,
+          overwrite,
           rename_map: renameMap,
         });
+        // 检查冲突
+        const conflicts = Array.isArray(result?.conflicts)
+          ? result.conflicts
+          : [];
+        if (conflicts.length > 0) {
+          const resolveResult = await showConflictRenameModal(
+            conflicts.map((c: { skill_name?: string; suggested_name?: string }) => ({
+              key: c.skill_name || "",
+              label: c.skill_name || "",
+              suggested_name: c.suggested_name || "",
+            })),
+          );
+          if (!resolveResult?.renameMap) break;
+          renameMap = { ...renameMap, ...resolveResult.renameMap };
+          overwrite = false;
+          continue;
+        }
         if (result.count > 0) {
           message.success(
             t("skillPool.imported", { names: result.imported.join(", ") }),
@@ -540,28 +563,13 @@ function SkillPoolPage() {
         }
         break;
       } catch (error) {
-        const detail = parseErrorDetail(error);
-        const conflicts = Array.isArray(detail?.conflicts)
-          ? detail.conflicts
-          : [];
-        if (conflicts.length === 0) {
-          if (handleScanError(error, t)) break;
-          message.error(
-            error instanceof Error
-              ? error.message
-              : t("skillPool.zipImportFailed"),
-          );
-          break;
-        }
-        const newRenames = await showConflictRenameModal(
-          conflicts.map((c: { skill_name?: string; suggested_name?: string }) => ({
-            key: c.skill_name || "",
-            label: c.skill_name || "",
-            suggested_name: c.suggested_name || "",
-          })),
+        if (handleScanError(error, t)) break;
+        message.error(
+          error instanceof Error
+            ? error.message
+            : t("skillPool.zipImportFailed"),
         );
-        if (!newRenames) break;
-        renameMap = { ...renameMap, ...newRenames };
+        break;
       }
     }
   };
@@ -589,15 +597,15 @@ function SkillPoolPage() {
       const detail = parseErrorDetail(error);
       if (detail?.suggested_name) {
         const skillName = detail?.skill_name || "";
-        const renameMap = await showConflictRenameModal([
+        const renameResult2 = await showConflictRenameModal([
           {
             key: skillName,
             label: skillName,
             suggested_name: String(detail.suggested_name),
           },
         ]);
-        if (renameMap) {
-          const newName = Object.values(renameMap)[0];
+        if (renameResult2?.renameMap) {
+          const newName = Object.values(renameResult2.renameMap)[0];
           if (newName) {
             await handleConfirmImport(url, newName);
           }
@@ -704,6 +712,7 @@ function SkillPoolPage() {
                     type="default"
                     className={styles.primaryTransferButton}
                     icon={<SendOutlined />}
+                    disabled={!canManage}
                     onClick={handleBatchBroadcast}
                   >
                     {t("skillPool.broadcast")}
@@ -734,6 +743,7 @@ function SkillPoolPage() {
                       type="default"
                       className={styles.primaryTransferButton}
                       icon={<SendOutlined />}
+                      disabled={!canManage}
                       onClick={() => openBroadcast()}
                     >
                       {t("skillPool.broadcast")}
@@ -865,6 +875,7 @@ function SkillPoolPage() {
                   <div className={styles.cardFooter}>
                     <Button
                       className={styles.actionButton}
+                      disabled={!canManage}
                       onClick={(e) => {
                         e.stopPropagation();
                         openBroadcast(skill);

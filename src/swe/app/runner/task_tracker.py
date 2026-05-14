@@ -4,6 +4,7 @@
 run_key is ChatSpec.id (chat_id). Per run: task, queues, event buffer.
 Reconnects get buffer replay + new events. Cleanup when task completes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +13,8 @@ import logging
 import weakref
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Callable, Coroutine
+
+from .task_progress import TaskProgressPayload, clone_task_progress
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,7 @@ class TaskTracker:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
         self._runs: dict[str, _RunState] = {}
+        self._task_progress: dict[str, TaskProgressPayload] = {}
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -111,6 +115,27 @@ class TaskTracker:
                 q.put_nowait(sse)
             state.queues.append(q)
             return q
+
+    async def update_task_progress(
+        self,
+        run_key: str,
+        payload: TaskProgressPayload,
+    ) -> TaskProgressPayload:
+        """Store the latest task progress payload for a run."""
+        async with self._lock:
+            cloned_payload = clone_task_progress(payload)
+            if cloned_payload is None:
+                raise ValueError("task progress payload must not be empty")
+            self._task_progress[run_key] = cloned_payload
+            return clone_task_progress(cloned_payload) or cloned_payload
+
+    async def get_task_progress(
+        self,
+        run_key: str,
+    ) -> TaskProgressPayload | None:
+        """Get a copy of the latest task progress payload for a run."""
+        async with self._lock:
+            return clone_task_progress(self._task_progress.get(run_key))
 
     async def detach_subscriber(
         self,
@@ -198,6 +223,7 @@ class TaskTracker:
                         async with tracker.lock:
                             for q in run.queues:
                                 q.put_nowait(_SENTINEL)
+                            tracker._task_progress.pop(run_key, None)
                             # pylint: disable=protected-access
                             tracker._runs.pop(
                                 run_key,

@@ -19,3 +19,17 @@ export interface DailyMemoryFile extends MdFileInfo {
   date: string;
   updated_at: number;
 }
+
+// --- File broadcast types ---
+
+export interface BroadcastFileTenantResult {
+  tenant_id: string;
+  success: boolean;
+  bootstrapped: boolean;
+  files_updated: string[];
+  error?: string;
+}
+
+export interface BroadcastFilesResponse {
+  results: BroadcastFileTenantResult[];
+}

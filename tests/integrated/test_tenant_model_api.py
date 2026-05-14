@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Integration tests for tenant model configuration API endpoints."""
+
 # pylint:disable=consider-using-with,redefined-outer-name,too-many-statements
 from __future__ import annotations
 

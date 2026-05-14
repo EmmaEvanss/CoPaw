@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Input, Modal } from "@agentscope-ai/design";
+import { Space } from "antd";
+import { Input, Modal, Radio } from "@agentscope-ai/design";
 import { useTranslation } from "react-i18next";
 
 export interface ConflictItem {
@@ -12,36 +13,52 @@ interface InternalItem extends ConflictItem {
   new_name: string;
 }
 
-export function useConflictRenameModal(): {
+export type ConflictResolveMode = "rename" | "overwrite";
+
+interface UseConflictRenameModalOptions {
+  /** 是否显示覆盖选项，默认 false */
+  showOverwriteOption?: boolean;
+}
+
+export function useConflictRenameModal(
+  options?: UseConflictRenameModalOptions,
+): {
   showConflictRenameModal: (
     items: ConflictItem[],
-  ) => Promise<Record<string, string> | null>;
+  ) => Promise<{ renameMap: Record<string, string> | null; mode: ConflictResolveMode } | null>;
   conflictRenameModal: React.ReactNode;
 } {
   const { t } = useTranslation();
+  const showOverwrite = options?.showOverwriteOption ?? false;
   const [items, setItems] = useState<InternalItem[]>([]);
+  const [resolveMode, setResolveMode] = useState<ConflictResolveMode>("rename");
   const [resolver, setResolver] = useState<
-    ((result: Record<string, string> | null) => void) | null
+    ((result: { renameMap: Record<string, string> | null; mode: ConflictResolveMode } | null) => void) | null
   >(null);
 
   const showConflictRenameModal = (
     incoming: ConflictItem[],
-  ): Promise<Record<string, string> | null> =>
+  ): Promise<{ renameMap: Record<string, string> | null; mode: ConflictResolveMode } | null> =>
     new Promise((resolve) => {
       setItems(
         incoming.map((item) => ({ ...item, new_name: item.suggested_name })),
       );
+      setResolveMode("rename");
       setResolver(() => resolve);
     });
 
   const handleOk = () => {
-    const renameMap: Record<string, string> = {};
-    for (const item of items) {
-      if (item.new_name.trim()) {
-        renameMap[item.key] = item.new_name.trim();
+    if (showOverwrite && resolveMode === "overwrite") {
+      resolver?.({ renameMap: null, mode: "overwrite" });
+    } else {
+      const renameMap: Record<string, string> = {};
+      for (const item of items) {
+        if (item.new_name.trim()) {
+          renameMap[item.key] = item.new_name.trim();
+        }
       }
+      resolver?.({ renameMap, mode: "rename" });
     }
-    resolver?.(renameMap);
     setItems([]);
     setResolver(null);
   };
@@ -61,7 +78,21 @@ export function useConflictRenameModal(): {
       zIndex={2100}
     >
       <p>{t("skillPool.multiConflictDesc")}</p>
-      {items.map((item, i) => (
+
+      {/* 覆盖选项：仅当 showOverwrite=true 时显示 */}
+      {showOverwrite && (
+        <div style={{ marginBottom: 16 }}>
+          <Radio.Group value={resolveMode} onChange={(e) => setResolveMode(e.target.value)}>
+            <Space direction="vertical">
+              <Radio value="rename">{t("skillPool.resolveModeRename")}</Radio>
+              <Radio value="overwrite">{t("skillPool.resolveModeOverwrite")}</Radio>
+            </Space>
+          </Radio.Group>
+        </div>
+      )}
+
+      {/* 重命名输入框 */}
+      {(!showOverwrite || resolveMode === "rename") && items.map((item, i) => (
         <div key={item.key} style={{ marginBottom: 12 }}>
           <div style={{ marginBottom: 4 }}>
             {t("skillPool.renameEntry", { name: item.label })}
@@ -76,6 +107,13 @@ export function useConflictRenameModal(): {
           />
         </div>
       ))}
+
+      {/* 覆盖提示 */}
+      {showOverwrite && resolveMode === "overwrite" && (
+        <div style={{ padding: 12, backgroundColor: "#fffbe6", borderRadius: 6, border: "1px solid #ffe58f" }}>
+          {t("skillPool.overwriteWarning", { count: items.length })}
+        </div>
+      )}
     </Modal>
   );
 

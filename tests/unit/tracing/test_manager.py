@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for TraceManager and TraceContext."""
+
 # pylint: disable=protected-access,redefined-outer-name,unused-import
 
 from datetime import datetime
@@ -78,12 +79,14 @@ class TestTraceContext:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         assert ctx.trace_id == "trace-1"
         assert ctx.user_id == "user-1"
         assert ctx.session_id == "session-1"
         assert ctx.channel == "console"
+        assert ctx.source_id == "default"
         assert ctx.trace is None
 
     def test_span_stack(self):
@@ -93,6 +96,7 @@ class TestTraceContext:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         # Initially empty
@@ -119,6 +123,7 @@ class TestTraceContext:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         assert ctx.pop_span() is None
@@ -138,6 +143,7 @@ class TestCurrentTraceContext:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         set_current_trace(ctx)
@@ -202,6 +208,7 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         assert trace_id is not None
@@ -220,6 +227,7 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
             user_message="Hello",
         )
 
@@ -258,6 +266,7 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         await manager.end_trace(trace_id, TraceStatus.COMPLETED)
@@ -277,6 +286,7 @@ class TestTraceManager:
             trace_id="trace-1",
             event_type=EventType.LLM_INPUT,
             name="test_span",
+            source_id="default",
         )
 
         assert span_id is not None
@@ -291,6 +301,7 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         span_id = await manager.emit_span(
@@ -299,6 +310,7 @@ class TestTraceManager:
             name="llm_call_gpt-4",
             model_name="gpt-4",
             input_tokens=100,
+            source_id="default",
         )
 
         assert span_id is not None
@@ -320,12 +332,14 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         span_id = await manager.emit_llm_input(
             trace_id=trace_id,
             model_name="gpt-4",
             input_tokens=100,
+            source_id="default",
             user_id="user-1",
             session_id="session-1",
             channel="console",
@@ -351,12 +365,14 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         span_id = await manager.emit_llm_input(
             trace_id=trace_id,
             model_name="gpt-4",
             input_tokens=100,
+            source_id="default",
         )
 
         await manager.emit_llm_output(
@@ -383,12 +399,14 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         span_id = await manager.emit_tool_call_start(
             trace_id=trace_id,
             tool_name="browser_control",
             tool_input={"url": "https://example.com"},
+            source_id="default",
         )
 
         assert span_id is not None
@@ -422,12 +440,14 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         span_id = await manager.emit_tool_call_start(
             trace_id=trace_id,
             tool_name="browser_control",
             tool_input={"url": "https://example.com"},
+            source_id="default",
         )
 
         await manager.emit_tool_call_end(
@@ -454,11 +474,13 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         span_id = await manager.emit_skill_invocation(
             trace_id=trace_id,
             skill_name="pdf",
+            source_id="default",
         )
 
         assert span_id is not None
@@ -480,6 +502,7 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         span_id = await manager.emit_tool_call_start(
@@ -487,6 +510,7 @@ class TestTraceManager:
             tool_name="get_weather",
             tool_input={"city": "Beijing"},
             mcp_server="weather-server",
+            source_id="default",
         )
 
         span = manager._pending_spans[
@@ -512,6 +536,7 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
             user_message=long_message,
         )
 
@@ -531,12 +556,14 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         await manager.emit_tool_call_start(
             trace_id=trace_id,
             tool_name="test_tool",
             tool_input={"api_key": "secret123", "data": "normal"},
+            source_id="default",
         )
 
         span = list(manager._pending_spans.values())[
@@ -557,6 +584,7 @@ class TestTraceManager:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         # Emit LLM call
@@ -564,6 +592,7 @@ class TestTraceManager:
             trace_id=trace_id,
             model_name="gpt-4",
             input_tokens=100,
+            source_id="default",
         )
         await manager.emit_llm_output(trace_id, span_id, output_tokens=200)
 
@@ -640,6 +669,7 @@ class TestBatchFlush:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         # Emit spans up to batch size
@@ -648,6 +678,7 @@ class TestBatchFlush:
                 trace_id=trace_id,
                 event_type=EventType.LLM_INPUT,
                 name=f"span_{i}",
+                source_id="default",
             )
 
         # Wait a bit for async flush
@@ -672,6 +703,7 @@ class TestBatchFlush:
             user_id="user-1",
             session_id="session-1",
             channel="console",
+            source_id="default",
         )
 
         # Emit a span
@@ -679,6 +711,7 @@ class TestBatchFlush:
             trace_id=trace_id,
             event_type=EventType.LLM_INPUT,
             name="test_span",
+            source_id="default",
         )
 
         # Close should flush remaining spans
@@ -719,3 +752,146 @@ class TestOwnsDb:
 
         # DB should not be closed since we don't own it
         mock_db.close.assert_not_called()
+
+
+class TestSessionName:
+    """Tests for session_name field in tracing."""
+
+    def test_trace_context_with_session_name(self):
+        """Test creating TraceContext with session_name."""
+        ctx = TraceContext(
+            trace_id="trace-1",
+            user_id="user-1",
+            session_id="session-1",
+            channel="console",
+            source_id="source-1",
+            user_name="Test User",
+            bbk_id="bbk-001",
+            session_name="My First Chat",
+        )
+
+        assert ctx.session_name == "My First Chat"
+
+    def test_trace_context_without_session_name(self):
+        """Test creating TraceContext without session_name defaults to None."""
+        ctx = TraceContext(
+            trace_id="trace-1",
+            user_id="user-1",
+            session_id="session-1",
+            channel="console",
+            source_id="source-1",
+        )
+
+        assert ctx.session_name is None
+
+    @pytest.mark.asyncio
+    async def test_start_trace_with_session_name(
+        self,
+        enabled_config,
+        mock_db,
+    ):
+        """Test start_trace with session_name parameter."""
+        manager = TraceManager(enabled_config, mock_db)
+        await manager.initialize()
+
+        trace_id = await manager.start_trace(
+            user_id="user-1",
+            session_id="session-1",
+            channel="console",
+            source_id="source-1",
+            session_name="Important Discussion",
+        )
+
+        assert trace_id is not None
+        trace = manager._active_traces[trace_id]
+        assert trace.session_name == "Important Discussion"
+
+        # Check context also has session_name
+        ctx = get_current_trace()
+        assert ctx is not None
+        assert ctx.session_name == "Important Discussion"
+
+        await manager.close()
+
+    @pytest.mark.asyncio
+    async def test_start_trace_without_session_name(
+        self,
+        enabled_config,
+        mock_db,
+    ):
+        """Test start_trace without session_name parameter."""
+        manager = TraceManager(enabled_config, mock_db)
+        await manager.initialize()
+
+        trace_id = await manager.start_trace(
+            user_id="user-1",
+            session_id="session-1",
+            channel="console",
+            source_id="source-1",
+        )
+
+        assert trace_id is not None
+        trace = manager._active_traces[trace_id]
+        assert trace.session_name is None
+
+        await manager.close()
+
+    @pytest.mark.asyncio
+    async def test_session_name_with_user_info(self, enabled_config, mock_db):
+        """Test session_name works together with user_name and bbk_id."""
+        manager = TraceManager(enabled_config, mock_db)
+        await manager.initialize()
+
+        trace_id = await manager.start_trace(
+            user_id="user-1",
+            session_id="session-1",
+            channel="console",
+            source_id="source-1",
+            user_name="John Doe",
+            bbk_id="branch-001",
+            session_name="Client Meeting Notes",
+        )
+
+        trace = manager._active_traces[trace_id]
+        assert trace.session_name == "Client Meeting Notes"
+        assert trace.user_name == "John Doe"
+        assert trace.bbk_id == "branch-001"
+
+        # Verify all fields are in context
+        ctx = get_current_trace()
+        assert ctx.session_name == "Client Meeting Notes"
+        assert ctx.user_name == "John Doe"
+        assert ctx.bbk_id == "branch-001"
+
+        await manager.close()
+
+    def test_trace_model_with_session_name(self):
+        """Test Trace model with session_name field."""
+        from swe.tracing.models import Trace
+
+        trace = Trace(
+            trace_id="trace-1",
+            source_id="source-1",
+            user_id="user-1",
+            session_id="session-1",
+            session_name="Project Discussion",
+            channel="console",
+            start_time=datetime.now(),
+        )
+
+        assert trace.session_name == "Project Discussion"
+
+    def test_trace_model_without_session_name(self):
+        """Test Trace model without session_name defaults to None."""
+        from swe.tracing.models import Trace
+
+        trace = Trace(
+            trace_id="trace-1",
+            source_id="source-1",
+            user_id="user-1",
+            session_id="session-1",
+            channel="console",
+            start_time=datetime.now(),
+        )
+
+        assert trace.session_name is None

@@ -4,6 +4,7 @@
 Provides unified registration, lifecycle management, and dependency handling
 for all workspace services (MemoryManager, ChatManager, etc.).
 """
+
 from __future__ import annotations
 
 import asyncio

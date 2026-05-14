@@ -47,9 +47,9 @@ class SkillToolRegistry:
         """Initialize an empty registry."""
         self._skill_to_tools: dict[str, list[str]] = {}
         self._tool_to_skills: dict[str, list[str]] = {}
-        self._tool_patterns: list[
-            tuple[str, str]
-        ] = []  # (pattern, skill_name)
+        self._tool_patterns: list[tuple[str, str]] = (
+            []
+        )  # (pattern, skill_name)
 
     def register_skill_tools(
         self,

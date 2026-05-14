@@ -7,6 +7,7 @@ separate message storage to prevent cross-tenant data leakage.
 Bounded: at most _MAX_MESSAGES kept per tenant; messages older than
 _MAX_AGE_SECONDS are dropped when reading.
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -2,6 +2,7 @@
 # flake8: noqa: E402
 # pylint: disable=wrong-import-position,unused-variable
 """Tests for CLI providers tenant support."""
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock

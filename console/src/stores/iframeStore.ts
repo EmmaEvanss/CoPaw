@@ -10,11 +10,13 @@
  *
  * 存储字段：
  * - userId: 用户 ID（来自父窗口的 sapId 参数）
+ * - userName: 用户名称（从后端接口查询）
  * - clawName: Claw 名称
  * - space: 空间标识
  * - source: 来源标识
  * - hideMenu: 是否隐藏菜单
  * - isSuperManager: 是否为超级管理员
+ * - manager: 是否为普通管理员
  * - authHeaders: 自定义 headers 数组
  * - parentOrigin: 父窗口来源 origin
  *
@@ -70,11 +72,13 @@ interface IframeStore extends IframeContext {
 const initialState: IframeContext = {
   initialized: false,
   userId: null,
+  userName: null,
   clawName: null,
   space: null,
   source: null,
   hideMenu: false,
   isSuperManager: false,
+  manager: false,
   authHeaders: [],
   parentOrigin: null,
   receivedAt: null,
@@ -117,11 +121,13 @@ export const useIframeStore = create<IframeStore>()(
       name: "swe-iframe-context",
       partialize: (state) => ({
         userId: state.userId,
+        userName: state.userName,
         clawName: state.clawName,
         space: state.space,
         source: state.source,
         hideMenu: state.hideMenu,
         isSuperManager: state.isSuperManager,
+        manager: state.manager,
         authHeaders: state.authHeaders,
         parentOrigin: state.parentOrigin,
         sysId: state.sysId,

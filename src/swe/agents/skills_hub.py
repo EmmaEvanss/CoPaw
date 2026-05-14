@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Skills hub client and install helpers."""
+
 from __future__ import annotations
 
 import json
@@ -47,9 +48,9 @@ def _build_hub_conflict(name: str) -> dict[str, Any]:
     }
 
 
-_cancel_checker_ctx: contextvars.ContextVar[
-    Any | None
-] = contextvars.ContextVar("skills_hub_cancel_checker", default=None)
+_cancel_checker_ctx: contextvars.ContextVar[Any | None] = (
+    contextvars.ContextVar("skills_hub_cancel_checker", default=None)
+)
 
 
 @dataclass

@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """Chat manager for managing chat specifications."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from .models import ChatSpec
 from .repo import BaseChatRepository
@@ -84,6 +85,7 @@ class ChatManager:
         user_id: str,
         channel: str = DEFAULT_CHANNEL,
         name: str = "New Chat",
+        meta: Optional[dict[str, Any]] = None,
     ) -> ChatSpec:
         """Get existing chat or create new one.
 
@@ -94,6 +96,7 @@ class ChatManager:
             user_id: User identifier
             channel: Channel name
             name: Chat name
+            meta: Optional metadata to merge into the chat spec
 
         Returns:
             Chat specification (existing or newly created)
@@ -111,6 +114,15 @@ class ChatManager:
                 channel,
             )
             if existing:
+                if meta:
+                    merged_meta = {
+                        **(existing.meta or {}),
+                        **meta,
+                    }
+                    if merged_meta != (existing.meta or {}):
+                        existing.meta = merged_meta
+                        existing.updated_at = datetime.now(timezone.utc)
+                        await self._repo.upsert_chat(existing)
                 logger.debug(
                     f"get_or_create_chat: Found existing chat: {existing.id}",
                 )
@@ -126,6 +138,7 @@ class ChatManager:
                 user_id=user_id,
                 channel=channel,
                 name=name,
+                meta=meta or {},
             )
             logger.debug(f"get_or_create_chat: created spec={spec.id}")
             # Call internal create without lock (already locked)

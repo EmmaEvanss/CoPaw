@@ -43,9 +43,9 @@ class BackupTask(BaseModel):
     target_tenant_ids: Optional[list[str]] = None  # Tenants to backup/restore
     backup_date: Optional[str] = None  # YYYY-MM-DD
     backup_hour: Optional[int] = None  # 0-23, defaults to current hour
-    instance_id: Optional[
-        str
-    ] = None  # Instance identifier for multi-instance deployment
+    instance_id: Optional[str] = (
+        None  # Instance identifier for multi-instance deployment
+    )
 
     # Progress info
     current_step: str = ""

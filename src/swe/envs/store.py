@@ -8,6 +8,7 @@ Persistence strategy (two layers):
    ``os.getenv()`` and child subprocesses (``subprocess.run``, etc.)
    can read them immediately.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,9 +21,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _BOOTSTRAP_WORKING_DIR = (
-    Path(os.environ.get("SWE_WORKING_DIR", "~/.swe"))
-    .expanduser()
-    .resolve()
+    Path(os.environ.get("SWE_WORKING_DIR", "~/.swe")).expanduser().resolve()
 )
 _BOOTSTRAP_SECRET_DIR = (
     Path(

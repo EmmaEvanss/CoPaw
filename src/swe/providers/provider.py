@@ -174,9 +174,11 @@ class Provider(ProviderInfo, ABC):
             self.generate_kwargs = config["generate_kwargs"]
         if "extra_models" in config and config["extra_models"] is not None:
             self.extra_models = [
-                model
-                if isinstance(model, ModelInfo)
-                else ModelInfo.model_validate(model)
+                (
+                    model
+                    if isinstance(model, ModelInfo)
+                    else ModelInfo.model_validate(model)
+                )
                 for model in config["extra_models"]
             ]
 

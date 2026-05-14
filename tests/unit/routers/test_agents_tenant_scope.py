@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tenant-local agent resolution tests."""
+
 # pylint: disable=protected-access,redefined-outer-name,unused-argument
 import asyncio
 import importlib.util
@@ -141,8 +142,8 @@ def _install_test_stubs() -> dict[str, object | None]:
     config_utils.get_tenant_working_dir = lambda tenant_id=None: Path(
         "/tmp",
     ) / (tenant_id or "global")
-    config_utils.get_tenant_working_dir_strict = (
-        lambda tenant_id=None: Path("/tmp") / tenant_id
+    config_utils.get_tenant_working_dir_strict = lambda tenant_id=None: (
+        Path("/tmp") / tenant_id
         if tenant_id
         else (_ for _ in ()).throw(RuntimeError("tenant context required"))
     )
@@ -151,8 +152,8 @@ def _install_test_stubs() -> dict[str, object | None]:
         / (tenant_id or "global")
         / "config.json"
     )
-    config_utils.get_tenant_config_path_strict = (
-        lambda tenant_id=None: Path("/tmp") / tenant_id / "config.json"
+    config_utils.get_tenant_config_path_strict = lambda tenant_id=None: (
+        Path("/tmp") / tenant_id / "config.json"
         if tenant_id
         else (_ for _ in ()).throw(RuntimeError("tenant context required"))
     )

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Unit tests for tenant model API endpoints."""
+
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
@@ -26,7 +27,7 @@ def sample_tenant_config():
                 api_key="test-key",
                 models=["gpt-4"],
                 enabled=True,
-            )
+            ),
         ],
         routing=RoutingConfig(
             mode="cloud_first",
@@ -42,6 +43,7 @@ def sample_tenant_config():
 def client():
     """Create a TestClient for the tenant providers router."""
     from fastapi import FastAPI
+
     app = FastAPI()
     app.include_router(tenant_providers_router)
     return TestClient(app)
@@ -55,12 +57,12 @@ class TestGetTenantProviders:
         # Mock get_current_tenant_id to return a tenant ID
         with patch(
             "swe.app.routers.providers.get_current_tenant_id",
-            return_value="test-tenant"
+            return_value="test-tenant",
         ):
             # Mock TenantModelManager.load to return the sample config
             with patch(
                 "swe.app.routers.providers.TenantModelManager.load",
-                return_value=sample_tenant_config
+                return_value=sample_tenant_config,
             ):
                 response = client.get("/providers")
 
@@ -87,7 +89,7 @@ class TestGetTenantProviders:
         # Mock get_current_tenant_id to return None
         with patch(
             "swe.app.routers.providers.get_current_tenant_id",
-            return_value=None
+            return_value=None,
         ):
             response = client.get("/providers")
 
@@ -99,19 +101,23 @@ class TestGetTenantProviders:
         # Mock get_current_tenant_id to return a tenant ID
         with patch(
             "swe.app.routers.providers.get_current_tenant_id",
-            return_value="nonexistent-tenant"
+            return_value="nonexistent-tenant",
         ):
             # Mock TenantModelManager.load to raise TenantModelNotFoundError
             with patch(
                 "swe.app.routers.providers.TenantModelManager.load",
-                side_effect=TenantModelNotFoundError("nonexistent-tenant")
+                side_effect=TenantModelNotFoundError("nonexistent-tenant"),
             ):
                 response = client.get("/providers")
 
                 assert response.status_code == 404
                 assert "Configuration not found" in response.json()["detail"]
 
-    def test_get_tenant_providers_different_tenant(self, client, sample_tenant_config):
+    def test_get_tenant_providers_different_tenant(
+        self,
+        client,
+        sample_tenant_config,
+    ):
         """Test that different tenant IDs return different configurations."""
         tenant1_config = sample_tenant_config
 
@@ -124,18 +130,18 @@ class TestGetTenantProviders:
                     api_key="tenant2-key",
                     models=["claude-3"],
                     enabled=True,
-                )
+                ),
             ],
             routing=RoutingConfig(
                 mode="local_first",
                 slots={
                     "local": ModelSlot(
                         provider_id="tenant2-ollama",
-                        model="mistral"
+                        model="mistral",
                     ),
                     "cloud": ModelSlot(
                         provider_id="tenant2-anthropic",
-                        model="claude-3"
+                        model="claude-3",
                     ),
                 },
             ),
@@ -144,11 +150,11 @@ class TestGetTenantProviders:
         # Test tenant1
         with patch(
             "swe.app.routers.providers.get_current_tenant_id",
-            return_value="tenant1"
+            return_value="tenant1",
         ):
             with patch(
                 "swe.app.routers.providers.TenantModelManager.load",
-                return_value=tenant1_config
+                return_value=tenant1_config,
             ):
                 response1 = client.get("/providers")
                 data1 = response1.json()
@@ -160,11 +166,11 @@ class TestGetTenantProviders:
         # Test tenant2
         with patch(
             "swe.app.routers.providers.get_current_tenant_id",
-            return_value="tenant2"
+            return_value="tenant2",
         ):
             with patch(
                 "swe.app.routers.providers.TenantModelManager.load",
-                return_value=tenant2_config
+                return_value=tenant2_config,
             ):
                 response2 = client.get("/providers")
                 data2 = response2.json()

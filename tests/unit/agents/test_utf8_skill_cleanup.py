@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import io
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 from swe.agents import react_agent, skills_manager
 from swe.agents.skills_manager import (
     SkillService,
+    _extract_zip_skills,
     _read_skill_from_dir,
     get_pool_skill_manifest_path,
     get_skill_pool_dir,
@@ -26,6 +29,34 @@ def _write_skill(skill_dir: Path, description: str = "demo skill") -> None:
         f"---\nname: demo\ndescription: {description}\n---\n",
         encoding="utf-8",
     )
+
+
+def _gbk_zip_name(name: str) -> str:
+    return name.encode("gbk").decode("cp437")
+
+
+def test_extract_zip_skills_recovers_gbk_chinese_member_names() -> None:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in {
+            "demo/SKILL.md": "---\nname: demo\n---\n",
+            "demo/references/中文资料.md": "中文内容",
+        }.items():
+            info = zipfile.ZipInfo(_gbk_zip_name(name))
+            info.flag_bits &= ~0x800
+            zf.writestr(info, content.encode("utf-8"))
+
+    tmp_dir, found = _extract_zip_skills(buf.getvalue())
+    try:
+        skill_dir, skill_name = found[0]
+        assert skill_name == "demo"
+        assert (skill_dir / "references" / "中文资料.md").read_text(
+            encoding="utf-8",
+        ) == "中文内容"
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def test_reconcile_workspace_manifest_renames_unsafe_skill_dir(

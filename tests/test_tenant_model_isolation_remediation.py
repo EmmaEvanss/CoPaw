@@ -24,7 +24,6 @@ from swe.tenant_models.models import (
     TenantProviderConfig,
 )
 
-
 # =============================================================================
 # Remediation 1: Model Selection Fallback Path Verification
 # =============================================================================

@@ -4,6 +4,7 @@
 Tests that `swe init --tenant-id <id>` writes config to the correct
 tenant directory structure, and that backward compatibility is preserved.
 """
+
 import sys
 from pathlib import Path
 

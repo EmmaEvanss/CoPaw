@@ -1,10 +1,3 @@
-/**
- * ============================================================
- * iframe postMessage 通信核心逻辑
- * Author: Kun He
- * Date: 2026-04-07
- * ============================================================
- */
 import type {
   IframeUserDataMessage,
   IframeIncomingMessage,
@@ -18,24 +11,18 @@ import {
   isUserInitialized,
   setUserInitialized,
 } from "../api/modules/customerInfo";
+import {
+  fetchUserInfo,
+  extractUserInfo,
+} from "../api/modules/userInfo";
+import {
+  ensureValidToken,
+  isExternalTokenEnabled,
+} from "../api/externalToken";
+import { getTargetCookie } from "./cookie-utils";
 import { authApi } from "../api/modules/auth";
 import { buildAuthHeaders } from "../api/authHeaders";
-
-/**
- * 从 cookie 中读取指定名称的值
- * @param name - cookie 名称
- * @returns cookie 值或 null
- */
-function getCookieValue(name: string): string | null {
-  const cookies = document.cookie.split(";").map((c) => c.trim());
-  for (const cookie of cookies) {
-    const [key, value] = cookie.split("=");
-    if (key === name) {
-      return value ?? null;
-    }
-  }
-  return null;
-}
+// import mmj from 'xxxx'
 
 /**
  * 允许的来源白名单
@@ -56,6 +43,12 @@ let isListenerRegistered = false;
 
 /** 清理函数 */
 let cleanupFn: (() => void) | null = null;
+
+/** 当前正在查询用户信息的 userId，用于合并初始化和 iframe 消息触发的并发请求 */
+let pendingUserInfoUserId: string | null = null;
+
+/** 当前正在执行的用户信息查询任务 */
+let pendingUserInfoRequest: Promise<boolean> | null = null;
 
 /**
  * 将值转换为布尔值，用于处理父窗口可能传递的字符串 "true"/"false"
@@ -127,14 +120,15 @@ function buildIframeAuthHeaders(
   return authHeaders;
 }
 
+
 /**
  * 调用用户初始化接口并保存到 localStorage
  * 检查用户是否已初始化，未初始化则调用接口
  */
-async function initializeUserIfNeeded(
+function initializeUserIfNeeded(
   userId: string,
   store: ReturnType<typeof useIframeStore.getState>,
-): Promise<void> {
+): void {
   if (isUserInitialized(userId)) {
     return;
   }
@@ -144,54 +138,54 @@ async function initializeUserIfNeeded(
     text: `\n### 用户身份信息\n分行号：${store.bbk}\n网点机构编号：${store.orgCode}\n岗位编号：${store.positionId}\n客户经理ID：${userId}`,
   };
 
-  try {
-    const initResponse = await fetchUserInit(params);
-
-    if (initResponse?.success) {
-      setUserInitialized(userId);
-    } else {
-      console.warn("[IframeMessage] User init failed");
-    }
-  } catch (error) {
-    console.error("[IframeMessage] User init error:", error);
-  }
+  void fetchUserInit(params)
+    .then((initResponse) => {
+      if (initResponse?.appended) {
+        setUserInitialized(userId);
+      } else {
+        console.warn("[IframeMessage] User init failed");
+      }
+    })
+    .catch ((error) => {
+      console.error("[IframeMessage] User init error:", error);
+    });
 }
 
 /**
  * 处理 USER_DATA 消息
  * 父窗口发送的用户数据消息处理逻辑
  */
-async function handleUserDataMessage(
+function handleUserDataMessage(
   message: IframeUserDataMessage,
   origin: string,
-): Promise<void> {
+): void {
   const store = useIframeStore.getState();
   const authHeaders = buildIframeAuthHeaders(message);
+  const nextUserId = message.data.sapId ?? null;
 
   store.setContext({
-    userId: message.data.sapId ?? null,
+    userId: nextUserId,
+    ...(store.userId !== nextUserId ? { userName: null } : {}),
     clawName: message.data.clawName ?? null,
     space: message.data.space ?? null,
     source: message.data.source ?? null,
     hideMenu: toBoolean(message.data.hideMenu),
     isSuperManager: toBoolean(message.data.isSuperManager),
+    manager: toBoolean(message.data.manager),
     authHeaders,
     parentOrigin: origin,
+    bbk: message.data.bbkId ?? null,
   });
 
   store.markInitialized();
+  void fetchAndSetUserName();
   // sendMessageToParent({ type: "READY_RESPONSE", initialized: true });
+  // 用户首次进入系统时，发起cron-auth请求
+  // const headers = buildCookieHeaders(message);
+  // const cookieValue = headers["x-header-cookie"] || document.cookie;
+  // void authApi.sendCronAuth(cookieValue);
 
-  console.info("[IframeMessage] Initialized with context from parent:", {
-    origin,
-    userId: message.data.sapId,
-    clawName: message.data.clawName,
-    space: message.data.space,
-    source: message.data.source,
-    hideMenu: message.data.hideMenu,
-    isSuperManager: message.data.isSuperManager,
-    authHeadersCount: authHeaders.length,
-  });
+  // initMmj();
 }
 
 /**
@@ -222,25 +216,18 @@ function handleReadyRequest(): void {
 function handleMessage(event: MessageEvent): void {
   // 安全检查：验证来源
   if (!isValidOrigin(event.origin)) {
-    console.warn(
-      "[IframeMessage] Rejected message from untrusted origin:",
-      event.origin,
-    );
     return;
   }
 
   // 验证消息格式
   if (!validateMessage(event.data)) {
-    console.debug("[IframeMessage] Ignored invalid message format");
     return;
   }
-
   const message = event.data as IframeIncomingMessage;
 
   switch (message.type) {
     case "USER_DATA":
-      // handleUserDataMessage 是 async 函数，这里用 void 处理
-      void handleUserDataMessage(message, event.origin);
+      handleUserDataMessage(message, event.origin);
       break;
     case "HEARTBEAT":
       handleHeartbeatMessage(message.timestamp);
@@ -262,11 +249,7 @@ export function sendMessageToParent(message: IframeOutgoingMessage): void {
   }
 
   const context = getIframeContext();
-  // 确保 targetOrigin 有效，避免传入 null 或 "null" 字符串
-  const targetOrigin =
-    context.parentOrigin && context.parentOrigin !== "null"
-      ? context.parentOrigin
-      : "*";
+  const targetOrigin = context.parentOrigin && context.parentOrigin !== "null" ? context.parentOrigin : "*";
 
   window.parent.postMessage(message, targetOrigin);
 }
@@ -284,18 +267,13 @@ export function sendMessageToParent(message: IframeOutgoingMessage): void {
 export function initIframeMessageListener(): void {
   // 防止重复注册
   if (isListenerRegistered) {
-    console.warn("[IframeMessage] Listener already registered");
     return;
   }
 
   // 检查是否在 iframe 中
   if (window.self === window.top) {
-    console.debug("[IframeMessage] Not running in iframe, skipping listener");
     return;
   }
-
-  // 处理 URL 参数 origin=Y 的场景（父应用通过 URL 传递参数，不走 postMessage）
-  handleUrlOriginParam();
 
   // 注册消息监听器
   window.addEventListener("message", handleMessage);
@@ -310,20 +288,37 @@ export function initIframeMessageListener(): void {
 
   // 页面卸载时自动清理
   window.addEventListener("beforeunload", cleanupFn);
+}
 
-  console.info("[IframeMessage] Listener registered");
+/**
+ * 清理独立访问时残留的 iframe 上下文
+ *
+ * 同一个浏览器标签页可能先以 iframe 方式打开，再以普通页面方式访问。
+ * 这时 sessionStorage 中的 iframe 身份会污染后续请求头，因此独立访问时主动清理。
+ */
+export function resetIframeContextForStandalone(): void {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (isInIframe() || urlParams.get("origin") === "Y") {
+    return;
+  }
 
-  // 父容器不需要知道初始化状态，已注释
-  // 通知父窗口准备就绪，可以发送初始化消息 (USER_DATA)
-  // initialized: false 表示等待父窗口发送数据
-  // sendMessageToParent({ type: "READY_RESPONSE", initialized: false });
+  const store = useIframeStore.getState();
+  if (
+    store.userId ||
+    store.userName ||
+    store.source ||
+    store.bbk ||
+    store.authHeaders.length > 0
+  ) {
+    store.clearContext();
+  }
 }
 
 /**
  * 处理 URL 参数 origin=Y 的场景
  * 当父应用通过 URL 传递参数时，从 cookie 读取用户信息并初始化
  */
-function handleUrlOriginParam(): void {
+export async function handleUrlOriginParam(): Promise<void> {
   const urlParams = new URLSearchParams(window.location.search);
   const originParam = urlParams.get("origin");
 
@@ -331,22 +326,18 @@ function handleUrlOriginParam(): void {
     return;
   }
 
-  // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 读取 sessionId 和 taskId 参数，用于自动跳转到聊天页面
   const sessionIdParam = urlParams.get("sessionId");
   const taskIdParam = urlParams.get("taskId");
-  // ==================== URL 导航参数结束 ====================
-
   // 从 cookie 读取用户信息
-  const userId = getCookieValue("userid");
-  const sysId = getCookieValue("sysid");
-  const vbbk = getCookieValue("vbbk");
-  const vorgcode = getCookieValue("vorgcode");
-  const vorglvl = getCookieValue("vorglvl");
-  const positionId = getCookieValue("positionID");
+  const userId = getTargetCookie("userid");
+  const sysId = getTargetCookie("sysid");
+  const vbbk = getTargetCookie("vbbk");
+  const vorgcode = getTargetCookie("vorgcode");
+  const vorglvl = getTargetCookie("vorglvl");
+  const positionId = getTargetCookie("positionID");
 
   if (!userId) {
-    console.warn("[IframeMessage] origin=Y but userid cookie not found");
     return;
   }
 
@@ -355,43 +346,25 @@ function handleUrlOriginParam(): void {
   // 设置初始上下文，hideMenu=true 隐藏 MainLayout 侧边栏
   store.setContext({
     userId,
+    ...(store.userId !== userId ? { userName: null } : {}),
     sysId: sysId ?? null,
     bbk: vbbk ?? null,
     orgCode: vorgcode ?? null,
     orgLvl: vorglvl ?? null,
     positionId: positionId ?? null,
     hideMenu: true, // URL origin=Y 时隐藏 MainLayout 侧边栏
+    source: "RMASSIST",
   });
 
-  // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 设置导航参数，Chat 页面会在首次加载时检查并执行导航
   if (sessionIdParam || taskIdParam) {
     store.setNavigationParams(sessionIdParam, taskIdParam);
-    console.info("[IframeMessage] Navigation params set:", {
-      sessionId: sessionIdParam,
-      taskId: taskIdParam,
-    });
   }
-  // ==================== URL 导航参数结束 ====================
 
   // 异步调用客户信息接口和用户初始化
-  void initFromUrlParams(userId, store);
-
-  console.info(
-    "[IframeMessage] Initialized from URL origin param and cookies:",
-    {
-      userId,
-      sysId,
-      vbbk,
-      vorgcode,
-      vorglvl,
-      positionId,
-      hideMenu: true,
-      sessionId: sessionIdParam,
-      taskId: taskIdParam,
-    },
-  );
+  await initFromUrlParams(userId, store);
 }
+
 
 /**
  * 从 URL 参数初始化时的异步处理
@@ -404,19 +377,36 @@ async function initFromUrlParams(
   // 调用客户信息接口（使用 cookie 中的参数）
   await fetchAndApplyCustomerInfoFromCookie(userId, store);
 
-  // 用户初始化
+  // 用户初始化（不需要等待）
   const currentUserId = store.userId;
   if (currentUserId) {
-    await initializeUserIfNeeded(currentUserId, store);
+    initializeUserIfNeeded(currentUserId, store);
   }
 
   store.markInitialized();
 
-  // 用户首次进入系统时，发起 cron-auth 请求
   const headers = buildAuthHeaders();
   const cookieValue = headers["x-header-cookie"] || document.cookie;
   void authApi.sendCronAuth(cookieValue);
+  // initMmj()
 }
+
+// async function initMmj()
+// 省略实现
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 省略实现结束
 
 /**
  * 从 cookie 参数调用客户信息接口
@@ -426,11 +416,11 @@ async function fetchAndApplyCustomerInfoFromCookie(
   store: ReturnType<typeof useIframeStore.getState>,
 ): Promise<void> {
   try {
-    const sysId = getCookieValue("sysid") ?? "";
-    const vbbk = getCookieValue("vbbk") ?? "";
-    const vorgcode = getCookieValue("vorgcode") ?? "";
-    const vorglvl = getCookieValue("vorglvl") ?? "";
-    const positionId = getCookieValue("positionID") ?? "";
+    const sysId = getTargetCookie("sysid") ?? "";
+    const vbbk = getTargetCookie("vbbk") ?? "";
+    const vorgcode = getTargetCookie("vorgcode") ?? "";
+    const vorglvl = getTargetCookie("vorglvl") ?? "";
+    const positionId = getTargetCookie("positionID") ?? "";
 
     const targetUserData = {
       inputParams: {
@@ -459,11 +449,6 @@ async function fetchAndApplyCustomerInfoFromCookie(
           userChange: result.userChange ?? false,
         });
       }
-    } else {
-      console.warn(
-        "[IframeMessage] Customer info fetch failed:",
-        response?.errorMsg,
-      );
     }
   } catch (error) {
     console.error("[IframeMessage] Customer info fetch error:", error);
@@ -479,7 +464,6 @@ async function fetchAndApplyCustomerInfoFromCookie(
 export function cleanupIframeMessageListener(): void {
   if (cleanupFn) {
     cleanupFn();
-    console.info("[IframeMessage] Listener cleaned up");
   }
 }
 
@@ -505,4 +489,70 @@ export function isIframeInitialized(): boolean {
  */
 export function getAllowedOrigins(): string[] {
   return [...ALLOWED_ORIGINS];
+}
+
+/**
+ * 查询并设置用户名称和 bbk
+ * 在获取 userId 和 token 后调用，将 userName 和 bbk 存入 store
+ *
+ * @returns 是否成功获取用户信息
+ */
+export async function fetchAndSetUserName(): Promise<boolean> {
+  const store = useIframeStore.getState();
+  const userId = store.userId;
+
+  if (!userId) {
+    return false;
+  }
+
+  if (pendingUserInfoRequest && pendingUserInfoUserId === userId) {
+    return pendingUserInfoRequest;
+  }
+
+  pendingUserInfoUserId = userId;
+  pendingUserInfoRequest = fetchAndApplyUserName(userId);
+
+  try {
+    return await pendingUserInfoRequest;
+  } finally {
+    if (pendingUserInfoRequest && pendingUserInfoUserId === userId) {
+      pendingUserInfoRequest = null;
+      pendingUserInfoUserId = null;
+    }
+  }
+}
+
+async function fetchAndApplyUserName(userId: string): Promise<boolean> {
+  try {
+    if (isExternalTokenEnabled()) {
+      await ensureValidToken();
+    }
+
+    const userInfoData = await fetchUserInfo(userId);
+    const { userName, bbk } = extractUserInfo(userInfoData);
+
+    const store = useIframeStore.getState();
+    if (store.userId !== userId) {
+      return false;
+    }
+
+    // 更新 store，只更新有值的字段
+    // 如果 store 中已存在 bbk，则不覆盖
+    const updates: { userName?: string; bbk?: string } = {};
+    if (userName) {
+      updates.userName = userName;
+    }
+    if (bbk && !store.bbk) {
+      updates.bbk = bbk;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      store.setContext(updates);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error("[IframeMessage] fetchAndSetUserName error:", error);
+    return false;
+  }
 }

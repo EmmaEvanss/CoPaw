@@ -61,6 +61,49 @@ ALL_SKILL_ROUTING_CHANNELS = [
 
 _RegistryResult = TypeVar("_RegistryResult")
 _MAX_ZIP_BYTES = 200 * 1024 * 1024
+_ZIP_UTF8_FLAG = 0x800
+
+
+def _has_cjk_text(text: str) -> bool:
+    """判断字符串是否包含常见中日韩文字。"""
+    return any(
+        "\u3400" <= char <= "\u9fff" or "\uf900" <= char <= "\ufaff"
+        for char in text
+    )
+
+
+def _decode_zip_member_name(info: zipfile.ZipInfo) -> str:
+    """兼容未声明 UTF-8 的中文 zip 成员名。"""
+    name = info.filename.replace("\\", "/")
+    try:
+        raw_name = name.encode("cp437")
+    except UnicodeEncodeError:
+        return name
+    if info.flag_bits & _ZIP_UTF8_FLAG and _has_cjk_text(name):
+        return name
+    for encoding in ("gb18030", "gbk", "big5", "utf-8"):
+        try:
+            decoded = raw_name.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        decoded = decoded.replace("\\", "/")
+        if decoded != name and _has_cjk_text(decoded):
+            return decoded
+    return name
+
+
+def _extract_zip_member(
+    zf: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    target: Path,
+) -> None:
+    """按已修复的目标路径解压单个 zip 成员。"""
+    if info.is_dir():
+        target.mkdir(parents=True, exist_ok=True)
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zf.open(info) as src, target.open("wb") as dst:
+        shutil.copyfileobj(src, dst)
 
 
 class SkillInfo(BaseModel):
@@ -603,15 +646,19 @@ def _extract_and_validate_zip(data: bytes, tmp_dir: Path) -> None:
 
         root_path = tmp_dir.resolve()
         for info in zf.infolist():
-            target = (tmp_dir / info.filename).resolve()
+            member_name = _decode_zip_member_name(info)
+            target = (tmp_dir / member_name).resolve()
             if not target.is_relative_to(root_path):
-                raise ValueError(f"Unsafe path in zip: {info.filename}")
+                raise ValueError(f"Unsafe path in zip: {member_name}")
             if info.external_attr >> 16 & 0o120000 == 0o120000:
                 raise ValueError(
-                    f"Symlink not allowed in zip: {info.filename}",
+                    f"Symlink not allowed in zip: {member_name}",
                 )
 
-        zf.extractall(tmp_dir)
+        for info in zf.infolist():
+            member_name = _decode_zip_member_name(info)
+            target = (tmp_dir / member_name).resolve()
+            _extract_zip_member(zf, info, target)
 
 
 def _safe_child_path(base_dir: Path, relative_name: str) -> Path:
@@ -1642,9 +1689,11 @@ class SkillService:
             entry = manifest.get("skills", {}).get(skill_name, {})
             skill = _read_skill_from_dir(
                 skill_root / skill_name,
-                "builtin"
-                if entry.get("source", "customized") == "builtin"
-                else "customized",
+                (
+                    "builtin"
+                    if entry.get("source", "customized") == "builtin"
+                    else "customized"
+                ),
             )
             if skill is not None:
                 skills.append(skill)
@@ -2758,9 +2807,11 @@ class SkillPoolService:
             metadata = _build_skill_metadata(
                 final_name,
                 target_dir,
-                source="builtin"
-                if entry.get("source") == "builtin"
-                else "customized",
+                source=(
+                    "builtin"
+                    if entry.get("source") == "builtin"
+                    else "customized"
+                ),
                 protected=False,
             )
             payload["skills"][final_name] = {

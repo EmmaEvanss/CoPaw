@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=redefined-outer-name
 """Unit tests for the tenant-scoped settings router (/api/settings/language)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -67,6 +68,7 @@ def api_client():
 
 def test_get_language_default(api_client):
     """Should return 'en' when no settings file exists."""
+
     async def run_test():
         async with api_client:
             return await api_client.get("/api/settings/language")
@@ -79,7 +81,8 @@ def test_get_language_default(api_client):
 def test_get_language_persisted(api_client, _use_tmp_settings):
     """Should return the persisted language value."""
     _use_tmp_settings["tenant-a"].write_text(
-        json.dumps({"language": "ja"}), "utf-8"
+        json.dumps({"language": "ja"}),
+        "utf-8",
     )
 
     async def run_test():
@@ -104,6 +107,7 @@ def test_put_language_valid(
     _use_tmp_settings,
 ):
     """Should accept all valid languages and persist them."""
+
     async def run_test():
         async with api_client:
             return await api_client.put(
@@ -122,6 +126,7 @@ def test_put_language_valid(
 
 def test_put_language_invalid(api_client):
     """Should reject invalid language with 400."""
+
     async def run_test():
         async with api_client:
             return await api_client.put(
@@ -137,6 +142,7 @@ def test_put_language_invalid(api_client):
 
 def test_put_language_empty(api_client):
     """Should reject empty language with 400."""
+
     async def run_test():
         async with api_client:
             return await api_client.put(
@@ -151,6 +157,7 @@ def test_put_language_empty(api_client):
 
 def test_put_language_missing_key(api_client):
     """Should reject body without 'language' key with 400."""
+
     async def run_test():
         async with api_client:
             return await api_client.put(
@@ -165,6 +172,7 @@ def test_put_language_missing_key(api_client):
 
 def test_put_then_get_roundtrip(api_client):
     """PUT then GET should return the updated language."""
+
     async def run_test():
         async with api_client:
             await api_client.put(
@@ -215,10 +223,12 @@ def test_tenant_a_cannot_see_tenant_b_settings(
 ):
     """Tenant A should not see Tenant B's settings."""
     _use_tmp_settings["tenant-a"].write_text(
-        json.dumps({"language": "zh"}), "utf-8"
+        json.dumps({"language": "zh"}),
+        "utf-8",
     )
     _use_tmp_settings["tenant-b"].write_text(
-        json.dumps({"language": "ja"}), "utf-8"
+        json.dumps({"language": "ja"}),
+        "utf-8",
     )
 
     async def run_test():
@@ -243,6 +253,7 @@ def test_tenant_settings_are_isolated(
     _use_tmp_settings,
 ):
     """Changing settings for one tenant doesn't affect another."""
+
     async def run_test():
         async with api_client:
             await api_client.put(

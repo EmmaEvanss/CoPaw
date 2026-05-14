@@ -37,10 +37,11 @@ export default function Suggestions(props: ISuggestionsProps) {
       setTimeout(() => setTooltipVisible(null), 1500);
       return;
     }
-    // 空闲时通过事件触发提交
+    // Suggestions are rendered only after a response is finished. Use a
+    // dedicated event so stale session.generating state cannot block submit.
     emit({
-      type: "handleSubmit",
-      data: { query },
+      type: "handleSuggestionSubmit",
+      data: { query, fileList: [] },
     });
   };
 
@@ -59,7 +60,8 @@ export default function Suggestions(props: ISuggestionsProps) {
               open={tooltipVisible === suggestion || undefined}
               mouseEnterDelay={0.3}
             >
-              <div
+              <button
+                type="button"
                 className={`${prefixCls}-item`}
                 onClick={() => handleClick(suggestion)}
               >
@@ -67,7 +69,7 @@ export default function Suggestions(props: ISuggestionsProps) {
                   {suggestion}
                 </span>
                 <SparkRightArrowLine className={`${prefixCls}-item-icon`} />
-              </div>
+              </button>
             </Tooltip>
           ))}
         </div>

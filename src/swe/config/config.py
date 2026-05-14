@@ -2,12 +2,15 @@
 import json
 from pathlib import Path
 from typing import Any, Optional, Dict, List, Literal
+from enum import Enum
 
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 import shortuuid
 
 from .timezone import detect_system_timezone
 from ..constant import (
+    DEFAULT_LLM_CHAT_MAX_CONCURRENT,
+    DEFAULT_LLM_CRON_MAX_CONCURRENT,
     EnvVarLoader,
     HEARTBEAT_DEFAULT_EVERY,
     HEARTBEAT_DEFAULT_TARGET,
@@ -38,6 +41,16 @@ from ..constant import (
 from ..providers.models import ModelSlotConfig
 from ..tracing.config import TracingConfig
 
+LEGACY_DEFAULT_SYSTEM_PROMPT_FILES = (
+    "AGENTS.md",
+    "SOUL.md",
+    "PROFILE.md",
+)
+DEFAULT_SYSTEM_PROMPT_FILES = (
+    *LEGACY_DEFAULT_SYSTEM_PROMPT_FILES,
+    "MEMORY.md",
+)
+
 
 def generate_short_agent_id() -> str:
     """Generate a 6-character short UUID for agent identification.
@@ -46,6 +59,30 @@ def generate_short_agent_id() -> str:
         6-character short UUID string
     """
     return shortuuid.ShortUUID().random(length=6)
+
+
+def get_default_system_prompt_files() -> list[str]:
+    """Return the default workspace system prompt files."""
+    return list(DEFAULT_SYSTEM_PROMPT_FILES)
+
+
+def normalize_system_prompt_files(
+    files: list[str] | tuple[str, ...] | None,
+) -> list[str]:
+    """Upgrade only the historical default prompt-file selection.
+
+    Existing custom selections are preserved verbatim. Historical defaults are
+    normalized to the current ordered default that includes MEMORY.md.
+    """
+    if files is None:
+        return get_default_system_prompt_files()
+
+    normalized_files = list(files)
+    if len(normalized_files) == len(
+        LEGACY_DEFAULT_SYSTEM_PROMPT_FILES,
+    ) and set(normalized_files) == set(LEGACY_DEFAULT_SYSTEM_PROMPT_FILES):
+        return get_default_system_prompt_files()
+    return normalized_files
 
 
 class BaseChannelConfig(BaseModel):
@@ -125,13 +162,32 @@ class ZhaohuConfig(BaseChannelConfig):
     )
     client_secret: str = Field(
         default_factory=lambda: EnvVarLoader.get_str(
-            "SWE_ZHAOHU_CLIENT_SECRET",
+            "SWE_ZHAOHU_CLIENT_SECRET_POSEIDON",
             "",
         ),
     )
     custom_card_url: str = Field(
         default_factory=lambda: EnvVarLoader.get_str(
             "SWE_ZHAOHU_CUSTOM_CARD_URL",
+            "",
+        ),
+    )
+    # Intent recognition API configuration
+    intent_url: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_INTENT_URL",
+            "",
+        ),
+    )
+    intent_open_id: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_INTENT_OPEN_ID",
+            "",
+        ),
+    )
+    intent_api_key: str = Field(
+        default_factory=lambda: EnvVarLoader.get_str(
+            "SWE_ZHAOHU_INTENT_API_KEY",
             "",
         ),
     )
@@ -357,6 +413,22 @@ class MemorySummaryConfig(BaseModel):
         ),
     )
 
+    dream_cron: str = Field(
+        default="",
+        description=(
+            "Cron expression for dream-based memory optimization job "
+            "(empty string to disable). Default: disabled (empty string)."
+        ),
+    )
+
+
+class SuggestionMode(str, Enum):
+    """猜你想问生成模式."""
+
+    DISABLED = "disabled"  # 完全禁用
+    BACKEND_GENERATE = "backend_generate"  # 后端生成（原有模式）
+    QA_EXTRACTION_ONLY = "qa_extraction_only"  # 仅提取 Q&A（新模式）
+
 
 class SuggestionConfig(BaseModel):
     """猜你想问功能配置 - 在模型回答后异步生成后续问题建议."""
@@ -366,6 +438,10 @@ class SuggestionConfig(BaseModel):
     enabled: bool = Field(
         default=True,
         description="是否启用猜你想问功能",
+    )
+    mode: SuggestionMode = Field(
+        default=SuggestionMode.BACKEND_GENERATE,
+        description="猜你想问生成模式",
     )
     max_suggestions: int = Field(
         default=3,
@@ -390,6 +466,59 @@ class SuggestionConfig(BaseModel):
         ge=200,
         le=2000,
         description="助手回答截断长度（字符）",
+    )
+    qa_content_total_max_length: int = Field(
+        default=1500,
+        ge=500,
+        le=3000,
+        description="Q&A 内容总长度上限（字符）",
+    )
+    qa_content_max_age_seconds: int = Field(
+        default=120,
+        ge=30,
+        le=300,
+        description="Q&A 内容存储有效期（秒）",
+    )
+
+
+class PostTurnValidationConfig(BaseModel):
+    """回答后校验配置 - 判断任务是否完成并在必要时提示续跑."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(
+        default=True,
+        description="是否启用回答后的任务完成校验",
+    )
+    max_confirmed_turns: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=5,
+        description="单次用户请求最多允许用户确认续跑的轮数",
+    )
+    max_auto_turns: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="每次用户请求或确认后最多允许全自动续跑的轮数",
+    )
+    timeout_seconds: float = Field(
+        default=8.0,
+        ge=1.0,
+        le=20.0,
+        description="后校验模型调用超时时间（秒）",
+    )
+    user_message_max_length: int = Field(
+        default=300,
+        ge=50,
+        le=1000,
+        description="后校验时保留的用户任务长度上限",
+    )
+    assistant_response_max_length: int = Field(
+        default=1200,
+        ge=200,
+        le=4000,
+        description="后校验时保留的助手回答长度上限",
     )
 
 
@@ -436,8 +565,29 @@ class AgentsRunningConfig(BaseModel):
         default=LLM_MAX_CONCURRENT,
         ge=1,
         description=(
-            "Maximum number of concurrent in-flight LLM calls. "
-            "Shared across all agents; only the first initialization wins."
+            "Fallback maximum number of concurrent in-flight LLM calls for "
+            "this tenant-local agent scope. Chat and cron workloads use "
+            "separate pools with workload-specific defaults."
+        ),
+    )
+
+    llm_chat_max_concurrent: Optional[int] = Field(
+        default=DEFAULT_LLM_CHAT_MAX_CONCURRENT,
+        ge=1,
+        description=(
+            "Maximum concurrent in-flight LLM calls for chat workload "
+            "traffic in this tenant-local agent scope. When unset or null, "
+            "the chat default is used."
+        ),
+    )
+
+    llm_cron_max_concurrent: Optional[int] = Field(
+        default=DEFAULT_LLM_CRON_MAX_CONCURRENT,
+        ge=1,
+        description=(
+            "Maximum concurrent in-flight LLM calls for cron and heartbeat "
+            "workload traffic in this tenant-local agent scope. When unset "
+            "or null, the cron default is used."
         ),
     )
 
@@ -445,9 +595,10 @@ class AgentsRunningConfig(BaseModel):
         default=LLM_MAX_QPM,
         ge=0,
         description=(
-            "Maximum queries per minute (60-second sliding window). "
-            "New requests that would exceed this limit wait before being "
-            "dispatched — proactively preventing 429s. 0 = disabled."
+            "Maximum queries per minute for this tenant-local agent scope "
+            "(60-second sliding window). New requests that would exceed this "
+            "limit wait before being dispatched; 0 = disabled. This quota is "
+            "shared across chat and cron workloads."
         ),
     )
 
@@ -455,8 +606,9 @@ class AgentsRunningConfig(BaseModel):
         default=LLM_RATE_LIMIT_PAUSE,
         ge=1.0,
         description=(
-            "Default pause duration (seconds) applied globally when a 429 "
-            "rate-limit response is received."
+            "Default pause duration (seconds) applied to this tenant-local "
+            "agent scope when a 429 rate-limit response is received. The "
+            "cooldown is shared across chat and cron workloads."
         ),
     )
 
@@ -465,7 +617,7 @@ class AgentsRunningConfig(BaseModel):
         ge=0.0,
         description=(
             "Random jitter range (seconds) added on top of the pause so "
-            "concurrent waiters stagger their wake-up."
+            "concurrent waiters in this agent scope stagger their wake-up."
         ),
     )
 
@@ -473,10 +625,52 @@ class AgentsRunningConfig(BaseModel):
         default=LLM_ACQUIRE_TIMEOUT,
         ge=10.0,
         description=(
-            "Maximum time (seconds) a caller waits to acquire a rate-limiter "
-            "slot before giving up with an error."
+            "Default maximum time (seconds) a caller waits to acquire its "
+            "workload-specific rate-limiter slot before giving up with an "
+            "error."
         ),
     )
+
+    llm_chat_acquire_timeout: Optional[float] = Field(
+        default=None,
+        ge=10.0,
+        description=(
+            "Optional maximum time (seconds) chat workload callers wait for "
+            "their LLM concurrency slot. When unset, llm_acquire_timeout is "
+            "used."
+        ),
+    )
+
+    llm_cron_acquire_timeout: Optional[float] = Field(
+        default=None,
+        ge=10.0,
+        description=(
+            "Optional maximum time (seconds) cron and heartbeat workload "
+            "callers wait for their LLM concurrency slot. When unset, "
+            "llm_acquire_timeout is used."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_workload_concurrency_defaults(
+        cls,
+        data: Any,
+    ) -> Any:
+        """Treat missing/null workload concurrency fields as defaults."""
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        if normalized.get("llm_chat_max_concurrent") is None:
+            normalized["llm_chat_max_concurrent"] = (
+                DEFAULT_LLM_CHAT_MAX_CONCURRENT
+            )
+        if normalized.get("llm_cron_max_concurrent") is None:
+            normalized["llm_cron_max_concurrent"] = (
+                DEFAULT_LLM_CRON_MAX_CONCURRENT
+            )
+        return normalized
 
     @model_validator(mode="after")
     def validate_llm_retry_backoff(self) -> "AgentsRunningConfig":
@@ -486,6 +680,23 @@ class AgentsRunningConfig(BaseModel):
                 "llm_backoff_cap must be greater than or equal to "
                 "llm_backoff_base",
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_llm_acquire_timeout(self) -> "AgentsRunningConfig":
+        """Validate LLM acquire timeout relationships."""
+        cooldown = self.llm_rate_limit_pause + self.llm_rate_limit_jitter
+        for field_name in (
+            "llm_acquire_timeout",
+            "llm_chat_acquire_timeout",
+            "llm_cron_acquire_timeout",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and value <= cooldown:
+                raise ValueError(
+                    f"{field_name} must be greater than "
+                    "llm_rate_limit_pause + llm_rate_limit_jitter",
+                )
         return self
 
     max_input_length: int = Field(
@@ -545,6 +756,11 @@ class AgentsRunningConfig(BaseModel):
     suggestions: SuggestionConfig = Field(
         default_factory=SuggestionConfig,
         description="猜你想问功能配置",
+    )
+
+    post_turn_validation: PostTurnValidationConfig = Field(
+        default_factory=PostTurnValidationConfig,
+        description="回答后的任务完成校验与自动续跑配置",
     )
 
     @property
@@ -651,7 +867,7 @@ class AgentProfileConfig(BaseModel):
         description="Language setting for this agent",
     )
     system_prompt_files: List[str] = Field(
-        default_factory=lambda: ["AGENTS.md", "SOUL.md", "PROFILE.md"],
+        default_factory=get_default_system_prompt_files,
         description="System prompt markdown files",
     )
     tools: Optional["ToolsConfig"] = Field(
@@ -662,6 +878,13 @@ class AgentProfileConfig(BaseModel):
         default=None,
         description="Security configuration for this agent",
     )
+
+    @model_validator(mode="after")
+    def _normalize_system_prompt_files(self):
+        self.system_prompt_files = normalize_system_prompt_files(
+            self.system_prompt_files,
+        )
+        return self
 
 
 class AgentsConfig(BaseModel):
@@ -693,7 +916,7 @@ class AgentsConfig(BaseModel):
     language: str = Field(default="zh")
     installed_md_files_language: Optional[str] = None
     system_prompt_files: List[str] = Field(
-        default_factory=lambda: ["AGENTS.md", "SOUL.md", "PROFILE.md"],
+        default_factory=get_default_system_prompt_files,
     )
     audio_mode: Literal["auto", "native"] = Field(
         default="auto",
@@ -735,6 +958,13 @@ class AgentsConfig(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _normalize_system_prompt_files(self):
+        self.system_prompt_files = normalize_system_prompt_files(
+            self.system_prompt_files,
+        )
+        return self
+
 
 class LastDispatchConfig(BaseModel):
     """Last channel/user/session that received a user-originated reply."""
@@ -759,6 +989,33 @@ class MCPClientConfig(BaseModel):
     args: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     cwd: str = ""
+    # 市场分发相关字段
+    source: str = Field(
+        default="",
+        description="来源标识：空=我创建的；marketplace:{item_id}=市场分发的",
+    )
+    market_client_key: str = Field(
+        default="",
+        description="市场来源的 client_key",
+    )
+    distributed_by: str = Field(
+        default="",
+        description="分发者 user_id",
+    )
+    # 懒加载预留字段
+    lazy_load: bool = Field(
+        default=False,
+        description="是否延迟加载 MCP 客户端",
+    )
+    # 时间戳字段
+    created_at: str = Field(
+        default="",
+        description="创建时间 ISO8601",
+    )
+    updated_at: str = Field(
+        default="",
+        description="更新时间 ISO8601",
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -910,6 +1167,12 @@ def _default_builtin_tools() -> Dict[str, BuiltinToolConfig]:
             name="copy_file_to_static",
             enabled=True,
             description="copy file to static",
+        ),
+        "update_task_progress": BuiltinToolConfig(
+            name="update_task_progress",
+            enabled=True,
+            description="update task progress state",
+            display_to_user=False,
         ),
     }
 
@@ -1372,11 +1635,8 @@ def load_agent_config(
                 and config.agents.llm_routing
                 else AgentsLLMRoutingConfig()
             ),
-            system_prompt_files=(
-                config.agents.system_prompt_files
-                if hasattr(config.agents, "system_prompt_files")
-                and config.agents.system_prompt_files
-                else ["AGENTS.md", "SOUL.md", "PROFILE.md"]
+            system_prompt_files=normalize_system_prompt_files(
+                getattr(config.agents, "system_prompt_files", None),
             ),
         )
         # Save for future use
@@ -1408,6 +1668,10 @@ def load_agent_config(
             data = normalized_data
     except Exception:
         pass
+
+    data["system_prompt_files"] = normalize_system_prompt_files(
+        data.get("system_prompt_files"),
+    )
 
     return AgentProfileConfig(**data)
 
@@ -1510,10 +1774,12 @@ def migrate_legacy_config_to_multi_agent() -> bool:
             if legacy_agents.llm_routing
             else AgentsLLMRoutingConfig()
         ),
-        system_prompt_files=(
-            legacy_agents.system_prompt_files
-            if legacy_agents.system_prompt_files
-            else ["AGENTS.md", "SOUL.md", "PROFILE.md"]
+        system_prompt_files=normalize_system_prompt_files(
+            (
+                legacy_agents.system_prompt_files
+                if legacy_agents.system_prompt_files
+                else None
+            ),
         ),
         tools=config.tools if config.tools else None,
         security=config.security if config.security else None,
@@ -1548,8 +1814,8 @@ def migrate_legacy_config_to_multi_agent() -> bool:
                     shutil.copy2(old_path, new_path)
                 print(f"  Migrated {item_name} to default workspace")
 
-    # Copy markdown files (AGENTS.md, SOUL.md, PROFILE.md)
-    for md_file in ["AGENTS.md", "SOUL.md", "PROFILE.md"]:
+    # Copy markdown files used by the default system prompt.
+    for md_file in get_default_system_prompt_files():
         old_md = old_workspace / md_file
         if old_md.exists():
             new_md = default_workspace / md_file

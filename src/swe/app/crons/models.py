@@ -33,6 +33,9 @@ _CRONTAB_NUM_TO_NAME: dict[str, str] = {
     "7": "sun",
 }
 
+DEFAULT_CRON_TIMEOUT_SECONDS = 7200
+DEFAULT_CRON_MISFIRE_GRACE_SECONDS = 300
+
 
 def _crontab_dow_to_name(field: str) -> str:
     """Convert the day-of-week field from crontab numbers to abbreviations.
@@ -100,8 +103,14 @@ class DispatchSpec(BaseModel):
 
 class JobRuntimeSpec(BaseModel):
     max_concurrency: int = Field(default=1, ge=1)
-    timeout_seconds: int = Field(default=120, ge=1)
-    misfire_grace_seconds: int = Field(default=60, ge=0)
+    timeout_seconds: int = Field(
+        default=DEFAULT_CRON_TIMEOUT_SECONDS,
+        ge=1,
+    )
+    misfire_grace_seconds: int = Field(
+        default=DEFAULT_CRON_MISFIRE_GRACE_SECONDS,
+        ge=0,
+    )
 
 
 class CronJobRequest(BaseModel):
@@ -131,6 +140,20 @@ class CronJobSpec(BaseModel):
         description=(
             "Tenant ID for job isolation. If None, uses default tenant."
         ),
+    )
+
+    # Identity headers from request
+    bbk_id: Optional[str] = Field(
+        default=None,
+        description="分行号 (from X-Bbk-Id header)",
+    )
+    source_id: Optional[str] = Field(
+        default=None,
+        description="来源标识 (from X-Source-Id header)",
+    )
+    tenant_name: Optional[str] = Field(
+        default=None,
+        description="租户姓名 (from X-User-Name header)",
     )
 
     schedule: ScheduleSpec

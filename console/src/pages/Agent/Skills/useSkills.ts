@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Modal } from "@agentscope-ai/design";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import api from "../../../api";
+import { skillApi } from "../../../api/modules/skill";
 import type { SecurityScanErrorResponse } from "../../../api/modules/security";
 import { invalidateSkillCache } from "../../../api/modules/skill";
 import type { SkillSpec } from "../../../api/types";
@@ -259,10 +260,11 @@ export function useSkills() {
     void api.cancelHubSkillInstall(taskId);
   }, [importing]);
 
+  // 启用/禁用技能 - 直接使用 skillApi 避免与 mySkillsApi 冲突
   const toggleEnabled = async (skill: SkillSpec) => {
     try {
       if (skill.enabled) {
-        await api.disableSkill(skill.name);
+        await skillApi.disableSkill(skill.name);
         setSkills((prev) =>
           prev.map((s) =>
             s.name === skill.name ? { ...s, enabled: false } : s,
@@ -270,7 +272,7 @@ export function useSkills() {
         );
         message.success("Disabled successfully");
       } else {
-        await api.enableSkill(skill.name);
+        await skillApi.enableSkill(skill.name);
         setSkills((prev) =>
           prev.map((s) =>
             s.name === skill.name ? { ...s, enabled: true } : s,
@@ -279,7 +281,7 @@ export function useSkills() {
         message.success("Enabled successfully");
         await checkScanWarnings(skill.name);
       }
-      invalidateSkillCache({ agentId: selectedAgent }); // Clear cache after mutation
+      invalidateSkillCache({ agentId: selectedAgent });
       return true;
     } catch (error) {
       handleError(error, "Operation failed");
@@ -287,6 +289,7 @@ export function useSkills() {
     }
   };
 
+  // 删除技能 - 直接使用 skillApi 避免与 mySkillsApi 冲突
   const deleteSkill = async (skill: SkillSpec) => {
     const confirmed = await new Promise<boolean>((resolve) => {
       Modal.confirm({
@@ -303,10 +306,10 @@ export function useSkills() {
     if (!confirmed) return false;
 
     try {
-      const result = await api.deleteSkill(skill.name);
+      const result = await skillApi.deleteSkill(skill.name);
       if (result.deleted) {
         message.success(t("skills.deleteSuccess"));
-        invalidateSkillCache({ agentId: selectedAgent }); // Clear cache after mutation
+        invalidateSkillCache({ agentId: selectedAgent });
         await fetchSkills();
         return true;
       }

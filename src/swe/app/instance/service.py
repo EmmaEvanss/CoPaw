@@ -262,12 +262,12 @@ class InstanceService:
             user_id=user_id,
             source_id=source_id,
             instance_id=instance_id,
-            instance_name=updated_instance.instance_name
-            if updated_instance
-            else None,
-            instance_url=updated_instance.instance_url
-            if updated_instance
-            else None,
+            instance_name=(
+                updated_instance.instance_name if updated_instance else None
+            ),
+            instance_url=(
+                updated_instance.instance_url if updated_instance else None
+            ),
             message="分配成功",
         )
 

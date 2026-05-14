@@ -30,6 +30,7 @@ from .routers import router as api_router, create_agent_scoped_router
 from .routers.agent_scoped import AgentContextMiddleware
 from .routers.voice import voice_router
 from ..envs import load_envs_into_environ
+from ..config.envs import load_env_defaults
 from .multi_agent_manager import MultiAgentManager
 from .workspace.tenant_pool import TenantWorkspacePool
 from .migration import (
@@ -39,6 +40,7 @@ from .channels.registry import register_custom_channel_routes
 from ..tracing import init_trace_manager, close_trace_manager
 from ..database import get_database_config
 from .service_heartbeat import start_service_heartbeat, stop_service_heartbeat
+from .crons.monitor_sync_client import get_monitor_sync_client
 
 # Apply log level on load so reload child process gets same level as CLI.
 logger = setup_logger(os.environ.get(LOG_LEVEL_ENV, "info"))
@@ -52,8 +54,9 @@ mimetypes.add_type("application/javascript", ".mjs")
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/wasm", ".wasm")
 
-# Load persisted env vars into os.environ at module import time
-# so they are available before the lifespan starts.
+# Load environment defaults (dev.json/prd.json based on SWE_ENV)
+# then load persisted env vars (envs.json) which can override defaults.
+load_env_defaults()
 load_envs_into_environ()
 
 
@@ -75,11 +78,12 @@ class DynamicMultiAgentRunner:
 
     async def _get_workspace_runner(self, request):
         """Get the correct workspace runner based on request."""
-        from .agent_context import get_current_agent_id, get_current_tenant_id
+        from .agent_context import get_current_agent_id
+        from ..config.context import get_current_effective_tenant_id
 
         # Get agent_id from context (set by middleware or header)
         agent_id = get_current_agent_id()
-        tenant_id = get_current_tenant_id()
+        tenant_id = get_current_effective_tenant_id()
 
         logger.debug(f"_get_workspace_runner: agent_id={agent_id}")
 
@@ -110,16 +114,26 @@ class DynamicMultiAgentRunner:
 
     async def stream_query(self, request, *args, **kwargs):
         """Dynamically route to the correct workspace runner."""
+        from ..config.llm_workload import (
+            LLM_WORKLOAD_CHAT,
+            bind_llm_workload,
+        )
+
         logger.debug("DynamicMultiAgentRunner.stream_query called")
         try:
             runner = await self._get_workspace_runner(request)
             logger.debug(f"Got runner: {runner}, type: {type(runner)}")
             # Delegate to the actual runner's stream_query generator
             count = 0
-            async for item in runner.stream_query(request, *args, **kwargs):
-                count += 1
-                logger.debug(f"Yielding item #{count}: {type(item)}")
-                yield item
+            with bind_llm_workload(LLM_WORKLOAD_CHAT):
+                async for item in runner.stream_query(
+                    request,
+                    *args,
+                    **kwargs,
+                ):
+                    count += 1
+                    logger.debug(f"Yielding item #{count}: {type(item)}")
+                    yield item
             logger.debug(f"stream_query completed, yielded {count} items")
         except Exception as e:
             logger.error(
@@ -340,6 +354,12 @@ async def lifespan(
     # 启动服务心跳任务
     await start_service_heartbeat()
 
+    # SWE 重启后通知 Monitor 触发定时任务恢复预热；延迟执行是为了确保
+    # 当前服务已经开始接收 Monitor 对 /cron/jobs 的回调请求。
+    get_monitor_sync_client().schedule_swe_cron_warmup(
+        start_delay_seconds=5.0,
+    )
+
     try:
         yield
     finally:
@@ -510,6 +530,51 @@ app.include_router(voice_router, tags=["voice"])
 # Custom channel routes (before SPA catch-all to ensure route priority)
 register_custom_channel_routes(app)
 
+
+# User-specific static files: /static/{user_id}/{path}
+# This route dynamically resolves the user directory per-request.
+# The directory is created on-demand if it doesn't exist.
+@app.get("/static/{user_id}/{agent_id}/{file_name:path}")
+async def serve_user_static(
+    user_id: str,
+    agent_id: str,
+    file_name: str,
+):
+    """Serve static files from user's static directory.
+    Args:
+        agent_id: multi agent id
+        user_id: User identifier (used to determine static directory)
+        file_name: Relative path within user's static directory
+    Returns:
+        FileResponse if file exists, 404 otherwise
+    """
+    from ..constant import WORKING_DIR
+
+    # Set tenant ID in context
+    logger.info(f"Serving static files from user {user_id}")
+
+    static_dir = (
+        WORKING_DIR / user_id / "workspaces" / agent_id / "static"
+    ).resolve()
+
+    # Security: ensure resolved path is still within user's static dir
+    try:
+        target = (static_dir / file_name).resolve()
+    except ValueError as exc:
+        # Path traversal attempt detected
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file path",
+        ) from exc
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Guess MIME type
+    _, _ = mimetypes.guess_type(str(target))
+    media_type = "application/octet-stream"
+    return FileResponse(Path(target), media_type=media_type)
+
+
 # Console static files and SPA fallback
 # Register these AFTER API routes to ensure proper routing priority
 if os.path.isdir(_CONSOLE_STATIC_DIR):
@@ -563,6 +628,27 @@ if os.path.isdir(_CONSOLE_STATIC_DIR):
     def _console_spa_alias(full_path: str = ""):
         _ = full_path
         return _serve_console_index()
+
+    @app.get("/static/{file_path:path}")
+    def _console_assets(file_path: str):
+        """Serve static assets from console assets directory.
+        Uses dynamic file lookup so assets can be added after startup.
+        """
+        if not _assets_dir.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail="Assets directory not found",
+            )
+        full_path = _assets_dir / file_path
+        try:
+            full_path.resolve().relative_to(_assets_dir.resolve())
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Not Found") from exc
+        if not full_path.is_file():
+            raise HTTPException(status_code=404, detail="Not Found")
+        # Guess content type
+        content_type, _ = mimetypes.guess_type(str(full_path))
+        return FileResponse(full_path, media_type=content_type)
 
     # SPA fallback: catch-all route for frontend routing
     # Must be registered AFTER all API routes to avoid conflicts

@@ -23,10 +23,32 @@ from ...agents.utils.tool_summary import (
     generate_tool_output_summary,
 )
 
-
 logger = logging.getLogger(__name__)
 
 _STREAM_SUMMARY_TIMEOUT_SECONDS = 0.15
+
+# 不在聊天流中展示进度的工具名称集合
+_SILENT_TOOL_NAMES: frozenset[str] = frozenset({"update_task_progress"})
+
+
+def _is_silent_tool_event(event: Event) -> bool:
+    """检查事件是否属于不应在聊天流中展示的工具。"""
+    if not isinstance(event, Message):
+        return False
+    if event.type not in (
+        MessageType.FUNCTION_CALL,
+        MessageType.PLUGIN_CALL,
+        MessageType.FUNCTION_CALL_OUTPUT,
+        MessageType.PLUGIN_CALL_OUTPUT,
+        MessageType.MCP_TOOL_CALL,
+        MessageType.MCP_TOOL_CALL_OUTPUT,
+    ):
+        return False
+    for content in event.content or []:
+        data = getattr(content, "data", None) or {}
+        if isinstance(data, dict) and data.get("name") in _SILENT_TOOL_NAMES:
+            return True
+    return False
 
 
 def _consume_summary_task_result(task: asyncio.Task[str]) -> None:
@@ -235,6 +257,9 @@ async def normalize_reasoning_boundary_stream(
                 yield completed_reasoning
                 yield event
                 continue
+
+        if _is_silent_tool_event(event):
+            continue
 
         if isinstance(event, Message):
             await _enrich_tool_message(event)

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """API router for sending messages to channels."""
+
 from __future__ import annotations
 
 import logging
@@ -111,8 +112,9 @@ async def send_message(
     agent_id = x_agent_id or "default"
 
     # Get tenant ID from request context
-    from ..agent_context import get_current_tenant_id
-    tenant_id = get_current_tenant_id()
+    from ...config.context import get_current_effective_tenant_id
+
+    tenant_id = get_current_effective_tenant_id()
 
     # Get multi-agent manager from app state (via request)
     multi_agent_manager = _get_multi_agent_manager(http_request)

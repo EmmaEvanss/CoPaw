@@ -5,6 +5,7 @@ Creates the directory structure and seeds default agents for a single tenant.
 Used by both ``swe init --tenant-id`` (CLI) and ``TenantWorkspacePool`` (runtime)
 so the bootstrap logic lives in one place.
 """
+
 import json
 import logging
 import shutil
@@ -69,23 +70,14 @@ class TenantInitializer:
         If source_id is provided and default_{source_id} doesn't exist,
         automatically creates it from the default template.
 
-        Default tenant MUST have a source_id. Non-default tenants without
-        source_id use the "default" template for initialization.
+        Default tenant without source_id uses "default" directory directly.
+        Non-default tenants without source_id use the "default" template for initialization.
 
         Returns:
             Template directory name (e.g., "default_ruice" or "default").
-
-        Raises:
-            TenantContextError: If tenant_id is "default" but source_id is None.
         """
-        from ...config.context import TenantContextError
-
         if not self.source_id:
-            if self.tenant_id == "default":
-                raise TenantContextError(
-                    "Default tenant must access via a source. "
-                    "X-Source-Id header is required for default tenant.",
-                )
+            # No source_id: use default template/directory
             return "default"
         template_name = f"default_{self.source_id}"
         template_dir = self.base_working_dir / template_name
@@ -295,9 +287,9 @@ class TenantInitializer:
 
         # Step 3: Seed default workspace skills from default tenant
         # Note: This raises RuntimeError on failure
-        result[
-            "workspace_seed"
-        ] = self.seed_default_workspace_skills_from_default()
+        result["workspace_seed"] = (
+            self.seed_default_workspace_skills_from_default()
+        )
 
         # Step 4: Ensure the default workspace scaffold is complete.
         result["workspace_scaffold"] = self.ensure_default_workspace_scaffold()

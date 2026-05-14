@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Integration tests for skill recognition enhancement."""
+
 # pylint: disable=protected-access, unused-variable
 
 from pathlib import Path

@@ -6,6 +6,7 @@
 Tests workspace loading from pool, request.state binding,
 and context reset after response.
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -114,6 +115,74 @@ class TestTenantWorkspaceHelpers:
         with pytest.raises((AttributeError, RuntimeError)):
             if mock_request.state.workspace is None:
                 raise RuntimeError("Workspace not set")
+
+    @pytest.mark.asyncio
+    async def test_dispatch_uses_effective_tenant_id_for_source_scoped_default(
+        self,
+    ):
+        """Workspace loading should use effective_tenant_id when present."""
+        from swe.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        effective_root = Path("/tmp/default_RMASSIST")
+
+        mock_req = MagicMock(spec=Request)
+        mock_req.method = "GET"
+        mock_req.state = MagicMock()
+        mock_req.state.tenant_id = "default"
+        mock_req.state.effective_tenant_id = "default_RMASSIST"
+        mock_req.state.source_id = "RMASSIST"
+        mock_req.url = MagicMock()
+        mock_req.url.path = "/api/test"
+        mock_req.app = MagicMock()
+        mock_req.app.state = MagicMock()
+
+        pool = MagicMock()
+        pool.ensure_bootstrap = AsyncMock()
+        pool.get_tenant_workspace_dir = MagicMock(return_value=effective_root)
+        mock_req.app.state.tenant_workspace_pool = pool
+
+        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+        async def call_next(_request):
+            return Response(content=b"OK", status_code=200)
+
+        response = await middleware.dispatch(mock_req, call_next)
+
+        assert response.status_code == 200
+        pool.ensure_bootstrap.assert_awaited_once_with(
+            "default_RMASSIST",
+            source_id="RMASSIST",
+        )
+        pool.get_tenant_workspace_dir.assert_called_once_with(
+            "default_RMASSIST",
+        )
+
+    @pytest.mark.asyncio
+    async def test_dispatch_allows_public_static_without_tenant_context(self):
+        """Public static routes should bypass workspace requirements."""
+        from swe.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        mock_req = MagicMock(spec=Request)
+        mock_req.method = "GET"
+        mock_req.state = MagicMock()
+        mock_req.state.tenant_id = None
+        mock_req.state.effective_tenant_id = None
+        mock_req.url = MagicMock()
+        mock_req.url.path = "/static/alice/demo.txt"
+        mock_req.app = MagicMock()
+
+        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+        async def call_next(_request):
+            return Response(content=b"OK", status_code=200)
+
+        response = await middleware.dispatch(mock_req, call_next)
+
+        assert response.status_code == 200
 
 
 class TestTenantWorkspaceContextReset:
@@ -442,9 +511,7 @@ class TestTenantProviderConfigInitialization:
         from swe.constant import SECRET_DIR
 
         # Setup: Create default tenant with config
-        default_providers = (
-            tmp_path / ".swe.secret" / "default" / "providers"
-        )
+        default_providers = tmp_path / ".swe.secret" / "default" / "providers"
         default_providers.mkdir(parents=True)
         (default_providers / "builtin").mkdir()
         (default_providers / "custom").mkdir()

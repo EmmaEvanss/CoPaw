@@ -7,6 +7,7 @@ These tests verify:
 - config.json cannot override environment-derived values
 - Missing env values fall back to hardcoded defaults
 """
+
 from __future__ import annotations
 
 import json
@@ -64,21 +65,27 @@ class TestWorkspaceCronCoordinationEnvLoading:
         workspace_dir.mkdir()
 
         # Mock environment constants
-        with patch(
-            "swe.constant.CRON_COORDINATION_ENABLED",
-            True,
-        ), patch(
-            "swe.constant.CRON_CLUSTER_MODE",
-            True,
-        ), patch(
-            "swe.constant.CRON_REDIS_URL",
-            "redis://env-override:6379/1",
-        ), patch(
-            "swe.constant.CRON_LEASE_TTL_SECONDS",
-            60,
-        ), patch(
-            "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
-            20,
+        with (
+            patch(
+                "swe.constant.CRON_COORDINATION_ENABLED",
+                True,
+            ),
+            patch(
+                "swe.constant.CRON_CLUSTER_MODE",
+                True,
+            ),
+            patch(
+                "swe.constant.CRON_REDIS_URL",
+                "redis://env-override:6379/1",
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_TTL_SECONDS",
+                60,
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
+                20,
+            ),
         ):
             ws = Workspace(
                 agent_id="test-agent",
@@ -138,12 +145,15 @@ class TestWorkspaceCronCoordinationEnvLoading:
         workspace_dir.mkdir()
 
         # Mock cluster mode and nodes
-        with patch(
-            "swe.constant.CRON_CLUSTER_MODE",
-            True,
-        ), patch(
-            "swe.constant.CRON_CLUSTER_NODES",
-            "node1:6379,node2:6380,node3:6381",
+        with (
+            patch(
+                "swe.constant.CRON_CLUSTER_MODE",
+                True,
+            ),
+            patch(
+                "swe.constant.CRON_CLUSTER_NODES",
+                "node1:6379,node2:6380,node3:6381",
+            ),
         ):
             ws = Workspace(
                 agent_id="test-agent",
@@ -169,12 +179,15 @@ class TestWorkspaceCronCoordinationEnvLoading:
         workspace_dir.mkdir()
 
         # Standalone mode (default)
-        with patch(
-            "swe.constant.CRON_CLUSTER_MODE",
-            False,
-        ), patch(
-            "swe.constant.CRON_CLUSTER_NODES",
-            "node1:6379,node2:6380",
+        with (
+            patch(
+                "swe.constant.CRON_CLUSTER_MODE",
+                False,
+            ),
+            patch(
+                "swe.constant.CRON_CLUSTER_NODES",
+                "node1:6379,node2:6380",
+            ),
         ):
             ws = Workspace(
                 agent_id="test-agent",
@@ -236,15 +249,19 @@ class TestWorkspaceCronCoordinationFallback:
         workspace_dir.mkdir()
 
         # Mock invalid lease values: ttl == renew_interval WITH coordination enabled
-        with patch(
-            "swe.constant.CRON_COORDINATION_ENABLED",
-            True,
-        ), patch(
-            "swe.constant.CRON_LEASE_TTL_SECONDS",
-            10,
-        ), patch(
-            "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
-            10,
+        with (
+            patch(
+                "swe.constant.CRON_COORDINATION_ENABLED",
+                True,
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_TTL_SECONDS",
+                10,
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
+                10,
+            ),
         ):
             ws = Workspace(
                 agent_id="test-agent",
@@ -267,15 +284,19 @@ class TestWorkspaceCronCoordinationFallback:
         workspace_dir.mkdir()
 
         # Mock invalid lease values: ttl < renew_interval WITH coordination enabled
-        with patch(
-            "swe.constant.CRON_COORDINATION_ENABLED",
-            True,
-        ), patch(
-            "swe.constant.CRON_LEASE_TTL_SECONDS",
-            5,
-        ), patch(
-            "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
-            10,
+        with (
+            patch(
+                "swe.constant.CRON_COORDINATION_ENABLED",
+                True,
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_TTL_SECONDS",
+                5,
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
+                10,
+            ),
         ):
             ws = Workspace(
                 agent_id="test-agent",
@@ -298,15 +319,19 @@ class TestWorkspaceCronCoordinationFallback:
         workspace_dir.mkdir()
 
         # Mock invalid lease values BUT coordination is disabled
-        with patch(
-            "swe.constant.CRON_COORDINATION_ENABLED",
-            False,
-        ), patch(
-            "swe.constant.CRON_LEASE_TTL_SECONDS",
-            5,
-        ), patch(
-            "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
-            10,
+        with (
+            patch(
+                "swe.constant.CRON_COORDINATION_ENABLED",
+                False,
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_TTL_SECONDS",
+                5,
+            ),
+            patch(
+                "swe.constant.CRON_LEASE_RENEW_INTERVAL_SECONDS",
+                10,
+            ),
         ):
             ws = Workspace(
                 agent_id="test-agent",

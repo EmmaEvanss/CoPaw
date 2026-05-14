@@ -4,6 +4,7 @@ Heartbeat: run agent with HEARTBEAT.md as query at interval.
 Uses config functions (get_heartbeat_config, get_heartbeat_query_path,
 load_config) for paths and settings.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,8 +21,12 @@ from ...config.utils import (
     get_heartbeat_query_path,
     load_config,
 )
+from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
 from ...constant import HEARTBEAT_FILE, HEARTBEAT_TARGET_LAST
-from ..crons.models import _crontab_dow_to_name
+from ..crons.models import (
+    DEFAULT_CRON_TIMEOUT_SECONDS,
+    _crontab_dow_to_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +208,11 @@ async def run_heartbeat_once(
                     )
 
             try:
-                await asyncio.wait_for(_run_and_dispatch(), timeout=120)
+                with bind_llm_workload(LLM_WORKLOAD_CRON):
+                    await asyncio.wait_for(
+                        _run_and_dispatch(),
+                        timeout=DEFAULT_CRON_TIMEOUT_SECONDS,
+                    )
             except asyncio.TimeoutError:
                 logger.warning("heartbeat run timed out")
             return
@@ -214,6 +223,10 @@ async def run_heartbeat_once(
             pass
 
     try:
-        await asyncio.wait_for(_run_only(), timeout=120)
+        with bind_llm_workload(LLM_WORKLOAD_CRON):
+            await asyncio.wait_for(
+                _run_only(),
+                timeout=DEFAULT_CRON_TIMEOUT_SECONDS,
+            )
     except asyncio.TimeoutError:
         logger.warning("heartbeat run timed out")

@@ -1,0 +1,323 @@
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 300px;
+}
+
+.modalContent {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 80vh;
+}
+
+.topSection {
+  flex-shrink: 0;
+}
+
+.bottomSection {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.leftPanel {
+  width: 280px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.rightPanel {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+// 会话列表
+.sessionList {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessionListTitle {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: #262626;
+}
+
+.sessionLoading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.sessionEmpty {
+  text-align: center;
+  color: #999;
+  padding: 40px 0;
+}
+
+.sessionCard {
+  padding: 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #1890ff;
+    background: #fafafa;
+  }
+
+  &.selected {
+    border-color: #1890ff;
+    background: #e6f7ff;
+  }
+}
+
+.sessionId {
+  font-family: monospace;
+  font-size: 12px;
+  color: #262626;
+  word-break: break-all;
+}
+
+.sessionIdRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.copyIcon {
+  cursor: pointer;
+  color: #999;
+  flex-shrink: 0;
+  transition: color 0.2s;
+
+  &:hover {
+    color: #1890ff;
+  }
+}
+
+.sessionName {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 6px;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.sessionMeta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.sessionStats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 4px;
+}
+
+.sessionTime {
+  font-size: 11px;
+  color: #999;
+}
+
+.sessionPagination {
+  margin-top: 12px;
+  text-align: center;
+}
+
+// 对话流
+.tracesFlow {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.tracesTitle {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: #262626;
+}
+
+.tracesLoading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.traceItem {
+  padding-bottom: 8px;
+}
+
+.traceHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.traceTime {
+  font-size: 12px;
+  color: #666;
+}
+
+.traceDuration {
+  font-size: 12px;
+  color: #999;
+  margin-left: auto;
+}
+
+.traceMeta {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.traceModel {
+  margin-left: 8px;
+  color: #1890ff;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traceExpandBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: #1890ff;
+  font-size: 12px;
+  margin-top: 4px;
+
+  &:hover {
+    color: #40a9ff;
+  }
+}
+
+.traceDetail {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+}
+
+.userMessage {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.modelOutput {
+  background: #e6f7ff;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.messageLabel {
+  font-weight: 500;
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.messageContent {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.skillsSection {
+  margin: 8px 0;
+}
+
+.sectionLabel {
+  font-size: 12px;
+  color: #666;
+  margin-right: 8px;
+}
+
+.tagList {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.toolsSection {
+  margin: 8px 0;
+}
+
+.toolCard {
+  background: #fff;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 4px 0;
+  border: 1px solid #e8e8e8;
+}
+
+.toolName {
+  font-weight: 500;
+  font-size: 12px;
+  color: #262626;
+}
+
+.toolMeta {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+}
+
+.toolError {
+  font-size: 11px;
+  color: #ff4d4f;
+  margin-top: 4px;
+}
+
+.errorSection {
+  margin: 8px 0;
+}
+
+.errorText {
+  background: #fff1f0;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #ff4d4f;
+  margin: 4px 0 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tracesPagination {
+  margin-top: 12px;
+  text-align: center;
+}

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Agent Markdown manager for reading and writing markdown files in working
 and memory directories."""
+
 from datetime import datetime
 from pathlib import Path
 

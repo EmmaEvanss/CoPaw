@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Console active-model distribution contract tests."""
+
 from __future__ import annotations
 
 import json

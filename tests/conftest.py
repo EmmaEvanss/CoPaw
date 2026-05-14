@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Root conftest: ensure worktree src is importable before collection."""
+
 import sys
 from pathlib import Path
 

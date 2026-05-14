@@ -21,6 +21,7 @@ Usage
 Analysers receive the policy at construction time and use it in place of their
 previously-hardcoded sets/lists.
 """
+
 from __future__ import annotations
 
 import logging

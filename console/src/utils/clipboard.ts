@@ -1,21 +1,42 @@
-/**
- * Copy text to clipboard with fallback for non-secure contexts or blocked permissions.
- * Returns true if successful, false if failed.
- */
-export async function copyToClipboard(text: string): Promise<boolean> {
-  if (!text) return false;
+type ClipboardPolicy = {
+  allowsFeature?: (feature: string) => boolean;
+};
 
-  // Try Clipboard API first
-  if (navigator.clipboard) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Clipboard API blocked (permissions policy) or failed, fallback to execCommand
-    }
+type ClipboardAwareDocument = Document & {
+  permissionsPolicy?: ClipboardPolicy;
+  featurePolicy?: ClipboardPolicy;
+};
+
+const CLIPBOARD_WRITE_FEATURE = "clipboard-write";
+const COPY_COMMAND = "copy";
+
+function allowsClipboardWriteByPolicy(): boolean {
+  const doc = document as ClipboardAwareDocument;
+  const policy = doc.permissionsPolicy ?? doc.featurePolicy;
+  if (typeof policy?.allowsFeature !== "function") {
+    return true;
   }
 
-  // Fallback using execCommand (works in iframe, non-secure contexts)
+  try {
+    return policy.allowsFeature(CLIPBOARD_WRITE_FEATURE);
+  } catch {
+    return true;
+  }
+}
+
+function canUseClipboardApi(): boolean {
+  return Boolean(
+    window.isSecureContext &&
+      navigator.clipboard?.writeText &&
+      allowsClipboardWriteByPolicy(),
+  );
+}
+
+function copyByExecCommand(text: string): boolean {
+  if (typeof document.execCommand !== "function") {
+    return false;
+  }
+
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.setAttribute("readonly", "");
@@ -25,14 +46,26 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   textarea.style.opacity = "0";
   document.body.appendChild(textarea);
 
-  let copied = false;
   try {
     textarea.focus();
     textarea.select();
-    copied = document.execCommand("copy");
+    return document.execCommand(COPY_COMMAND);
   } finally {
     document.body.removeChild(textarea);
   }
+}
 
-  return copied;
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+
+  if (canUseClipboardApi()) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return copyByExecCommand(text);
+    }
+  }
+
+  return copyByExecCommand(text);
 }

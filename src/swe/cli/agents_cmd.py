@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """CLI commands for managing agents and inter-agent communication."""
+
 # pylint:disable=too-many-branches,too-many-statements
 from __future__ import annotations
 

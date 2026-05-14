@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Modal, Image, message, Tooltip, Spin } from "antd";
+import { Modal, message, Tooltip, Spin } from "antd";
 import { FullscreenOutlined } from "@ant-design/icons";
 import {
   SparkFalseLine,
@@ -8,8 +8,7 @@ import {
   SparkTrueLine,
 } from "@agentscope-ai/icons";
 import { IconButton } from "@agentscope-ai/design";
-import { Markdown } from "@/components/agentscope-chat";
-import { getFileIcon, getFileType, getOfficePreviewUrl } from "./fileUtils";
+import { getFileIcon, getFileType, getContentType } from "./fileUtils";
 
 export interface FilePreviewModalProps {
   open: boolean;
@@ -18,58 +17,52 @@ export interface FilePreviewModalProps {
   fileName: string;
 }
 
-// 文本预览样式
-const textPreviewStyle: React.CSSProperties = {
-  width: "100%",
-  maxHeight: "400px",
-  overflow: "auto",
-  backgroundColor: "#f5f5f5",
-  borderRadius: "8px",
-  padding: "12px",
-  fontFamily: "monospace",
-  fontSize: "12px",
-  lineHeight: "1.5",
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-all",
-};
-
 function FilePreviewModal(props: FilePreviewModalProps) {
   const { open, onClose, fileUrl, fileName } = props;
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [textContent, setTextContent] = useState<string | null>(null);
-  const [textLoading, setTextLoading] = useState(false);
-  const [textError, setTextError] = useState<string | null>(null);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fileType = useMemo(() => getFileType(fileName), [fileName]);
-  // 弹窗中使用大图标
   const { icon, color } = useMemo(() => getFileIcon(fileName, 48), [fileName]);
 
-  // 加载文本/Markdown 内容
+  // fetch 文件数据并创建 Blob URL
   useEffect(() => {
-    if (open && (fileType === "text" || fileType === "markdown") && fileUrl) {
-      setTextLoading(true);
-      setTextError(null);
-      setTextContent(null);
+    if (open && fileType === "previewable" && fileUrl) {
+      setLoading(true);
+      setError(null);
+      setBlobUrl(null);
 
       fetch(fileUrl)
         .then((res) => {
           if (!res.ok) throw new Error("加载失败");
-          return res.text();
+          return res.blob();
         })
-        .then((text) => {
-          // 限制显示长度，避免超长文本
-          const maxLength = 50000;
-          setTextContent(text.length > maxLength ? text.slice(0, maxLength) + "\n\n... (内容过长，已截断)" : text);
+        .then((blob) => {
+          const contentType = getContentType(fileName);
+          const newBlob = new Blob([blob], { type: contentType });
+          const url = URL.createObjectURL(newBlob);
+          setBlobUrl(url);
         })
         .catch(() => {
-          setTextError("文件暂时无法预览");
+          setError("文件暂时无法预览");
         })
         .finally(() => {
-          setTextLoading(false);
+          setLoading(false);
         });
     }
-  }, [open, fileType, fileUrl]);
+  }, [open, fileType, fileUrl, fileName]);
+
+  // 清理 Blob URL
+  useEffect(() => {
+    return () => {
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl);
+      }
+    };
+  }, [blobUrl]);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -96,98 +89,18 @@ function FilePreviewModal(props: FilePreviewModalProps) {
     setFullscreen((prev) => !prev);
   }, []);
 
-  // 全屏时的内容高度
   const previewHeight = fullscreen ? "85vh" : "500px";
 
-  // Render preview content based on file type
   const renderPreviewContent = useMemo(() => {
-    if (fileType === "image") {
-      return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Image
-            src={fileUrl}
-            alt={fileName}
-            style={{ maxWidth: "100%", maxHeight: previewHeight, objectFit: "contain" }}
-          />
-        </div>
-      );
-    }
-
-    if (fileType === "video") {
-      return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <video
-            controls
-            style={{ maxWidth: "100%", maxHeight: previewHeight }}
-            src={fileUrl}
-          >
-            <source src={fileUrl} />
-          </video>
-        </div>
-      );
-    }
-
-    if (fileType === "audio") {
-      return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 0" }}>
-          <audio controls style={{ width: "100%" }} src={fileUrl}>
-            <source src={fileUrl} />
-          </audio>
-        </div>
-      );
-    }
-
-    // Office files - use iframe preview
-    if (fileType === "office") {
-      const previewUrl = getOfficePreviewUrl(fileUrl);
-      return (
-        <div style={{ width: "100%", height: previewHeight }}>
-          <iframe
-            src={previewUrl}
-            style={{ width: "100%", height: "100%", border: "none" }}
-            title="Office Preview"
-          />
-        </div>
-      );
-    }
-
-    // PDF files - use iframe preview
-    if (fileType === "pdf") {
-      return (
-        <div style={{ width: "100%", height: previewHeight }}>
-          <iframe
-            src={fileUrl}
-            style={{ width: "100%", height: "100%", border: "none" }}
-            title="PDF Preview"
-          />
-        </div>
-      );
-    }
-
-    // HTML files - use iframe preview
-    if (fileType === "html") {
-      return (
-        <div style={{ width: "100%", height: previewHeight }}>
-          <iframe
-            src={fileUrl}
-            style={{ width: "100%", height: "100%", border: "none" }}
-            title="HTML Preview"
-            sandbox="allow-scripts allow-same-origin"
-          />
-        </div>
-      );
-    }
-
-    // Markdown files - fetch and render with Markdown component
-    if (fileType === "markdown") {
-      if (textLoading) {
+    if (fileType === "previewable") {
+      if (loading) {
         return <Spin tip="加载中..." />;
       }
-      if (textError) {
+      if (error) {
         return (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "24px" }}>
             <div style={{ color: "#8c8c8c", marginBottom: "16px", fontSize: "14px" }}>
-              文件暂时无法预览，请尝试下载查看
+              {error}
             </div>
             <IconButton icon={<SparkDownloadLine />} onClick={handleDownload}>
               下载文件查看
@@ -195,44 +108,20 @@ function FilePreviewModal(props: FilePreviewModalProps) {
           </div>
         );
       }
-      if (textContent) {
+      if (blobUrl) {
         return (
-          <div style={{ width: "100%", maxHeight: previewHeight, overflow: "auto", padding: "12px" }}>
-            <Markdown content={textContent} allowHtml />
+          <div style={{ width: "100%", height: previewHeight }}>
+            <iframe
+              src={blobUrl}
+              style={{ width: "100%", height: "100%", border: "none" }}
+              title="File Preview"
+            />
           </div>
         );
       }
       return null;
     }
 
-    // Text files - fetch and display content
-    if (fileType === "text") {
-      if (textLoading) {
-        return <Spin tip="加载中..." />;
-      }
-      if (textError) {
-        return (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "24px" }}>
-            <div style={{ color: "#8c8c8c", marginBottom: "16px", fontSize: "14px" }}>
-              文件暂时无法预览，请尝试下载查看
-            </div>
-            <IconButton icon={<SparkDownloadLine />} onClick={handleDownload}>
-              下载文件查看
-            </IconButton>
-          </div>
-        );
-      }
-      if (textContent) {
-        return (
-          <div style={{ ...textPreviewStyle, maxHeight: previewHeight }}>
-            <code>{textContent}</code>
-          </div>
-        );
-      }
-      return null;
-    }
-
-    // Other file types - show file info card
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px", textAlign: "center" }}>
         <div style={{ marginBottom: "16px", color }}>
@@ -241,21 +130,19 @@ function FilePreviewModal(props: FilePreviewModalProps) {
         <div style={{ fontSize: "16px", fontWeight: 500, marginBottom: "8px", maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {fileName}
         </div>
-        <div style={{ fontSize: "12px", color: "#8c8c8c" }}>
-          文件类型: {fileName.split(".").pop()?.toUpperCase() || "未知"}
+        <div style={{ fontSize: "12px", color: "#8c8c8c", marginBottom: "16px" }}>
+          该文件类型不支持预览
         </div>
         <IconButton
           icon={<SparkDownloadLine />}
           onClick={handleDownload}
-          style={{ marginTop: 16 }}
         >
           下载文件
         </IconButton>
       </div>
     );
-  }, [fileType, fileUrl, fileName, icon, color, handleDownload, textLoading, textError, textContent, previewHeight]);
+  }, [fileType, blobUrl, loading, error, fileName, icon, color, handleDownload, previewHeight]);
 
-  // Header actions
   const headerActions = useMemo(() => {
     const actions = [
       <Tooltip key="copy" title="复制链接">
@@ -276,9 +163,7 @@ function FilePreviewModal(props: FilePreviewModalProps) {
       </Tooltip>,
     ];
 
-    // 所有支持预览的文件类型都添加全屏按钮
-    const previewableTypes = ["image", "video", "audio", "office", "pdf", "markdown", "text", "html"];
-    if (previewableTypes.includes(fileType)) {
+    if (fileType === "previewable") {
       actions.unshift(
         <Tooltip key="fullscreen" title={fullscreen ? "退出全屏" : "全屏预览"}>
           <IconButton

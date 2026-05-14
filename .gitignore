@@ -109,3 +109,8 @@ src/.hypothesis/
 # github actions
 .github/
 .gitnexus
+
+.playwright-mcp
+.agents
+/venv_market/
+/.mini-wiki/

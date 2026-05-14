@@ -7,15 +7,20 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator
+from uuid import uuid4
 
 import httpx
 from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
 from agentscope.message import Msg, TextBlock
 from agentscope.pipeline import stream_printing_messages
 from agentscope_runtime.engine.runner import Runner
-from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest, Event
+from agentscope_runtime.engine.schemas.agent_schemas import (
+    AgentRequest,
+    Event,
+)
 from agentscope_runtime.engine.schemas.exception import AgentException
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
@@ -30,12 +35,20 @@ from .command_dispatch import (
 from .query_error_dump import write_query_error_dump
 from .session import SafeJSONSession
 from .stream_boundary import normalize_reasoning_boundary_stream
+from .task_progress import attach_task_progress
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
 from ...security.tool_guard.models import TOOL_GUARD_DENIED_MARK
-from ...config.config import MCPClientConfig, MCPConfig, load_agent_config
+from ...config.config import (
+    MCPClientConfig,
+    MCPConfig,
+    load_agent_config,
+    SuggestionMode,
+)
 from ...constant import (
+    QUERY_CLEANUP_TIMEOUT,
+    QUERY_TIMEOUT_SECONDS,
     TOOL_GUARD_APPROVAL_TIMEOUT_SECONDS,
     WORKING_DIR,
 )
@@ -48,12 +61,19 @@ from ...tracing.models import TraceStatus
 from ...config.context import (
     get_current_passthrough_headers,
 )
+from ..post_turn_continuation_store import (
+    consume_pending_continuation,
+    store_pending_continuation,
+)
+from ..post_turn_validation import validate_task_completion
 from ..suggestions import generate_suggestions, store_suggestions
 
 if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
 
 logger = logging.getLogger(__name__)
+TASK_RUNS_STATE_KEY = "task_runs"
+_INTERNAL_FOLLOW_UP_METADATA_KEY = "swe_internal_follow_up"
 
 _APPROVE_EXACT = frozenset(
     {
@@ -65,6 +85,92 @@ _APPROVE_EXACT = frozenset(
 _MCP_HTTP_TIMEOUT_SECONDS = 240.0
 _MCP_HTTP_SSE_READ_TIMEOUT_SECONDS = 60.0 * 5
 
+_DENY_EXACT = frozenset(
+    {
+        "deny",
+        "/deny",
+        "/daemon deny",
+    },
+)
+
+
+def _extract_memory_entry_payload(entry: Any) -> dict[str, Any] | None:
+    """提取内存条目里的消息载荷。"""
+    if isinstance(entry, list) and entry and isinstance(entry[0], dict):
+        return entry[0]
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def _extract_text_from_message_content(content: Any) -> str:
+    """从消息内容中提取可展示文本。"""
+    if isinstance(content, str):
+        return content.strip()
+
+    if not isinstance(content, list):
+        return ""
+
+    texts: list[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        text = ""
+        if block.get("type") == "text":
+            text = str(block.get("text", "") or "")
+        elif block.get("type") == "thinking":
+            text = str(block.get("thinking", "") or "")
+        if text.strip():
+            texts.append(text.strip())
+    return "\n".join(texts).strip()
+
+
+def _build_task_run_record(
+    memory_entries: list[Any],
+    *,
+    memory_start: int,
+) -> dict[str, Any] | None:
+    """根据本次新增消息构建任务运行元数据。"""
+    if not memory_entries:
+        return None
+
+    started_at: str | None = None
+    ended_at: str | None = None
+    preview_text = ""
+
+    for entry in memory_entries:
+        payload = _extract_memory_entry_payload(entry)
+        if not payload:
+            continue
+        timestamp = payload.get("timestamp")
+        if isinstance(timestamp, str) and timestamp and not started_at:
+            started_at = timestamp
+        if isinstance(timestamp, str) and timestamp:
+            ended_at = timestamp
+
+    for entry in reversed(memory_entries):
+        payload = _extract_memory_entry_payload(entry)
+        if not payload or payload.get("role") != "assistant":
+            continue
+        preview_text = _extract_text_from_message_content(
+            payload.get("content"),
+        )
+        if preview_text:
+            break
+
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    started_at = started_at or now
+    ended_at = ended_at or started_at
+
+    return {
+        "run_id": f"task-run-{uuid4()}",
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "memory_start": memory_start,
+        "memory_end": memory_start + len(memory_entries),
+        "preview_text": preview_text,
+    }
+
 
 def _is_approval(text: str) -> bool:
     """Return True only when *text* is exactly ``approve``,
@@ -75,6 +181,12 @@ def _is_approval(text: str) -> bool:
     """
     normalized = " ".join(text.split()).lower()
     return normalized in _APPROVE_EXACT
+
+
+def _is_denial(text: str) -> bool:
+    """Return True only when *text* is an explicit deny command."""
+    normalized = " ".join(text.split()).lower()
+    return normalized in _DENY_EXACT
 
 
 async def _build_and_connect_mcp_clients(
@@ -107,7 +219,6 @@ async def _build_and_connect_mcp_clients(
                 await client.connect()
                 clients.append(client)
                 logger.info(f"MCP client '{key}' created and connected")
-                print("passthrough_headers", passthrough_headers)
         except Exception as e:
             logger.warning(
                 f"Failed to create MCP client '{key}': {e}",
@@ -279,6 +390,135 @@ def _extract_assistant_response(agent: SWEAgent) -> str:
     return ""
 
 
+def _build_internal_follow_up_msg(follow_up_prompt: str) -> Msg:
+    """Build a hidden continuation turn for the same agent."""
+    return Msg(
+        name="system-follow-up",
+        role="user",
+        content=(
+            "[内部续跑指令]\n"
+            "继续当前用户任务。不要把本段当作用户的新需求，"
+            "不要向用户复述本指令。\n"
+            f"{follow_up_prompt.strip()}"
+        ),
+        metadata={
+            _INTERNAL_FOLLOW_UP_METADATA_KEY: True,
+        },
+    )
+
+
+def _resolve_max_confirmed_turns(validation_config: Any) -> int:
+    """Resolve the post-turn confirmation limit with backward compatibility."""
+    confirmed_turns = getattr(validation_config, "max_confirmed_turns", None)
+    if confirmed_turns is None:
+        confirmed_turns = 2
+    try:
+        return max(int(confirmed_turns), 0)
+    except (TypeError, ValueError):
+        return 2
+
+
+def _resolve_max_auto_turns(validation_config: Any) -> int:
+    """Resolve the automatic continuation limit."""
+    auto_turns = getattr(validation_config, "max_auto_turns", 2)
+    try:
+        return max(int(auto_turns), 0)
+    except (TypeError, ValueError):
+        return 2
+
+
+def _strip_internal_follow_up_messages_from_state(
+    agent_state: dict[str, Any],
+) -> int:
+    """Remove hidden continuation prompts before persisting session state."""
+    memory_state = agent_state.get("memory")
+    if not isinstance(memory_state, dict):
+        return 0
+
+    content = memory_state.get("content")
+    if not isinstance(content, list):
+        return 0
+
+    kept_entries = []
+    removed = 0
+    for entry in content:
+        msg_payload = entry[0] if isinstance(entry, list) and entry else None
+        metadata = (
+            msg_payload.get("metadata")
+            if isinstance(msg_payload, dict)
+            else None
+        )
+        if isinstance(metadata, dict) and metadata.get(
+            _INTERNAL_FOLLOW_UP_METADATA_KEY,
+        ):
+            removed += 1
+            continue
+        kept_entries.append(entry)
+
+    if removed:
+        memory_state["content"] = kept_entries
+
+    return removed
+
+
+async def _index_model_output_to_monitor(
+    trace_id: str,
+    model_output: str,
+) -> None:
+    """通过 Monitor API 写入 model_output 到 ES.
+
+    Args:
+        trace_id: 追踪 ID
+        model_output: 模型输出文本
+    """
+    monitor_url = os.environ.get(
+        "SWE_MONITOR_API_URL",
+        "http://127.0.0.1:9090",
+    )
+    url = f"{monitor_url}/monitor/tracing/model-output"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                json={
+                    "trace_id": trace_id,
+                    "model_output": model_output,
+                },
+            )
+            logger.debug(
+                "Monitor API response: status=%s, body=%s",
+                response.status_code,
+                response.text[:200] if response.text else "",
+            )
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("status") == "success":
+                    logger.info(
+                        "Model output indexed via Monitor API: trace_id=%s",
+                        trace_id,
+                    )
+                else:
+                    logger.info(
+                        "Model output write skipped: trace_id=%s, reason=%s",
+                        trace_id,
+                        result.get("reason", "unknown"),
+                    )
+            else:
+                logger.warning(
+                    "Monitor API returned %s: trace_id=%s",
+                    response.status_code,
+                    trace_id,
+                )
+    except httpx.TimeoutException:
+        logger.warning("Monitor API timeout: trace_id=%s", trace_id)
+    except Exception as e:
+        logger.warning(
+            "Failed to call Monitor API for model_output: %s",
+            e,
+        )
+
+
 async def _generate_and_store_suggestions(
     session_id: str,
     user_message: str,
@@ -427,14 +667,20 @@ class AgentRunner(Runner):
                         approved_tool_call["_remaining_queue"] = remaining
                     thinking_blocks = record.extra.get("thinking_blocks")
                     if isinstance(thinking_blocks, list):
-                        approved_tool_call[
-                            "_thinking_blocks"
-                        ] = thinking_blocks
+                        approved_tool_call["_thinking_blocks"] = (
+                            thinking_blocks
+                        )
             return None, True, approved_tool_call
 
+        explicit_deny = _is_denial(normalized)
+        denial_decision = (
+            ApprovalDecision.DENIED
+            if explicit_deny
+            else ApprovalDecision.DENIED
+        )
         await svc.resolve_request(
             pending.request_id,
-            ApprovalDecision.DENIED,
+            denial_decision,
         )
         return (
             Msg(
@@ -505,6 +751,8 @@ class AgentRunner(Runner):
         chat = None
         session_state_loaded = False
         trace_id = None
+        agent_config = None
+        task_completed = True
 
         # Initialize tracing context
         if has_trace_manager():
@@ -534,12 +782,43 @@ class AgentRunner(Runner):
                     )
                     user_message = _get_last_user_text(msgs)
 
+                    # 提取用户名称：先尝试 request 属性，再尝试 request.state
+                    user_name_for_trace = getattr(
+                        request,
+                        "user_name",
+                        None,
+                    ) or getattr(
+                        getattr(request, "state", None),
+                        "user_name",
+                        None,
+                    )
+                    # 提取 BBK 标识符：先尝试 request 属性，再尝试 request.state
+                    bbk_id_for_trace = getattr(
+                        request,
+                        "bbk_id",
+                        None,
+                    ) or getattr(
+                        getattr(request, "state", None),
+                        "bbk_id",
+                        None,
+                    )
+
+                    # 提取 session_name：从第一条消息中提取前 10 个字符
+                    session_name_for_trace = None
+                    if msgs and len(msgs) > 0:
+                        content = msgs[0].get_text_content()
+                        if content:
+                            session_name_for_trace = content[:10]
+
                     trace_id = await trace_mgr.start_trace(
                         user_id=user_id_for_trace,
                         session_id=session_id_for_trace,
                         channel=channel_for_trace,
                         source_id=source_id_for_trace,
                         user_message=user_message,
+                        user_name=user_name_for_trace,
+                        bbk_id=bbk_id_for_trace,
+                        session_name=session_name_for_trace,
                     )
             except Exception as e:
                 logger.warning("Failed to start trace: %s", e)
@@ -548,6 +827,7 @@ class AgentRunner(Runner):
             session_id = request.session_id
             user_id = request.user_id
             channel = getattr(request, "channel", DEFAULT_CHANNEL)
+            skip_history = getattr(request, "skip_history", False)
 
             logger.info(
                 "Handle agent query:\n%s",
@@ -594,6 +874,47 @@ class AgentRunner(Runner):
                 passthrough_headers=passthrough_headers or None,
             )
 
+            name = "New Chat"
+            if len(msgs) > 0:
+                content = msgs[0].get_text_content()
+                if content:
+                    name = msgs[0].get_text_content()[:10]
+                else:
+                    name = "Media Message"
+
+            logger.debug(
+                f"DEBUG chat_manager status: "
+                f"_chat_manager={self._chat_manager}, "
+                f"is_none={self._chat_manager is None}, "
+                f"agent_id={self.agent_id}",
+            )
+
+            turn_id = f"turn-{uuid4().hex}"
+            if self._chat_manager is not None:
+                logger.debug(
+                    f"Runner: Calling get_or_create_chat for "
+                    f"session_id={session_id}, user_id={user_id}, "
+                    f"channel={channel}, name={name}",
+                )
+                chat = await self._chat_manager.get_or_create_chat(
+                    session_id,
+                    user_id,
+                    channel,
+                    name=name,
+                    meta={"agent_id": self.agent_id},
+                )
+                logger.debug(f"Runner: Got chat: {chat.id}")
+                request.channel_meta = {
+                    **(getattr(request, "channel_meta", None) or {}),
+                    "chat_id": chat.id,
+                    "turn_id": turn_id,
+                }
+            else:
+                logger.warning(
+                    f"ChatManager is None! Cannot auto-register chat for "
+                    f"session_id={session_id}",
+                )
+
             agent = SWEAgent(
                 agent_config=agent_config,
                 env_context=env_context,
@@ -603,6 +924,8 @@ class AgentRunner(Runner):
                     "session_id": session_id,
                     "user_id": user_id,
                     "channel": channel,
+                    "chat_id": chat.id if chat is not None else "",
+                    "turn_id": turn_id,
                     "agent_id": self.agent_id,
                     **(
                         {
@@ -636,66 +959,213 @@ class AgentRunner(Runner):
                 f"Agent Query msgs {msgs}",
             )
 
-            name = "New Chat"
-            if len(msgs) > 0:
-                content = msgs[0].get_text_content()
-                if content:
-                    name = msgs[0].get_text_content()[:10]
-                else:
-                    name = "Media Message"
-
-            logger.debug(
-                f"DEBUG chat_manager status: "
-                f"_chat_manager={self._chat_manager}, "
-                f"is_none={self._chat_manager is None}, "
-                f"agent_id={self.agent_id}",
-            )
-
-            if self._chat_manager is not None:
-                logger.debug(
-                    f"Runner: Calling get_or_create_chat for "
-                    f"session_id={session_id}, user_id={user_id}, "
-                    f"channel={channel}, name={name}",
-                )
-                chat = await self._chat_manager.get_or_create_chat(
-                    session_id,
-                    user_id,
-                    channel,
-                    name=name,
-                )
-                logger.debug(f"Runner: Got chat: {chat.id}")
-            else:
-                logger.warning(
-                    f"ChatManager is None! Cannot auto-register chat for "
-                    f"session_id={session_id}",
-                )
-
             _was_cancelled = False
 
-            try:
-                await self.session.load_session_state(
-                    session_id=session_id,
-                    user_id=user_id,
-                    agent=agent,
-                )
-            except KeyError as e:
-                logger.warning(
-                    "load_session_state skipped (state schema mismatch): %s; "
-                    "will save fresh state on completion to recover file",
-                    e,
-                )
-            session_state_loaded = True
+            session_state_loaded = await self.get_state_loaded(
+                agent,
+                session_id,
+                session_state_loaded,
+                skip_history,
+                user_id,
+            )
 
             # Rebuild system prompt so it always reflects the latest
             # AGENTS.md / SOUL.md / PROFILE.md, not the stale one saved
             # in the session state.
             agent.rebuild_sys_prompt()
+            channel_meta = getattr(request, "channel_meta", {}) or {}
+            resume_id = channel_meta.get("post_turn_validation_resume_id")
+            confirmed_turn_index = 0
+            original_user_message = query or _get_last_user_text(msgs) or ""
+            validation_config = getattr(
+                agent_config.running,
+                "post_turn_validation",
+                None,
+            )
+            task_completed = True
+            if resume_id:
+                pending_continuation = await consume_pending_continuation(
+                    validation_id=resume_id,
+                    session_id=session_id,
+                    tenant_id=self.tenant_id,
+                )
+                if pending_continuation is None:
+                    yield Msg(
+                        name="Friday",
+                        role="assistant",
+                        content="续跑请求已过期或不存在，请重新发起任务。",
+                    ), True
+                    task_completed = False
+                    return
 
-            async for msg, last in stream_printing_messages(
-                agents=[agent],
-                coroutine_task=agent(msgs),
+                original_user_message = (
+                    pending_continuation.user_message or original_user_message
+                )
+                confirmed_turn_index = (
+                    pending_continuation.confirmed_turn_index + 1
+                )
+                turn_msgs = [
+                    _build_internal_follow_up_msg(
+                        pending_continuation.follow_up_prompt,
+                    ),
+                ]
+            else:
+                turn_msgs = list(msgs)
+
+            auto_follow_up_turns = 0
+            max_auto_turns = (
+                _resolve_max_auto_turns(validation_config)
+                if validation_config is not None
+                else 0
+            )
+            last_validation_result = None
+
+            while True:
+                async for msg, last in self._enforce_query_timeout(
+                    stream_printing_messages(
+                        agents=[agent],
+                        coroutine_task=agent(turn_msgs),
+                    ),
+                    session_id=session_id,
+                    agent=agent,
+                ):
+                    yield msg, last
+
+                assistant_response = _extract_assistant_response(agent)
+                task_completed = True
+                last_validation_result = None
+                if (
+                    assistant_response
+                    and original_user_message
+                    and validation_config is not None
+                    and getattr(validation_config, "enabled", False)
+                ):
+                    last_validation_result = await validate_task_completion(
+                        user_message=original_user_message,
+                        assistant_response=assistant_response,
+                        agent_id=self.agent_id,
+                        timeout_seconds=getattr(
+                            validation_config,
+                            "timeout_seconds",
+                            8.0,
+                        ),
+                        user_message_max_length=getattr(
+                            validation_config,
+                            "user_message_max_length",
+                            300,
+                        ),
+                        assistant_response_max_length=getattr(
+                            validation_config,
+                            "assistant_response_max_length",
+                            1200,
+                        ),
+                    )
+                    task_completed = last_validation_result.completed
+
+                    if (
+                        not last_validation_result.completed
+                        and last_validation_result.follow_up_prompt
+                        and auto_follow_up_turns < max_auto_turns
+                    ):
+                        auto_follow_up_turns += 1
+                        turn_msgs = [
+                            _build_internal_follow_up_msg(
+                                last_validation_result.follow_up_prompt,
+                            ),
+                        ]
+                        logger.info(
+                            "Post-turn validation scheduled automatic "
+                            "follow-up turn %d/%d for session %s: %s",
+                            auto_follow_up_turns,
+                            max_auto_turns,
+                            session_id,
+                            last_validation_result.reason or "continue",
+                        )
+                        continue
+
+                break
+
+            if (
+                not task_completed
+                and last_validation_result is not None
+                and last_validation_result.follow_up_prompt
             ):
-                yield msg, last
+                max_confirmed_turns = _resolve_max_confirmed_turns(
+                    validation_config,
+                )
+                if confirmed_turn_index < max_confirmed_turns:
+                    await store_pending_continuation(
+                        session_id=session_id,
+                        user_message=original_user_message,
+                        assistant_response=_extract_assistant_response(agent),
+                        reason=last_validation_result.reason,
+                        follow_up_prompt=last_validation_result.follow_up_prompt,
+                        tenant_id=self.tenant_id,
+                        confirmed_turn_index=confirmed_turn_index,
+                    )
+                    logger.info(
+                        "Post-turn validation pending confirmation after "
+                        "automatic turns %d/%d; confirmed turn %d/%d for "
+                        "session %s: %s",
+                        auto_follow_up_turns,
+                        max_auto_turns,
+                        confirmed_turn_index + 1,
+                        max_confirmed_turns,
+                        session_id,
+                        last_validation_result.reason or "continue",
+                    )
+                else:
+                    logger.info(
+                        "Post-turn validation reached confirmed turn "
+                        "limit %d for session %s",
+                        max_confirmed_turns,
+                        session_id,
+                    )
+
+            suggestions_config = getattr(
+                agent_config.running,
+                "suggestions",
+                None,
+            )
+            if (
+                task_completed
+                and suggestions_config is not None
+                and getattr(suggestions_config, "enabled", False)
+                and getattr(suggestions_config, "mode", None)
+                == SuggestionMode.BACKEND_GENERATE
+            ):
+                assistant_response = _extract_assistant_response(agent)
+                if assistant_response and original_user_message:
+                    await _generate_and_store_suggestions(
+                        session_id,
+                        original_user_message,
+                        assistant_response,
+                        suggestions_config,
+                    )
+
+            # 通过 Monitor API 写入 model_output 到 ES
+            if trace_id and agent is not None:
+                logger.debug(
+                    "Preparing to index model output: trace_id=%s, agent=%s",
+                    trace_id,
+                    type(agent).__name__,
+                )
+                assistant_response = _extract_assistant_response(agent)
+                logger.debug(
+                    "Extracted assistant response: trace_id=%s, response_len=%d",
+                    trace_id,
+                    len(assistant_response) if assistant_response else 0,
+                )
+                if assistant_response:
+                    await _index_model_output_to_monitor(
+                        trace_id,
+                        assistant_response,
+                    )
+                else:
+                    logger.warning(
+                        "No assistant response to index: trace_id=%s",
+                        trace_id,
+                    )
 
             # End trace with success status
             if trace_id and has_trace_manager():
@@ -763,59 +1233,278 @@ class AgentRunner(Runner):
                 session_id,
             )
 
-            if agent is not None and session_state_loaded:
+            async def _safe_cleanup() -> None:
+                """Safely run cleanup operations, ignoring CancelledError.
+
+                When the outer scope is cancelled, await operations in finally
+                blocks may raise CancelledError due to asyncio checkpoint
+                behavior. These should be suppressed since the task is already
+                being cleaned up.
+
+                Each cleanup step is guarded by an ``asyncio.wait_for`` with
+                ``QUERY_CLEANUP_TIMEOUT`` to prevent a stalled cleanup
+                (e.g. database unreachable) from blocking the request forever.
+                """
+                try:
+                    if agent is not None and session_state_loaded:
+                        await asyncio.wait_for(
+                            self.save_job_session_state(
+                                agent,
+                                session_id,
+                                skip_history,
+                                user_id,
+                            ),
+                            timeout=QUERY_CLEANUP_TIMEOUT,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Runner finally: session state save timed out "
+                        "(session_id=%s, timeout=%.0fs)",
+                        session_id,
+                        QUERY_CLEANUP_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Runner finally: session state save cancelled (session_id=%s)",
+                        session_id,
+                    )
+                try:
+                    if self._chat_manager is not None and chat is not None:
+                        await asyncio.wait_for(
+                            self._chat_manager.update_chat(chat),
+                            timeout=QUERY_CLEANUP_TIMEOUT,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Runner finally: chat update timed out "
+                        "(session_id=%s, timeout=%.0fs)",
+                        session_id,
+                        QUERY_CLEANUP_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Runner finally: chat update cancelled (session_id=%s)",
+                        session_id,
+                    )
+                try:
+                    # Close all MCP clients created for this request
+                    # Check if mcp_clients exists in scope (may not if init failed early)
+                    if "mcp_clients" in locals() and mcp_clients:
+                        await asyncio.wait_for(
+                            _cleanup_mcp_clients(mcp_clients),
+                            timeout=QUERY_CLEANUP_TIMEOUT,
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Runner finally: MCP cleanup timed out "
+                        "(session_id=%s, timeout=%.0fs)",
+                        session_id,
+                        QUERY_CLEANUP_TIMEOUT,
+                    )
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "Runner finally: MCP cleanup cancelled (session_id=%s)",
+                        session_id,
+                    )
+
+            await _safe_cleanup()
+
+            # === 可插拔式 Q&A 内容提取钩子 ===
+            if (
+                agent_config is not None
+                and task_completed
+                and agent_config.running.suggestions.enabled
+                and agent_config.running.suggestions.mode
+                == SuggestionMode.QA_EXTRACTION_ONLY
+                and chat is not None
+            ):
+                # 提取助手响应文本
+                assistant_response = _extract_assistant_response(agent)
+                user_message = query  # 用户原始问题
+
+                if assistant_response and user_message:
+                    from ..suggestions.service import extract_key_content
+                    from ..suggestions.store import store_qa_content
+
+                    # 提取关键内容
+                    config = agent_config.running.suggestions
+                    extracted_user = user_message[
+                        : config.user_message_max_length
+                    ]
+                    extracted_assistant = extract_key_content(
+                        assistant_response,
+                        max_length=min(
+                            config.qa_content_total_max_length
+                            - len(extracted_user),
+                            config.assistant_response_max_length,
+                        ),
+                    )
+
+                    # 存储 Q&A 内容（按 chat_id + user_message_hash）
+                    await store_qa_content(
+                        chat_id=chat.id,
+                        user_message=extracted_user,
+                        assistant_response=extracted_assistant,
+                        tenant_id=self.tenant_id,
+                        # max_age_seconds=config.qa_content_max_age_seconds,
+                    )
+                    logger.info(
+                        "Stored Q&A content for suggestions: chat_id=%s, "
+                        "user_len=%d, assistant_len=%d",
+                        chat.id,
+                        len(extracted_user),
+                        len(extracted_assistant),
+                    )
+                else:
+                    logger.debug(
+                        "No Q&A content to extract for suggestions: "
+                        "assistant_response=%s, user_message=%s",
+                        bool(assistant_response),
+                        bool(user_message),
+                    )
+
+    async def get_state_loaded(
+        self,
+        agent: SWEAgent,
+        session_id: str | None,
+        session_state_loaded: bool,
+        skip_history: bool | Any,
+        user_id: str | None,
+    ) -> bool:
+        # 对于 cron 任务，跳过会话历史加载（不读取旧历史）
+        if skip_history:
+            logger.info(
+                "Cron task: skipping session state load (session_id=%s)",
+                session_id,
+            )
+            session_state_loaded = True
+        else:
+            try:
+                await self.session.load_session_state(
+                    session_id=session_id,
+                    user_id=user_id,
+                    agent=agent,
+                )
+            except KeyError as e:
+                logger.warning(
+                    "load_session_state skipped (state schema mismatch): %s; "
+                    "will save fresh state on completion to recover file",
+                    e,
+                )
+            session_state_loaded = True
+        return session_state_loaded
+
+    async def save_job_session_state(
+        self,
+        agent: SWEAgent,
+        session_id: str | None | Any,
+        skip_history: bool | Any,
+        user_id: str | None,
+    ):
+        if skip_history:
+            # 对于 cron 任务：合并保存，保留旧历史 + 新消息
+            existing_state = await self.session.get_session_state_dict(
+                session_id=session_id,
+                user_id=user_id,
+                allow_not_exist=True,
+            )
+            # 获取当前 agent 状态
+            current_agent_state = agent.state_dict()
+            existing_memory = (
+                existing_state.get("agent", {}).get("memory", {}) or {}
+            )
+            current_memory = current_agent_state.get("memory", {}) or {}
+            existing_content = list(existing_memory.get("content", []) or [])
+            current_content = list(current_memory.get("content", []) or [])
+            stripped_count = _strip_internal_follow_up_messages_from_state(
+                current_agent_state,
+            )
+
+            # 深度合并：对于 agent.memory，需要追加内容而不是覆盖
+            if (
+                "agent" in existing_state
+                and "memory" in existing_state["agent"]
+            ):
+                existing_memory = existing_state["agent"]["memory"]
+                current_memory = current_agent_state.get("memory", {})
+                # 合并 memory.content（消息列表）
+                if "content" in existing_memory:
+                    existing_content = existing_memory["content"]
+                    current_content = current_memory.get("content", [])
+                    # 追加新消息到旧消息后面
+                    current_memory = dict(current_memory)
+                    current_memory["content"] = (
+                        existing_content + current_content
+                    )
+                    current_agent_state = dict(current_agent_state)
+                    current_agent_state["memory"] = current_memory
+
+            # 构建最终状态
+            merged_state = dict(existing_state)
+            merged_state["agent"] = current_agent_state
+            task_run = _build_task_run_record(
+                current_content,
+                memory_start=len(existing_content),
+            )
+            if task_run is not None:
+                task_runs = list(
+                    existing_state.get(TASK_RUNS_STATE_KEY, []) or [],
+                )
+                task_runs.append(task_run)
+                merged_state[TASK_RUNS_STATE_KEY] = task_runs
+
+            await self.session.save_merged_state(
+                session_id,
+                user_id=user_id,
+                state=merged_state,
+            )
+            logger.info(
+                "Cron task: saved merged session state "
+                "(session_id=%s, existing_memory_content=%s, new_content=%s, "
+                "stripped_internal_follow_ups=%s)",
+                session_id,
+                len(
+                    existing_state.get("agent", {})
+                    .get("memory", {})
+                    .get("content", []),
+                ),
+                len(
+                    current_agent_state.get("memory", {}).get(
+                        "content",
+                        [],
+                    ),
+                ),
+                stripped_count,
+            )
+        else:
+            if not hasattr(agent, "state_dict") or not hasattr(
+                self.session,
+                "save_merged_state",
+            ):
                 await self.session.save_session_state(
                     session_id=session_id,
                     user_id=user_id,
                     agent=agent,
                 )
+                return
 
-            if self._chat_manager is not None and chat is not None:
-                await self._chat_manager.update_chat(chat)
-
-            # Close all MCP clients created for this request
-            await _cleanup_mcp_clients(mcp_clients)
-
-            # 异步生成猜你想问建议（如果启用）
-            logger.debug(
-                "Suggestions check: enabled=%s, agent=%s, query=%s",
-                agent_config.running.suggestions.enabled,
-                agent is not None,
-                query[:50] if query else None,
+            state_modules = {
+                "agent": agent.state_dict(),
+            }
+            stripped_count = _strip_internal_follow_up_messages_from_state(
+                state_modules["agent"],
             )
-            if (
-                agent_config.running.suggestions.enabled
-                and not _was_cancelled
-                and agent is not None
-                and query
-                and chat
-                is not None  # 确保 chat 存在，使用 chat.id 作为 suggestions 存储键
-            ):
-                # 提取助手响应文本
-                assistant_response = _extract_assistant_response(agent)
-                logger.debug(
-                    "Extracted assistant response: %s chars",
-                    len(assistant_response) if assistant_response else 0,
-                )
-                if assistant_response:
-                    # 使用 chat.id (UUID) 作为 session_id，与前端轮询时使用的 session_id 保持一致
-                    logger.info(
-                        "Starting suggestions generation task for chat %s (session_id=%s)",
-                        chat.id,
-                        session_id,
-                    )
-                    asyncio.create_task(
-                        _generate_and_store_suggestions(
-                            session_id=chat.id,  # 使用 chat.id (UUID)
-                            user_message=query,
-                            assistant_response=assistant_response,
-                            config=agent_config.running.suggestions,
-                        ),
-                    )
-                else:
-                    logger.debug(
-                        "No assistant response to generate suggestions from",
-                    )
+            await self.session.save_merged_state(
+                session_id=session_id,
+                user_id=user_id,
+                state=state_modules,
+            )
+            logger.info(
+                "Saved session state with stripped_internal_follow_ups=%s "
+                "(session_id=%s)",
+                stripped_count,
+                session_id,
+            )
 
     async def _cleanup_denied_session_memory(
         self,
@@ -927,6 +1616,74 @@ class AgentRunner(Runner):
                 exc_info=True,
             )
 
+    async def _enforce_query_timeout(
+        self,
+        msg_stream,
+        session_id: str,
+        agent=None,
+        timeout_seconds: float = QUERY_TIMEOUT_SECONDS,
+    ):
+        """Wrap an async message stream with global wall-clock timeout.
+
+        Iterates over *msg_stream* and yields each ``(msg, last)`` pair.
+        If the total elapsed time since the first call exceeds
+        *timeout_seconds*, a timeout notification message is yielded,
+        the stream is terminated, and the agent is interrupted.
+
+        Args:
+            msg_stream: Async iterable of ``(msg, last)`` tuples.
+            session_id: Session identifier for logging.
+            agent: Agent instance to interrupt on timeout.
+            timeout_seconds: Maximum wall-clock seconds for the entire
+                query (default: ``QUERY_TIMEOUT_SECONDS``).
+
+        Yields:
+            ``(msg, last)`` tuples, with a final timeout notification if
+            the limit is exceeded.
+        """
+        start = time.monotonic()
+        async for msg, last in msg_stream:
+            elapsed = time.monotonic() - start
+            if elapsed > timeout_seconds:
+                logger.warning(
+                    "Query timeout (%.0fs > %.0fs) for session %s",
+                    elapsed,
+                    timeout_seconds,
+                    session_id,
+                )
+                # Interrupt the agent to stop it from continuing
+                if agent is not None:
+                    try:
+                        await agent.interrupt()
+                        logger.info(
+                            "Agent interrupted after query timeout for session %s",
+                            session_id,
+                        )
+                    except Exception as interrupt_err:
+                        logger.warning(
+                            "Failed to interrupt agent on query timeout: %s",
+                            interrupt_err,
+                        )
+                yield (
+                    Msg(
+                        name="Friday",
+                        role="assistant",
+                        content=[
+                            TextBlock(
+                                type="text",
+                                text=(
+                                    f"⏰ 任务执行超时"
+                                    f"（{int(elapsed)}s > {int(timeout_seconds)}s），"
+                                    f"已自动终止。"
+                                ),
+                            ),
+                        ],
+                    ),
+                    True,
+                )
+                return
+            yield msg, last
+
     async def stream_query(
         self,
         request,
@@ -936,7 +1693,17 @@ class AgentRunner(Runner):
         async for event in normalize_reasoning_boundary_stream(
             super().stream_query(request, **kwargs),
         ):
-            yield event
+            progress = None
+            channel_meta = getattr(request, "channel_meta", None) or {}
+            chat_id = channel_meta.get("chat_id")
+            if not chat_id and self._chat_manager is not None:
+                chat_id = await self._chat_manager.get_chat_id_by_session(
+                    getattr(request, "session_id", "") or "",
+                    getattr(request, "channel", DEFAULT_CHANNEL),
+                )
+            if chat_id and self._task_tracker is not None:
+                progress = await self._task_tracker.get_task_progress(chat_id)
+            yield attach_task_progress(event, progress)
 
     async def init_handler(self, *args, **kwargs):
         """

@@ -9,6 +9,7 @@ endpoint or via POST /console/chat. This channel handles the **output** side:
 whenever a completed message event or a proactive send arrives, it is
 pretty-printed to the terminal.
 """
+
 from __future__ import annotations
 
 import copy
@@ -42,7 +43,6 @@ from ..base import (
     TextContent,
 )
 from ..utils import file_url_to_local_path
-
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +273,16 @@ class ConsoleChannel(BaseChannel):
             channel_meta=meta,
         )
         request.channel_meta = meta
+
+        # 从 meta 中提取 user_name 和 bbk_id 设置到 AgentRequest（用于 tracing）
+        # AgentRequest 支持 extra="allow"
+        user_name = meta.get("user_name")
+        bbk_id = meta.get("bbk_id")
+        if user_name:
+            request.user_name = user_name  # type: ignore[attr-defined]
+        if bbk_id:
+            request.bbk_id = bbk_id  # type: ignore[attr-defined]
+
         return request
 
     async def _extract_media_message(self, message: Message) -> Message | None:

@@ -2,8 +2,10 @@ import type { CronJobSpecOutput } from "../../api/types";
 import { formatListTime } from "./listTimeFormat.ts";
 
 export interface TaskSidebarMeta {
-  state: "active" | "auto-paused" | "manual-paused";
+  state: "active" | "running" | "auto-paused" | "manual-paused";
   unreadCount: number;
+  canPause: boolean;
+  canRun: boolean;
   canResume: boolean;
   canDelete: boolean;
 }
@@ -11,18 +13,35 @@ export interface TaskSidebarMeta {
 const AUTO_PAUSE_REASON = "auto_unread_threshold";
 
 export function isVisibleTask(job: CronJobSpecOutput): boolean {
-  return job.task_type === "agent" && Boolean(job.task?.visible_in_my_tasks);
+  return Boolean(job.task?.visible_in_my_tasks);
 }
 
 export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
-  const unreadCount = Math.max(0, Number(job.task?.unread_execution_count || 0));
+  const unreadCount = Math.max(
+    0,
+    Number(job.task?.unread_execution_count || 0),
+  );
   const pauseReason = job.task?.pause_reason;
   const isPaused = Boolean(job.task?.is_paused || pauseReason);
+  const isRunning = Boolean(job.task?.is_running);
+
+  if (isRunning) {
+    return {
+      state: "running",
+      unreadCount,
+      canPause: false,
+      canRun: false,
+      canResume: false,
+      canDelete: false,
+    };
+  }
 
   if (pauseReason === AUTO_PAUSE_REASON) {
     return {
       state: "auto-paused",
       unreadCount,
+      canPause: false,
+      canRun: false,
       canResume: true,
       canDelete: true,
     };
@@ -32,6 +51,8 @@ export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
     return {
       state: "manual-paused",
       unreadCount,
+      canPause: false,
+      canRun: false,
       canResume: true,
       canDelete: true,
     };
@@ -40,8 +61,10 @@ export function getTaskSidebarMeta(job: CronJobSpecOutput): TaskSidebarMeta {
   return {
     state: "active",
     unreadCount,
+    canPause: true,
+    canRun: true,
     canResume: false,
-    canDelete: false,
+    canDelete: true,
   };
 }
 
@@ -50,7 +73,12 @@ export function shouldMarkTaskReadOnOpen(job: CronJobSpecOutput): boolean {
 }
 
 export function getTaskNextRunText(job: CronJobSpecOutput): string | null {
-  if (getTaskSidebarMeta(job).canResume) {
+  const sidebarMeta = getTaskSidebarMeta(job);
+  if (sidebarMeta.state === "running") {
+    return "运行中...";
+  }
+
+  if (sidebarMeta.canResume) {
     return null;
   }
 
@@ -60,6 +88,20 @@ export function getTaskNextRunText(job: CronJobSpecOutput): string | null {
   }
 
   return `下次运行：${formatted}`;
+}
+
+export function getTaskOpenTarget(job: CronJobSpecOutput): string | null {
+  const normalize = (value: string | null | undefined): string | null => {
+    const text = String(value || "").trim();
+    return text || null;
+  };
+
+  return (
+    normalize(job.task?.chat_id) ||
+    normalize(job.task?.session_id) ||
+    normalize(job.request?.session_id as string | null | undefined) ||
+    normalize(job.dispatch?.target?.session_id)
+  );
 }
 
 export function deriveChatTaskState(

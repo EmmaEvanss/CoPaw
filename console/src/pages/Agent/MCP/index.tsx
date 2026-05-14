@@ -10,6 +10,7 @@ import { useMCP } from "./useMCP";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/PageHeader";
 import { useAgentStore } from "../../../stores/agentStore";
+import { useIframeStore } from "../../../stores/iframeStore";
 import { getUserId } from "../../../utils/identity";
 import styles from "./index.module.less";
 
@@ -62,6 +63,8 @@ function MCPPage() {
   const { message } = useAppMessage();
   const { selectedAgent } = useAgentStore();
   const currentTenantId = getUserId();
+  const manager = useIframeStore((state) => state.manager);
+  const canManage = manager || currentTenantId === "default";
   const {
     clients,
     loading,
@@ -130,7 +133,7 @@ function MCPPage() {
     setSelectedTenantIds([]);
     setDistributionLoading(true);
     try {
-      const result = await api.listActiveModelDistributionTenants();
+      const result = await api.listMCPDistributionTenants();
       setDistributionTenantIds(
         (result.tenant_ids || []).filter(
           (tenantId) => tenantId !== currentTenantId,
@@ -307,7 +310,7 @@ function MCPPage() {
               </span>
             ) : null}
             <Button
-              disabled={!selectedClientKeys.length}
+              disabled={!canManage || !selectedClientKeys.length}
               icon={<SendOutlined />}
               onClick={openDistributionModal}
             >

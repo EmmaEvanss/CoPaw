@@ -3,6 +3,7 @@ import type {
   IAgentScopeRuntimeRequest,
   IAgentScopeRuntimeResponse,
 } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/types";
+import type { IAgentScopeRuntimeWebUIMessage } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/types/IMessages";
 
 export interface ChatMessageHeaderMeta {
   timestamp?: number;
@@ -15,6 +16,25 @@ export interface ChatRuntimeRequestCardData
 
 export interface ChatRuntimeResponseCardData
   extends IAgentScopeRuntimeResponse {
+  headerMeta?: ChatMessageHeaderMeta;
+}
+
+export interface ChatApprovalActionCardData {
+  requestId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  triggerLabel: string;
+  approveCommand: string;
+  denyCommand: string;
+  status?: "pending" | "approved" | "denied" | "timeout" | "superseded";
+}
+
+export interface ChatTaskRunGroupCardData {
+  runId: string;
+  runIndex: number;
+  taskName?: string;
+  finalMessages: IAgentScopeRuntimeWebUIMessage[];
+  stepMessages: IAgentScopeRuntimeWebUIMessage[];
   headerMeta?: ChatMessageHeaderMeta;
 }
 

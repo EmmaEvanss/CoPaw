@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Telemetry collection for installation analytics."""
+
 from __future__ import annotations
 
 import json

@@ -85,7 +85,9 @@ class InstanceStore:
             return [
                 Source(
                     source_id=row["source_id"],
-                    source_name=row["source_id"],  # source_name 直接使用 source_id
+                    source_name=row[
+                        "source_id"
+                    ],  # source_name 直接使用 source_id
                     created_at=row["created_at"],
                 )
                 for row in rows
@@ -110,7 +112,9 @@ class InstanceStore:
             return [
                 SourceWithStats(
                     source_id=row["source_id"],
-                    source_name=row["source_id"],  # source_name 直接使用 source_id
+                    source_name=row[
+                        "source_id"
+                    ],  # source_name 直接使用 source_id
                     created_at=row["created_at"],
                     total_instances=row["total_instances"] or 0,
                     active_instances=row["active_instances"] or 0,
@@ -211,7 +215,9 @@ class InstanceStore:
                         current_users,
                         max_users,
                     ),
-                    source_name=row["source_id"],  # source_name 直接使用 source_id
+                    source_name=row[
+                        "source_id"
+                    ],  # source_name 直接使用 source_id
                     bbk_name=row.get("bbk_name"),
                 )
         return None
@@ -320,7 +326,9 @@ class InstanceStore:
                         current_users,
                         max_users,
                     ),
-                    source_name=row["source_id"],  # source_name 直接使用 source_id
+                    source_name=row[
+                        "source_id"
+                    ],  # source_name 直接使用 source_id
                     bbk_name=row.get("bbk_name"),
                 ),
             )
@@ -421,7 +429,9 @@ class InstanceStore:
                     instance_id=row["instance_id"],
                     allocated_at=row["allocated_at"],
                     status=UserAllocationStatus(row["status"]),
-                    source_name=row["source_id"],  # source_name 直接使用 source_id
+                    source_name=row[
+                        "source_id"
+                    ],  # source_name 直接使用 source_id
                     instance_name=row["instance_name"],
                     instance_url=row["instance_url"],
                 )
@@ -480,7 +490,9 @@ class InstanceStore:
                     instance_id=row["instance_id"],
                     allocated_at=row["allocated_at"],
                     status=UserAllocationStatus(row["status"]),
-                    source_name=row["source_id"],  # source_name 直接使用 source_id
+                    source_name=row[
+                        "source_id"
+                    ],  # source_name 直接使用 source_id
                     instance_name=row["instance_name"],
                     instance_url=row["instance_url"],
                 )
@@ -613,12 +625,16 @@ class InstanceStore:
                     action=row["action"],
                     target_type=row["target_type"],
                     target_id=row["target_id"],
-                    old_value=json.loads(row["old_value"])
-                    if row["old_value"]
-                    else None,
-                    new_value=json.loads(row["new_value"])
-                    if row["new_value"]
-                    else None,
+                    old_value=(
+                        json.loads(row["old_value"])
+                        if row["old_value"]
+                        else None
+                    ),
+                    new_value=(
+                        json.loads(row["new_value"])
+                        if row["new_value"]
+                        else None
+                    ),
                     operator=row["operator"],
                     created_at=row["created_at"],
                 )

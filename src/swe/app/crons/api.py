@@ -26,9 +26,19 @@ async def get_cron_manager(
 
 
 def _inject_request_tenant(spec: CronJobSpec, request: Request) -> CronJobSpec:
-    """Force cron job tenant_id to follow request tenant context."""
+    """Force cron job tenant_id, bbk_id, source_id, tenant_name to follow request context."""
     tenant_id = getattr(request.state, "tenant_id", None)
-    return spec.model_copy(update={"tenant_id": tenant_id})
+    bbk_id = getattr(request.state, "bbk_id", None)
+    source_id = getattr(request.state, "source_id", None)
+    user_name = getattr(request.state, "user_name", None)
+    return spec.model_copy(
+        update={
+            "tenant_id": tenant_id,
+            "bbk_id": bbk_id,
+            "source_id": source_id,
+            "tenant_name": user_name,
+        },
+    )
 
 
 def _get_request_user_id(request: Request) -> str | None:
@@ -43,7 +53,7 @@ def _inject_creator_user(
     request: Request,
     existing: CronJobSpec | None = None,
 ) -> CronJobSpec:
-    if spec.task_type != "agent":
+    if spec.task_type not in {"agent", "text"}:
         return spec
     meta = dict(spec.meta or {})
     existing_creator = (
@@ -59,6 +69,28 @@ def _inject_creator_user(
     return spec.model_copy(update={"meta": meta})
 
 
+async def _ensure_task_binding_for_read(
+    spec: CronJobSpec,
+    request: Request,
+    mgr: CronManager,
+) -> CronJobSpec:
+    if spec.task_type not in {"agent", "text"}:
+        return spec
+
+    meta = dict(spec.meta or {})
+    has_binding = bool(
+        meta.get("task_chat_id") and meta.get("task_session_id"),
+    )
+    has_creator = bool(meta.get("creator_user_id"))
+    if has_binding and has_creator:
+        return spec
+
+    rebound = _inject_creator_user(spec, request, existing=spec)
+    await mgr.create_or_replace_job(rebound)
+    saved = await mgr.get_job(spec.id)
+    return saved or rebound
+
+
 def _serialize_state(state):
     if hasattr(state, "model_dump"):
         return state.model_dump(mode="json")
@@ -71,7 +103,10 @@ async def list_jobs(
     mgr: CronManager = Depends(get_cron_manager),
 ):
     user_id = _get_request_user_id(request)
-    jobs = await mgr.list_jobs()
+    jobs = [
+        await _ensure_task_binding_for_read(job, request, mgr)
+        for job in await mgr.list_jobs()
+    ]
     return [
         CronJobListItem(
             **job.model_dump(mode="json"),
@@ -91,6 +126,7 @@ async def get_job(
     job = await mgr.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
+    job = await _ensure_task_binding_for_read(job, request, mgr)
     return CronJobView(
         spec=job,
         state=_serialize_state(mgr.get_state(job_id)),

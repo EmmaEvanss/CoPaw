@@ -10,7 +10,15 @@ import {
 import AgentScopeRuntimeRequestCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Request/Card";
 import AgentScopeRuntimeResponseCard from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/AgentScopeRuntime/Response/Card";
 // ==================== 组件引入方式变更结束 ====================
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
+import { flushSync } from "react-dom";
 import { Button, Modal, Result, Tooltip } from "antd";
 import { useAppMessage } from "../../hooks/useAppMessage";
 import { ExclamationCircleOutlined, SettingOutlined } from "@ant-design/icons";
@@ -24,7 +32,11 @@ import { cronJobApi } from "../../api/modules/cronjob";
 import { getApiUrl } from "../../api/config";
 import { buildAuthHeaders } from "../../api/authHeaders";
 import { providerApi } from "../../api/modules/provider";
-import type { ProviderInfo, ModelInfo, CronJobSpecOutput } from "../../api/types";
+import type {
+  ProviderInfo,
+  ModelInfo,
+  CronJobSpecOutput,
+} from "../../api/types";
 import ModelSelector from "./ModelSelector";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAgentStore } from "../../stores/agentStore";
@@ -44,9 +56,10 @@ import { useIframeStore } from "../../stores/iframeStore";
 // ==================== URL 导航参数结束 ====================
 import styles from "./index.module.less";
 import { IconButton } from "@agentscope-ai/design";
-import ChatActionGroup from "./components/ChatActionGroup";
+// import ChatActionGroup from "./components/ChatActionGroup";
 import ChatHeaderTitle from "./components/ChatHeaderTitle";
 import ChatSessionInitializer from "./components/ChatSessionInitializer";
+import ConversationQuickNav from "@/components/ConversationQuickNav";
 // ==================== 首页改版 (Kun He) ====================
 import WelcomeCenterLayout from "@/components/agentscope-chat/WelcomeCenterLayout";
 import ChatSidebar from "./components/ChatSidebar";
@@ -64,29 +77,95 @@ import {
   type CopyableResponse,
   type RuntimeLoadingBridgeApi,
 } from "./utils";
-import { deriveChatTaskState, shouldMarkTaskReadOnOpen } from "./taskJobs";
+import {
+  deriveChatTaskState,
+  getTaskOpenTarget,
+  shouldMarkTaskReadOnOpen,
+} from "./taskJobs";
 import { shouldRefreshCurrentTaskMessages } from "./taskMessageRefresh";
+import { matchesResolvedChatId } from "./sessionApi/resolvedSessionMapping";
 
-// ==================== 会话状态轮询 (自动 reconnect) ====================
-import { emit } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Context/useChatAnywhereEventEmitter";
-import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
-// ==================== 会话状态轮询 (自动 reconnect) ====================
 import RuntimeRequestCard from "./components/RuntimeRequestCard";
+import { FOLLOW_UP_SUBMIT_FAILED_EVENT } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/followUpSubmit";
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
+import ApprovalActionCard from "./components/ApprovalActionCard";
+import TaskRunGroupCard from "./components/TaskRunGroupCard";
+import TaskProgressFloatingCard from "./components/TaskProgressFloatingCard";
+import GeneratedFilesDrawer from "./components/GeneratedFilesDrawer";
 import type {
+  ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
   ChatRuntimeResponseCardData,
+  ChatTaskRunGroupCardData,
 } from "./messageMeta";
+import {
+  CHAT_TASK_PROGRESS_UPDATE_EVENT,
+  type ChatTaskProgressData,
+} from "./taskProgressEvents";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
+const CHAT_REQUEST_TIMEOUT_MS = 300_000;
+const TASK_RUNNING_POLL_MS = 30_000;
 const TASK_PAGE_POLL_MS = 30_000;
 const TASK_PENDING_POLL_MS = 30_000;
-const SESSION_RUNNING_POLL_MS = 3_000;
+
+function createTimedAbortSignal(
+  externalSignal?: AbortSignal,
+  timeoutMs: number = CHAT_REQUEST_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+
+  const abortWithReason = (reason?: unknown) => {
+    if (controller.signal.aborted) return;
+    controller.abort(
+      reason ?? new DOMException("The operation was aborted.", "AbortError"),
+    );
+  };
+
+  if (externalSignal?.aborted) {
+    abortWithReason(externalSignal.reason);
+  }
+
+  const handleExternalAbort = () => {
+    abortWithReason(externalSignal?.reason);
+  };
+
+  if (externalSignal && !externalSignal.aborted) {
+    externalSignal.addEventListener("abort", handleExternalAbort, {
+      once: true,
+    });
+  }
+
+  const timeoutId = window.setTimeout(() => {
+    const elapsedSeconds = Math.ceil(timeoutMs / 1000);
+    abortWithReason(
+      new Error(
+        `⏰ 任务执行超时（${elapsedSeconds}s > ${elapsedSeconds}s），已自动终止。`,
+      ),
+    );
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", handleExternalAbort);
+      }
+    },
+  };
+}
 
 interface SessionInfo {
   session_id?: string;
   user_id?: string;
   channel?: string;
+}
+
+interface ChatRequestTarget {
+  session_id?: string;
+  logical_session_id?: string;
+  chat_id?: string | null;
 }
 
 interface CustomWindow extends Window {
@@ -328,13 +407,21 @@ export default function ChatPage() {
   }, [location.pathname]);
   const [showModelPrompt, setShowModelPrompt] = useState(false);
   const [jobs, setJobs] = useState<CronJobSpecOutput[]>([]);
+  const [taskProgress, setTaskProgress] = useState<ChatTaskProgressData | null>(
+    null,
+  );
   const { selectedAgent } = useAgentStore();
   const [refreshKey, setRefreshKey] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
   const runtimeLoadingBridgeRef = useRef<RuntimeLoadingBridgeApi | null>(null);
   const { message } = useAppMessage();
-  const { setSessionLoading } = useChatAnywhereSessionsState();
+  const { setSessionLoading, setSessions } = useChatAnywhereSessionsState();
+
+  // useTransition for non-urgent state updates (badge clearing)
+  const [, startTransition] = useTransition();
+  // Debounce flag for markTaskRead API calls
+  const markTaskReadPendingRef = useRef(false);
 
   const isChatActiveRef = useRef(false);
   isChatActiveRef.current =
@@ -349,6 +436,30 @@ export default function ChatPage() {
     return () =>
       document.removeEventListener(FOLLOW_UP_SUBMIT_FAILED_EVENT, handler);
   }, [message, t]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<ChatTaskProgressData | null>).detail;
+      if (!detail) {
+        setTaskProgress(null);
+        return;
+      }
+      setTaskProgress((previous) => {
+        if (
+          previous &&
+          previous.turn_id === detail.turn_id &&
+          previous.version > detail.version
+        ) {
+          return previous;
+        }
+        return detail;
+      });
+    };
+
+    document.addEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
+    return () =>
+      document.removeEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
+  }, []);
 
   const isChatActive = useCallback(() => isChatActiveRef.current, []);
 
@@ -381,7 +492,7 @@ export default function ChatPage() {
   // Register session API event callbacks for URL synchronization
 
   useEffect(() => {
-    sessionApi.onSessionIdResolved = (realId) => {
+    sessionApi.onSessionIdResolved = (_tempId, realId) => {
       if (!isChatActiveRef.current) return;
       // Update URL when realId is resolved, regardless of current chatId
       // (chatId may be undefined if URL was cleared in onSessionCreated)
@@ -418,7 +529,14 @@ export default function ChatPage() {
       // 3. A's request completes → onSessionSelected(A) fires
       // 4. Should NOT navigate back to A since user already chose B
       const currentUrlChatId = chatIdRef.current;
-      if (currentUrlChatId && currentUrlChatId !== targetId) {
+      if (
+        currentUrlChatId &&
+        currentUrlChatId !== targetId &&
+        !matchesResolvedChatId({
+          requestedSessionId: currentUrlChatId,
+          chatId: targetId,
+        })
+      ) {
         return;
       }
 
@@ -466,9 +584,13 @@ export default function ChatPage() {
     };
   }, []);
 
+  useEffect(() => {
+    setTaskProgress(null);
+  }, [chatId, location.pathname]);
+
   // ==================== URL 导航参数 (Kun He, 2026-04-15) ====================
   // 处理 iframe URL 传递的 sessionId/taskId 参数，自动跳转到对应聊天页面
-  // sessionId: 直接导航到 /chat/:sessionId
+  // sessionId: 可传 backend chat.id 或逻辑 session_id，后续由初始选择逻辑解析
   // taskId: 查找 task.chat_id 后导航
   const sessionIdRef = useRef<string | null>(null);
   const taskIdRef = useRef<string | null>(null);
@@ -544,40 +666,48 @@ export default function ChatPage() {
     () => deriveChatTaskState(jobs, chatId),
     [jobs, chatId],
   );
+  const hasRunningTask = useMemo(
+    () => tasks.some((task) => task.task?.is_running),
+    [tasks],
+  );
 
   useEffect(() => {
     void refreshJobs();
 
-    const handleFocusRefresh = () => {
-      void refreshJobs();
-    };
+    // 仅从其他标签页切换回来时刷新（移除 window.focus 触发，减少不必要的 API 调用）
     const handleVisibilityRefresh = () => {
       if (document.visibilityState === "visible") {
         void refreshJobs();
       }
     };
 
-    window.addEventListener("focus", handleFocusRefresh);
+    // 监听定时任务创建成功事件
+    const handleTaskCreated = () => {
+      void refreshJobs();
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
+    document.addEventListener("taskCreated", handleTaskCreated);
 
     return () => {
-      window.removeEventListener("focus", handleFocusRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+      document.removeEventListener("taskCreated", handleTaskCreated);
     };
   }, [refreshJobs]);
 
   useEffect(() => {
-    const pollMs =
-      currentTask?.task?.has_scheduled_result === false
-        ? TASK_PENDING_POLL_MS
-        : TASK_PAGE_POLL_MS;
+    const pollMs = hasRunningTask
+      ? TASK_RUNNING_POLL_MS
+      : currentTask?.task?.has_scheduled_result === false
+      ? TASK_PENDING_POLL_MS
+      : TASK_PAGE_POLL_MS;
 
     const intervalId = window.setInterval(() => {
       void refreshJobs();
     }, pollMs);
 
     return () => window.clearInterval(intervalId);
-  }, [currentTask?.task?.has_scheduled_result, refreshJobs]);
+  }, [currentTask?.task?.has_scheduled_result, hasRunningTask, refreshJobs]);
 
   useEffect(() => {
     const hadResult = Boolean(currentTask?.task?.has_scheduled_result);
@@ -592,117 +722,49 @@ export default function ChatPage() {
     if ((currentTask.task?.unread_execution_count || 0) <= 0) return;
     if (!shouldMarkTaskReadOnOpen(currentTask)) return;
 
-    setJobs((prev) =>
-      prev.map((job) =>
-        job.id === currentTask.id && job.task
-          ? {
-              ...job,
-              task: {
-                ...job.task,
-                unread_execution_count: 0,
-              },
-            }
-          : job,
-      ),
-    );
-    void cronJobApi.markTaskRead(currentTask.id).catch(() => {});
+    // Debounce: skip if there's already a pending markTaskRead request
+    if (markTaskReadPendingRef.current) return;
+
+    markTaskReadPendingRef.current = true;
+
+    // Non-urgent update: badge clearing can be delayed
+    startTransition(() => {
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === currentTask.id && job.task
+            ? {
+                ...job,
+                task: {
+                  ...job.task,
+                  unread_execution_count: 0,
+                },
+              }
+            : job,
+        ),
+      );
+    });
+
+    void cronJobApi
+      .markTaskRead(currentTask.id)
+      .catch(() => {})
+      .finally(() => {
+        markTaskReadPendingRef.current = false;
+      });
   }, [currentTask?.id, currentTask?.task?.unread_execution_count]);
 
-  // ==================== 会话状态轮询 (自动 reconnect) ====================
-  // 当用户已在当前会话页面时，如果会话状态变为 running，自动触发 reconnect
-  // 注意：需要排除用户主动发起提问的情况（已在 generating 状态）
-  const sessionReconnectingRef = useRef(false);
-  const prevSessionStatusRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!chatId) return;
-
-    const pollSessionStatus = async () => {
-      try {
-        // 如果当前已经在 generating/loading 状态，说明用户主动发起的提问正在进行
-        // 此时不应触发 reconnect，避免重复创建 SSE 连接
-        const isLoading = runtimeLoadingBridgeRef.current?.getLoading?.() ?? false;
-        if (isLoading) {
-          // 正在进行中，跳过轮询，但记录状态为 running 以便下次正确判断
-          prevSessionStatusRef.current = "running";
-          return;
-        }
-
-        const chatHistory = await chatApi.getChat(chatId);
-        const status = chatHistory?.status;
-        const generating = status === "running";
-
-        // 状态从非 running 变为 running 时触发 reconnect
-        // 条件：1. 状态变为 running  2. 之前不是 running  3. 没有正在 reconnect  4. 当前没有正在 generating
-        if (
-          generating &&
-          prevSessionStatusRef.current !== "running" &&
-          !sessionReconnectingRef.current &&
-          !isLoading
-        ) {
-          sessionReconnectingRef.current = true;
-          // 使用 chatId（UUID）作为 session_id，后端会正确处理
-          console.info("[Chat] Session running, auto reconnect:", chatId);
-          emit({
-            type: "handleReconnect",
-            data: { session_id: chatId },
-          });
-        }
-
-        // 状态变为非 running 时重置 reconnecting 标记
-        if (!generating) {
-          sessionReconnectingRef.current = false;
-        }
-
-        prevSessionStatusRef.current = status;
-      } catch (err) {
-        console.warn("[Chat] Failed to poll session status:", err);
-      }
-    };
-
-    pollSessionStatus();
-    const intervalId = window.setInterval(pollSessionStatus, SESSION_RUNNING_POLL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [chatId]);
-  // ==================== 会话状态轮询结束 ====================
-
   const handleTaskOpen = useCallback(
-    async (task: CronJobSpecOutput) => {
-      const taskChatId = task.task?.chat_id;
-      if (!taskChatId) return;
+    (task: CronJobSpecOutput) => {
+      const taskOpenTarget = getTaskOpenTarget(task);
+      if (!taskOpenTarget) return;
 
-      if (shouldMarkTaskReadOnOpen(task)) {
-        setJobs((prev) =>
-          prev.map((job) =>
-            job.id === task.id && job.task
-              ? {
-                  ...job,
-                  task: {
-                    ...job.task,
-                    unread_execution_count: 0,
-                  },
-                }
-              : job,
-          ),
-        );
-      }
+      // Force loading to render immediately before navigate triggers re-render
+      flushSync(() => {
+        setSessionLoading(true);
+      });
 
-      // 先设置 loading 状态，避免导航后闪现欢迎页
-      setSessionLoading(true);
-      navigate(`/chat/${taskChatId}`, { replace: true });
-
-      if (shouldMarkTaskReadOnOpen(task)) {
-        try {
-          await cronJobApi.markTaskRead(task.id);
-        } catch {
-          void refreshJobs();
-        }
-      }
+      navigate(`/chat/${taskOpenTarget}`, { replace: true });
     },
-    [navigate, refreshJobs, setSessionLoading],
+    [navigate, setSessionLoading],
   );
 
   const handleTaskResume = useCallback(
@@ -739,14 +801,83 @@ export default function ChatPage() {
     [message, refreshJobs],
   );
 
+  const handleTaskPause = useCallback(
+    async (task: CronJobSpecOutput) => {
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === task.id
+            ? {
+                ...job,
+                enabled: false,
+                task: job.task
+                  ? {
+                      ...job.task,
+                      is_paused: true,
+                      pause_reason: "manual",
+                    }
+                  : job.task,
+              }
+            : job,
+        ),
+      );
+
+      try {
+        await cronJobApi.pauseCronJob(task.id);
+        message.success("任务已停止");
+        void refreshJobs();
+      } catch {
+        message.error("停止失败");
+        void refreshJobs();
+      }
+    },
+    [message, refreshJobs],
+  );
+
+  const handleTaskRun = useCallback(
+    async (task: CronJobSpecOutput) => {
+      setJobs((prev) =>
+        prev.map((job) =>
+          job.id === task.id
+            ? {
+                ...job,
+                state: {
+                  ...job.state,
+                  last_status: "running",
+                  last_error: null,
+                },
+                task: job.task
+                  ? {
+                      ...job.task,
+                      is_running: true,
+                    }
+                  : job.task,
+              }
+            : job,
+        ),
+      );
+
+      try {
+        await cronJobApi.runCronJob(task.id);
+        message.success("任务已开始执行");
+        void refreshJobs();
+      } catch {
+        message.error("执行失败");
+        void refreshJobs();
+      }
+    },
+    [message, refreshJobs],
+  );
+
   const handleTaskDelete = useCallback(
     (task: CronJobSpecOutput) => {
       Modal.confirm({
-        title: "删除暂停任务",
-        content: `确认删除任务“${task.name || task.id}”？`,
+        title: "删除任务",
+        content: `确认删除任务“${task.name || task.id}”？删除后无法恢复。`,
+        centered: true,
         okText: "删除",
         okType: "danger",
         cancelText: "取消",
+        cancelButtonProps: { type: "text" },
         onOk: async () => {
           setJobs((prev) => prev.filter((job) => job.id !== task.id));
           if (task.task?.chat_id && task.task.chat_id === chatIdRef.current) {
@@ -788,15 +919,15 @@ export default function ChatPage() {
   ]);
 
   // Show toast when task has no scheduled result yet
-  const taskNoResultShownRef = useRef(false);
+  const taskNoResultShownIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (currentTask && !currentTask.task?.has_scheduled_result) {
-      if (!taskNoResultShownRef.current) {
-        taskNoResultShownRef.current = true;
+      if (taskNoResultShownIdRef.current !== currentTask.id) {
+        taskNoResultShownIdRef.current = currentTask.id;
         message.info("当前任务暂未启动，等下次收到提醒再来看看哟~");
       }
     } else {
-      taskNoResultShownRef.current = false;
+      taskNoResultShownIdRef.current = null;
     }
   }, [currentTask?.id, currentTask?.task?.has_scheduled_result]);
 
@@ -812,11 +943,44 @@ export default function ChatPage() {
     [t],
   );
 
+  const resolveLogicalRequestSessionId = useCallback(
+    (target: ChatRequestTarget, session?: SessionInfo): string => {
+      if (target.logical_session_id) {
+        return target.logical_session_id;
+      }
+
+      return sessionApi.getLogicalSessionId(
+        target.session_id ||
+          window.currentSessionId ||
+          session?.session_id ||
+          "",
+      );
+    },
+    [],
+  );
+
+  const resolveRequestChatId = useCallback(
+    (target: ChatRequestTarget, logicalSessionId: string): string => {
+      return (
+        target.chat_id ||
+        sessionApi.getChatIdForSession(logicalSessionId) ||
+        sessionApi.getChatIdForSession(target.session_id || "") ||
+        target.session_id ||
+        chatIdRef.current ||
+        logicalSessionId
+      );
+    },
+    [],
+  );
+
   const customFetch = useCallback(
     async (data: {
       input?: Array<Record<string, unknown>>;
       biz_params?: Record<string, unknown>;
       signal?: AbortSignal;
+      session_id?: string;
+      logical_session_id?: string;
+      chat_id?: string | null;
     }): Promise<Response> => {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -840,7 +1004,13 @@ export default function ChatPage() {
         return buildModelError();
       }
 
-      const { input = [], biz_params } = data;
+      const {
+        input = [],
+        biz_params,
+        session_id,
+        logical_session_id,
+        chat_id,
+      } = data;
       const session: SessionInfo = input[input.length - 1]?.session || {};
       const lastInput = input.slice(-1);
       const lastMsg = lastInput[0];
@@ -854,9 +1024,18 @@ export default function ChatPage() {
             ]
           : lastInput;
 
+      const resolvedLogicalSessionId = resolveLogicalRequestSessionId(
+        {
+          session_id,
+          logical_session_id,
+          chat_id,
+        },
+        session,
+      );
+
       const requestBody = {
         input: rewrittenInput,
-        session_id: window.currentSessionId || session?.session_id || "",
+        session_id: resolvedLogicalSessionId,
         // ==================== userId 统一整改 (Kun He) ====================
         // 使用 getUserId()/getChannel() 获取，优先级：iframe > window > session > default
         user_id: getUserId(session?.user_id),
@@ -866,10 +1045,14 @@ export default function ChatPage() {
         ...biz_params,
       };
 
-      const backendChatId =
-        sessionApi.getRealIdForSession(requestBody.session_id) ??
-        chatIdRef.current ??
-        requestBody.session_id;
+      const backendChatId = resolveRequestChatId(
+        {
+          session_id,
+          logical_session_id: resolvedLogicalSessionId,
+          chat_id,
+        },
+        requestBody.session_id,
+      );
       if (backendChatId) {
         const userText = rewrittenInput
           .filter((m: InputMessage) => m.role === "user")
@@ -881,16 +1064,39 @@ export default function ChatPage() {
         }
       }
 
-      const response = await fetch(getApiUrl("/console/chat"), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: data.signal,
-      });
+      const timeoutSignal = createTimedAbortSignal(data.signal);
+      try {
+        const response = await fetch(getApiUrl("/console/chat"), {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody),
+          signal: timeoutSignal.signal,
+        });
 
-      return response;
+        return response;
+      } catch (error) {
+        // 如果是超时导致的abort,调用cancel API终止后端任务
+        if (error instanceof DOMException && error.name === "AbortError") {
+          const backendChatId = resolveRequestChatId(
+            {
+              session_id: data.session_id,
+              logical_session_id: data.logical_session_id,
+              chat_id: data.chat_id,
+            },
+            requestBody.session_id,
+          );
+          if (backendChatId) {
+            chatApi.stopChat(backendChatId).catch((err) => {
+              console.error("Failed to stop chat after timeout:", err);
+            });
+          }
+        }
+        throw error;
+      } finally {
+        timeoutSignal.cleanup();
+      }
     },
-    [selectedAgent],
+    [resolveLogicalRequestSessionId, resolveRequestChatId, selectedAgent],
   );
 
   const handleFileUpload = useCallback(
@@ -986,7 +1192,9 @@ export default function ChatPage() {
   // ==================== Drag & drop end ====================
 
   const options = useMemo(() => {
-    const i18nConfig = getDefaultConfig(t) as unknown as Partial<IAgentScopeRuntimeWebUIOptions>;
+    const i18nConfig = getDefaultConfig(
+      t,
+    ) as unknown as Partial<IAgentScopeRuntimeWebUIOptions>;
     const commandSuggestions: CommandSuggestion[] = [
       {
         command: "/clear",
@@ -1033,8 +1241,9 @@ export default function ChatPage() {
             <RuntimeLoadingBridge bridgeRef={runtimeLoadingBridgeRef} />
             <ChatHeaderTitle />
             <span style={{ flex: 1 }} />
+            <GeneratedFilesDrawer />
             <ModelSelector />
-            <ChatActionGroup />
+            {/* <ChatActionGroup /> */}
           </>
         ),
       },
@@ -1052,9 +1261,7 @@ export default function ChatPage() {
         render: ({ greeting, onSubmit }) => (
           <WelcomeCenterLayout
             greeting={
-              typeof greeting === "string"
-                ? greeting
-                : "你好，你的专属小龙虾，前来报到！"
+              typeof greeting === "string" ? greeting : "你好，有什么可以帮您？"
             }
             onSubmit={(data) => onSubmit(data)}
           />
@@ -1064,7 +1271,8 @@ export default function ChatPage() {
       sender: {
         ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
-        allowSpeech: true,
+        beforeUI: <TaskProgressFloatingCard progress={taskProgress} />,
+        allowSpeech: false,
         attachments: {
           trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {
             const tooltipKey = multimodalCaps.supportsMultimodal
@@ -1104,6 +1312,12 @@ export default function ChatPage() {
           data: ChatRuntimeResponseCardData;
           isLast?: boolean;
         }) => <RuntimeResponseCard {...props} />,
+        ApprovalAction: (props: { data: ChatApprovalActionCardData }) => (
+          <ApprovalActionCard {...props} />
+        ),
+        TaskRunGroupCard: (props: { data: ChatTaskRunGroupCardData }) => (
+          <TaskRunGroupCard {...props} />
+        ),
       },
       api: {
         ...defaultConfig.api,
@@ -1111,35 +1325,54 @@ export default function ChatPage() {
         replaceMediaURL: (url: string) => {
           return toDisplayUrl(url);
         },
-        cancel(data: { session_id: string }) {
-          const chatId =
-            sessionApi.getRealIdForSession(data.session_id) ?? data.session_id;
+        cancel(data: {
+          session_id: string;
+          logical_session_id?: string;
+          chat_id?: string | null;
+        }) {
+          const logicalSessionId = resolveLogicalRequestSessionId(data);
+          const chatId = resolveRequestChatId(data, logicalSessionId);
           if (chatId) {
             chatApi.stopChat(chatId).catch((err) => {
               console.error("Failed to stop chat:", err);
             });
           }
         },
-        async reconnect(data: { session_id: string; signal?: AbortSignal }) {
+        async reconnect(data: {
+          session_id: string;
+          signal?: AbortSignal;
+          logical_session_id?: string;
+          chat_id?: string | null;
+        }) {
           const headers: Record<string, string> = {
             "Content-Type": "application/json",
             ...buildAuthHeaders(),
           };
+          const logicalSessionId = resolveLogicalRequestSessionId(data);
+          const reconnectSessionId = resolveRequestChatId(
+            data,
+            logicalSessionId,
+          );
 
-          return fetch(getApiUrl("/console/chat"), {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              reconnect: true,
-              session_id: window.currentSessionId || data.session_id,
-              // ==================== userId 统一整改 (Kun He) ====================
-              // 使用 getUserId()/getChannel() 获取
-              user_id: getUserId(),
-              channel: getChannel(),
-              // ==================== userId 统一整改结束 ====================
-            }),
-            signal: data.signal,
-          });
+          const timeoutSignal = createTimedAbortSignal(data.signal);
+          try {
+            return await fetch(getApiUrl("/console/chat"), {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                reconnect: true,
+                session_id: reconnectSessionId,
+                // ==================== userId 统一整改 (Kun He) ====================
+                // 使用 getUserId()/getChannel() 获取
+                user_id: getUserId(),
+                channel: getChannel(),
+                // ==================== userId 统一整改结束 ====================
+              }),
+              signal: timeoutSignal.signal,
+            });
+          } finally {
+            timeoutSignal.cleanup();
+          }
         },
       },
       // ==================== 自定义工具渲染器 ====================
@@ -1172,6 +1405,9 @@ export default function ChatPage() {
     isComposingRef,
     isDark,
     multimodalCaps,
+    resolveLogicalRequestSessionId,
+    resolveRequestChatId,
+    taskProgress,
     t,
   ]);
 
@@ -1212,21 +1448,27 @@ export default function ChatPage() {
           tasks={tasks}
           onCreateSession={handleCreateSessionFromSidebar}
           onTaskClick={handleTaskOpen}
+          onTaskPause={handleTaskPause}
+          onTaskRun={handleTaskRun}
           onTaskResume={handleTaskResume}
           onTaskDelete={handleTaskDelete}
         />
         {/* ==================== 首页改版结束 ==================== */}
-          <div
-            className={styles.chatMessagesArea}
-            style={{ flex: 1, minWidth: 0, position: "relative" }}
-            onDragEnter={handleDragEnter}
-            onDragLeave={handleDragLeave}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
-          >
-            <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
-            <DragUploadOverlay visible={isDragging} onClose={handleDragOverlayClose} />
-          </div>
+        <div
+          className={styles.chatMessagesArea}
+          style={{ flex: 1, minWidth: 0, position: "relative" }}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
+          <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
+          <DragUploadOverlay
+            visible={isDragging}
+            onClose={handleDragOverlayClose}
+          />
+          <ConversationQuickNav />
+        </div>
 
         <Modal
           open={showModelPrompt}
@@ -1235,7 +1477,10 @@ export default function ChatPage() {
           width={480}
           styles={{
             content: isDark
-              ? { background: "#1f1f1f", boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }
+              ? {
+                  background: "#1f1f1f",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                }
               : undefined,
           }}
         >

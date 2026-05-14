@@ -5,6 +5,7 @@ DEPRECATED: Agent-level model configuration has been removed.
 Models are now managed at tenant level via TenantModelConfig.
 These tests are skipped as the functionality is no longer supported.
 """
+
 from pathlib import Path
 
 import pytest

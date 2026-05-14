@@ -77,10 +77,13 @@ export interface UserStats {
   avg_duration_ms: number;
   tools_used: ToolUsage[];
   skills_used: SkillUsage[];
+  mcp_tools_used: MCPToolUsage[];
 }
 
 export interface UserListItem {
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   total_sessions: number;
   total_conversations: number;
   total_tokens: number;
@@ -90,6 +93,8 @@ export interface UserListItem {
 export interface TraceListItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -104,7 +109,10 @@ export interface TraceListItem {
 
 export interface SessionListItem {
   session_id: string;
+  session_name?: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   channel: string;
   total_traces: number;
   total_tokens: number;
@@ -141,6 +149,8 @@ export interface TraceDetail {
 export interface Trace {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   start_time: string;
@@ -154,6 +164,7 @@ export interface Trace {
   status: string;
   error: string | null;
   user_message: string | null;
+  model_output: string | null;
 }
 
 export interface Span {
@@ -172,6 +183,8 @@ export interface Span {
   tool_input: Record<string, unknown> | null;
   tool_output: string | null;
   error: string | null;
+  user_name?: string;
+  bbk_id?: string;
 }
 
 export interface ToolCall {
@@ -219,7 +232,6 @@ export interface TimelineEvent {
   trigger_reason: string | null;
   tool_name: string | null;
   mcp_server: string | null;
-  skill_weight: number | null;
   model_name: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
@@ -242,11 +254,11 @@ export interface TraceDetailWithTimeline {
 export interface UserMessageItem {
   trace_id: string;
   user_id: string;
+  user_name?: string;
+  bbk_id?: string;
   session_id: string;
   channel: string;
   user_message: string | null;
-  input_tokens: number;
-  output_tokens: number;
   model_name: string | null;
   start_time: string;
   duration_ms: number | null;
@@ -257,11 +269,13 @@ export const tracingApi = {
   getOverview: async (
     startDate?: string,
     endDate?: string,
+    sourceId?: string,
   ): Promise<OverviewStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    return request(`/tracing/overview?${params.toString()}`);
+    if (sourceId) params.append("source_id", sourceId);
+    return request(`/monitor/tracing/overview?${params.toString()}`);
   },
 
   getUsers: async (
@@ -271,6 +285,10 @@ export const tracingApi = {
       user_id?: string;
       start_date?: string;
       end_date?: string;
+      source_id?: string;
+      sort_by?: string;
+      filter_user_type?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -283,22 +301,30 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        // filter_user_type 需要传递 "all" 或 "filtered"
+        // source_id 使用 "all" 表示查询全部
+        if (key === "filter_user_type") {
+          if (value) params.append(key, value);
+        } else if (value && value !== "all") {
+          params.append(key, value);
+        }
       });
     }
-    return request(`/tracing/users?${params.toString()}`);
+    return request(`/monitor/tracing/users?${params.toString()}`);
   },
 
   getUserStats: async (
     userId: string,
     startDate?: string,
     endDate?: string,
+    sourceId?: string,
   ): Promise<UserStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/users/${encodeURIComponent(userId)}${query}`);
+    return request(`/monitor/tracing/users/${encodeURIComponent(userId)}${query}`);
   },
 
   getTraces: async (
@@ -310,6 +336,8 @@ export const tracingApi = {
       status?: string;
       start_date?: string;
       end_date?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -325,33 +353,37 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/tracing/traces?${params.toString()}`);
+    return request(`/monitor/tracing/traces?${params.toString()}`);
   },
 
   getTraceDetail: async (traceId: string): Promise<TraceDetail> => {
-    return request(`/tracing/traces/${traceId}`);
+    return request(`/monitor/tracing/traces/${traceId}`);
   },
 
   getModelUsage: async (
     startDate?: string,
     endDate?: string,
+    sourceId?: string,
   ): Promise<{ models: ModelUsage[] }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/models${query}`);
+    return request(`/monitor/tracing/models${query}`);
   },
 
   getToolUsage: async (
     startDate?: string,
     endDate?: string,
+    sourceId?: string,
   ): Promise<{ tools: ToolUsage[] }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/tracing/tools${query}`);
+    return request(`/monitor/tracing/tools${query}`);
   },
 
   getSessions: async (
@@ -362,6 +394,8 @@ export const tracingApi = {
       session_id?: string;
       start_date?: string;
       end_date?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -377,20 +411,22 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/tracing/sessions?${params.toString()}`);
+    return request(`/monitor/tracing/sessions?${params.toString()}`);
   },
 
   getSessionStats: async (
     sessionId: string,
     startDate?: string,
     endDate?: string,
+    sourceId?: string,
   ): Promise<SessionStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
-      `/tracing/sessions/${encodeURIComponent(sessionId)}${query}`,
+      `/monitor/tracing/sessions/${encodeURIComponent(sessionId)}${query}`,
     );
   },
 
@@ -403,6 +439,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: UserMessageItem[];
@@ -418,7 +456,7 @@ export const tracingApi = {
         if (value) params.append(key, value);
       });
     }
-    return request(`/tracing/user-messages?${params.toString()}`);
+    return request(`/monitor/tracing/user-messages?${params.toString()}`);
   },
 
   exportUserMessages: async (
@@ -428,6 +466,8 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
+      source_id?: string;
+      bbk_id?: string;
     },
     format: string = "xlsx",
   ): Promise<Blob> => {
@@ -440,7 +480,7 @@ export const tracingApi = {
     }
     // Use the proper API URL and include authorization token
     const { getApiUrl } = await import("../config");
-    const url = getApiUrl(`/tracing/user-messages/export?${params.toString()}`);
+    const url = getApiUrl(`/monitor/tracing/user-messages/export?${params.toString()}`);
     const headers = new Headers(buildAuthHeaders());
     const response = await fetch(url, { headers });
     if (!response.ok) {
@@ -462,6 +502,152 @@ export const tracingApi = {
 
   // Timeline with skill hierarchy
   getTraceTimeline: async (traceId: string): Promise<TraceDetailWithTimeline> => {
-    return request(`/tracing/traces/${traceId}/timeline`);
+    return request(`/monitor/tracing/traces/${traceId}/timeline`);
+  },
+
+  // Business Overview APIs
+  getSources: async (
+    startDate?: string,
+    endDate?: string,
+  ): Promise<{ sources: string[] }> => {
+    const params = new URLSearchParams();
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/sources${query}`);
+  },
+
+  getChannelDistribution: async (
+    sourceId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<{
+    platformUserDistribution: { name: string; value: number }[];
+    platformCallDistribution: { name: string; value: number }[];
+    totalPlatforms: number;
+  }> => {
+    const params = new URLSearchParams();
+    if (sourceId) params.append("source_id", sourceId);
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/channel-distribution${query}`);
+  },
+
+  getGrowthStats: async (
+    startDate: string,
+    endDate: string,
+    timeRange: string = "day",
+    sourceId?: string,
+  ): Promise<{
+    callsGrowth: number;
+    tokensGrowth: number;
+    sessionGrowth: number;
+    userGrowth: number;
+    platformGrowth: number;
+    avgDurationGrowth: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("start_date", startDate);
+    params.append("end_date", endDate);
+    params.append("time_range", timeRange);
+    if (sourceId) params.append("source_id", sourceId);
+    return request(`/monitor/tracing/growth-stats?${params.toString()}`);
+  },
+
+  getDailyTrend: async (
+    startDate?: string,
+    endDate?: string,
+    sourceId?: string,
+  ): Promise<{
+    trendData: { date: string; calls: number; tokens: number; users: number }[];
+  }> => {
+    const params = new URLSearchParams();
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    if (sourceId) params.append("source_id", sourceId);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/daily-trend${query}`);
+  },
+
+  // 技能调用排行榜（分页）
+  getSkills: async (
+    page = 1,
+    pageSize = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: SkillUsage[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/monitor/tracing/skills?${params.toString()}`);
+  },
+
+  // 技能调用的对话列表（分页）
+  getSkillTraces: async (
+    skillName: string,
+    page = 1,
+    pageSize = 20,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: TraceListItem[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(
+      `/monitor/tracing/skills/${encodeURIComponent(skillName)}/traces?${params.toString()}`,
+    );
+  },
+
+  // MCP 服务调用排行榜（分页）
+  getMCPServers: async (
+    page = 1,
+    pageSize = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+    },
+  ): Promise<{
+    items: MCPServerUsage[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> => {
+    const params = new URLSearchParams();
+    params.append("page", page.toString());
+    params.append("page_size", pageSize.toString());
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    return request(`/monitor/tracing/mcp?${params.toString()}`);
   },
 };

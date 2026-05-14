@@ -3,6 +3,7 @@
 
 Blocks tool calls that target files explicitly listed in a sensitive-file set.
 """
+
 from __future__ import annotations
 
 import shlex

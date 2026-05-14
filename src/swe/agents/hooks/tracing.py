@@ -4,6 +4,7 @@
 This hook integrates tracing events into the agent's lifecycle,
 capturing LLM calls, tool executions, and skill invocations.
 """
+
 import logging
 from typing import Any, Optional
 
@@ -29,6 +30,8 @@ class TracingHook:
         session_id: str,
         channel: str,
         source_id: str,
+        user_name: Optional[str] = None,
+        bbk_id: Optional[str] = None,
     ):
         """Initialize tracing hook.
 
@@ -38,12 +41,16 @@ class TracingHook:
             session_id: Session identifier
             channel: Channel identifier
             source_id: Source identifier for data isolation
+            user_name: 用户名称（可选）
+            bbk_id: BBK标识符（可选）
         """
         self.trace_id = trace_id
         self.user_id = user_id
         self.session_id = session_id
         self.channel = channel
         self.source_id = source_id
+        self.user_name = user_name
+        self.bbk_id = bbk_id
         self._current_llm_span_id: Optional[str] = None
         self._current_tool_span_id: Optional[str] = None
         self._tool_spans: dict[str, str] = {}  # tool_call_id -> span_id
@@ -78,6 +85,8 @@ class TracingHook:
                 session_id=self.session_id,
                 channel=self.channel,
                 source_id=self.source_id,
+                user_name=self.user_name,
+                bbk_id=self.bbk_id,
             )
             self._current_llm_span_id = span_id
             return span_id
@@ -154,6 +163,8 @@ class TracingHook:
                 session_id=self.session_id,
                 channel=self.channel,
                 mcp_server=mcp_server,
+                user_name=self.user_name,
+                bbk_id=self.bbk_id,
             )
             if tool_call_id:
                 self._tool_spans[tool_call_id] = span_id
@@ -232,6 +243,8 @@ class TracingHook:
                 session_id=self.session_id,
                 channel=self.channel,
                 skill_input=skill_input,
+                user_name=self.user_name,
+                bbk_id=self.bbk_id,
             )
             self._current_tool_span_id = span_id  # Reuse for skill tracking
             return span_id

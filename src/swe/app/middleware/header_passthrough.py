@@ -4,6 +4,7 @@
 Extracts x-header-* prefixed HTTP headers and stores them in context
 for later injection into MCP client HTTP requests.
 """
+
 import logging
 from typing import Callable, Awaitable
 
@@ -93,7 +94,7 @@ class HeaderPassthroughMiddleware(BaseHTTPMiddleware):
             name_lower = name.lower()
             if name_lower.startswith(self.HEADER_PREFIX):
                 # Strip prefix: x-header-cookie → cookie
-                mcp_name = name_lower[len(self.HEADER_PREFIX):]
+                mcp_name = name_lower[len(self.HEADER_PREFIX) :]
                 headers[mcp_name] = value
         return headers
 

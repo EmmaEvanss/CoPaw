@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Allow running SWE via ``python -m swe``."""
+
 from .cli.main import cli
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ Verifies that:
 - Workspace runtime starts only on demand via MultiAgentManager
 - Feature subsystems initialize on first use
 """
+
 # pylint: disable=protected-access,unused-argument
 import sys
 from pathlib import Path

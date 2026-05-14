@@ -17,6 +17,8 @@ export const DEFAULT_OPEN_KEYS = [
   "settings-group",
   "analytics-group",
   "instance-group",
+  "harness-group",
+  "market-group",
 ];
 
 export const KEY_TO_PATH: Record<string, string> = {
@@ -40,15 +42,20 @@ export const KEY_TO_PATH: Record<string, string> = {
   security: "/security",
   "token-usage": "/token-usage",
   "voice-transcription": "/voice-transcription",
-  "analytics-overview": "/analytics/overview",
   "analytics-users": "/analytics/users",
   "analytics-sessions": "/analytics/sessions",
   "analytics-messages": "/analytics/messages",
   "analytics-traces": "/analytics/traces",
+  "analytics-business-overview": "/analytics/business-overview",
+  "monitor-cron-overview": "/monitor/cron-overview",
   "instance-overview": "/instance/overview",
   "instance-instances": "/instance/instances",
   "instance-allocations": "/instance/allocations",
   "instance-operation-logs": "/instance/operation-logs",
+  "continuous-iteration": "/continuous-iteration",
+  market: "/market",
+  "my-skills": "/my-skills",
+  "my-mcp": "/my-mcp",
 };
 
 export const KEY_TO_LABEL: Record<string, string> = {
@@ -68,15 +75,19 @@ export const KEY_TO_LABEL: Record<string, string> = {
   security: "nav.security",
   "token-usage": "nav.tokenUsage",
   agents: "nav.agents",
-  "analytics-overview": "nav.analyticsOverview",
   "analytics-users": "nav.analyticsUsers",
   "analytics-sessions": "nav.analyticsSessions",
   "analytics-messages": "nav.analyticsMessages",
   "analytics-traces": "nav.analyticsTraces",
+  "analytics-business-overview": "nav.analyticsBusinessOverview",
   "instance-overview": "nav.instanceOverview",
   "instance-instances": "nav.instanceInstances",
   "instance-allocations": "nav.instanceAllocations",
   "instance-operation-logs": "nav.instanceOperationLogs",
+  "continuous-iteration": "nav.continuousIteration",
+  market: "nav.market",
+  "my-skills": "nav.mySkills",
+  "my-mcp": "nav.myMcp",
 };
 
 // ── URL helpers ───────────────────────────────────────────────────────────

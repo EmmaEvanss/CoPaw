@@ -4,6 +4,7 @@
 Provides utilities to get the correct agent instance for each request,
 with tenant-first resolution order.
 """
+
 from contextvars import ContextVar
 from typing import Optional, TYPE_CHECKING
 from fastapi import Request

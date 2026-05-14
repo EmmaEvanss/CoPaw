@@ -14,9 +14,8 @@ import Chat from "../../pages/Chat";
 import ChannelsPage from "../../pages/Control/Channels";
 import SessionsPage from "../../pages/Control/Sessions";
 import CronJobsPage from "../../pages/Control/CronJobs";
-import CasesPage from "../../pages/Control/Cases";
-import GreetingPage from "../../pages/Control/Greeting";
 import FeaturedCasesPage from "../../pages/Control/FeaturedCases";
+import GreetingPage from "../../pages/Control/Greeting";
 import HeartbeatPage from "../../pages/Control/Heartbeat";
 import AgentConfigPage from "../../pages/Agent/Config";
 import SkillsPage from "../../pages/Agent/Skills";
@@ -32,9 +31,14 @@ import VoiceTranscriptionPage from "../../pages/Settings/VoiceTranscription";
 import AgentsPage from "../../pages/Settings/Agents";
 import AnalyticsPage from "../../pages/Analytics";
 import InstancePage from "../../pages/Instance";
+import MonitorPage from "../../pages/Monitor";
+import ContinuousIterationPage from "../../pages/Harness/ContinuousIteration";
 // ==================== 测试页面 (用于验证新功能) ====================
 import TestDownloadCardPage from "../../pages/TestDownloadCard";
 // ==================== 测试页面结束 ====================
+import MarketPage from "../../pages/Market";
+import MySkillsPage from "../../pages/MySkills";
+import MyMCPPage from "../../pages/MyMCP";
 
 const { Content } = Layout;
 
@@ -43,7 +47,6 @@ const pathToKey: Record<string, string> = {
   "/channels": "channels",
   "/sessions": "sessions",
   "/cron-jobs": "cron-jobs",
-  "/cases-management": "cases-management",
   "/greeting-management": "greeting-management",
   "/featured-cases-management": "featured-cases-management",
   "/heartbeat": "heartbeat",
@@ -59,15 +62,20 @@ const pathToKey: Record<string, string> = {
   "/security": "security",
   "/token-usage": "token-usage",
   "/voice-transcription": "voice-transcription",
-  "/analytics/overview": "analytics-overview",
   "/analytics/users": "analytics-users",
   "/analytics/sessions": "analytics-sessions",
   "/analytics/messages": "analytics-messages",
   "/analytics/traces": "analytics-traces",
+  "/analytics/business-overview": "analytics-business-overview",
+  "/monitor/cron-overview": "monitor-cron-overview",
   "/instance/overview": "instance-overview",
   "/instance/instances": "instance-instances",
   "/instance/allocations": "instance-allocations",
   "/instance/operation-logs": "instance-operation-logs",
+  "/continuous-iteration": "continuous-iteration",
+  "/market": "market",
+  "/my-skills": "my-skills",
+  "/my-mcp": "my-mcp",
 };
 
 export default function MainLayout() {
@@ -103,8 +111,10 @@ export default function MainLayout() {
               <Route path="/channels" element={<ChannelsPage />} />
               <Route path="/sessions" element={<SessionsPage />} />
               <Route path="/cron-jobs" element={<CronJobsPage />} />
-              <Route path="/cases-management" element={<CasesPage />} />
-              <Route path="/greeting-management" element={<GreetingPage />} />
+              <Route
+                path="/greeting-management"
+                element={<GreetingPage />}
+              />
               <Route
                 path="/featured-cases-management"
                 element={<FeaturedCasesPage />}
@@ -126,10 +136,15 @@ export default function MainLayout() {
                 element={<VoiceTranscriptionPage />}
               />
               <Route path="/analytics/*" element={<AnalyticsPage />} />
+              <Route path="/monitor/*" element={<MonitorPage />} />
               <Route path="/instance/*" element={<InstancePage />} />
+              <Route path="/continuous-iteration" element={<ContinuousIterationPage />} />
               {/* ==================== 测试路由 ==================== */}
               <Route path="/test-download-card" element={<TestDownloadCardPage />} />
               {/* ==================== 测试路由结束 ==================== */}
+              <Route path="/market" element={<MarketPage />} />
+              <Route path="/my-skills" element={<MySkillsPage />} />
+              <Route path="/my-mcp" element={<MyMCPPage />} />
             </Routes>
           </div>
         </Content>

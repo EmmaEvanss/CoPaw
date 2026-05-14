@@ -5,8 +5,10 @@ Parses and validates X-Tenant-Id and X-User-Id headers, enforces
 tenant identity requirements on stateful routes, and binds tenant/user
 context for the duration of the request.
 """
+
 import logging
 from typing import Callable, Awaitable
+from urllib.parse import unquote
 
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -14,6 +16,7 @@ from starlette.responses import Response, JSONResponse
 from starlette.types import ASGIApp
 
 from swe.config.context import (
+    resolve_runtime_tenant_id,
     set_current_tenant_id,
     set_current_user_id,
     set_current_source_id,
@@ -76,6 +79,7 @@ def is_tenant_exempt(path: str) -> bool:
     # Prefix match for certain routes
     exempt_prefixes = (
         "/assets/",
+        "/static/",
         "/console/",
     )
     if any(path.startswith(prefix) for prefix in exempt_prefixes):
@@ -117,18 +121,31 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
     def _resolve_request_identity(
         self,
         request: Request,
-    ) -> tuple[str | None, str | None, str | None, bool]:
-        """Resolve tenant, user, and source IDs from request headers."""
+    ) -> tuple[
+        str | None,
+        str | None,
+        str | None,
+        str | None,
+        str | None,
+        bool,
+    ]:
+        """Resolve tenant, user, source, user_name, bbk_id from request headers."""
         path = request.url.path
         is_exempt = request.method == "OPTIONS" or is_tenant_exempt(path)
         tenant_id = request.headers.get("X-Tenant-Id")
         user_id = request.headers.get("X-User-Id")
         source_id = request.headers.get("X-Source-Id")
+        user_name = request.headers.get("X-User-Name")
+        bbk_id = request.headers.get("X-Bbk-Id")
+
+        # 对 header 中的 user_name 进行 URI 解码
+        if user_name:
+            user_name = unquote(user_name)
 
         if not is_exempt:
             tenant_id = self._validate_tenant_id(path, tenant_id)
 
-        return tenant_id, user_id, source_id, is_exempt
+        return tenant_id, user_id, source_id, user_name, bbk_id, is_exempt
 
     def _validate_tenant_id(
         self,
@@ -161,14 +178,23 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
         tenant_id: str | None,
         user_id: str | None,
         source_id: str | None,
+        user_name: str | None,
+        bbk_id: str | None,
     ) -> None:
         """Store identity in request state for downstream use."""
+        effective_tenant_id = resolve_runtime_tenant_id(tenant_id, source_id)
         if tenant_id:
             request.state.tenant_id = tenant_id
+        if effective_tenant_id:
+            request.state.effective_tenant_id = effective_tenant_id
         if user_id:
             request.state.user_id = user_id
         if source_id:
             request.state.source_id = source_id
+        if user_name:
+            request.state.user_name = user_name
+        if bbk_id:
+            request.state.bbk_id = bbk_id
 
     def _bind_context(
         self,
@@ -221,15 +247,25 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
                 tenant_id,
                 user_id,
                 source_id,
+                user_name,
+                bbk_id,
                 is_exempt,
             ) = self._resolve_request_identity(request)
 
-            self._store_request_state(request, tenant_id, user_id, source_id)
+            self._store_request_state(
+                request,
+                tenant_id,
+                user_id,
+                source_id,
+                user_name,
+                bbk_id,
+            )
             tokens = self._bind_context(tenant_id, user_id, source_id)
 
             logger.debug(
                 f"TenantIdentityMiddleware: tenant_id={tenant_id}, "
-                f"user_id={user_id}, path={request.url.path}, exempt={is_exempt}",
+                f"user_id={user_id}, bbk_id={bbk_id}, source_id={source_id}, "
+                f"path={request.url.path}, exempt={is_exempt}",
             )
 
             response = await call_next(request)
@@ -351,6 +387,30 @@ def get_source_id_from_request(request: Request) -> str | None:
     return getattr(request.state, "source_id", None)
 
 
+def get_user_name_from_request(request: Request) -> str | None:
+    """Get user name from request state.
+
+    Args:
+        request: The FastAPI request object.
+
+    Returns:
+        The user name if set, None otherwise.
+    """
+    return getattr(request.state, "user_name", None)
+
+
+def get_bbk_id_from_request(request: Request) -> str | None:
+    """Get bbk_id from request state.
+
+    Args:
+        request: The FastAPI request object.
+
+    Returns:
+        The bbk_id if set, None otherwise.
+    """
+    return getattr(request.state, "bbk_id", None)
+
+
 __all__ = [
     "TenantIdentityMiddleware",
     "is_tenant_exempt",
@@ -360,4 +420,6 @@ __all__ = [
     "require_tenant_id",
     "require_user_id",
     "get_source_id_from_request",
+    "get_user_name_from_request",
+    "get_bbk_id_from_request",
 ]

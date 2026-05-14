@@ -6,6 +6,7 @@ Windows filenames cannot contain: \\ / : * ? " < > |
 This module wraps agentscope's SessionBase so that session_id and user_id
 are sanitized before being used as filenames.
 """
+
 import os
 import re
 import json
@@ -75,11 +76,34 @@ class SafeJSONSession(SessionBase):
         **state_modules_mapping,
     ) -> None:
         """Save state modules to a JSON file using async I/O."""
+        session_save_path = self._get_save_path(session_id, user_id=user_id)
+        existing_state = {}
+        if os.path.exists(session_save_path):
+            async with aiofiles.open(
+                session_save_path,
+                "r",
+                encoding="utf-8",
+                errors="surrogatepass",
+            ) as f:
+                content = await f.read()
+                if content.strip():
+                    try:
+                        loaded_state = json.loads(content)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Failed to parse existing session state at %s; "
+                            "overwriting with current state.",
+                            session_save_path,
+                        )
+                    else:
+                        if isinstance(loaded_state, dict):
+                            existing_state = loaded_state
+
         state_dicts = {
             name: state_module.state_dict()
             for name, state_module in state_modules_mapping.items()
         }
-        session_save_path = self._get_save_path(session_id, user_id=user_id)
+        state_dicts = {**existing_state, **state_dicts}
         with open(
             session_save_path,
             "w",
@@ -233,4 +257,35 @@ class SafeJSONSession(SessionBase):
         raise ValueError(
             f"Failed to get session state for file {session_save_path} "
             "because it does not exist.",
+        )
+
+    async def save_merged_state(
+        self,
+        session_id: str,
+        user_id: str = "",
+        state: dict = None,
+    ) -> None:
+        """Save merged state dict to JSON file.
+
+        Used by cron tasks to preserve existing session history while
+        saving new state without overwriting.
+
+        Args:
+            session_id: The session id
+            user_id: The user ID for the storage
+            state: The merged state dict to save
+        """
+        if state is None:
+            state = {}
+        session_save_path = self._get_save_path(session_id, user_id=user_id)
+        async with aiofiles.open(
+            session_save_path,
+            "w",
+            encoding="utf-8",
+        ) as f:
+            await f.write(json.dumps(state, ensure_ascii=False))
+        logger.info(
+            "Saved merged session state to %s (keys=%d)",
+            session_save_path,
+            len(state),
         )

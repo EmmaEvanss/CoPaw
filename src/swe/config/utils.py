@@ -34,7 +34,7 @@ from .config import (
 )
 from .context import (
     TenantContextError,
-    get_current_tenant_id,
+    get_current_effective_tenant_id,
     resolve_effective_tenant_id,
 )
 
@@ -579,6 +579,36 @@ def get_heartbeat_config(
     return hb if hb is not None else HeartbeatConfig()
 
 
+def get_dream_cron(
+    agent_id: Optional[str] = None,
+    *,
+    tenant_id: str | None = None,
+) -> str:
+    """Return dream-based memory optimization cron expression for the agent.
+
+    Args:
+        agent_id: Agent ID to load config from. If None, returns empty string.
+        tenant_id: Optional tenant scope for agent config lookup.
+
+    Returns:
+        str: Cron expression for dream job, or empty string if disabled.
+    """
+    if agent_id is not None:
+        try:
+            agent_config = load_agent_config(
+                agent_id,
+                tenant_id=tenant_id,
+            )
+            return getattr(
+                agent_config.running.memory_summary,
+                "dream_cron",
+                "",
+            )
+        except Exception:
+            return ""
+    return ""
+
+
 def update_last_dispatch(
     channel: str,
     user_id: str,
@@ -670,7 +700,7 @@ def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
         Path to tenant working directory.
     """
     if tenant_id is None:
-        tenant_id = get_current_tenant_id()
+        tenant_id = get_current_effective_tenant_id()
 
     # Always use tenant subdirectory; default to "default" tenant
     if not tenant_id:
@@ -797,7 +827,7 @@ def get_tenant_working_dir_strict(tenant_id: str | None = None) -> Path:
         TenantContextError: If tenant_id is None and no tenant in context.
     """
     if tenant_id is None:
-        tenant_id = get_current_tenant_id()
+        tenant_id = get_current_effective_tenant_id()
         if tenant_id is None:
             raise TenantContextError(
                 "Tenant context required. "
@@ -846,8 +876,39 @@ def list_all_tenant_ids() -> list[str]:
     return sorted(tenant_ids)
 
 
-def list_logical_tenant_ids(source_id: str | None = None) -> list[str]:
-    """Return tenant IDs suitable for source-scoped API consumers."""
+async def list_logical_tenant_ids(
+    source_id: str | None = None,
+    *,
+    source_filter: bool = False,
+) -> list[str]:
+    """Return tenant IDs, optionally filtered by source_id.
+
+    Args:
+        source_id: Current request's source_id (from X-Source-Id header).
+        source_filter: Enable source_id filtering. When enabled:
+            - Database unavailable: return empty list
+            - source_id empty: return empty list
+            - Otherwise: return tenants from swe_tenant_init_source table
+
+    Returns:
+        List of tenant IDs.
+    """
+    if source_filter:
+        from ..app.workspace.tenant_init_source_store import (
+            get_tenant_init_source_store,
+        )
+
+        store = get_tenant_init_source_store()
+        if store is None or not source_id:
+            return []
+        rows = await store.get_by_source(source_id)
+        return sorted(
+            tid
+            for tid in {row["tenant_id"] for row in rows}
+            if tid != "default"
+        )
+
+    # Existing logic: file system scan with source-based default resolution
     tenant_ids = list_all_tenant_ids()
     if not source_id:
         return tenant_ids

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Authentication API endpoints."""
+
 from __future__ import annotations
 
 import os
@@ -158,9 +159,7 @@ async def configure_cron_auth(
     )
     return {
         "configured": snapshot.configured,
-        "user_info_status": (
-            "reused" if ensured.reused else "refreshed"
-        ),
+        "user_info_status": ("reused" if ensured.reused else "refreshed"),
         "user_info_expires_at": snapshot.user_info_expires_at,
         "auth_token_expires_at": snapshot.auth_token_expires_at,
         "has_auth_token": snapshot.has_auth_token,

@@ -2,6 +2,7 @@
 # flake8: noqa: E402
 # pylint: disable=wrong-import-position,redefined-outer-name,unused-variable
 """Integration tests for provider API tenant routing."""
+
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -224,7 +225,8 @@ class TestProviderAPISetActiveModel:
             assert response.status_code == 200
             # Should call activate_model (normalized to global scope)
             mock_manager.activate_model.assert_called_once_with(
-                "openai", "gpt-4"
+                "openai",
+                "gpt-4",
             )
 
     def test_set_active_model_invalid_scope_rejected(self, client):

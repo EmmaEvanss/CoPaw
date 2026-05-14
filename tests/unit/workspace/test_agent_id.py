@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for agent ID generation and short UUID functionality."""
+
 from swe.config.config import generate_short_agent_id
 
 

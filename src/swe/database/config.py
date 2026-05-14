@@ -3,6 +3,7 @@
 
 Defines configuration classes for database connections.
 """
+
 import os
 from typing import Optional
 
@@ -90,23 +91,31 @@ def get_database_config(
         return default
 
     return DatabaseConfig(
-        host=host
-        if host is not None
-        else _get_str("SWE_DB_HOST", "localhost"),
+        host=(
+            host if host is not None else _get_str("SWE_DB_HOST", "localhost")
+        ),
         port=port if port is not None else _get_int("SWE_DB_PORT", 3306),
         user=user if user is not None else _get_str("SWE_DB_USER", "root"),
-        password=password
-        if password is not None
-        else _get_password("SWE_DB_ACCESS", ""),
-        database=database
-        if database is not None
-        else _get_str("SWE_DB_NAME", "swe"),
-        min_connections=min_connections
-        if min_connections is not None
-        else _get_int("SWE_DB_MIN_CONN", 2),
-        max_connections=max_connections
-        if max_connections is not None
-        else _get_int("SWE_DB_MAX_CONN", 10),
+        password=(
+            password
+            if password is not None
+            else _get_password("SWE_DB_ACCESS", "")
+        ),
+        database=(
+            database
+            if database is not None
+            else _get_str("SWE_DB_NAME", "swe")
+        ),
+        min_connections=(
+            min_connections
+            if min_connections is not None
+            else _get_int("SWE_DB_MIN_CONN", 2)
+        ),
+        max_connections=(
+            max_connections
+            if max_connections is not None
+            else _get_int("SWE_DB_MAX_CONN", 10)
+        ),
     )
 
 

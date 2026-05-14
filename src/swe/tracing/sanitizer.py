@@ -3,6 +3,7 @@
 
 Provides functions to sanitize sensitive data before storage.
 """
+
 from typing import Any, Optional
 
 # Sensitive keys to redact from tool input/output
@@ -59,11 +60,15 @@ def sanitize_dict(
             result[key] = sanitize_dict(value, max_length)
         elif isinstance(value, list):
             result[key] = [
-                sanitize_dict(item, max_length)
-                if isinstance(item, dict)
-                else item[:max_length] + "..."
-                if isinstance(item, str) and len(item) > max_length
-                else item
+                (
+                    sanitize_dict(item, max_length)
+                    if isinstance(item, dict)
+                    else (
+                        item[:max_length] + "..."
+                        if isinstance(item, str) and len(item) > max_length
+                        else item
+                    )
+                )
                 for item in value
             ]
         else:

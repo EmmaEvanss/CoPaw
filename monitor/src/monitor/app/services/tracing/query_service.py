@@ -1864,6 +1864,30 @@ class TracingQueryService:
         end_date: datetime,
     ) -> Optional[dict]:
         """获取会话统计行数据."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            query = f"""
+                SELECT
+                    user_id,
+                    channel,
+                    COUNT(*) as total_traces,
+                    SUM(total_input_tokens) as input_tokens,
+                    SUM(total_output_tokens) as output_tokens,
+                    SUM(total_tokens) as total_tokens,
+                    AVG(duration_ms) as avg_duration,
+                    MIN(start_time) as first_active,
+                    MAX(start_time) as last_active
+                FROM swe_tracing_traces
+                WHERE source_id NOT IN ({exclude_placeholders})
+                      AND session_id = %s AND start_time >= %s AND start_time <= %s
+                GROUP BY user_id, channel
+            """
+            return await self._db.fetch_one(
+                query,
+                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+            )
         return await self._db.fetch_one(
             """
             SELECT
@@ -1891,6 +1915,26 @@ class TracingQueryService:
         end_date: datetime,
     ) -> list:
         """获取会话模型使用数据."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            query = f"""
+                SELECT model_name, COUNT(*) as count,
+                       SUM(total_input_tokens) as input_tokens,
+                       SUM(total_output_tokens) as output_tokens,
+                       SUM(total_tokens) as total_tokens
+                FROM swe_tracing_traces
+                WHERE source_id NOT IN ({exclude_placeholders})
+                      AND session_id = %s AND start_time >= %s AND start_time <= %s
+                      AND model_name IS NOT NULL
+                GROUP BY model_name
+                ORDER BY count DESC
+            """
+            return await self._db.fetch_all(
+                query,
+                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+            )
         return await self._db.fetch_all(
             """
             SELECT model_name, COUNT(*) as count,
@@ -1914,6 +1958,27 @@ class TracingQueryService:
         end_date: datetime,
     ) -> list:
         """获取会话工具使用数据."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            query = f"""
+                SELECT tool_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id NOT IN ({exclude_placeholders})
+                      AND session_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND tool_name IS NOT NULL
+                  AND mcp_server IS NULL
+                GROUP BY tool_name
+                ORDER BY count DESC
+            """
+            return await self._db.fetch_all(
+                query,
+                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+            )
         return await self._db.fetch_all(
             """
             SELECT tool_name, COUNT(*) as count,
@@ -1938,6 +2003,25 @@ class TracingQueryService:
         end_date: datetime,
     ) -> list:
         """获取会话技能使用数据."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            query = f"""
+                SELECT skill_name, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration
+                FROM swe_tracing_spans
+                WHERE source_id NOT IN ({exclude_placeholders})
+                      AND session_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'skill_invocation'
+                  AND skill_name IS NOT NULL
+                GROUP BY skill_name
+                ORDER BY count DESC
+            """
+            return await self._db.fetch_all(
+                query,
+                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+            )
         return await self._db.fetch_all(
             """
             SELECT skill_name, COUNT(*) as count,
@@ -1960,6 +2044,26 @@ class TracingQueryService:
         end_date: datetime,
     ) -> list:
         """获取会话 MCP 工具使用数据."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
+            )
+            query = f"""
+                SELECT tool_name, mcp_server, COUNT(*) as count,
+                       AVG(duration_ms) as avg_duration,
+                       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
+                FROM swe_tracing_spans
+                WHERE source_id NOT IN ({exclude_placeholders})
+                      AND session_id = %s AND start_time >= %s AND start_time <= %s
+                  AND event_type = 'tool_call_end'
+                  AND mcp_server IS NOT NULL
+                GROUP BY tool_name, mcp_server
+                ORDER BY count DESC
+            """
+            return await self._db.fetch_all(
+                query,
+                (*EXCLUDED_SOURCE_IDS, session_id, start_date, end_date),
+            )
         return await self._db.fetch_all(
             """
             SELECT tool_name, mcp_server, COUNT(*) as count,

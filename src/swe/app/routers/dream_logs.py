@@ -303,7 +303,18 @@ def _get_workspace_dir(request: Request) -> Path:
 
 
 def _get_tenant_id(request: Request) -> str:
-    """Get tenant_id from request header or default."""
+    """Get runtime tenant identity from request scope or tenant header."""
+    request_state = getattr(request, "state", None)
+    if request_state is not None:
+        scope_id = getattr(request_state, "scope_id", None)
+        if scope_id:
+            return scope_id
+        tenant_id = getattr(request_state, "tenant_id", None)
+        source_id = getattr(request_state, "source_id", None)
+        if tenant_id:
+            from ...config.context import resolve_runtime_tenant_id
+
+            return resolve_runtime_tenant_id(tenant_id, source_id) or tenant_id
     return request.headers.get("X-Tenant-Id", "default")
 
 

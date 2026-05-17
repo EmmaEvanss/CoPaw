@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 
 
 def _get_effective_request_tenant_id(request: Request) -> str | None:
-    """Return the effective tenant ID stored on request.state."""
+    """Return the runtime scope used for workspace isolation."""
+    scope_id = getattr(request.state, "scope_id", None)
+    if isinstance(scope_id, str) and scope_id:
+        return scope_id
+
     effective_tenant_id = getattr(request.state, "effective_tenant_id", None)
     if isinstance(effective_tenant_id, str) and effective_tenant_id:
         return effective_tenant_id

@@ -94,6 +94,17 @@ class ProviderManager:
     _instances: dict[str, "ProviderManager"] = {}
     _instances_lock = threading.Lock()
 
+    @classmethod
+    def reset_instance_cache(cls) -> None:
+        """清空进程内 ProviderManager 单例缓存。
+
+        source-scoped cutover 期间必须确保旧的 tenant-only 单例不会在同一
+        进程生命周期里继续复用，因此这里提供显式清理入口供启动/测试调用。
+        """
+        with cls._instances_lock:
+            cls._instances.clear()
+            cls._instance = None
+
     def __init__(self, tenant_id: str = "default") -> None:
         """Initialize provider manager for a specific tenant.
 
@@ -278,13 +289,21 @@ class ProviderManager:
             to call multiple times - subsequent calls are no-ops if storage exists.
         """
         from ..config.context import (
+            get_current_scope_id,
             get_current_source_id,
-            resolve_effective_tenant_id,
+            resolve_runtime_tenant_id,
         )
 
         tenant_id = tenant_id or "default"
         source_id = get_current_source_id()
-        effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
+        effective_tenant_id = (
+            get_current_scope_id()
+            or resolve_runtime_tenant_id(
+                tenant_id,
+                source_id,
+            )
+            or tenant_id
+        )
         tenant_providers_dir = SECRET_DIR / effective_tenant_id / "providers"
 
         # Fast path: already exists
@@ -411,13 +430,21 @@ class ProviderManager:
             ProviderManager instance for the specified tenant.
         """
         from ..config.context import (
+            get_current_scope_id,
             get_current_source_id,
-            resolve_effective_tenant_id,
+            resolve_runtime_tenant_id,
         )
 
         tenant_id = tenant_id or "default"
         source_id = get_current_source_id()
-        effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
+        effective_tenant_id = (
+            get_current_scope_id()
+            or resolve_runtime_tenant_id(
+                tenant_id,
+                source_id,
+            )
+            or tenant_id
+        )
 
         # Fast path: check if instance exists without lock
         if effective_tenant_id in ProviderManager._instances:

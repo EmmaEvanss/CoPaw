@@ -16,6 +16,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
+_ORIGINAL_MODULES = {
+    name: sys.modules.get(name)
+    for name in [
+        "swe.config.config",
+        "swe.app.workspace.tenant_init_source_store",
+        "swe.app",
+        "swe.app.workspace",
+    ]
+}
+
 config_stub = types.ModuleType("swe.config.config")
 config_stub.Config = object
 config_stub.HeartbeatConfig = object
@@ -46,14 +56,37 @@ sys.modules["swe.app.workspace.tenant_init_source_store"] = (
 
 # Stub swe.app namespace and submodules
 app_stub = types.ModuleType("swe.app")
+app_stub.__path__ = [
+    str(Path(__file__).parent.parent.parent.parent / "src" / "swe" / "app"),
+]
 sys.modules["swe.app"] = app_stub
 app_workspace_stub = types.ModuleType("swe.app.workspace")
+app_workspace_stub.__path__ = [
+    str(
+        Path(__file__).parent.parent.parent.parent
+        / "src"
+        / "swe"
+        / "app"
+        / "workspace",
+    ),
+]
 sys.modules["swe.app.workspace"] = app_workspace_stub
 
 context_module = importlib.import_module("swe.config.context")
 utils_module = importlib.import_module("swe.config.utils")
 
+for _name, _module in _ORIGINAL_MODULES.items():
+    if _module is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _module
+
+# 还原真实依赖后重新加载 utils，避免测试桩污染后续测试进程。
+utils_module = importlib.reload(utils_module)
+
 TenantContextError = context_module.TenantContextError
+encode_scope_id = context_module.encode_scope_id
+tenant_context = context_module.tenant_context
 get_tenant_working_dir_strict = utils_module.get_tenant_working_dir_strict
 get_tenant_config_path_strict = utils_module.get_tenant_config_path_strict
 list_logical_tenant_ids = utils_module.list_logical_tenant_ids
@@ -163,6 +196,13 @@ class TestTenantPathStrictHelpers:
         with pytest.raises(TenantContextError):
             get_tenant_working_dir_strict(None)
 
+    def test_explicit_logical_tenant_is_scoped_by_current_source(self):
+        """显式逻辑 tenant 也不能绕过当前 source 的 runtime scope。"""
+        with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+            path = get_tenant_working_dir_strict("tenant-a")
+
+        assert path == WORKING_DIR / encode_scope_id("tenant-a", "source-a")
+
     @pytest.mark.skip(reason="Requires full app dependencies")
     def test_get_tenant_working_dir_strict_with_tenant_id(self):
         """get_tenant_working_dir_strict works with explicit tenant_id."""
@@ -194,7 +234,7 @@ class TestLogicalTenantListing:
 
         assert await list_logical_tenant_ids() == ["default", "tenant-a"]
 
-    async def test_source_id_maps_effective_default_to_logical_default(
+    async def test_source_id_ignores_legacy_default_templates(
         self,
         monkeypatch,
     ):
@@ -211,11 +251,10 @@ class TestLogicalTenantListing:
 
         assert await list_logical_tenant_ids("ruice") == [
             "default",
-            "default_other",
             "tenant-a",
         ]
 
-    async def test_source_id_preserves_other_default_prefixed_tenants(
+    async def test_source_id_ignores_default_prefixed_templates(
         self,
         monkeypatch,
     ):
@@ -229,10 +268,27 @@ class TestLogicalTenantListing:
             ],
         )
 
+        assert await list_logical_tenant_ids("ruice") == ["tenant-a"]
+
+    async def test_source_id_projects_scope_directories_back_to_logical_ids(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(
+            utils_module,
+            "list_all_tenant_ids",
+            lambda: [
+                encode_scope_id("default", "ruice"),
+                encode_scope_id("tenant-a", "ruice"),
+                encode_scope_id("tenant-a", "sales"),
+                "tenant-b",
+            ],
+        )
+
         assert await list_logical_tenant_ids("ruice") == [
             "default",
-            "default_sales",
             "tenant-a",
+            "tenant-b",
         ]
 
     async def test_source_filter_returns_tenants_from_store(self, monkeypatch):
@@ -243,6 +299,11 @@ class TestLogicalTenantListing:
             {"tenant_id": "tenant-b", "source_id": "ruice"},
         ]
 
+        monkeypatch.setitem(
+            sys.modules,
+            "swe.app.workspace.tenant_init_source_store",
+            tenant_init_source_store_stub,
+        )
         monkeypatch.setattr(
             tenant_init_source_store_stub,
             "get_tenant_init_source_store",
@@ -258,6 +319,11 @@ class TestLogicalTenantListing:
         monkeypatch,
     ):
         """source_filter=True returns empty list when store is None."""
+        monkeypatch.setitem(
+            sys.modules,
+            "swe.app.workspace.tenant_init_source_store",
+            tenant_init_source_store_stub,
+        )
         monkeypatch.setattr(
             tenant_init_source_store_stub,
             "get_tenant_init_source_store",
@@ -269,7 +335,6 @@ class TestLogicalTenantListing:
 
     async def test_source_filter_returns_empty_when_source_id_missing(
         self,
-        _monkeypatch,
     ):
         """source_filter=True returns empty list when source_id is None."""
         result = await list_logical_tenant_ids(None, source_filter=True)

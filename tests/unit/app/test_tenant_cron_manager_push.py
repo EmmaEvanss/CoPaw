@@ -74,6 +74,7 @@ push_module.append = _append
 sys.modules["swe.app.console_push_store"] = push_module
 
 channels_schema_module = types.ModuleType("swe.app.channels.schema")
+channels_schema_module.ChannelType = str
 channels_schema_module.DEFAULT_CHANNEL = "console"
 sys.modules["swe.app.channels.schema"] = channels_schema_module
 

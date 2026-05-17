@@ -7,6 +7,7 @@ import pytest
 
 from swe.app.approvals.service import ApprovalService
 from swe.app.runner.runner import AgentRunner
+from swe.config.context import tenant_context
 from swe.security.tool_guard.approval import ApprovalDecision
 
 
@@ -78,6 +79,39 @@ async def test_tool_guard_approval_is_consumed_as_preapproval() -> None:
     )
 
     assert consumed is True
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_lookup_is_scope_aware_for_same_session() -> (
+    None
+):
+    service = ApprovalService()
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        pending_a = await service.create_pending(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            tool_name="execute_shell_command",
+            result=_result(),
+        )
+    with tenant_context(tenant_id="tenant-a", source_id="source-b"):
+        pending_b = await service.create_pending(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            tool_name="execute_shell_command",
+            result=_result(),
+        )
+
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        selected_a = await service.get_pending_by_session("session-1")
+    with tenant_context(tenant_id="tenant-a", source_id="source-b"):
+        selected_b = await service.get_pending_by_session("session-1")
+
+    assert selected_a is not None
+    assert selected_b is not None
+    assert selected_a.request_id == pending_a.request_id
+    assert selected_b.request_id == pending_b.request_id
 
 
 @pytest.mark.asyncio

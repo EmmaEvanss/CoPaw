@@ -1,5 +1,13 @@
 import { Pagination, Spin, Tooltip, message } from "antd";
-import { Copy } from "lucide-react";
+import {
+  Copy,
+  Layers3,
+  MessageSquareText,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Radio,
+  Wrench,
+} from "lucide-react";
 import { SessionListItem } from "../../../../../api/modules/tracing";
 import styles from "./index.module.less";
 
@@ -10,8 +18,10 @@ interface SessionCardListProps {
   pageSize: number;
   loading: boolean;
   selectedSessionId: string | null;
+  collapsed?: boolean;
   onSelect: (sessionId: string) => void;
   onPageChange: (page: number) => void;
+  onToggleCollapsed?: () => void;
 }
 
 export default function SessionCardList({
@@ -21,8 +31,10 @@ export default function SessionCardList({
   pageSize,
   loading,
   selectedSessionId,
+  collapsed = false,
   onSelect,
   onPageChange,
+  onToggleCollapsed,
 }: SessionCardListProps) {
   // 格式化 Token 数量显示
   const formatTokens = (tokens: number) => {
@@ -43,31 +55,24 @@ export default function SessionCardList({
     });
   };
 
-  // 截断文本显示
   const truncateText = (text: string, maxLen: number) => {
     if (text.length <= maxLen) return text;
     return text.slice(0, maxLen) + "...";
   };
 
-  // 渲染带 tooltip 的文本
-  const renderTruncatedText = (
-    text: string,
-    maxLen: number,
-    className: string,
-  ) => {
+  const renderTruncatedText = (text: string, maxLen: number) => {
     const truncated = truncateText(text, maxLen);
     const needTooltip = text.length > maxLen;
     if (needTooltip) {
       return (
         <Tooltip title={text} placement="topLeft">
-          <div className={className}>{truncated}</div>
+          <span>{truncated}</span>
         </Tooltip>
       );
     }
-    return <div className={className}>{truncated}</div>;
+    return <span>{truncated}</span>;
   };
 
-  // 复制会话 ID
   const handleCopySessionId = (
     e: React.MouseEvent,
     sessionId: string,
@@ -77,9 +82,40 @@ export default function SessionCardList({
     message.success("会话 ID 已复制");
   };
 
+  if (collapsed) {
+    return (
+      <div className={`${styles.sessionList} ${styles.sessionListCollapsed}`}>
+        <Tooltip title="展开会话列表" placement="right">
+          <button
+            type="button"
+            className={styles.sessionPanelToggle}
+            onClick={onToggleCollapsed}
+            aria-label="展开会话列表"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        </Tooltip>
+        <div className={styles.sessionCollapsedTitle}>会话列表</div>
+        <div className={styles.sessionCollapsedCount}>{total}</div>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.sessionList}>
-      <div className={styles.sessionListTitle}>会话列表</div>
+      <div className={styles.sessionListHeader}>
+        <div className={styles.sessionListTitle}>会话列表</div>
+        <Tooltip title="收起会话列表" placement="right">
+          <button
+            type="button"
+            className={styles.sessionPanelToggle}
+            onClick={onToggleCollapsed}
+            aria-label="收起会话列表"
+          >
+            <PanelLeftClose size={16} />
+          </button>
+        </Tooltip>
+      </div>
 
       {loading ? (
         <div className={styles.sessionLoading}>
@@ -89,52 +125,77 @@ export default function SessionCardList({
         <div className={styles.sessionEmpty}>暂无会话数据</div>
       ) : (
         <>
-          {sessions.map((session) => (
-            <div
-              key={session.session_id}
-              className={`${styles.sessionCard} ${
-                selectedSessionId === session.session_id ? styles.selected : ""
-              }`}
-              onClick={() => onSelect(session.session_id)}
-            >
-              <div className={styles.sessionIdRow}>
-                {renderTruncatedText(
-                  session.session_id,
-                  20,
-                  styles.sessionId,
-                )}
-                <Tooltip title="复制会话 ID">
-                  <Copy
-                    size={14}
-                    className={styles.copyIcon}
-                    onClick={(e) => handleCopySessionId(e, session.session_id)}
-                  />
-                </Tooltip>
-              </div>
-              {session.session_name && (
-                <div className={styles.sessionName}>
-                  {session.session_name.length > 24 ? (
-                    <Tooltip title={session.session_name} placement="topLeft">
-                      <span>{truncateText(session.session_name, 24)}</span>
-                    </Tooltip>
-                  ) : (
-                    <span>{session.session_name}</span>
-                  )}
+          <div className={styles.sessionCards}>
+            {sessions.map((session) => {
+              const selected = selectedSessionId === session.session_id;
+              const sessionTitle = session.session_name || "未命名会话";
+
+              return (
+                <div
+                  key={session.session_id}
+                  className={`${styles.sessionCard} ${
+                    selected ? styles.selected : ""
+                  }`}
+                  onClick={() => onSelect(session.session_id)}
+                >
+                  <div className={styles.sessionCardHeader}>
+                    <div className={styles.sessionTitleBlock}>
+                      <div className={styles.sessionName}>
+                        {renderTruncatedText(sessionTitle, 18)}
+                      </div>
+                      <div className={styles.sessionIdRow}>
+                        <span className={styles.sessionId}>
+                          {renderTruncatedText(session.session_id, 42)}
+                        </span>
+                        <Tooltip title="复制会话 ID">
+                          <button
+                            type="button"
+                            className={styles.copyButton}
+                            onClick={(e) =>
+                              handleCopySessionId(e, session.session_id)
+                            }
+                          >
+                            <Copy size={13} />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    </div>
+                    {selected && (
+                      <span className={styles.sessionSelectedBadge}>当前</span>
+                    )}
+                  </div>
+
+                  <div className={styles.sessionMetricGrid}>
+                    <div className={styles.sessionMetric}>
+                      <MessageSquareText size={14} />
+                      <span>对话</span>
+                      <strong>{session.total_traces}</strong>
+                    </div>
+                    <div className={styles.sessionMetric}>
+                      <Layers3 size={14} />
+                      <span>Token</span>
+                      <strong>{formatTokens(session.total_tokens)}</strong>
+                    </div>
+                    <div className={styles.sessionMetric}>
+                      <Wrench size={14} />
+                      <span>技能</span>
+                      <strong>{session.total_skills}</strong>
+                    </div>
+                  </div>
+
+                  <div className={styles.sessionFooter}>
+                    <span className={styles.sessionChannel}>
+                      <Radio size={12} />
+                      {session.channel || "-"}
+                    </span>
+                    <span className={styles.sessionTime}>
+                      {formatTime(session.last_active)}
+                    </span>
+                  </div>
                 </div>
-              )}
-              <div className={styles.sessionMeta}>
-                <span>渠道: {session.channel || "-"}</span>
-                <span>对话: {session.total_traces}</span>
-              </div>
-              <div className={styles.sessionStats}>
-                <span>Token: {formatTokens(session.total_tokens)}</span>
-                <span>技能: {session.total_skills}</span>
-              </div>
-              <div className={styles.sessionTime}>
-                {formatTime(session.last_active)}
-              </div>
-            </div>
-          ))}
+              );
+            })}
+          </div>
 
           {total > pageSize && (
             <div className={styles.sessionPagination}>

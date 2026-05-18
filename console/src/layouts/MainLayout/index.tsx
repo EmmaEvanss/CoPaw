@@ -35,6 +35,7 @@ import MonitorPage from "../../pages/Monitor";
 import ContinuousIterationPage from "../../pages/Harness/ContinuousIteration";
 // ==================== 测试页面 (用于验证新功能) ====================
 import TestDownloadCardPage from "../../pages/TestDownloadCard";
+import TestUserDetailModalPage from "../../pages/TestUserDetailModal";
 // ==================== 测试页面结束 ====================
 import MarketPage from "../../pages/Market";
 import MySkillsPage from "../../pages/MySkills";
@@ -141,6 +142,7 @@ export default function MainLayout() {
               <Route path="/continuous-iteration" element={<ContinuousIterationPage />} />
               {/* ==================== 测试路由 ==================== */}
               <Route path="/test-download-card" element={<TestDownloadCardPage />} />
+              <Route path="/test-user-detail-modal" element={<TestUserDetailModalPage />} />
               {/* ==================== 测试路由结束 ==================== */}
               <Route path="/market" element={<MarketPage />} />
               <Route path="/my-skills" element={<MySkillsPage />} />

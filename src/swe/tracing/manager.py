@@ -962,35 +962,84 @@ class TraceManager:
                 logger.error("Error in flush loop: %s", e)
 
     async def _flush_spans(self) -> None:
-        """Flush queued spans to storage."""
+        """Flush queued spans to storage.
+
+        Handles race condition with update_span:
+        1. Keep spans in _pending_spans during INSERT
+        2. After INSERT, check for spans updated during INSERT (have end_time)
+        3. UPDATE those spans that were modified during the race window
+        4. Then clear _pending_spans
+        """
         async with self._span_queue_lock:
             if not self._span_queue:
                 return
             spans = self._span_queue.copy()
             self._span_queue.clear()
-            # Clear pending cache atomically with queue clear
-            for span in spans:
-                self._pending_spans.pop(span.span_id, None)
+            # Record span IDs that were originally in queue (without end_time)
+            # for later detection of updates during INSERT
+            spans_before_insert = {
+                span.span_id: span.end_time for span in spans
+            }
 
-        if spans:
-            try:
-                if self._db is None:
-                    # Log-only mode: output spans directly (only skill-related)
-                    for span in spans:
-                        if span.skill_name:
-                            logger.info(
-                                "[SKILL SPAN] skill='%s', type=%s",
-                                span.skill_name,
-                                (
-                                    span.event_type.value
-                                    if hasattr(span.event_type, "value")
-                                    else span.event_type
-                                ),
-                            )
-                else:
-                    await self.store.batch_create_spans(spans)
-            except Exception as e:
-                logger.error("Failed to flush spans: %s", e)
+        if not spans:
+            return
+
+        try:
+            if self._db is None:
+                self._flush_spans_log_only(spans)
+            else:
+                await self.store.batch_create_spans(spans)
+                await self._update_spans_modified_during_flush(
+                    spans,
+                    spans_before_insert,
+                )
+        except Exception as e:
+            logger.error("Failed to flush spans: %s", e)
+        finally:
+            # Clear pending cache AFTER INSERT completes (success or failure)
+            async with self._span_queue_lock:
+                for span in spans:
+                    self._pending_spans.pop(span.span_id, None)
+
+    def _flush_spans_log_only(self, spans: list["Span"]) -> None:
+        """Log skill-related spans in log-only mode."""
+        for span in spans:
+            if span.skill_name:
+                logger.info(
+                    "[SKILL SPAN] skill='%s', type=%s",
+                    span.skill_name,
+                    (
+                        span.event_type.value
+                        if hasattr(span.event_type, "value")
+                        else span.event_type
+                    ),
+                )
+
+    async def _update_spans_modified_during_flush(
+        self,
+        spans: list["Span"],
+        spans_before_insert: dict[str, Optional["datetime"]],
+    ) -> None:
+        """UPDATE spans that were modified during INSERT race window.
+
+        Args:
+            spans: List of spans that were flushed
+            spans_before_insert: Dict mapping span_id to original end_time
+        """
+        for span in spans:
+            # If span has end_time now but didn't before, it was updated
+            if (
+                span.end_time is not None
+                and spans_before_insert.get(span.span_id) is None
+            ):
+                try:
+                    await self.store.update_span(span)
+                except Exception as update_error:
+                    logger.warning(
+                        "Failed to update span %s after flush: %s",
+                        span.span_id,
+                        update_error,
+                    )
 
     async def _cleanup_loop(self) -> None:
         """Background loop for cleaning up old trace data."""

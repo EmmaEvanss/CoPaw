@@ -95,6 +95,16 @@ def test_missing_tenant_header_returns_400_for_stateful_route():
     assert response.json()["detail"] == "X-Tenant-Id header is required"
 
 
+def test_missing_source_header_returns_400_for_stateful_route():
+    client = TestClient(build_test_app(), raise_server_exceptions=False)
+    response = client.get(
+        "/api/settings",
+        headers={"X-Tenant-Id": "tenant-a"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "X-Source-Id header is required"
+
+
 def test_exempt_route_still_works_without_tenant_header():
     client = TestClient(build_test_app(), raise_server_exceptions=False)
     response = client.get("/api/version")
@@ -112,10 +122,26 @@ def test_invalid_tenant_id_returns_400():
     client = TestClient(build_test_app(), raise_server_exceptions=False)
     response = client.get(
         "/api/settings",
-        headers={"X-Tenant-Id": "../bad"},
+        headers={
+            "X-Tenant-Id": "../bad",
+            "X-Source-Id": "source-a",
+        },
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid X-Tenant-Id format"
+
+
+def test_invalid_source_id_returns_400():
+    client = TestClient(build_test_app(), raise_server_exceptions=False)
+    response = client.get(
+        "/api/settings",
+        headers={
+            "X-Tenant-Id": "tenant-a",
+            "X-Source-Id": "../bad",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid X-Source-Id format"
 
 
 class TestTenantIdentityExemptions:

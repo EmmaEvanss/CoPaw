@@ -6,6 +6,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from swe.providers.openai_chat_model_compat import (
     OpenAIChatModelCompat,
     _sanitize_tool_call,
@@ -73,7 +75,22 @@ def _make_reasoning_chunk(
     return SimpleNamespace(id="resp_1", usage=None, choices=[choice])
 
 
-async def test_stream_parser_skips_tool_call_without_function() -> None:
+def _clear_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+
+async def test_stream_parser_skips_tool_call_without_function(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_proxy_env(monkeypatch)
     model = CompatHarnessOpenAIChatModel(
         "dummy",
         api_key="sk-test",
@@ -184,7 +201,10 @@ def test_sanitize_tool_call_normalizes_non_string_arguments() -> None:
     assert sanitized_missing_name_and_arguments.function.arguments == ""
 
 
-async def test_stream_parser_filters_placeholder_think_first_frame() -> None:
+async def test_stream_parser_filters_placeholder_think_first_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_proxy_env(monkeypatch)
     model = CompatHarnessOpenAIChatModel(
         "dummy",
         api_key="sk-test",

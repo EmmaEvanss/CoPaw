@@ -21,6 +21,12 @@ from swe.config.llm_workload import (
     bind_llm_workload,
     get_current_llm_workload,
 )
+from swe.config.context import (
+    encode_scope_id,
+    get_current_scope_id,
+    get_current_source_id,
+    get_current_tenant_id,
+)
 
 
 @pytest.mark.asyncio
@@ -245,6 +251,42 @@ async def test_cron_manager_heartbeat_callback_binds_cron_workload(
         assert get_current_llm_workload() == LLM_WORKLOAD_CHAT
 
     assert observed["workload"] == LLM_WORKLOAD_CRON
+
+
+@pytest.mark.asyncio
+async def test_cron_manager_heartbeat_callback_rehydrates_scope_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """heartbeat 后台执行必须从 runtime scope 还原完整三元组。"""
+    observed: dict[str, Any] = {}
+    scope_id = encode_scope_id("tenant-a", "source-a")
+    manager = CronManager(
+        repo=object(),
+        runner=SimpleNamespace(workspace_dir=None, _workspace=None),
+        channel_manager=object(),
+        agent_id="default",
+        tenant_id=scope_id,
+    )
+
+    async def fake_run_heartbeat_once(workspace_dir: Any) -> None:
+        del workspace_dir
+        observed["tenant_id"] = get_current_tenant_id()
+        observed["source_id"] = get_current_source_id()
+        observed["scope_id"] = get_current_scope_id()
+
+    monkeypatch.setattr(
+        manager,
+        "_run_heartbeat_once",
+        fake_run_heartbeat_once,
+    )
+
+    await manager._heartbeat_callback()  # pylint: disable=protected-access
+
+    assert observed == {
+        "tenant_id": "tenant-a",
+        "source_id": "source-a",
+        "scope_id": scope_id,
+    }
 
 
 @pytest.mark.asyncio

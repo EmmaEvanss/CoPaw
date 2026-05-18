@@ -22,7 +22,25 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
+from swe.providers.openai_provider import OpenAIProvider
+from swe.providers.provider import ModelInfo
 from swe.providers.provider_manager import ProviderManager
+
+
+def _seed_custom_openai_provider(
+    manager: ProviderManager,
+    api_key: str = "",
+) -> None:
+    manager.overwrite_provider_payload(
+        OpenAIProvider(
+            id="openai",
+            name="OpenAI",
+            base_url="https://api.openai.com/v1",
+            api_key=api_key,
+            is_custom=True,
+            models=[ModelInfo(id="gpt-4o", name="GPT-4o")],
+        ).model_dump(),
+    )
 
 
 class TestTenantIsolation:
@@ -50,15 +68,17 @@ class TestTenantIsolation:
         ):
             manager_a = ProviderManager.get_instance("apikey-a")
             manager_b = ProviderManager.get_instance("apikey-b")
+            _seed_custom_openai_provider(manager_a)
+            _seed_custom_openai_provider(manager_b)
 
             # Tenant A sets API key
-            manager_a.update_provider(
+            assert manager_a.update_provider(
                 "openai",
                 {"api_key": "sk-tenant-a-secret"},
             )
 
             # Tenant B sets different API key
-            manager_b.update_provider(
+            assert manager_b.update_provider(
                 "openai",
                 {"api_key": "sk-tenant-b-secret"},
             )
@@ -151,32 +171,19 @@ class TestAutoInitialization:
         ):
             # Setup default tenant with configuration
             default_manager = ProviderManager.get_instance("default")
-            default_manager.update_provider(
-                "openai",
-                {"api_key": "sk-default-key"},
+            _seed_custom_openai_provider(
+                default_manager,
+                api_key="sk-default-key",
             )
 
-            # Simulate auto-initialization by copying from default
-            import shutil
-
-            default_providers = (
-                tmp_path / ".swe.secret" / "default" / "providers"
-            )
-            new_tenant_providers = (
-                tmp_path / ".swe.secret" / "new-tenant" / "providers"
-            )
-            new_tenant_providers.mkdir(parents=True)
-
-            # Copy builtin configs
-            if (default_providers / "builtin").exists():
-                shutil.copytree(
-                    default_providers / "builtin",
-                    new_tenant_providers / "builtin",
-                )
+            ProviderManager.ensure_tenant_provider_storage("new-tenant")
 
             # Verify new tenant has inherited config
             new_manager = ProviderManager.get_instance("new-tenant")
             assert new_manager.get_provider("openai") is not None
+            assert (
+                new_manager.get_provider("openai").api_key == "sk-default-key"
+            )
 
     def test_empty_directory_fallback_when_default_empty(self, tmp_path):
         """New tenant gets empty directory when default has no config."""
@@ -208,19 +215,20 @@ class TestMigrationBehavior:
                 tmp_path / ".swe.secret" / "default" / "providers"
             )
             default_providers.mkdir(parents=True)
-            builtin_dir = default_providers / "builtin"
-            builtin_dir.mkdir()
+            custom_dir = default_providers / "custom"
+            custom_dir.mkdir()
 
             # Create a provider config
             import json
 
-            (builtin_dir / "openai.json").write_text(
+            (custom_dir / "openai.json").write_text(
                 json.dumps(
                     {
                         "id": "openai",
                         "name": "OpenAI",
                         "base_url": "https://api.openai.com/v1",
                         "api_key": "sk-migrated",
+                        "is_custom": True,
                     },
                 ),
             )
@@ -241,7 +249,7 @@ class TestMigrationBehavior:
             # Setup migrated structure for multiple tenants
             for tenant in ["default", "alice", "bob"]:
                 tenant_dir = (
-                    tmp_path / ".swe.secret" / tenant / "providers" / "builtin"
+                    tmp_path / ".swe.secret" / tenant / "providers" / "custom"
                 )
                 tenant_dir.mkdir(parents=True)
 
@@ -254,6 +262,7 @@ class TestMigrationBehavior:
                             "name": "OpenAI",
                             "base_url": "https://api.openai.com/v1",
                             "api_key": f"sk-{tenant}",
+                            "is_custom": True,
                         },
                     ),
                 )
@@ -380,7 +389,8 @@ class TestConcurrentAccess:
                 ("concurrent-b", "key-b"),
             ]:
                 manager = ProviderManager.get_instance(tenant)
-                manager.update_provider("openai", {"api_key": key})
+                _seed_custom_openai_provider(manager)
+                assert manager.update_provider("openai", {"api_key": key})
 
             results = {"a": None, "b": None}
 

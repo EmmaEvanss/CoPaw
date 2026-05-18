@@ -56,9 +56,36 @@ def test_get_skill_dir_in_marketplace(tmp_path):
 
 def test_get_user_skills_dir(tmp_path):
     from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
 
-    result = get_user_skills_dir(tmp_path, "user1", "agent1")
-    assert result == tmp_path / "user1" / "workspaces" / "agent1" / "skills"
+    result = get_user_skills_dir(tmp_path, "user1", "agent1", "source_a")
+    assert result == (
+        tmp_path
+        / encode_scope_id("user1", "source_a")
+        / "workspaces"
+        / "agent1"
+        / "skills"
+    )
+
+
+def test_get_user_skills_dir_allows_main_service_identity_values(tmp_path):
+    from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
+
+    result = get_user_skills_dir(
+        tmp_path,
+        "alice@example.com",
+        "agent1",
+        "skill:xlsx",
+    )
+
+    assert result == (
+        tmp_path
+        / encode_scope_id("alice@example.com", "skill:xlsx")
+        / "workspaces"
+        / "agent1"
+        / "skills"
+    )
 
 
 def test_copy_skill_to_user_happy_path(tmp_path):
@@ -85,10 +112,15 @@ def test_copy_skill_to_user_happy_path(tmp_path):
         tmp_path / "swe",
         "user1",
         "my_skill",
+        "my_skill",
+        "desc",
         "admin1",
         "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill"
+    )
     assert (dst_dir / "SKILL.md").read_text() == "# Skill"
     data = json.loads((dst_dir / "skill.json").read_text())
     assert data["source"] == "marketplace:item-1"
@@ -118,10 +150,15 @@ def test_copy_skill_to_user_missing_skill_md(tmp_path):
         tmp_path / "swe",
         "user1",
         "my_skill2",
+        "my_skill2",
+        "desc",
         "admin1",
         "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill2"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill2"
+    )
     assert not (dst_dir / "SKILL.md").exists()
     data = json.loads((dst_dir / "skill.json").read_text())
     assert data["source"] == "marketplace:item-2"
@@ -146,10 +183,15 @@ def test_copy_skill_to_user_missing_skill_json(tmp_path):
         tmp_path / "swe",
         "user1",
         "my_skill3",
+        "my_skill3",
+        "desc",
         "admin1",
         "2.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill3"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill3"
+    )
     data = json.loads((dst_dir / "skill.json").read_text())
     assert data["source"] == "marketplace:item-3"
     assert data["received_version"] == "2.0.0"

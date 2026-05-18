@@ -1015,6 +1015,7 @@ async def _generate_and_store_suggestions(
     user_message: str,
     assistant_response: str,
     config,  # SuggestionConfig
+    tenant_id: str | None = None,
 ) -> None:
     """异步生成并存储建议（后台任务）."""
     logger.info(
@@ -1039,7 +1040,11 @@ async def _generate_and_store_suggestions(
             session_id,
         )
         if suggestions:
-            await store_suggestions(session_id, suggestions)
+            await store_suggestions(
+                session_id,
+                suggestions,
+                tenant_id=tenant_id,
+            )
             logger.info(
                 "Stored %d suggestions for session %s: %s",
                 len(suggestions),

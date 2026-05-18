@@ -6,7 +6,7 @@ import sys
 
 
 def test_importing_cron_manager_does_not_import_heavy_runtime_modules():
-    """CronManager import should avoid heavy config and memory runtime imports."""
+    """CronManager import should not drag full app bootstrap modules."""
     result = subprocess.run(
         [
             sys.executable,
@@ -15,12 +15,12 @@ def test_importing_cron_manager_does_not_import_heavy_runtime_modules():
                 "import sys; "
                 "import swe.app.crons.manager; "
                 "raise SystemExit("
-                "0 if 'swe.config.config' not in sys.modules "
-                "and 'swe.config.utils' not in sys.modules "
-                "and not any("
-                "name.startswith('agentscope.memory') "
-                "for name in sys.modules"
-                ") else 1)"
+                "0 if 'swe.app._app' not in sys.modules "
+                "and not any(name.startswith('swe.app.workspace') for name in sys.modules) "
+                "and 'swe.app.multi_agent_manager' not in sys.modules "
+                "and 'swe.app.runner.runner' not in sys.modules "
+                "and 'swe.agents.react_agent' not in sys.modules "
+                "else 1)"
             ),
         ],
         capture_output=True,

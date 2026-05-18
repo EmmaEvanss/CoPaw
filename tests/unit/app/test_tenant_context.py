@@ -17,6 +17,10 @@ from swe.config.context import (
     current_tenant_id,
     current_user_id,
     current_workspace_dir,
+    encode_scope_id,
+    get_current_effective_tenant_id,
+    get_current_scope_id,
+    get_current_source_id,
     get_current_tenant_id,
     get_current_user_id,
     get_current_workspace_dir,
@@ -29,6 +33,8 @@ from swe.config.context import (
     get_current_tenant_id_strict,
     get_current_user_id_strict,
     get_current_workspace_dir_strict,
+    resolve_runtime_tenant_id,
+    resolve_runtime_identity,
     tenant_context,
     TenantContextError,
 )
@@ -286,10 +292,13 @@ class TestBindTenantContext:
             tenant_id="tenant-1",
             user_id="user-1",
             workspace_dir=Path("/tmp/ws"),
+            source_id="source-a",
         ):
             assert get_current_tenant_id() == "tenant-1"
             assert get_current_user_id() == "user-1"
             assert get_current_workspace_dir() == Path("/tmp/ws")
+            assert get_current_source_id() == "source-a"
+            assert get_current_effective_tenant_id() is not None
 
     def test_resets_context_on_exit(self):
         """bind_tenant_context resets values on exit."""
@@ -297,12 +306,14 @@ class TestBindTenantContext:
             tenant_id="tenant-1",
             user_id="user-1",
             workspace_dir=Path("/tmp/ws"),
+            source_id="source-a",
         ):
             pass
 
         assert get_current_tenant_id() is None
         assert get_current_user_id() is None
         assert get_current_workspace_dir() is None
+        assert get_current_source_id() is None
 
 
 class TestGetTenantContext:
@@ -373,3 +384,33 @@ class TestRequireFullContext:
             assert tenant_id == "tenant-1"
             assert user_id == "user-1"
             assert workspace_dir == Path("/tmp/ws")
+
+
+class TestRuntimeIdentityResolution:
+    """运行时 scope 展开辅助函数的回归测试。"""
+
+    def test_encoded_scope_restores_logical_components(self):
+        """编码后的 scope 必须可还原出 logical tenant 和 source。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        identity = resolve_runtime_identity(scope_id)
+
+        assert identity == ("tenant-a", "source-a", scope_id)
+
+    def test_logical_tenant_with_source_builds_scope(self):
+        """逻辑租户配合 source 时必须解析出新的 scope。"""
+        identity = resolve_runtime_identity("tenant-a", "source-a")
+
+        assert identity == (
+            "tenant-a",
+            "source-a",
+            encode_scope_id("tenant-a", "source-a"),
+        )
+
+    def test_runtime_tenant_resolution_keeps_encoded_scope_id(self):
+        """已编码 scope 再次解析时必须保持幂等，避免二次编码。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        resolved = resolve_runtime_tenant_id(scope_id, "source-a")
+
+        assert resolved == scope_id

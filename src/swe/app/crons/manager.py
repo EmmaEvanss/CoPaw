@@ -21,6 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
+from ...config.context import resolve_runtime_identity, resolve_scope_id
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
 from .coordination import (
     CoordinationConfig,
@@ -654,12 +655,17 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 if self._runner.workspace_dir
                 else None
             )
+            tenant_id, source_id, scope_id = resolve_runtime_identity(
+                self._tenant_id,
+            )
             with bind_tenant_context(
-                tenant_id=self._tenant_id,
+                tenant_id=tenant_id,
                 workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
             ):
                 await self._runner.memory_manager.dream_memory(
-                    tenant_id=self._tenant_id,
+                    tenant_id=scope_id or tenant_id,
                     trigger="cron",
                 )
             logger.debug("Dream task executed successfully")
@@ -2113,9 +2119,15 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 tenant_id=job.tenant_id,
                 user_id=job.dispatch.target.user_id,
                 workspace_dir=workspace_dir,
+                source_id=job.source_id,
+                scope_id=job.scope_id,
             ):
+                runtime_tenant_id = job.scope_id or resolve_scope_id(
+                    job.tenant_id,
+                    job.source_id,
+                )
                 prefetch_auth_token(
-                    tenant_id=job.tenant_id,
+                    tenant_id=runtime_tenant_id,
                     workspace_dir=workspace_dir,
                 )
             st = self._states.get(job_id, CronJobState())
@@ -2275,18 +2287,23 @@ class CronManager:  # pylint: disable=too-many-public-methods
             if hasattr(self._runner, "workspace_dir"):
                 workspace_dir = self._runner.workspace_dir
 
-            tenant_id = None
+            tenant_id = self._tenant_id
             # pylint: disable=protected-access
             if (
                 hasattr(self._runner, "_workspace")
                 and self._runner._workspace is not None
             ):
                 tenant_id = self._runner._workspace.tenant_id
+            tenant_id, source_id, scope_id = resolve_runtime_identity(
+                tenant_id,
+            )
 
             with (
                 bind_tenant_context(
                     tenant_id=tenant_id,
                     workspace_dir=workspace_dir,
+                    source_id=source_id,
+                    scope_id=scope_id,
                 ),
                 bind_llm_workload(LLM_WORKLOAD_CRON),
             ):

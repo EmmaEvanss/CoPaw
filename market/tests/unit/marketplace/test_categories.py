@@ -39,7 +39,7 @@ def test_get_categories_returns_list():
     app = _make_app(mock_db)
     client = TestClient(app)
     response = client.get(
-        "/api/marketplace/categories",
+        "/api/market/categories",
         headers={"X-Source-Id": "src_a"},
     )
     assert response.status_code == 200
@@ -53,7 +53,7 @@ def test_get_categories_missing_source_id_returns_400():
     mock_db.is_connected = True
     app = _make_app(mock_db)
     client = TestClient(app)
-    response = client.get("/api/marketplace/categories")
+    response = client.get("/api/market/categories")
     assert response.status_code == 400
 
 
@@ -63,7 +63,7 @@ def test_get_categories_db_not_connected_returns_503():
     app = _make_app(mock_db)
     client = TestClient(app)
     response = client.get(
-        "/api/marketplace/categories",
+        "/api/market/categories",
         headers={"X-Source-Id": "src_a"},
     )
     assert response.status_code == 503

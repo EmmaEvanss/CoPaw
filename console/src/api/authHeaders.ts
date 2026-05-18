@@ -77,7 +77,7 @@ export function buildAuthHeaders(): Record<string, string> {
   // ==================== userId 统一整改结束 ====================
 
   // 5. Source ID（来自 iframe context，用于数据隔离）
-  // 只有 iframe 模式下有值时才发送 X-Source-Id
+  // 独立访问时也必须携带默认 source，避免后端严格隔离校验直接拒绝请求
   const sourceId = iframeContext.source || DEFAULT_SOURCE_ID;
   if (sourceId) {
     headers["X-Source-Id"] = sourceId;

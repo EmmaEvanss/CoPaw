@@ -15,6 +15,7 @@ from pathlib import Path
 import time
 from typing import Optional
 
+from ...config.context import resolve_runtime_identity
 from .tenant_initializer import TenantInitializer
 from .workspace import Workspace
 
@@ -204,9 +205,16 @@ class TenantWorkspacePool:
                     init_source = "default"
                 else:
                     init_source = initializer.template_name
+                (
+                    logical_tenant_id,
+                    resolved_source_id,
+                    _scope_id,
+                ) = resolve_runtime_identity(tenant_id, source_id)
+                # DB 映射服务于运维侧按来源查询，应保存逻辑租户，
+                # 不能把运行时隔离目录使用的 opaque scope 暴露出去。
                 await self._record_init_source_mapping(
-                    tenant_id,
-                    source_id,
+                    logical_tenant_id or tenant_id,
+                    resolved_source_id or source_id,
                     init_source,
                     tenant_name=tenant_name,
                     bbk_id=bbk_id,
@@ -315,19 +323,41 @@ class TenantWorkspacePool:
             tenant_id,
         )
 
-        from ..multi_agent_manager import MultiAgentManager
+        async with self._registry_lock:
+            entry = self._workspaces.get(tenant_id)
+            if entry is not None and entry.workspace is not None:
+                self._mark_access(entry)
+                return entry.workspace
 
-        # Ensure tenant is bootstrapped first
         await self.ensure_bootstrap(tenant_id)
 
-        # Delegate workspace creation and startup to MultiAgentManager
-        # Note: This creates a new MultiAgentManager instance each time,
-        # which breaks caching semantics. This is why the method is deprecated.
-        multi_agent_manager = MultiAgentManager()
-        return await multi_agent_manager.get_agent(
-            agent_id,
-            tenant_id=tenant_id,
-        )
+        async with self._registry_lock:
+            entry = self._workspaces.get(tenant_id)
+            if entry is not None and entry.workspace is not None:
+                self._mark_access(entry)
+                return entry.workspace
+
+            workspace = Workspace(
+                agent_id=agent_id,
+                workspace_dir=str(
+                    self._get_tenant_workspace_dir(tenant_id)
+                    / "workspaces"
+                    / agent_id,
+                ),
+                tenant_id=tenant_id,
+            )
+
+            if entry is None:
+                entry = TenantWorkspaceEntry(
+                    tenant_id=tenant_id,
+                    workspace=workspace,
+                )
+                self._workspaces[tenant_id] = entry
+            else:
+                entry.workspace = workspace
+
+            self._mark_access(entry)
+            return workspace
 
     async def get(self, tenant_id: str) -> Optional[Workspace]:
         """Get existing workspace for tenant if it exists.

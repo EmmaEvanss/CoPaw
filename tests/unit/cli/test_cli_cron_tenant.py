@@ -22,7 +22,7 @@ class _Response:
         return {"ok": True}
 
 
-def test_cron_create_passes_tenant_header():
+def test_cron_create_passes_scope_headers():
     runner = CliRunner()
 
     with patch("swe.cli.cron_cmd.client") as mock_client:
@@ -53,9 +53,12 @@ def test_cron_create_passes_tenant_header():
                 "UTC",
                 "--tenant-id",
                 "tenant-a",
+                "--source-id",
+                "source-a",
             ],
         )
 
     assert result.exit_code == 0
     _, kwargs = mock_http.post.call_args
     assert kwargs["headers"]["X-Tenant-Id"] == "tenant-a"
+    assert kwargs["headers"]["X-Source-Id"] == "source-a"

@@ -515,7 +515,7 @@ async def publish_single_my_mcp_to_market(
 
     context, agent_config = load_agent_config_for_request(request)
     mark_request_state(request, context)
-    source_id = context.source_id or "default"
+    source_id = context.source_id
 
     if agent_config.mcp is None:
         raise HTTPException(400, detail=NO_MCP_CLIENTS_CONFIGURED_DETAIL)
@@ -561,7 +561,7 @@ async def publish_my_mcp_to_market(
 
     context, agent_config = load_agent_config_for_request(request)
     mark_request_state(request, context)
-    source_id = context.source_id or "default"
+    source_id = context.source_id
 
     if agent_config.mcp is None:
         raise HTTPException(400, detail=NO_MCP_CLIENTS_CONFIGURED_DETAIL)

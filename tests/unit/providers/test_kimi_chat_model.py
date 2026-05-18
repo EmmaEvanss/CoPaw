@@ -5,6 +5,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from swe.providers.kimi_chat_model import KimiChatModel
 
 
@@ -37,7 +39,22 @@ def _response(content: list[dict[str, Any]]) -> Any:
     return SimpleNamespace(content=content)
 
 
-async def test_kimi_chat_model_extracts_complete_think_blocks() -> None:
+def _clear_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in [
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+
+async def test_kimi_chat_model_extracts_complete_think_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_proxy_env(monkeypatch)
     model = KimiHarnessChatModel(
         "dummy",
         api_key="sk-test",
@@ -58,7 +75,10 @@ async def test_kimi_chat_model_extracts_complete_think_blocks() -> None:
     ]
 
 
-async def test_kimi_chat_model_extracts_closing_only_think_blocks() -> None:
+async def test_kimi_chat_model_extracts_closing_only_think_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_proxy_env(monkeypatch)
     model = KimiHarnessChatModel(
         "dummy",
         api_key="sk-test",
@@ -78,7 +98,10 @@ async def test_kimi_chat_model_extracts_closing_only_think_blocks() -> None:
     ]
 
 
-async def test_kimi_chat_model_wraps_plain_text_as_thinking() -> None:
+async def test_kimi_chat_model_wraps_plain_text_as_thinking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_proxy_env(monkeypatch)
     model = KimiHarnessChatModel(
         "dummy",
         api_key="sk-test",

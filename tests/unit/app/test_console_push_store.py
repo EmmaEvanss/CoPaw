@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 import pytest
+from swe.config.context import tenant_context
 
 SRC_ROOT = Path(__file__).parent.parent.parent.parent / "src"
 _STORE_FILE = SRC_ROOT / "swe" / "app" / "console_push_store.py"
@@ -42,6 +43,28 @@ class TestTenantPushStoreIsolation:
         taken = asyncio.run(scenario())
 
         assert [m["text"] for m in taken] == ["msg-a"]
+
+    def test_same_session_isolated_by_source_scope_with_same_tenant(self):
+        append = console_push_store.append
+        clear_tenant = console_push_store.clear_tenant
+        take = console_push_store.take
+
+        async def scenario():
+            await clear_tenant("tenant-a")
+            with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+                await append("session-a", "msg-a", tenant_id="tenant-a")
+            with tenant_context(tenant_id="tenant-a", source_id="source-b"):
+                await append("session-a", "msg-b", tenant_id="tenant-a")
+            with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+                taken_a = await take("session-a", tenant_id="tenant-a")
+            with tenant_context(tenant_id="tenant-a", source_id="source-b"):
+                taken_b = await take("session-a", tenant_id="tenant-a")
+            return taken_a, taken_b
+
+        taken_a, taken_b = asyncio.run(scenario())
+
+        assert [m["text"] for m in taken_a] == ["msg-a"]
+        assert [m["text"] for m in taken_b] == ["msg-b"]
 
     @pytest.mark.skip(reason="Requires full app dependencies")
     async def test_append_creates_tenant_isolated_message(self):

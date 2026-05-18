@@ -42,31 +42,38 @@ class TestRemediation1ModelSelectionFallback:
         This verifies the remediation: instead of falling back to global
         active_model, it now raises a clear error requiring tenant configuration.
         """
-        with patch("swe.constant.WORKING_DIR", tmp_path):
-            with patch("swe.constant.SECRET_DIR", tmp_path / ".secret"):
-                # Reset ProviderManager singleton
-                ProviderManager._instance = None
+        with (
+            patch("swe.constant.WORKING_DIR", tmp_path),
+            patch("swe.constant.SECRET_DIR", tmp_path / ".secret"),
+            patch(
+                "swe.providers.provider_manager.SECRET_DIR",
+                tmp_path / ".secret",
+            ),
+        ):
+            # Reset ProviderManager singleton
+            ProviderManager._instance = None
+            ProviderManager._instances.clear()
 
-                tenant_id = "unconfigured_tenant"
+            tenant_id = "unconfigured_tenant"
 
-                with tenant_context(tenant_id=tenant_id, user_id=tenant_id):
-                    # Verify no tenant config exists
-                    assert not TenantModelContext.is_configured()
+            with tenant_context(tenant_id=tenant_id, user_id=tenant_id):
+                # Verify no tenant config exists
+                assert not TenantModelContext.is_configured()
 
-                    # Attempt to create model without tenant config
-                    with pytest.raises(ValueError) as exc_info:
-                        create_model_and_formatter()
+                # Attempt to create model without tenant config
+                with pytest.raises(ValueError) as exc_info:
+                    create_model_and_formatter()
 
-                    # Verify error message mentions tenant configuration requirement
-                    error_msg = str(exc_info.value)
-                    assert (
-                        "tenant model configuration" in error_msg.lower()
-                        or "not found" in error_msg.lower()
-                    ), f"Error should mention tenant config requirement: {error_msg}"
+                # Verify error message mentions tenant configuration requirement
+                error_msg = str(exc_info.value)
+                assert (
+                    "tenant model configuration" in error_msg.lower()
+                    or "not found" in error_msg.lower()
+                ), f"Error should mention tenant config requirement: {error_msg}"
 
-                    print(
-                        f"\n[REMEDIATION VERIFIED] Error raised as expected: {error_msg[:100]}...",
-                    )
+                print(
+                    f"\n[REMEDIATION VERIFIED] Error raised as expected: {error_msg[:100]}...",
+                )
 
     async def test_model_factory_succeeds_with_tenant_config(
         self,
@@ -75,57 +82,63 @@ class TestRemediation1ModelSelectionFallback:
         """Test: create_model_and_formatter works with proper tenant config."""
         from swe.tenant_models import TenantModelManager
 
-        with patch("swe.constant.WORKING_DIR", tmp_path):
-            with patch("swe.constant.SECRET_DIR", tmp_path / ".secret"):
-                ProviderManager._instance = None
+        with (
+            patch("swe.constant.WORKING_DIR", tmp_path),
+            patch("swe.constant.SECRET_DIR", tmp_path / ".secret"),
+            patch(
+                "swe.tenant_models.manager.SECRET_DIR",
+                tmp_path / ".secret",
+            ),
+        ):
+            ProviderManager._instance = None
 
-                tenant_id = "configured_tenant"
+            tenant_id = "configured_tenant"
 
-                # Create tenant-specific model config
-                tenant_config = TenantModelConfig(
-                    providers=[
-                        TenantProviderConfig(
-                            id="openai",
-                            type="openai",
-                            api_key="sk-test-key",
-                            models=["gpt-4o"],
-                        ),
-                    ],
-                    routing=RoutingConfig(
-                        mode="local_first",
-                        slots={
-                            "local": ModelSlot(
-                                provider_id="openai",
-                                model="gpt-4o",
-                            ),
-                            "cloud": ModelSlot(
-                                provider_id="openai",
-                                model="gpt-4o",
-                            ),
-                        },
+            # Create tenant-specific model config
+            tenant_config = TenantModelConfig(
+                providers=[
+                    TenantProviderConfig(
+                        id="openai",
+                        type="openai",
+                        api_key="sk-test-key",
+                        models=["gpt-4o"],
                     ),
-                )
+                ],
+                routing=RoutingConfig(
+                    mode="local_first",
+                    slots={
+                        "local": ModelSlot(
+                            provider_id="openai",
+                            model="gpt-4o",
+                        ),
+                        "cloud": ModelSlot(
+                            provider_id="openai",
+                            model="gpt-4o",
+                        ),
+                    },
+                ),
+            )
 
-                # Save tenant config
-                TenantModelManager.save(tenant_id, tenant_config)
+            # Save tenant config
+            TenantModelManager.save(tenant_id, tenant_config)
 
-                with tenant_context(tenant_id=tenant_id, user_id=tenant_id):
-                    # Load and set tenant config in context
-                    loaded_config = TenantModelManager.load(tenant_id)
-                    token = TenantModelContext.set_config(loaded_config)
+            with tenant_context(tenant_id=tenant_id, user_id=tenant_id):
+                # Load and set tenant config in context
+                loaded_config = TenantModelManager.load(tenant_id)
+                token = TenantModelContext.set_config(loaded_config)
 
-                    try:
-                        # Verify context is configured
-                        assert TenantModelContext.is_configured()
+                try:
+                    # Verify context is configured
+                    assert TenantModelContext.is_configured()
 
-                        # This should now work with tenant config
-                        # Note: This may still fail due to missing API keys,
-                        # but it should not fail due to missing tenant config
-                        print(
-                            "\n[REMEDIATION VERIFIED] Tenant config properly set in context",
-                        )
-                    finally:
-                        TenantModelContext.reset_config(token)
+                    # This should now work with tenant config
+                    # Note: This may still fail due to missing API keys,
+                    # but it should not fail due to missing tenant config
+                    print(
+                        "\n[REMEDIATION VERIFIED] Tenant config properly set in context",
+                    )
+                finally:
+                    TenantModelContext.reset_config(token)
 
 
 # =============================================================================
@@ -146,45 +159,52 @@ class TestRemediation2ProviderManagerDeprecation:
         This verifies the remediation: users are warned that this method
         is not suitable for multi-tenant environments.
         """
-        with patch("swe.constant.WORKING_DIR", tmp_path):
-            with patch("swe.constant.SECRET_DIR", tmp_path / ".secret"):
-                ProviderManager._instance = None
+        with (
+            patch("swe.constant.WORKING_DIR", tmp_path),
+            patch("swe.constant.SECRET_DIR", tmp_path / ".secret"),
+            patch(
+                "swe.providers.provider_manager.SECRET_DIR",
+                tmp_path / ".secret",
+            ),
+        ):
+            ProviderManager._instance = None
+            ProviderManager._instances.clear()
 
-                # Create a minimal active model config
-                pm = ProviderManager.get_instance()
-                from swe.providers.models import ModelSlotConfig
+            # Create a minimal active model config
+            pm = ProviderManager.get_instance()
+            from swe.providers.models import ModelSlotConfig
 
-                pm.save_active_model(
-                    ModelSlotConfig(provider_id="openai", model="gpt-4o"),
+            pm.save_active_model(
+                ModelSlotConfig(provider_id="openai", model="gpt-4o"),
+            )
+
+            # Capture warnings
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+
+                try:
+                    # This should emit a deprecation warning
+                    ProviderManager.get_active_chat_model()
+                except Exception:
+                    # We expect this to fail due to missing provider,
+                    # but the warning should still be emitted
+                    pass
+
+                # Verify deprecation warning was emitted
+                deprecation_warnings = [
+                    warning
+                    for warning in w
+                    if issubclass(warning.category, DeprecationWarning)
+                    and "multi-tenant" in str(warning.message).lower()
+                ]
+
+                assert (
+                    len(deprecation_warnings) > 0
+                ), f"Expected DeprecationWarning about multi-tenant, got: {[str(w.message) for w in w]}"
+
+                print(
+                    f"\n[REMEDIATION VERIFIED] Deprecation warning emitted: {deprecation_warnings[0].message}",
                 )
-
-                # Capture warnings
-                with warnings.catch_warnings(record=True) as w:
-                    warnings.simplefilter("always")
-
-                    try:
-                        # This should emit a deprecation warning
-                        ProviderManager.get_active_chat_model()
-                    except Exception:
-                        # We expect this to fail due to missing provider,
-                        # but the warning should still be emitted
-                        pass
-
-                    # Verify deprecation warning was emitted
-                    deprecation_warnings = [
-                        warning
-                        for warning in w
-                        if issubclass(warning.category, DeprecationWarning)
-                        and "multi-tenant" in str(warning.message).lower()
-                    ]
-
-                    assert (
-                        len(deprecation_warnings) > 0
-                    ), f"Expected DeprecationWarning about multi-tenant, got: {[str(w.message) for w in w]}"
-
-                    print(
-                        f"\n[REMEDIATION VERIFIED] Deprecation warning emitted: {deprecation_warnings[0].message}",
-                    )
 
 
 # =============================================================================

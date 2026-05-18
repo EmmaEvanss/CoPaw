@@ -45,8 +45,6 @@ from .context import (
 
 logger = logging.getLogger(__name__)
 
-_LEGACY_SCOPE_DIR_PREFIX = "scope.v1."
-
 
 def _normalize_working_dir_bound_paths(data: object) -> object:
     """Normalize legacy ~/.swe-bound paths to current WORKING_DIR.
@@ -59,15 +57,37 @@ def _normalize_working_dir_bound_paths(data: object) -> object:
     legacy_root_tilde = "~/.swe"
     legacy_root_abs = str(Path(legacy_root_tilde).expanduser().resolve())
     new_root_abs = str(WORKING_DIR)
+    legacy_scope_prefix = "scope.v1."
 
     def _rewrite_path_value(v: object) -> object:
         if not isinstance(v, str) or not v:
             return v
         if v.startswith(legacy_root_tilde):
-            return new_root_abs + v[len(legacy_root_tilde) :]
+            v = new_root_abs + v[len(legacy_root_tilde) :]
         if v.startswith(legacy_root_abs):
-            return new_root_abs + v[len(legacy_root_abs) :]
-        return v
+            v = new_root_abs + v[len(legacy_root_abs) :]
+
+        path = Path(v).expanduser()
+        normalized_parts: list[str] = []
+        changed = False
+        for part in path.parts:
+            if not part.startswith(legacy_scope_prefix):
+                normalized_parts.append(part)
+                continue
+
+            try:
+                normalized_parts.append(canonicalize_scope_id(part))
+            except ValueError:
+                normalized_parts.append(part[len(legacy_scope_prefix) :])
+            else:
+                changed = True
+                continue
+
+            changed = True
+
+        if changed:
+            return str(Path(*normalized_parts))
+        return str(path)
 
     def _walk(obj: object, key: str | None = None) -> object:
         if isinstance(obj, dict):
@@ -716,75 +736,14 @@ def _resolve_runtime_tenant_for_paths(
     return resolve_runtime_tenant_id(tenant_id, get_current_source_id())
 
 
-def _merge_legacy_scope_directory(source_dir: Path, target_dir: Path) -> None:
-    """把旧目录中缺失的内容合并到新目录，保留新目录已有文件。"""
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for source_path in source_dir.iterdir():
-        target_path = target_dir / source_path.name
-        if source_path.is_dir():
-            if target_path.exists():
-                _merge_legacy_scope_directory(source_path, target_path)
-                continue
-            try:
-                source_path.rename(target_path)
-            except OSError:
-                shutil.copytree(source_path, target_path)
-                shutil.rmtree(source_path)
-            continue
-
-        if target_path.exists():
-            logger.warning(
-                "跳过 legacy scope 目录中的冲突文件，保留 canonical 内容: %s",
-                target_path,
-            )
-            source_path.unlink()
-            continue
-
-        try:
-            source_path.rename(target_path)
-        except OSError:
-            shutil.copy2(source_path, target_path)
-            source_path.unlink()
-
-    source_dir.rmdir()
-
-
 def migrate_legacy_scope_dir_if_needed(base_dir: Path, tenant_id: str) -> Path:
-    """按需把 legacy scope 目录迁移到 canonical 无前缀目录。"""
+    """返回 canonical scope 目录，不在路径查询阶段执行迁移。"""
     try:
         canonical_scope_id = canonicalize_scope_id(tenant_id)
     except ValueError:
         return base_dir / tenant_id
 
-    canonical_dir = base_dir / canonical_scope_id
-    legacy_dir = base_dir / f"{_LEGACY_SCOPE_DIR_PREFIX}{canonical_scope_id}"
-
-    if not legacy_dir.exists():
-        return canonical_dir
-
-    if not canonical_dir.exists():
-        try:
-            legacy_dir.rename(canonical_dir)
-            logger.info(
-                "已迁移 legacy scope 目录: %s -> %s",
-                legacy_dir,
-                canonical_dir,
-            )
-            return canonical_dir
-        except OSError:
-            logger.warning(
-                "legacy scope 目录原子迁移失败，改用合并迁移: %s -> %s",
-                legacy_dir,
-                canonical_dir,
-            )
-
-    _merge_legacy_scope_directory(legacy_dir, canonical_dir)
-    logger.info(
-        "已合并 legacy scope 目录: %s -> %s",
-        legacy_dir,
-        canonical_dir,
-    )
-    return canonical_dir
+    return base_dir / canonical_scope_id
 
 
 def get_tenant_working_dir(tenant_id: str | None = None) -> Path:

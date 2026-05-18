@@ -4,14 +4,10 @@
 from __future__ import annotations
 
 import base64
-import logging
-import shutil
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Generator
-
-logger = logging.getLogger(__name__)
 
 _LEGACY_SCOPE_ID_PREFIX = "scope.v1"
 _IDENTITY_MAX_LENGTH = 256
@@ -109,67 +105,14 @@ def resolve_effective_tenant_id(
     return encode_scope_id(tenant_id, source_id)
 
 
-def _merge_legacy_scope_directory(source_dir: Path, target_dir: Path) -> None:
-    """把 legacy 目录中的文件合并到 canonical 目录。"""
-    target_dir.mkdir(parents=True, exist_ok=True)
-    for source_path in source_dir.iterdir():
-        target_path = target_dir / source_path.name
-        if source_path.is_dir():
-            if target_path.exists():
-                _merge_legacy_scope_directory(source_path, target_path)
-                continue
-            try:
-                source_path.rename(target_path)
-            except OSError:
-                shutil.copytree(source_path, target_path)
-                shutil.rmtree(source_path)
-            continue
-
-        if target_path.exists():
-            source_path.unlink()
-            continue
-
-        try:
-            source_path.rename(target_path)
-        except OSError:
-            shutil.copy2(source_path, target_path)
-            source_path.unlink()
-
-    source_dir.rmdir()
-
-
 def migrate_legacy_scope_dir_if_needed(base_dir: Path, tenant_id: str) -> Path:
-    """按需把 legacy scope 目录迁移到 canonical 目录。"""
+    """返回 canonical scope 目录，不在路径查询阶段执行迁移。"""
     try:
         canonical_scope_id = canonicalize_scope_id(tenant_id)
     except ValueError:
         return base_dir / tenant_id
 
-    canonical_dir = base_dir / canonical_scope_id
-    legacy_dir = base_dir / f"{_LEGACY_SCOPE_ID_PREFIX}.{canonical_scope_id}"
-
-    if not legacy_dir.exists():
-        return canonical_dir
-
-    if not canonical_dir.exists():
-        try:
-            legacy_dir.rename(canonical_dir)
-            logger.info(
-                "Migrated legacy scope dir: %s -> %s",
-                legacy_dir,
-                canonical_dir,
-            )
-            return canonical_dir
-        except OSError:
-            logger.warning(
-                "Atomic legacy scope migration failed, merging instead: %s -> %s",
-                legacy_dir,
-                canonical_dir,
-            )
-
-    _merge_legacy_scope_directory(legacy_dir, canonical_dir)
-    logger.info("Merged legacy scope dir: %s -> %s", legacy_dir, canonical_dir)
-    return canonical_dir
+    return base_dir / canonical_scope_id
 
 
 @contextmanager

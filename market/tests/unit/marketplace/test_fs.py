@@ -88,7 +88,7 @@ def test_get_user_skills_dir_allows_main_service_identity_values(tmp_path):
     )
 
 
-def test_get_user_skills_dir_migrates_legacy_scope_directory(tmp_path):
+def test_get_user_skills_dir_keeps_legacy_scope_directory_untouched(tmp_path):
     from market.marketplace.fs import get_user_skills_dir
     from market.runtime.context import encode_scope_id
 
@@ -103,8 +103,8 @@ def test_get_user_skills_dir_migrates_legacy_scope_directory(tmp_path):
     assert result == (
         tmp_path / canonical_scope_id / "workspaces" / "agent1" / "skills"
     )
-    assert not legacy_scope_dir.exists()
-    assert (result / "legacy.txt").read_text(encoding="utf-8") == "legacy"
+    assert legacy_scope_dir.exists()
+    assert not (result / "legacy.txt").exists()
 
 
 def test_copy_skill_to_user_happy_path(tmp_path):

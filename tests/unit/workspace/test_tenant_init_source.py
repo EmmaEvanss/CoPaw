@@ -138,11 +138,11 @@ class TestTenantInitializerSourceId:
         assert initializer.effective_tenant_id == scope_id
         assert initializer.tenant_dir == tmp_path / scope_id
 
-    def test_legacy_scope_directory_is_migrated_before_workspace_init(
+    def test_legacy_scope_directory_is_not_touched_by_workspace_init(
         self,
         tmp_path,
     ):
-        """工作区初始化前应先把旧 scope 目录收敛到 canonical 名称。"""
+        """工作区初始化只解析 canonical 目录，不负责迁移旧 scope 目录。"""
         canonical_scope_id = encode_scope_id("user-001", "ruice")
         legacy_scope_id = f"scope.v1.{canonical_scope_id}"
         legacy_dir = tmp_path / legacy_scope_id
@@ -156,8 +156,8 @@ class TestTenantInitializerSourceId:
         )
 
         assert initializer.tenant_dir == tmp_path / canonical_scope_id
-        assert not legacy_dir.exists()
-        assert (initializer.tenant_dir / "legacy.txt").exists()
+        assert legacy_dir.exists()
+        assert not (initializer.tenant_dir / "legacy.txt").exists()
 
     def test_source_id_creates_template_from_default_when_missing(
         self,

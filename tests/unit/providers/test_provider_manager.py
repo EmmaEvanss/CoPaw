@@ -280,7 +280,7 @@ def test_ensure_storage_uses_requested_tenant_with_current_source(
     assert not (isolated_secret_dir / current_scope_id / "providers").exists()
 
 
-def test_provider_storage_migrates_legacy_scope_directory(
+def test_provider_storage_keeps_legacy_scope_directory_untouched(
     isolated_secret_dir,
 ) -> None:
     canonical_scope_id = encode_scope_id("tenant-a", "source-a")
@@ -298,8 +298,8 @@ def test_provider_storage_migrates_legacy_scope_directory(
         isolated_secret_dir / canonical_scope_id / "providers"
     )
     assert canonical_provider_dir.exists()
-    assert not legacy_provider_dir.parent.exists()
-    assert (canonical_provider_dir / "active_model.json").exists()
+    assert legacy_provider_dir.parent.exists()
+    assert not (canonical_provider_dir / "active_model.json").exists()
 
 
 async def test_remove_custom_provider_missing_file_is_safe(

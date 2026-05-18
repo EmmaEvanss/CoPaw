@@ -46,6 +46,11 @@ def resolve_my_mcp_request_context(request: Request) -> MyMCPRequestContext:
             status_code=400,
             detail="X-Tenant-Id header is required",
         )
+    if not source_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Source-Id header is required",
+        )
     effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
     root_config = load_root_config(swe_root, effective_tenant_id)
     resolved_agent_id = (

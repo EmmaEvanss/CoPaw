@@ -20,6 +20,16 @@ SRC_ROOT = Path(__file__).parent.parent.parent.parent / "src"
 _MODELS_FILE = SRC_ROOT / "swe" / "app" / "crons" / "models.py"
 _EXECUTOR_FILE = SRC_ROOT / "swe" / "app" / "crons" / "executor.py"
 
+_ORIGINAL_MODULES = {
+    name: sys.modules.get(name)
+    for name in [
+        "swe.app",
+        "swe.app.crons",
+        "swe.app.channels.schema",
+        "swe.app.crons.models",
+        "swe.app.crons.executor",
+    ]
+}
 
 if "swe.app" not in sys.modules:
     app_pkg = types.ModuleType("swe.app")
@@ -32,6 +42,7 @@ if "swe.app.crons" not in sys.modules:
     sys.modules["swe.app.crons"] = crons_pkg
 
 channels_schema = types.ModuleType("swe.app.channels.schema")
+channels_schema.ChannelType = str
 channels_schema.DEFAULT_CHANNEL = "console"
 sys.modules["swe.app.channels.schema"] = channels_schema
 
@@ -58,6 +69,12 @@ executor_module = importlib.util.module_from_spec(executor_spec)
 sys.modules["swe.app.crons.executor"] = executor_module
 executor_spec.loader.exec_module(executor_module)
 
+for _name, _module in _ORIGINAL_MODULES.items():
+    if _module is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _module
+
 
 auth_state_module = importlib.import_module("swe.app.crons.auth_state")
 
@@ -73,6 +90,14 @@ ScheduleSpec = models_module.ScheduleSpec
 
 def _get_current_workspace_dir():
     return context_module.get_current_workspace_dir()
+
+
+def _get_current_source_id():
+    return context_module.get_current_source_id()
+
+
+def _get_current_effective_tenant_id():
+    return context_module.get_current_effective_tenant_id()
 
 
 def _get_current_llm_workload():
@@ -98,6 +123,7 @@ def _build_text_job(workspace_dir: str) -> object:
         id="job-text",
         name="text job",
         tenant_id="tenant-a",
+        source_id="source-a",
         schedule=ScheduleSpec(cron="* * * * *"),
         task_type="text",
         text="hello",
@@ -115,6 +141,7 @@ def _build_agent_job(workspace_dir: str, timeout_seconds: int = 1) -> object:
         id="job-agent",
         name="agent job",
         tenant_id="tenant-a",
+        source_id="source-a",
         schedule=ScheduleSpec(cron="* * * * *"),
         task_type="agent",
         request=CronJobRequest(input=[{"content": [{"text": "ping"}]}]),
@@ -162,6 +189,99 @@ def test_execute_binds_workspace_dir_during_job_and_resets_afterward(
         "/tmp/tenant-a/workspaces/alpha",
     )
     assert _get_current_workspace_dir() is None
+
+
+def test_execute_binds_source_scope_during_job_and_resets_afterward(
+    monkeypatch,
+):
+    observed = {}
+    executor = CronExecutor(
+        runner=_Runner(),
+        channel_manager=_ChannelManager(),
+    )
+    job = _build_text_job("/tmp/tenant-a/workspaces/alpha")
+
+    async def fake_execute_job(
+        _self,
+        _job,
+        _target_user_id,
+        _target_session_id,
+        dispatch_meta,
+    ):
+        observed["source_id"] = _get_current_source_id()
+        observed["effective_tenant_id"] = _get_current_effective_tenant_id()
+        observed["meta_source"] = dispatch_meta.get("source_id")
+        observed["meta_scope"] = dispatch_meta.get("scope_id")
+
+    monkeypatch.setattr(CronExecutor, "_execute_job", fake_execute_job)
+
+    asyncio.run(executor.execute(job))
+
+    assert observed["source_id"] == "source-a"
+    assert observed["effective_tenant_id"] is not None
+    assert observed["meta_source"] == "source-a"
+    assert observed["meta_scope"] == observed["effective_tenant_id"]
+    assert _get_current_source_id() is None
+
+
+def test_build_agent_request_includes_runtime_scope():
+    executor = CronExecutor(
+        runner=_Runner(),
+        channel_manager=_ChannelManager(),
+    )
+    job = _build_agent_job("/tmp/tenant-a/workspaces/beta")
+    job = job.model_copy(
+        update={
+            "scope_id": context_module.encode_scope_id("tenant-a", "source-a"),
+        },
+    )
+
+    req = executor._build_agent_request(job, "user-a", "session-a")
+
+    assert req["source_id"] == "source-a"
+    assert req["scope_id"] == context_module.encode_scope_id(
+        "tenant-a",
+        "source-a",
+    )
+
+
+def test_apply_auth_token_uses_runtime_scope(monkeypatch):
+    """Cron auth 读取必须使用 scope_id，不能回退到逻辑 tenant。"""
+    observed = {}
+    executor = CronExecutor(
+        runner=_Runner(),
+        channel_manager=_ChannelManager(),
+    )
+    job = _build_agent_job("/tmp/tenant-a/workspaces/beta").model_copy(
+        update={
+            "scope_id": context_module.encode_scope_id(
+                "tenant-a",
+                "source-a",
+            ),
+        },
+    )
+
+    def fake_resolve_auth_token_for_execution(*, tenant_id, workspace_dir):
+        observed["tenant_id"] = tenant_id
+        observed["workspace_dir"] = workspace_dir
+        return types.SimpleNamespace(token=None, cookie_header=None)
+
+    monkeypatch.setattr(
+        executor_module,
+        "resolve_auth_token_for_execution",
+        fake_resolve_auth_token_for_execution,
+    )
+
+    executor._apply_auth_token(
+        job,
+        {"workspace_dir": "/tmp/tenant-a/workspaces/beta"},
+        {},
+    )
+
+    assert observed == {
+        "tenant_id": context_module.encode_scope_id("tenant-a", "source-a"),
+        "workspace_dir": "/tmp/tenant-a/workspaces/beta",
+    }
 
 
 def test_execute_binds_cron_workload_during_job_and_resets_afterward(
@@ -363,6 +483,7 @@ def test_execute_exposes_tenant_process_limit_policy_inside_cron_context(
     monkeypatch,
     tmp_path: Path,
 ):
+    from swe.config.context import encode_scope_id
     from swe.security.process_limits import (
         resolve_current_process_limit_policy,
     )
@@ -374,7 +495,8 @@ def test_execute_exposes_tenant_process_limit_policy_inside_cron_context(
     )
     job = _build_text_job("/tmp/tenant-a/workspaces/alpha")
 
-    tenant_dir = tmp_path / "tenant-a"
+    scope_id = encode_scope_id("tenant-a", "source-a")
+    tenant_dir = tmp_path / scope_id
     tenant_dir.mkdir(parents=True, exist_ok=True)
     save_config(
         Config.model_validate(
@@ -411,7 +533,7 @@ def test_execute_exposes_tenant_process_limit_policy_inside_cron_context(
     asyncio.run(executor.execute(job))
 
     assert observed == {
-        "tenant_id": "tenant-a",
+        "tenant_id": scope_id,
         "enabled": True,
         "cpu": 3,
     }

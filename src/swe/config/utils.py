@@ -34,8 +34,12 @@ from .config import (
 )
 from .context import (
     TenantContextError,
+    decode_scope_id,
     get_current_effective_tenant_id,
-    resolve_effective_tenant_id,
+    get_current_scope_id,
+    get_current_source_id,
+    get_current_tenant_id,
+    resolve_runtime_tenant_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -689,6 +693,26 @@ def get_chats_path() -> Path:
 # =============================================================================
 
 
+def _resolve_runtime_tenant_for_paths(
+    tenant_id: str | None,
+) -> str | None:
+    """把路径 helper 的输入统一收敛到 runtime scope 语义。"""
+    if tenant_id is None:
+        return get_current_effective_tenant_id()
+
+    try:
+        decode_scope_id(tenant_id)
+        return tenant_id
+    except ValueError:
+        pass
+
+    current_scope_id = get_current_scope_id()
+    if current_scope_id is not None and tenant_id == get_current_tenant_id():
+        return current_scope_id
+
+    return resolve_runtime_tenant_id(tenant_id, get_current_source_id())
+
+
 def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
     """Get tenant-specific working directory.
 
@@ -699,8 +723,7 @@ def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
     Returns:
         Path to tenant working directory.
     """
-    if tenant_id is None:
-        tenant_id = get_current_effective_tenant_id()
+    tenant_id = _resolve_runtime_tenant_for_paths(tenant_id)
 
     # Always use tenant subdirectory; default to "default" tenant
     if not tenant_id:
@@ -826,13 +849,12 @@ def get_tenant_working_dir_strict(tenant_id: str | None = None) -> Path:
     Raises:
         TenantContextError: If tenant_id is None and no tenant in context.
     """
+    tenant_id = _resolve_runtime_tenant_for_paths(tenant_id)
     if tenant_id is None:
-        tenant_id = get_current_effective_tenant_id()
-        if tenant_id is None:
-            raise TenantContextError(
-                "Tenant context required. "
-                "Ensure this code runs within a tenant-scoped request or context.",
-            )
+        raise TenantContextError(
+            "Tenant context required. "
+            "Ensure this code runs within a tenant-scoped request or context.",
+        )
 
     return WORKING_DIR / tenant_id
 
@@ -908,23 +930,33 @@ async def list_logical_tenant_ids(
             if tid != "default"
         )
 
-    # Existing logic: file system scan with source-based default resolution
+    # 文件系统扫描仅投影当前 source 的 scope 目录，避免把其他 source 的
+    # 本地状态泄露到分发候选列表中。
     tenant_ids = list_all_tenant_ids()
     if not source_id:
         return tenant_ids
 
     logical_tenant_ids: list[str] = []
-    effective_default_tenant_id = resolve_effective_tenant_id(
-        "default",
-        source_id,
-    )
     has_default_tenant = False
 
     for tenant_id in tenant_ids:
-        if tenant_id in {"default", effective_default_tenant_id}:
+        if tenant_id == "default":
             has_default_tenant = True
             continue
-        logical_tenant_ids.append(tenant_id)
+        try:
+            logical_tenant_id, scope_source_id = decode_scope_id(tenant_id)
+        except ValueError:
+            if tenant_id.startswith("default_"):
+                # legacy source templates are bootstrap material, not logical tenants
+                continue
+            logical_tenant_ids.append(tenant_id)
+            continue
+        if scope_source_id != source_id:
+            continue
+        if logical_tenant_id == "default":
+            has_default_tenant = True
+            continue
+        logical_tenant_ids.append(logical_tenant_id)
 
     if has_default_tenant:
         logical_tenant_ids.append("default")

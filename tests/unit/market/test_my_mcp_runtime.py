@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from market.runtime.config_store import (
     AgentProfileConfig,
     AgentProfileRef,
@@ -16,23 +19,57 @@ from market.runtime.config_store import (
     save_agent_config,
     save_root_config,
 )
+from market.app.my_mcp_helpers import resolve_my_mcp_request_context
 from market.runtime.context import resolve_effective_tenant_id
+from swe.config.context import encode_scope_id
 
 
 def test_resolve_effective_tenant_id_keeps_non_default_tenant() -> None:
-    """非 default tenant 不应继续附加 source。"""
-    assert resolve_effective_tenant_id("user_a", "SRC_A") == "user_a"
+    """非 default tenant 也必须按 source 进入独立 scope。"""
+    assert resolve_effective_tenant_id("user_a", "SRC_A") == (
+        encode_scope_id("user_a", "SRC_A")
+    )
 
 
 def test_resolve_effective_tenant_id_scopes_default_with_source() -> None:
-    """default tenant 应按 source 进入隔离目录。"""
-    assert resolve_effective_tenant_id("default", "SRC_A") == "default_SRC_A"
+    """default tenant 也必须使用统一的 scope 编码。"""
+    assert resolve_effective_tenant_id("default", "SRC_A") == (
+        encode_scope_id("default", "SRC_A")
+    )
+
+
+def test_resolve_effective_tenant_id_rejects_path_traversal() -> None:
+    """market runtime 与主服务一样拒绝危险 identity。"""
+    with pytest.raises(ValueError):
+        resolve_effective_tenant_id("user_a", "../bad")
+
+
+def test_my_mcp_context_requires_source_id(tmp_path) -> None:
+    """MyMCP 本地状态访问不得缺失 source_id。"""
+    request = SimpleNamespace(
+        headers={
+            "X-User-Id": "user-a",
+            "X-Tenant-Id": "user-a",
+        },
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                marketplace=SimpleNamespace(swe_root=tmp_path),
+            ),
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_my_mcp_request_context(request)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "X-Source-Id header is required"
 
 
 def test_load_and_save_agent_config_under_market_runtime(tmp_path) -> None:
     """market runtime 应能独立读写 tenant 下的 agent.json。"""
     swe_root = tmp_path / ".swe"
-    workspace_dir = swe_root / "default_SRC_A" / "workspaces" / "default"
+    scope_id = encode_scope_id("default", "SRC_A")
+    workspace_dir = swe_root / scope_id / "workspaces" / "default"
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     root_config = AgentsRootConfig(
@@ -46,7 +83,7 @@ def test_load_and_save_agent_config_under_market_runtime(tmp_path) -> None:
             },
         ),
     )
-    save_root_config(swe_root, "default_SRC_A", root_config)
+    save_root_config(swe_root, scope_id, root_config)
 
     agent_config = AgentProfileConfig(
         id="default",
@@ -63,9 +100,9 @@ def test_load_and_save_agent_config_under_market_runtime(tmp_path) -> None:
             },
         ),
     )
-    save_agent_config(swe_root, "default_SRC_A", "default", agent_config)
+    save_agent_config(swe_root, scope_id, "default", agent_config)
 
-    loaded = load_agent_config(swe_root, "default_SRC_A", "default")
+    loaded = load_agent_config(swe_root, scope_id, "default")
 
     assert loaded.id == "default"
     assert loaded.name == "Default Agent"

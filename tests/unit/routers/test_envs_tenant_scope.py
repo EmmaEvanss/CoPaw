@@ -49,6 +49,8 @@ async def bind_tenant_id(request: Request, call_next):
 
 app.include_router(router, prefix="/api")
 
+_SOURCE_HEADERS = {"X-Source-Id": "source-a"}
+
 
 @pytest.fixture(autouse=True)
 def _use_tmp_env_paths(tmp_path: Path):
@@ -109,7 +111,7 @@ def test_tenant_env_api_is_file_scoped_not_process_scoped(
 
     response = client.put(
         "/api/envs",
-        headers={"X-Tenant-Id": "tenant-a"},
+        headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
         json={"TENANT_ONLY_KEY": "value-a"},
     )
 
@@ -118,3 +120,26 @@ def test_tenant_env_api_is_file_scoped_not_process_scoped(
     assert response.status_code == 200
     assert load_envs(envs_path) == {"TENANT_ONLY_KEY": "value-a"}
     assert "TENANT_ONLY_KEY" not in os.environ
+
+
+def test_same_tenant_different_sources_use_scope_specific_env_file(
+    _use_tmp_env_paths: Path,
+):
+    """同一 tenant 的不同 source 必须落到不同 scope secrets 目录。"""
+    from swe.app.routers import envs as envs_router
+
+    request = types.SimpleNamespace(
+        state=types.SimpleNamespace(
+            tenant_id="tenant-a",
+            scope_id="scope.v1.tenant-a.source-b",
+        ),
+    )
+
+    envs_path = envs_router._get_tenant_envs_path(request)
+
+    assert envs_path == (
+        _use_tmp_env_paths
+        / "scope.v1.tenant-a.source-b"
+        / ".secret"
+        / "envs.json"
+    )

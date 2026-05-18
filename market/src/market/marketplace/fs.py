@@ -7,7 +7,7 @@
   <marketplace_root>/<source_id>/skills/<item_id>/SKILL.md
 
 用户技能目录：
-  <swe_root>/<user_id>/workspaces/<agent_id>/skills/<skill_name>/
+  <swe_root>/<scope_id>/workspaces/<agent_id>/skills/<skill_name>/
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from .models import MarketItem
+from ..runtime.context import encode_scope_id
 
 logger = logging.getLogger(__name__)
 
@@ -127,17 +128,10 @@ def resolve_effective_user_id(
     user_id: str,
     source_id: str | None = None,
 ) -> str:
-    """解析 effective user_id，default 用户需拼接 source_id.
-
-    - default 用户 + source_id: effective = ``default_{source_id}``
-    - default 用户 + 无 source_id: effective = ``default``
-    - 非 default 用户: effective = user_id (保持不变)
-    """
-    if user_id != "default" or not source_id:
+    """解析用户本地状态使用的运行时 scope 标识。"""
+    if not source_id:
         return user_id
-    # 验证 source_id 只包含安全字符
-    _validate_path_segment(source_id, "source_id")
-    return f"default_{source_id}"
+    return encode_scope_id(user_id, source_id)
 
 
 def get_user_skills_dir(

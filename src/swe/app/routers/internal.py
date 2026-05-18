@@ -7,6 +7,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
+from ...config.context import is_valid_identity_value, resolve_scope_id
+
 router = APIRouter(prefix="/internal", tags=["internal"])
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ async def internal_reload_agent(
     agent_id: str,
     request: Request,
     tenant_id: str = "default",
+    source_id: Optional[str] = None,
     x_internal_token: Optional[str] = Header(
         default=None,
         alias="X-Internal-Token",
@@ -42,12 +45,29 @@ async def internal_reload_agent(
         logger.warning("MultiAgentManager not initialized")
         raise HTTPException(status_code=503, detail="Manager not available")
 
+    if not source_id:
+        raise HTTPException(status_code=400, detail="source_id is required")
+    if not is_valid_identity_value(tenant_id):
+        raise HTTPException(status_code=400, detail="Invalid tenant_id")
+    if not is_valid_identity_value(source_id):
+        raise HTTPException(status_code=400, detail="Invalid source_id")
+
+    scope_id = resolve_scope_id(tenant_id, source_id)
+    if scope_id is None:
+        raise HTTPException(status_code=400, detail="Failed to resolve scope")
+
     try:
-        await manager.reload_agent(agent_id, tenant_id=tenant_id)
+        await manager.reload_agent(agent_id, tenant_id=scope_id)
         logger.info(
-            f"Agent '{agent_id}' (tenant={tenant_id}) reloaded via internal API",
+            f"Agent '{agent_id}' (scope={scope_id}) reloaded via internal API",
         )
-        return {"success": True, "agent_id": agent_id, "tenant_id": tenant_id}
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "tenant_id": tenant_id,
+            "source_id": source_id,
+            "scope_id": scope_id,
+        }
     except Exception as e:
         logger.error(f"Failed to reload agent '{agent_id}': {e}")
         raise HTTPException(status_code=500, detail=str(e))

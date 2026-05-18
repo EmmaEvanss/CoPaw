@@ -253,48 +253,51 @@ class TestErrorHandling:
 
 
 class TestHandleTaskAssignment:
-    """Tests for _handle_task_assignment using non-streaming flow."""
+    """Tests for _handle_task_assignment using current direct flow."""
 
     @pytest.mark.asyncio
-    async def test_calls_run_task_llm_and_notify(self):
-        """验证 _handle_task_assignment 调用 _run_task_llm_and_notify."""
+    async def test_calls_get_llm_response_direct_without_workspace(self):
+        """验证无 workspace 时走 direct 响应分支."""
         ch = _make_channel()
 
-        # Mock _run_task_llm_and_notify
-        ch._run_task_llm_and_notify = AsyncMock()
+        ch._get_llm_response_direct = AsyncMock()
+        ch.send_custom_card = AsyncMock(return_value=(0, "msg123"))
 
         await ch._handle_task_assignment(
             sap_id="sap123",
             from_id="open123",
             task_content="This is a long task description",
             meta={"send_addr": "yst123"},
+            yst_id="yst123",
+            msg_content="This is a long task description",
         )
 
-        # Should call _run_task_llm_and_notify
-        ch._run_task_llm_and_notify.assert_called_once()
-        call_args = ch._run_task_llm_and_notify.call_args[0]
-        # Arguments: request, session_id, task_content, from_id, meta
-        assert call_args[1].startswith("zhaohu:task:")
-        assert call_args[3] == "open123"
+        ch._get_llm_response_direct.assert_called_once()
+        call_args = ch._get_llm_response_direct.call_args[0]
+        assert call_args[0]["send_addr"] == "yst123"
+        assert call_args[4] == "yst123"
 
     @pytest.mark.asyncio
     async def test_no_consume_with_tracker_call(self):
         """验证不调用 _consume_with_tracker."""
         ch = _make_channel()
 
-        # Mock both methods to track which is called
-        ch._run_task_llm_and_notify = AsyncMock()
+        ch._get_llm_response_direct = AsyncMock()
         ch._consume_with_tracker = AsyncMock()
+        ch.send_custom_card = AsyncMock(return_value=(0, "msg123"))
 
         await ch._handle_task_assignment(
             sap_id="sap123",
             from_id="open123",
             task_content="This is a long task description",
             meta={"send_addr": "yst123"},
+            yst_id="yst123",
+            msg_content="This is a long task description",
         )
 
         # Should NOT call _consume_with_tracker
         ch._consume_with_tracker.assert_not_called()
+        ch._get_llm_response_direct.assert_called_once()
 
 
 class TestCase1AndCase3Unaffected:
@@ -310,12 +313,12 @@ class TestCase1AndCase3Unaffected:
 
         # Case 1: message is exactly one of the keywords
         await ch._route_message(
-            msg_id="msg123",
-            from_id="open123",
-            sap_id="sap123",
-            yst_id="yst123",
-            msg_content="我的任务进度",
-            meta={"send_addr": "yst123"},
+            "msg123",
+            "open123",
+            "sap123",
+            "yst123",
+            "我的任务进度",
+            {"send_addr": "yst123"},
         )
 
         # Should call _query_task_progress
@@ -331,12 +334,12 @@ class TestCase1AndCase3Unaffected:
 
         # Case 3: short message (< 10 chars)
         await ch._route_message(
-            msg_id="msg123",
-            from_id="open123",
-            sap_id="sap123",
-            yst_id="yst123",
-            msg_content="你好",  # Short message
-            meta={"send_addr": "yst123"},
+            "msg123",
+            "open123",
+            "sap123",
+            "yst123",
+            "你好",  # Short message
+            {"send_addr": "yst123"},
         )
 
         # Should call _handle_casual_chat

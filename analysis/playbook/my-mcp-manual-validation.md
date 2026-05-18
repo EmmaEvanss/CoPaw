@@ -16,7 +16,7 @@
 
 - `X-User-Id`：用户身份标识
 - `X-Tenant-Id`：租户隔离标识（**iframe 场景下与 X-User-Id 同值**）
-- `X-Source-Id`：来源标识（仅对 `tenant_id = "default"` 生效）
+- `X-Source-Id`：来源标识（与 `tenant_id` 一起决定运行时 `scope_id`）
 - `X-Agent-Id`：应用隔离标识
 - `X-Manager`：管理员权限标识
 
@@ -34,8 +34,8 @@
 
 - `sapId`（用户 SAP ID）直接作为 `X-Tenant-Id` 使用，**无 source → tenant 转换**
 - iframe 场景下：**用户身份 = 租户身份**
-- `source_id` 仅影响 `tenant_id = "default"` 的目录结构（产生 `default_{source}` 目录）
-- 非 default 租户不受 `source_id` 影响
+- `source_id` 会与 `tenant_id` 一起编码成独立运行时 `scope_id`
+- `default_{source}` 只保留为模板目录命名，不再是实际 runtime tenant 目录
 
 对应代码入口：
 
@@ -562,33 +562,34 @@ switchIframeContext({
 - 继承完成后，`user_a` 的修改是否不会影响 `user_b`
 - `user_a` 的修改是否不会回写到 `default`
 
-### 2. 非 `default` 用户下，`source` 不会继续拆目录
+### 2. 非 `default` 用户下，`source` 也会继续拆分 runtime scope
 
 当前来源隔离规则是：
 
 - `tenant_id = default` 且有 `source_id`
-  - 生效目录：`default_{source}`
+  - 生效目录：`scope.v1.<default>.<source>`
 - `tenant_id != default`
-  - 生效目录：直接使用 `tenant_id`（即 userId）
-  - **source_id 被完全忽略**
+  - 生效目录：`scope.v1.<tenant_id>.<source_id>`
+  - `source_id` 不再被忽略
 
 这意味着：
 
 - 在 `default` 用户下切换 `source`，能看到明显的来源隔离
-- 在 `user_a` / `user_b` 这种非 `default` 用户下切换 `source`，**目录仍为 user_a/user_b**，不会继续拆成 `user_a_xxx`
+- 在 `user_a` / `user_b` 这种非 `default` 用户下切换 `source`，也会进入不同的 runtime scope
 
-所以不要把下面这种现象误判为 bug：
+如果出现下面这种现象，应视为缺陷而不是预期行为：
 
 ```text
 同一个 user_a
 切换 source = SRC_A / SRC_B
-仍然落在同一个 user_a 目录
+仍然落在同一个 runtime 目录
 列表数据也完全相同
 ```
 
-这是当前设计行为，不是 `MyMCP` 失效。
+当前正确行为应为：
 
-**隔离真正原因**：iframe 场景下，不同 userId = 不同 tenant_id，而非 source 隔离。
+- `user_a + SRC_A` 与 `user_a + SRC_B` 使用不同的 runtime scope
+- `user_a + SRC_A` 与 `user_b + SRC_A` 也继续保持不同的 runtime scope
 
 ## 验证完成后的恢复
 
@@ -612,7 +613,7 @@ resetMyMcpContext()
 
 - iframe 场景下，`userId` 直接作为 `tenant_id` 使用
 - 不同 userId = 不同 tenant_id = 不同目录
-- source_id 仅对 `tenant_id = "default"` 生效，非 default 租户忽略 source_id
+- source_id 会继续参与 runtime scope 计算，即使 tenant_id 不是 `default`
 
 步骤：
 
@@ -632,9 +633,9 @@ switchIframeContext({
 - `X-User-Id = "user_a"`
 - `X-Tenant-Id = "user_a"`（与 X-User-Id 同值）
 - `X-User-Name = "张三"`
-- `X-Source-Id = "SRC_A"`（被后端忽略，因为 tenant_id 不是 default）
+- `X-Source-Id = "SRC_A"`（参与 runtime scope 计算）
 
-后端生效目录：`~/.swe/user_a/`
+后端生效目录：`~/.swe/scope.v1.<user_a>.<SRC_A>/`
 
 2. 新建一个 MCP，例如 `user-a-only`
 3. 再切到用户 B，但保持相同来源：
@@ -653,9 +654,9 @@ switchIframeContext({
 - `X-User-Id = "user_b"`
 - `X-Tenant-Id = "user_b"`
 - `X-User-Name = "李四"`
-- `X-Source-Id = "SRC_A"`（被后端忽略）
+- `X-Source-Id = "SRC_A"`（参与 runtime scope 计算）
 
-后端生效目录：`~/.swe/user_b/`
+后端生效目录：`~/.swe/scope.v1.<user_b>.<SRC_A>/`
 
 4. 检查 `user-a-only` 是否不可见
 5. 在 `user_b` 下新建一个不同的 MCP
@@ -665,9 +666,9 @@ switchIframeContext({
 
 - 同一来源下，不同用户互相不可见
 - 两个用户各自继承模板后独立演化
-- **隔离真正原因是不同 userId = 不同 tenant_id，而非 source 隔离**
+- **隔离同时来自 tenant_id 与 source_id 共同组成的 runtime scope**
 
-### 案例 2：相同用户，不同来源（仅对 `default` 用户有效）
+### 案例 2：相同用户，不同来源（所有用户都应隔离）
 
 目的：
 
@@ -675,9 +676,9 @@ switchIframeContext({
 
 **隔离原理**：
 
-- 仅当 `tenant_id = "default"` 时，`source_id` 才会影响目录结构
-- 生效目录：`default_{source}`（如 `default_SRC_A`、`default_SRC_B`）
-- 非 default 用户（如 `user_a`）切换 source 不产生任何隔离效果
+- 任意 tenant 只要携带 `source_id`，都会进入独立 runtime scope
+- 生效目录是编码后的 `scope_id`，例如 `scope.v1.<tenant>.<SRC_A>`
+- `default_{source}` 仅是模板目录，不是实际运行时目录
 
 步骤：
 
@@ -699,7 +700,7 @@ switchIframeContext({
 - `X-User-Name = "默认用户"`
 - `X-Source-Id = "SRC_A"`
 
-后端生效目录：`~/.swe/default_SRC_A/`（source 生效）
+后端生效目录：`~/.swe/scope.v1.<default>.<SRC_A>/`
 
 2. 新建一个 MCP，例如 `src-a-only`
 3. 切来源 B：
@@ -714,7 +715,7 @@ switchIframeContext({
 })
 ```
 
-后端生效目录：`~/.swe/default_SRC_B/`（source 生效）
+后端生效目录：`~/.swe/scope.v1.<default>.<SRC_B>/`
 
 4. 检查 `src-a-only` 是否不可见
 5. 在 `SRC_B` 下再新建一个 MCP
@@ -722,10 +723,10 @@ switchIframeContext({
 
 预期：
 
-- `default + source` 组合之间互相隔离
-- 不同 source 产生不同目录（`default_SRC_A` vs `default_SRC_B`）
+- `tenant + source` 组合之间互相隔离
+- 不同 source 产生不同 runtime scope 目录
 
-**补充验证**：若将 userId 切换为非 default 值（如 `user_a`），则切换 source 不产生任何隔离效果，列表数据保持一致。
+**补充验证**：若将 userId 切换为非 default 值（如 `user_a`），切换 source 仍应产生隔离效果，列表数据不应保持一致。
 
 ### 案例 3：相同用户，相同来源，不同应用
 
@@ -737,7 +738,7 @@ switchIframeContext({
 
 - Agent 隔离通过 `X-Agent-Id` header 实现
 - 与 tenant/source 隔离独立运作
-- 非 default 用户下，source 参数不影响目录，但 Agent 隔离仍然生效
+- source 会先切分 runtime scope，Agent 隔离再在该 scope 内继续生效
 
 步骤：
 
@@ -757,8 +758,8 @@ switchIframeContext({
 - `X-User-Id = "user_a"`
 - `X-Tenant-Id = "user_a"`
 - `X-User-Name = "张三"`
-- `X-Source-Id = "SRC_A"`（被后端忽略）
-- 后端生效目录：`~/.swe/user_a/`
+- `X-Source-Id = "SRC_A"`（参与 runtime scope 计算）
+- 后端生效目录：`~/.swe/scope.v1.<user_a>.<SRC_A>/`
 
 2. 切应用 A：
 

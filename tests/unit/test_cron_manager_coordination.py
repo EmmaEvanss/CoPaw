@@ -496,7 +496,7 @@ class TestCronManagerManualRun:
         )
         await manager.create_or_replace_job(job)
 
-        async def fake_execute_once(executed_job):
+        async def fake_execute_once(executed_job, **_kwargs):
             observed["job_id"] = executed_job.id
             observed["workload"] = get_current_llm_workload()
 
@@ -733,6 +733,8 @@ class TestCronManagerState:
             name="Prefetch Job",
             enabled=True,
             tenant_id="test-tenant",
+            source_id="source-a",
+            scope_id="scope.v1.dGVzdC10ZW5hbnQ.c291cmNlLWE",
             schedule=ScheduleSpec(
                 type="cron",
                 cron="0 0 * * *",
@@ -759,15 +761,35 @@ class TestCronManagerState:
         original_next_run_at = manager.get_state(job.id).next_run_at
         assert original_next_run_at is not None
 
-        with patch(
-            "swe.app.crons.manager.prefetch_auth_token",
+        observed = {}
+        import swe.app.crons.manager as manager_module
+
+        def fake_prefetch_auth_token(*, tenant_id, workspace_dir):
+            from swe.config.context import (
+                get_current_effective_tenant_id,
+                get_current_source_id,
+            )
+
+            observed["tenant_id"] = tenant_id
+            observed["workspace_dir"] = workspace_dir
+            observed["effective_tenant_id"] = get_current_effective_tenant_id()
+            observed["source_id"] = get_current_source_id()
+
+        with patch.object(
+            manager_module,
+            "prefetch_auth_token",
+            side_effect=fake_prefetch_auth_token,
         ) as prefetch_mock:
             await manager._prefetch_callback(job.id)
 
         prefetch_mock.assert_called_once_with(
-            tenant_id="test-tenant",
+            tenant_id=job.scope_id,
             workspace_dir="/tmp/test",
         )
+        assert observed["tenant_id"] == job.scope_id
+        assert observed["workspace_dir"] == "/tmp/test"
+        assert observed["source_id"] == "source-a"
+        assert observed["effective_tenant_id"] == job.scope_id
         state = manager.get_state(job.id)
         assert state.last_prefetch_at is not None
         assert state.last_error is None

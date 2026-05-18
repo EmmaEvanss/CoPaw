@@ -483,12 +483,12 @@ def _prepare_target_tenant(
     request: Request,
     tenant_id: str,
 ):
-    from ...config.context import resolve_effective_tenant_id
+    from ...config.context import resolve_runtime_tenant_id
     from ...config.utils import get_tenant_working_dir_strict
     from ..workspace.tenant_initializer import TenantInitializer
 
     validated_tenant_id = _validate_target_tenant_id(tenant_id)
-    effective_tid = resolve_effective_tenant_id(
+    effective_tid = resolve_runtime_tenant_id(
         validated_tenant_id,
         _request_source_id(request),
     )

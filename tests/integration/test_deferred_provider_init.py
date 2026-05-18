@@ -24,7 +24,25 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
+from swe.providers.openai_provider import OpenAIProvider
+from swe.providers.provider import ModelInfo
 from swe.providers.provider_manager import ProviderManager
+
+
+def _seed_custom_openai_provider(
+    manager: ProviderManager,
+    api_key: str = "",
+) -> None:
+    manager.overwrite_provider_payload(
+        OpenAIProvider(
+            id="openai",
+            name="OpenAI",
+            base_url="https://api.openai.com/v1",
+            api_key=api_key,
+            is_custom=True,
+            models=[ModelInfo(id="gpt-4o", name="GPT-4o")],
+        ).model_dump(),
+    )
 
 
 class TestDeferredProviderInitialization:
@@ -153,24 +171,11 @@ class TestProviderAPIInitialization:
             "swe.providers.provider_manager.SECRET_DIR",
             tmp_path / ".swe.secret",
         ):
-            # Setup default tenant with configuration
-            default_dir = tmp_path / ".swe.secret" / "default" / "providers"
-            default_dir.mkdir(parents=True)
-            default_builtin = default_dir / "builtin"
-            default_builtin.mkdir()
-
-            # Create a provider config in default
-            import json
-
-            (default_builtin / "openai.json").write_text(
-                json.dumps(
-                    {
-                        "id": "openai",
-                        "name": "OpenAI",
-                        "base_url": "https://api.openai.com/v1",
-                        "api_key": "sk-default-key",
-                    },
-                ),
+            ProviderManager._instances.clear()
+            default_manager = ProviderManager.get_instance("default")
+            _seed_custom_openai_provider(
+                default_manager,
+                api_key="sk-default-key",
             )
 
             # Create a new tenant
@@ -184,7 +189,7 @@ class TestProviderAPIInitialization:
 
             # Verify config was copied from default
             assert tenant_providers_dir.exists()
-            assert (tenant_providers_dir / "builtin" / "openai.json").exists()
+            assert (tenant_providers_dir / "custom" / "openai.json").exists()
 
             # Verify ProviderManager loads the inherited config
             ProviderManager._instances.clear()
@@ -245,12 +250,12 @@ class TestConcurrentInitialization:
             # Setup default tenant
             default_dir = tmp_path / ".swe.secret" / "default" / "providers"
             default_dir.mkdir(parents=True)
-            default_builtin = default_dir / "builtin"
-            default_builtin.mkdir()
+            default_custom = default_dir / "custom"
+            default_custom.mkdir()
 
             import json
 
-            (default_builtin / "test-provider.json").write_text(
+            (default_custom / "test-provider.json").write_text(
                 json.dumps({"id": "test-provider", "name": "Test"}),
             )
 
@@ -281,7 +286,7 @@ class TestConcurrentInitialization:
             # Verify storage was created correctly
             tenant_dir = tmp_path / ".swe.secret" / tenant_id / "providers"
             assert tenant_dir.exists()
-            assert (tenant_dir / "builtin" / "test-provider.json").exists()
+            assert (tenant_dir / "custom" / "test-provider.json").exists()
 
 
 class TestTenantIsolationPreserved:
@@ -304,10 +309,12 @@ class TestTenantIsolationPreserved:
             ProviderManager._instances.clear()
             manager_a = ProviderManager.get_instance(tenant_a)
             manager_b = ProviderManager.get_instance(tenant_b)
+            _seed_custom_openai_provider(manager_a)
+            _seed_custom_openai_provider(manager_b)
 
             # Configure different API keys
-            manager_a.update_provider("openai", {"api_key": "sk-a"})
-            manager_b.update_provider("openai", {"api_key": "sk-b"})
+            assert manager_a.update_provider("openai", {"api_key": "sk-a"})
+            assert manager_b.update_provider("openai", {"api_key": "sk-b"})
 
             # Clear cache and reload
             ProviderManager._instances.clear()
@@ -329,7 +336,11 @@ class TestTenantIsolationPreserved:
 
             # Configure default tenant
             manager = ProviderManager.get_instance("default")
-            manager.update_provider("openai", {"api_key": "sk-default"})
+            _seed_custom_openai_provider(manager)
+            assert manager.update_provider(
+                "openai",
+                {"api_key": "sk-default"},
+            )
 
             # New tenant should inherit from default but be isolated
             new_tenant = "inherits-from-default"
@@ -340,7 +351,7 @@ class TestTenantIsolationPreserved:
             assert new_manager.get_provider("openai").api_key == "sk-default"
 
             # Modify new tenant's config
-            new_manager.update_provider("openai", {"api_key": "sk-new"})
+            assert new_manager.update_provider("openai", {"api_key": "sk-new"})
 
             # Verify default tenant is unchanged
             ProviderManager._instances.clear()

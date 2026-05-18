@@ -377,9 +377,9 @@ class TestDeprecatedProvidersEndpoint:
             )
             mock_pm_class.get_instance.return_value = mock_manager
 
-            # Patch get_current_tenant_id which the endpoint uses
+            # endpoint 现在读取 effective tenant，兼容 source-scoped 存储。
             with patch(
-                "swe.app.routers.providers.get_current_tenant_id",
+                "swe.app.routers.providers.get_current_effective_tenant_id",
                 return_value="tenant-deprecated",
             ):
                 response = client.get("/providers")
@@ -402,7 +402,7 @@ class TestDeprecatedProvidersEndpoint:
     def test_deprecated_providers_endpoint_requires_tenant(self, client):
         """GET /providers requires tenant ID."""
         with patch(
-            "swe.app.routers.providers.get_current_tenant_id",
+            "swe.app.routers.providers.get_current_effective_tenant_id",
             return_value=None,
         ):
             response = client.get("/providers")

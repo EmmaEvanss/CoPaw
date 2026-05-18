@@ -178,6 +178,27 @@ agent_app = AgentApp(
 )
 
 
+async def _reset_scope_sensitive_runtime_state(app: FastAPI) -> None:
+    """在开始提供 source-scoped 流量前清空长期运行态缓存。"""
+    existing_manager = getattr(app.state, "multi_agent_manager", None)
+    if existing_manager is not None:
+        logger.info(
+            "Resetting existing MultiAgentManager before scope cutover...",
+        )
+        await existing_manager.stop_all()
+        app.state.multi_agent_manager = None
+
+    from ..providers.provider_manager import ProviderManager
+    from ..providers.rate_limiter import reset_rate_limiter
+    from ..tenant_models.manager import TenantModelManager
+
+    ProviderManager.reset_instance_cache()
+    TenantModelManager.invalidate_cache()
+    reset_rate_limiter()
+    runner.set_multi_agent_manager(None)
+    logger.info("Scope-sensitive runtime caches reset")
+
+
 @asynccontextmanager
 async def lifespan(
     app: FastAPI,
@@ -193,6 +214,10 @@ async def lifespan(
     # --- Minimal startup: only ensure default agent declaration exists ---
     logger.info("Performing minimal startup...")
     ensure_default_agent_exists()
+
+    # source-scoped cutover 需要在开始接流量前清空旧的进程级缓存，
+    # 避免同一进程继续复用 tenant-only 运行态。
+    await _reset_scope_sensitive_runtime_state(app)
 
     # --- Tenant workspace pool initialization (registry only, no runtime) ---
     logger.info("Initializing TenantWorkspacePool (registry only)...")

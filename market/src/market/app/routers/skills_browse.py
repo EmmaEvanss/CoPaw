@@ -706,7 +706,7 @@ async def upload_skill_to_workspace(
     bbk_id = x_bbk_id or "100"
     agent_id = "default"
 
-    # Get user skills directory (default user uses default_{source_id})
+    # 通过统一 scope_id 定位用户技能目录，避免跨 source 共享本地状态。
     skills_dir = get_user_skills_dir(swe_root, x_user_id, agent_id, source_id)
     skills_dir.mkdir(parents=True, exist_ok=True)
 

@@ -11,9 +11,12 @@ import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
+from swe.config.context import encode_scope_id
 from swe.app.middleware.tenant_identity import TenantIdentityMiddleware
 from swe.app.routers.agent import router
 from swe.app.routers.agent_scoped import create_agent_scoped_router
+
+_DEFAULT_SOURCE_ID = "source-a"
 
 
 class FakeMultiAgentManager:
@@ -76,7 +79,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         "swe.app.routers.agent.get_agent_for_request",
         fake_get_agent_for_request,
     )
-    return TestClient(app, raise_server_exceptions=False)
+    client = TestClient(app, raise_server_exceptions=False)
+    client.headers.update({"X-Source-Id": _DEFAULT_SOURCE_ID})
+    return client
 
 
 @pytest.fixture
@@ -108,10 +113,12 @@ def client_real_resolver(
     )
     monkeypatch.setattr(
         "swe.app.agent_context._get_tenant_aware_config",
-        lambda tenant_id=None, source_id=None: fake_config,
+        lambda tenant_id=None, source_id=None, scope_id=None: fake_config,
     )
 
-    return TestClient(app, raise_server_exceptions=False), manager
+    client = TestClient(app, raise_server_exceptions=False)
+    client.headers.update({"X-Source-Id": _DEFAULT_SOURCE_ID})
+    return client, manager
 
 
 def test_init_happy_path_appends_existing_top_level_md(
@@ -164,8 +171,13 @@ def test_init_isolates_different_agents_within_same_tenant(
     tmp_path: Path,
 ):
     client, manager = client_real_resolver
-    agent_1_file = tmp_path / "tenant-a" / "agents" / "agent-1" / "PROFILE.md"
-    agent_2_file = tmp_path / "tenant-a" / "agents" / "agent-2" / "PROFILE.md"
+    scoped_tenant = encode_scope_id("tenant-a", _DEFAULT_SOURCE_ID)
+    agent_1_file = (
+        tmp_path / scoped_tenant / "agents" / "agent-1" / "PROFILE.md"
+    )
+    agent_2_file = (
+        tmp_path / scoped_tenant / "agents" / "agent-2" / "PROFILE.md"
+    )
     agent_1_file.parent.mkdir(parents=True, exist_ok=True)
     agent_2_file.parent.mkdir(parents=True, exist_ok=True)
     agent_1_file.write_text("agent-1\n", encoding="utf-8")
@@ -184,7 +196,7 @@ def test_init_isolates_different_agents_within_same_tenant(
     assert response.status_code == 200
     assert agent_1_file.read_text(encoding="utf-8") == "agent-1\nappend"
     assert agent_2_file.read_text(encoding="utf-8") == "agent-2\n"
-    assert manager.calls == [("agent-1", "tenant-a")]
+    assert manager.calls == [("agent-1", scoped_tenant)]
 
 
 def test_init_isolates_same_agent_id_across_tenants(
@@ -192,8 +204,14 @@ def test_init_isolates_same_agent_id_across_tenants(
     tmp_path: Path,
 ):
     client, manager = client_real_resolver
-    tenant_a_file = tmp_path / "tenant-a" / "agents" / "agent-1" / "PROFILE.md"
-    tenant_b_file = tmp_path / "tenant-b" / "agents" / "agent-1" / "PROFILE.md"
+    scoped_tenant_a = encode_scope_id("tenant-a", _DEFAULT_SOURCE_ID)
+    scoped_tenant_b = encode_scope_id("tenant-b", _DEFAULT_SOURCE_ID)
+    tenant_a_file = (
+        tmp_path / scoped_tenant_a / "agents" / "agent-1" / "PROFILE.md"
+    )
+    tenant_b_file = (
+        tmp_path / scoped_tenant_b / "agents" / "agent-1" / "PROFILE.md"
+    )
     tenant_a_file.parent.mkdir(parents=True, exist_ok=True)
     tenant_b_file.parent.mkdir(parents=True, exist_ok=True)
     tenant_a_file.write_text("tenant-a\n", encoding="utf-8")
@@ -223,8 +241,8 @@ def test_init_isolates_same_agent_id_across_tenants(
     assert tenant_a_file.read_text(encoding="utf-8") == "tenant-a\nappend"
     assert tenant_b_file.read_text(encoding="utf-8") == "tenant-b\nappend"
     assert manager.calls == [
-        ("agent-1", "tenant-a"),
-        ("agent-1", "tenant-b"),
+        ("agent-1", scoped_tenant_a),
+        ("agent-1", scoped_tenant_b),
     ]
 
 

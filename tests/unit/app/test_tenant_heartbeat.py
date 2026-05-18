@@ -18,6 +18,7 @@ _ORIGINAL_MODULES = {
         "swe.app.crons",
         "swe.agents.utils.file_handling",
         "swe.config",
+        "swe.config.utils",
         "swe.constant",
         "swe.app.crons.models",
         "swe.app.crons.heartbeat",
@@ -38,19 +39,25 @@ file_handling = types.ModuleType("swe.agents.utils.file_handling")
 file_handling.read_text_file_with_encoding_fallback = lambda path: ""
 sys.modules["swe.agents.utils.file_handling"] = file_handling
 
-config_module = types.ModuleType("swe.config")
-config_module.get_heartbeat_config = (
+config_package = types.ModuleType("swe.config")
+config_package.__path__ = [str(SRC_ROOT / "swe" / "config")]
+sys.modules["swe.config"] = config_package
+
+config_utils_module = types.ModuleType("swe.config.utils")
+config_utils_module.get_heartbeat_config = (
     lambda agent_id=None: types.SimpleNamespace(
         active_hours=None,
         target="main",
     )
 )
-config_module.get_heartbeat_query_path = lambda: Path("/global/HEARTBEAT.md")
-config_module.load_config = lambda: types.SimpleNamespace(
+config_utils_module.get_heartbeat_query_path = lambda: Path(
+    "/global/HEARTBEAT.md",
+)
+config_utils_module.load_config = lambda: types.SimpleNamespace(
     user_timezone="UTC",
     last_dispatch=None,
 )
-sys.modules["swe.config"] = config_module
+sys.modules["swe.config.utils"] = config_utils_module
 
 constant_module = types.ModuleType("swe.constant")
 constant_module.HEARTBEAT_FILE = "HEARTBEAT.md"
@@ -58,6 +65,7 @@ constant_module.HEARTBEAT_TARGET_LAST = "last"
 sys.modules["swe.constant"] = constant_module
 
 models_module = types.ModuleType("swe.app.crons.models")
+models_module.DEFAULT_CRON_TIMEOUT_SECONDS = 60
 models_module._crontab_dow_to_name = lambda value: value
 sys.modules["swe.app.crons.models"] = models_module
 

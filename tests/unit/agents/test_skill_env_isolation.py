@@ -36,21 +36,21 @@ def test_apply_skill_config_env_overrides_scopes_values_without_mutating_process
         lambda workspace_dir, channel_name: ["demo"],
     )
     monkeypatch.delenv("API_KEY", raising=False)
-    monkeypatch.delenv("SWE_SKILL_CONFIG_DEMO", raising=False)
+    monkeypatch.delenv("COPAW_SKILL_CONFIG_DEMO", raising=False)
 
     with skills_manager.apply_skill_config_env_overrides(
         workspace_dir,
         "console",
     ):
         assert os.environ.get("API_KEY") is None
-        assert os.environ.get("SWE_SKILL_CONFIG_DEMO") is None
+        assert os.environ.get("COPAW_SKILL_CONFIG_DEMO") is None
         assert EnvVarLoader.get_str("API_KEY") == "tenant-secret"
         assert (
-            EnvVarLoader.get_str("SWE_SKILL_CONFIG_DEMO")
+            EnvVarLoader.get_str("COPAW_SKILL_CONFIG_DEMO")
             == '{"API_KEY": "tenant-secret"}'
         )
 
     assert os.environ.get("API_KEY") is None
-    assert os.environ.get("SWE_SKILL_CONFIG_DEMO") is None
+    assert os.environ.get("COPAW_SKILL_CONFIG_DEMO") is None
     assert EnvVarLoader.get_str("API_KEY") == ""
-    assert EnvVarLoader.get_str("SWE_SKILL_CONFIG_DEMO") == ""
+    assert EnvVarLoader.get_str("COPAW_SKILL_CONFIG_DEMO") == ""

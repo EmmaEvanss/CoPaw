@@ -15,36 +15,38 @@ from agentscope_runtime.engine.schemas.agent_schemas import (
     TextContent,
 )
 
-from swe.app.channels.qq.channel import (
-    QQApiError,
-    QQChannel,
-    _as_bool,
-    _get_next_msg_seq,
-    _HeartbeatController,
-    _media_path,
-    _MESSAGE_EVENT_SPECS,
-    _sanitize_qq_text,
-    _send_message_async,
-    _should_plaintext_fallback_from_markdown,
-    _WSState,
-    MAX_QUICK_DISCONNECT_COUNT,
-    OP_DISPATCH,
-    OP_HEARTBEAT_ACK,
-    OP_HELLO,
-    OP_IDENTIFY,
-    OP_INVALID_SESSION,
-    OP_RECONNECT,
-    OP_RESUME,
-    RATE_LIMIT_DELAY,
-    RECONNECT_DELAYS,
+qq_channel_module = pytest.importorskip("swe.app.channels.qq.channel")
+
+QQApiError = qq_channel_module.QQApiError
+QQChannel = qq_channel_module.QQChannel
+_as_bool = qq_channel_module._as_bool
+_get_next_msg_seq = qq_channel_module._get_next_msg_seq
+_HeartbeatController = qq_channel_module._HeartbeatController
+_media_path = qq_channel_module._media_path
+_MESSAGE_EVENT_SPECS = qq_channel_module._MESSAGE_EVENT_SPECS
+_sanitize_qq_text = qq_channel_module._sanitize_qq_text
+_send_message_async = qq_channel_module._send_message_async
+_should_plaintext_fallback_from_markdown = (
+    qq_channel_module._should_plaintext_fallback_from_markdown
 )
+_WSState = qq_channel_module._WSState
+MAX_QUICK_DISCONNECT_COUNT = qq_channel_module.MAX_QUICK_DISCONNECT_COUNT
+OP_DISPATCH = qq_channel_module.OP_DISPATCH
+OP_HEARTBEAT_ACK = qq_channel_module.OP_HEARTBEAT_ACK
+OP_HELLO = qq_channel_module.OP_HELLO
+OP_IDENTIFY = qq_channel_module.OP_IDENTIFY
+OP_INVALID_SESSION = qq_channel_module.OP_INVALID_SESSION
+OP_RECONNECT = qq_channel_module.OP_RECONNECT
+OP_RESUME = qq_channel_module.OP_RESUME
+RATE_LIMIT_DELAY = qq_channel_module.RATE_LIMIT_DELAY
+RECONNECT_DELAYS = qq_channel_module.RECONNECT_DELAYS
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_channel(**overrides: Any) -> QQChannel:
+def _make_channel(**overrides: Any) -> Any:
     """Create a QQChannel with dummy process handler."""
 
     async def _noop_process(_request):

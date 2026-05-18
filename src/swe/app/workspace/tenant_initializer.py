@@ -49,18 +49,21 @@ class TenantInitializer:
             tenant_id: The tenant identifier.
             source_id: Optional source identifier from X-Source-Id header.
                 Used to select the appropriate default_{source} template.
-                When tenant_id is "default" and source_id is set, the
-                effective working directory becomes default_{source_id}.
+                Runtime-scoped working directories use the encoded scope_id
+                when source_id is present.
         """
-        from ...config.context import resolve_effective_tenant_id
+        from ...config.context import resolve_runtime_tenant_id
 
         self.base_working_dir = Path(base_working_dir).expanduser().resolve()
         self.tenant_id = tenant_id
-        self.source_id = source_id
+        self.source_id = source_id or None
         self.template_name = self._resolve_template_name()
-        self.effective_tenant_id = resolve_effective_tenant_id(
-            tenant_id,
-            source_id,
+        self.effective_tenant_id = (
+            resolve_runtime_tenant_id(
+                tenant_id,
+                self.source_id,
+            )
+            or tenant_id
         )
         self.tenant_dir = self.base_working_dir / self.effective_tenant_id
 

@@ -9,14 +9,22 @@ import subprocess
 import sys
 import threading
 import time
+import os
+from pathlib import Path
 
 import httpx
+import pytest
 
 
 def _find_free_port(host: str = "127.0.0.1") -> int:
     """Bind to portary 0 and return the OS-assigned free port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind((host, 0))
+        try:
+            sock.bind((host, 0))
+        except PermissionError as exc:
+            pytest.skip(
+                f"Current environment disallows local port binding: {exc}",
+            )
         sock.listen(1)
         return sock.getsockname()[1]
 
@@ -29,6 +37,18 @@ def _tee_stream(stream, buffer: list[str]) -> None:
             print(line, end="", flush=True)
     finally:
         stream.close()
+
+
+def _subprocess_env() -> dict[str, str]:
+    """Force subprocesses to import the current worktree sources."""
+    root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    pythonpath_parts = [str(root / "src")]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_parts.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    return env
 
 
 def test_app_startup_and_console() -> None:
@@ -54,6 +74,8 @@ def test_app_startup_and_console() -> None:
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        cwd=str(Path(__file__).resolve().parents[2]),
+        env=_subprocess_env(),
     )
 
     assert process.stdout is not None

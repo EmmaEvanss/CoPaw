@@ -114,3 +114,4 @@ src/.hypothesis/
 .agents
 /venv_market/
 /.mini-wiki/
+/venv_swe/

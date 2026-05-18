@@ -14,6 +14,8 @@ export interface MySkill {
   enabled: boolean;
   category?: string;
   creator_name?: string;
+  created_at?: string;  // 技能创建/接收时间
+  updated_at?: string;  // 技能最后更新时间
 }
 
 export interface FileTreeNode {

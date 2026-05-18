@@ -13,16 +13,19 @@ from typing import Any, Optional
 from .config import TracingConfig
 from ..database import DatabaseConnection
 from .models import (
+    BranchMetricItem,
     EventType,
     MCPToolUsage,
     MCPServerUsage,
     ModelUsage,
+    OverviewBranchBreakdown,
     OverviewStats,
     SessionListItem,
     SessionStats,
     SkillCallTimeline,
     SkillUsage,
     Span,
+    TaskStatusBreakdown,
     TimelineEvent,
     ToolCallInSkill,
     ToolUsage,
@@ -491,6 +494,8 @@ class TraceStore:
         top_skills: list,
         top_mcp_tools: list,
         mcp_servers: list,
+        branch_breakdown: OverviewBranchBreakdown,
+        task_status_breakdown: TaskStatusBreakdown,
     ) -> OverviewStats:
         """Build OverviewStats from collected data."""
         return OverviewStats(
@@ -517,6 +522,216 @@ class TraceStore:
             top_mcp_tools=top_mcp_tools,
             mcp_servers=mcp_servers,
             daily_trend=[],
+            branch_breakdown=branch_breakdown,
+            task_status_breakdown=task_status_breakdown,
+        )
+
+    def _normalize_bbk_name(self, bbk_id: Any) -> str:
+        """Convert BBK ID to display name and keep a stable fallback."""
+        if bbk_id is None:
+            return "未知分行"
+        bbk_text = str(bbk_id).strip()
+        if not bbk_text:
+            return "未知分行"
+        try:
+            from ..utils.bbk import get_bbk_name_by_id
+
+            return get_bbk_name_by_id(bbk_text) or bbk_text
+        except Exception:  # pylint: disable=broad-except
+            return bbk_text
+
+    def _build_branch_metric_rows(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> list[BranchMetricItem]:
+        """Build branch rows with percentage values for the dashboard."""
+        total = sum(float(row.get("value") or 0) for row in rows)
+        normalized_total = total if total > 0 else 1.0
+        result: list[BranchMetricItem] = []
+        for row in rows:
+            value = float(row.get("value") or 0)
+            bbk_id = str(row.get("bbk_id") or "")
+            result.append(
+                BranchMetricItem(
+                    bbk_id=bbk_id,
+                    bbk_name=self._normalize_bbk_name(bbk_id),
+                    value=value,
+                    percent=round((value / normalized_total) * 100, 1),
+                ),
+            )
+        return result
+
+    async def _db_get_branch_breakdown_metric(
+        self,
+        query: str,
+        params: tuple[Any, ...],
+    ) -> list[BranchMetricItem]:
+        """Execute one branch aggregation query and normalize the rows."""
+        rows = await self.db.fetch_all(query, params)
+        return self._build_branch_metric_rows(list(rows or []))
+
+    async def _db_get_branch_breakdown(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> OverviewBranchBreakdown:
+        """Collect real branch-level breakdown data for overview cards."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            trace_where = f"""
+                start_time >= %s AND start_time <= %s
+                AND source_id NOT IN ({exclude_placeholders})
+                AND user_id != 'default'
+                AND bbk_id IS NOT NULL AND bbk_id != ''
+            """
+            trace_params: tuple[Any, ...] = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+            )
+            span_where = f"""
+                start_time >= %s AND start_time <= %s
+                AND source_id NOT IN ({exclude_placeholders})
+                AND user_id != 'default'
+                AND bbk_id IS NOT NULL AND bbk_id != ''
+            """
+            span_params: tuple[Any, ...] = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+            )
+        else:
+            trace_where = """
+                source_id = %s AND start_time >= %s AND start_time <= %s
+                AND user_id != 'default'
+                AND bbk_id IS NOT NULL AND bbk_id != ''
+            """
+            trace_params = (source_id, start_date, end_date)
+            span_where = """
+                source_id = %s AND start_time >= %s AND start_time <= %s
+                AND user_id != 'default'
+                AND bbk_id IS NOT NULL AND bbk_id != ''
+            """
+            span_params = (source_id, start_date, end_date)
+
+        users_query = f"""
+            SELECT bbk_id, COUNT(DISTINCT user_id) AS value
+            FROM swe_tracing_traces
+            WHERE {trace_where}
+            GROUP BY bbk_id
+            ORDER BY value DESC
+            LIMIT 5
+        """
+        conversations_query = f"""
+            SELECT bbk_id, COUNT(*) AS value
+            FROM swe_tracing_traces
+            WHERE {trace_where}
+            GROUP BY bbk_id
+            ORDER BY value DESC
+            LIMIT 5
+        """
+        sessions_query = f"""
+            SELECT bbk_id, COUNT(DISTINCT session_id) AS value
+            FROM swe_tracing_traces
+            WHERE {trace_where}
+            GROUP BY bbk_id
+            ORDER BY value DESC
+            LIMIT 5
+        """
+        tokens_query = f"""
+            SELECT bbk_id, COALESCE(SUM(total_tokens), 0) AS value
+            FROM swe_tracing_traces
+            WHERE {trace_where}
+            GROUP BY bbk_id
+            ORDER BY value DESC
+            LIMIT 5
+        """
+        skills_query = f"""
+            SELECT bbk_id, COUNT(*) AS value
+            FROM swe_tracing_spans
+            WHERE {span_where}
+              AND event_type = 'skill_invocation'
+              AND skill_name IS NOT NULL
+            GROUP BY bbk_id
+            ORDER BY value DESC
+            LIMIT 5
+        """
+
+        return OverviewBranchBreakdown(
+            users=await self._db_get_branch_breakdown_metric(
+                users_query,
+                trace_params,
+            ),
+            conversations=await self._db_get_branch_breakdown_metric(
+                conversations_query,
+                trace_params,
+            ),
+            sessions=await self._db_get_branch_breakdown_metric(
+                sessions_query,
+                trace_params,
+            ),
+            tokens=await self._db_get_branch_breakdown_metric(
+                tokens_query,
+                trace_params,
+            ),
+            skills=await self._db_get_branch_breakdown_metric(
+                skills_query,
+                span_params,
+            ),
+        )
+
+    async def _db_get_task_status_breakdown(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> TaskStatusBreakdown:
+        """Collect real task status counts for the execution summary card."""
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT status, COUNT(*) AS count
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                GROUP BY status
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (start_date, end_date, *EXCLUDED_SOURCE_IDS),
+            )
+        else:
+            query = """
+                SELECT status, COUNT(*) AS count
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
+                GROUP BY status
+            """
+            rows = await self.db.fetch_all(
+                query,
+                (source_id, start_date, end_date),
+            )
+
+        success = 0
+        failed = 0
+        running = 0
+        for row in rows or []:
+            status = str(row.get("status") or "").lower()
+            count = int(row.get("count") or 0)
+            if status == "completed":
+                success += count
+            elif status == "running":
+                running += count
+            else:
+                failed += count
+
+        return TaskStatusBreakdown(
+            success=success,
+            failed=failed,
+            running=running,
         )
 
     async def get_overview_stats(
@@ -571,6 +786,16 @@ class TraceStore:
             start_date,
             end_date,
         )
+        branch_breakdown = await self._db_get_branch_breakdown(
+            source_id,
+            start_date,
+            end_date,
+        )
+        task_status_breakdown = await self._db_get_task_status_breakdown(
+            source_id,
+            start_date,
+            end_date,
+        )
         top_skills = await self._db_get_top_skills(
             source_id,
             start_date,
@@ -592,6 +817,8 @@ class TraceStore:
             top_skills,
             top_mcp_tools,
             mcp_servers,
+            branch_breakdown,
+            task_status_breakdown,
         )
 
     async def get_channel_distribution(
@@ -746,7 +973,7 @@ class TraceStore:
             time_range: day/week/month/custom (used to calculate previous period)
 
         Returns:
-            Dict with callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth
+            Dict with callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth, avgDurationGrowth
         """
         if self.db is None or not self.db.is_connected:
             logger.error("Database not connected in get_growth_stats")
@@ -815,7 +1042,7 @@ class TraceStore:
                 "sessions": stats_row.get("sessions") or 0,
                 "users": stats_row.get("users") or 0,
                 "platforms": stats_row.get("platforms") or 0,
-                "avg_duration": float(stats_row.get("avg_duration") or 0),
+                "avg_duration": stats_row.get("avg_duration") or 0,
             }
 
         curr = await get_stats(start_date, end_date)

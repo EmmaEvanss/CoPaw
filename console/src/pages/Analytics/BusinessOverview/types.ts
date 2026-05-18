@@ -1,40 +1,3 @@
-/**
- * BusinessOverview 工具函数和类型定义
- */
-
-// ============================================================
-// 机构映射（从公共常量导入）
-// ============================================================
-
-export { BBK_ID_TO_NAME_MAP as BBK_NAME_MAP, getBbkDisplayName } from "../../../constants/bbk";
-
-// ============================================================
-// 类型定义
-// ============================================================
-
-export interface StatCard {
-  value: number;
-  label: string;
-  change?: number;
-  suffix?: string;
-  prefix?: string;
-}
-
-export interface PieChartData {
-  name: string;
-  value: number;
-}
-
-export interface LineChartData {
-  date: string;
-  value: number;
-}
-
-export interface BarChartData {
-  name: string;
-  value: number;
-}
-
 export interface UserRow {
   userId: string;
   userName?: string;
@@ -45,116 +8,6 @@ export interface UserRow {
   lastActive: string;
 }
 
-export interface SkillRow {
-  name: string;
-  calls: number;
-  tokens: number;
-}
-
-export interface TrendData {
-  date: string;
-  calls: number;
-  tokens: number;
-  users: number;
-}
-
-export interface MetricCardData {
-  totalCalls: number;
-  callsGrowth: number;
-  totalTokens: number;
-  tokensGrowth: number;
-  avgResponseTime: number;
-  responseTimeGrowth: number;
-  avgDuration: number;
-  durationGrowth: number;
-  sessionCount: number;
-  sessionGrowth: number;
-}
-
-export type TimeRange = "day" | "week" | "month" | "custom";
-
-// ============================================================
-// 工具函数
-// ============================================================
-
-/**
- * 格式化数字（大数字用K/M表示）
- */
-export function formatNumber(value: number | string | undefined | null, decimals: number = 1): string {
-  // 统一转换为数字
-  const numValue = Number(value);
-  if (isNaN(numValue)) {
-    return "0";
-  }
-  if (numValue >= 1000000) {
-    return `${(numValue / 1000000).toFixed(decimals)}M`;
-  }
-  if (numValue >= 1000) {
-    return `${(numValue / 1000).toFixed(decimals)}K`;
-  }
-  return numValue.toString();
-}
-
-/**
- * 格式化Token数量
- */
-export function formatTokens(value: number | string | undefined | null): string {
-  // 统一转换为数字
-  const numValue = Number(value);
-  if (isNaN(numValue)) {
-    return "0";
-  }
-  if (numValue >= 1000000000) {
-    return `${(numValue / 1000000000).toFixed(2)}B`;
-  }
-  if (numValue >= 1000000) {
-    return `${(numValue / 1000000).toFixed(1)}M`;
-  }
-  if (numValue >= 1000) {
-    return `${(numValue / 1000).toFixed(0)}K`;
-  }
-  return numValue.toString();
-}
-
-/**
- * 格式化百分比变化
- */
-export function formatChange(value: number | undefined | null): string {
-  // 确保是数字，如果是 undefined/null/对象等非数字类型则使用 0
-  const numValue = typeof value === "number" && !isNaN(value) ? value : 0;
-  const sign = numValue > 0 ? "+" : "";
-  return `${sign}${numValue.toFixed(1)}%`;
-}
-
-/**
- * 格式化响应时间
- */
-export function formatDuration(seconds: number | undefined | null): string {
-  // 确保是数字，非数字类型转为 0
-  const numValue = typeof seconds === "number" && !isNaN(seconds) ? seconds : 0;
-  if (numValue < 1) {
-    return `${(numValue * 1000).toFixed(0)}ms`;
-  }
-  return `${numValue.toFixed(1)}s`;
-}
-
-/**
- * 截断长名称，保持固定长度
- * @param name 原始名称
- * @param maxLength 最大长度，默认20
- * @returns 截断后的名称，超出部分显示为...
- */
-export function truncateName(name: string, maxLength: number = 20): string {
-  if (!name) return "";
-  if (name.length <= maxLength) return name;
-  return name.slice(0, maxLength) + "...";
-}
-
-// ============================================================
-// Modal 相关类型
-// ============================================================
-
-// 用户详情 Modal 状态类型
 export interface UserDetailModalProps {
   open: boolean;
   userId: string | null;
@@ -162,4 +15,144 @@ export interface UserDetailModalProps {
   endDate?: string;
   sourceId?: string;
   onClose: () => void;
+}
+
+export interface BreakdownItem {
+  name: string;
+  value: number;
+  valueText: string;
+}
+
+export interface OverviewMetricCard {
+  key: string;
+  title: string;
+  valueText: string;
+  changeText: string;
+  changeDirection: "up" | "down" | "flat";
+  accentColor: string;
+  breakdown: BreakdownItem[];
+}
+
+export interface DepthStatCard {
+  key: string;
+  title: string;
+  valueText: string;
+  changeText: string;
+  changeDirection: "up" | "down" | "flat";
+}
+
+export interface SummaryLegendItem {
+  key: string;
+  label: string;
+  value: number;
+  color: string;
+}
+
+export interface TrendDatum {
+  date: string;
+  calls: number;
+  users: number;
+}
+
+export type TimeRange = "day" | "week" | "month" | "custom";
+
+const BBK_NAME_MAP: Record<string, string> = {
+  "100": "总行",
+  "200": "北京分行",
+  "201": "上海分行",
+  "202": "深圳分行",
+  "203": "广州分行",
+  "204": "杭州分行",
+  "205": "苏州分行",
+  "206": "南京分行",
+};
+
+export function formatNumber(
+  value: number | string | undefined | null,
+  decimals = 0,
+): string {
+  const numberValue = Number(value);
+  if (Number.isNaN(numberValue)) {
+    return "0";
+  }
+  return new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: decimals,
+  }).format(numberValue);
+}
+
+export function formatTokens(
+  value: number | string | undefined | null,
+): string {
+  const numberValue = Number(value);
+  if (Number.isNaN(numberValue)) {
+    return "0";
+  }
+  return formatNumber(numberValue, 0);
+}
+
+export function formatPercent(value: number | undefined | null): string {
+  const numberValue =
+    typeof value === "number" && !Number.isNaN(value) ? value : 0;
+  return `${numberValue.toFixed(1)}%`;
+}
+
+export function formatChange(value: number | undefined | null): string {
+  if (value === null || value === undefined) {
+    return "--";
+  }
+  const numberValue =
+    typeof value === "number" && !Number.isNaN(value) ? value : 0;
+  const sign = numberValue > 0 ? "+" : "";
+  return `${sign}${numberValue.toFixed(1)}%`;
+}
+
+export function formatDuration(seconds: number | undefined | null): string {
+  const numberValue =
+    typeof seconds === "number" && !Number.isNaN(seconds) ? seconds : 0;
+
+  if (numberValue < 1) {
+    return `${Math.round(numberValue * 1000)}ms`;
+  }
+  if (numberValue < 60) {
+    return `${numberValue.toFixed(2).replace(/\.00$/, "")}s`;
+  }
+
+  const minutes = Math.floor(numberValue / 60);
+  const remainSeconds = Math.floor(numberValue % 60);
+  return `${minutes}m ${remainSeconds}s`;
+}
+
+export function toChangeDirection(
+  value: number | undefined | null,
+): "up" | "down" | "flat" {
+  if (value === null || value === undefined) {
+    return "flat";
+  }
+  const numberValue =
+    typeof value === "number" && !Number.isNaN(value) ? value : 0;
+  if (numberValue > 0) {
+    return "up";
+  }
+  if (numberValue < 0) {
+    return "down";
+  }
+  return "flat";
+}
+
+export function truncateName(name: string, maxLength = 20): string {
+  if (!name) {
+    return "";
+  }
+  if (name.length <= maxLength) {
+    return name;
+  }
+  return `${name.slice(0, maxLength)}...`;
+}
+
+export function getBbkDisplayName(bbkId?: string): string {
+  if (!bbkId) {
+    return "-";
+  }
+  return BBK_NAME_MAP[bbkId] || bbkId;
 }

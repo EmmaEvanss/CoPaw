@@ -26,13 +26,13 @@ export default function MyMCPPage() {
     selectedMCP,
     loading,
     detailLoading,
-    testResult,
     refreshList,
     fetchDetail,
     deleteMCP,
     toggleMCP,
     testConnection,
-    clearTestResult,
+    isTesting,
+    getTestResult,
   } = useMyMCP();
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -41,7 +41,6 @@ export default function MyMCPPage() {
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [editingClientKey, setEditingClientKey] = useState<string | null>(null);
   const [publishClientKey, setPublishClientKey] = useState<string>("");
-  const [testing, setTesting] = useState(false);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   );
@@ -77,9 +76,8 @@ export default function MyMCPPage() {
   const handleItemClick = useCallback(
     (item: MyMCPListItem) => {
       void fetchDetail(item.client_key);
-      clearTestResult();
     },
-    [fetchDetail, clearTestResult]
+    [fetchDetail]
   );
 
   const handleDelete = useCallback(
@@ -112,15 +110,12 @@ export default function MyMCPPage() {
     [toggleMCP, togglingClientKey]
   );
 
-  const handleTest = useCallback(async () => {
-    if (!selectedMCP) return;
-    setTesting(true);
-    try {
-      await testConnection(selectedMCP.client_key);
-    } finally {
-      setTesting(false);
-    }
-  }, [selectedMCP, testConnection]);
+  const handleTest = useCallback(
+    async (clientKey: string) => {
+      await testConnection(clientKey);
+    },
+    [testConnection]
+  );
 
   const openCreateModal = useCallback(() => {
     setEditingClientKey(null);
@@ -136,6 +131,11 @@ export default function MyMCPPage() {
     setPublishClientKey(clientKey);
     setPublishModalOpen(true);
   }, []);
+
+  // 获取当前选中 MCP 的测试状态和结果
+  const currentClientKey = selectedMCP?.client_key;
+  const testing = currentClientKey ? isTesting(currentClientKey) : false;
+  const testResult = currentClientKey ? getTestResult(currentClientKey) : null;
 
   return (
     <div
@@ -354,7 +354,9 @@ export default function MyMCPPage() {
             onEdit={openEditModal}
             onDelete={(mcp) => void handleDelete(mcp.client_key)}
             onToggle={handleToggle}
-            onTest={() => void handleTest()}
+            onTest={() => {
+              if (currentClientKey) void handleTest(currentClientKey);
+            }}
             onPublish={openPublishModal}
           />
         )}

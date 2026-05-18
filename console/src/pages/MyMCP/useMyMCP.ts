@@ -1,5 +1,6 @@
 /**
  * 我的 MCP 状态管理 Hook
+ * 支持多个 MCP 并发测试，互不影响
  */
 import { useState, useCallback } from "react";
 import { myMcpApi } from "../../api/modules/myMcp";
@@ -16,8 +17,10 @@ export function useMyMCP() {
   const [selectedMCP, setSelectedMCP] = useState<MyMCPDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [testResult, setTestResult] = useState<MCPTestResult | null>(null);
-  const [testLoading, setTestLoading] = useState(false);
+  // 支持并发测试：用 Record 存储每个 clientKey 的测试结果
+  const [testResults, setTestResults] = useState<Record<string, MCPTestResult>>({});
+  // 用 Set 存储正在测试的 clientKeys
+  const [testingKeys, setTestingKeys] = useState<Set<string>>(new Set());
 
   // 刷新 MCP 列表
   const refreshList = useCallback(async () => {
@@ -102,13 +105,14 @@ export function useMyMCP() {
     }
   }, [refreshList, selectedMCP]);
 
-  // 测试 MCP 连接
+  // 测试 MCP 连接（支持并发测试）
   const testConnection = useCallback(async (clientKey: string) => {
-    setTestLoading(true);
-    setTestResult(null);
+    // 添加到测试中的 Set
+    setTestingKeys((prev) => new Set(prev).add(clientKey));
     try {
       const result = await myMcpApi.testMyMCPConnection(clientKey);
-      setTestResult(result);
+      // 存储对应 clientKey 的测试结果
+      setTestResults((prev) => ({ ...prev, [clientKey]: result }));
       return result;
     } catch (err) {
       console.error("测试 MCP 连接失败:", err);
@@ -117,25 +121,47 @@ export function useMyMCP() {
         tools: [],
         error: String(err),
       };
-      setTestResult(errorResult);
+      // 存储对应 clientKey 的错误结果
+      setTestResults((prev) => ({ ...prev, [clientKey]: errorResult }));
       return errorResult;
     } finally {
-      setTestLoading(false);
+      // 从测试中的 Set 移除
+      setTestingKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(clientKey);
+        return next;
+      });
     }
   }, []);
 
-  // 清除测试结果
-  const clearTestResult = useCallback(() => {
-    setTestResult(null);
+  // 清除指定 clientKey 的测试结果
+  const clearTestResult = useCallback((clientKey: string) => {
+    setTestResults((prev) => {
+      const next = { ...prev };
+      delete next[clientKey];
+      return next;
+    });
   }, []);
+
+  // 检查指定 clientKey 是否正在测试
+  const isTesting = useCallback(
+    (clientKey: string) => testingKeys.has(clientKey),
+    [testingKeys]
+  );
+
+  // 获取指定 clientKey 的测试结果
+  const getTestResult = useCallback(
+    (clientKey: string) => testResults[clientKey] ?? null,
+    [testResults]
+  );
 
   return {
     mcpList,
     selectedMCP,
     loading,
     detailLoading,
-    testResult,
-    testLoading,
+    testResults,
+    testingKeys,
     refreshList,
     fetchDetail,
     createMCP,
@@ -144,6 +170,8 @@ export function useMyMCP() {
     toggleMCP,
     testConnection,
     clearTestResult,
+    isTesting,
+    getTestResult,
     setSelectedMCP,
   };
 }

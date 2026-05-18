@@ -100,6 +100,10 @@ async def get_overview(
         None,
         description="数据源标识，使用 'all' 查询所有平台",
     ),
+    bbk_id: Optional[str] = Query(
+        None,
+        description="分行ID筛选",
+    ),
     start_date: Optional[str] = Query(
         None,
         description="开始日期 (YYYY-MM-DD)",
@@ -110,6 +114,7 @@ async def get_overview(
 
     Args:
         source_id: 数据源标识（使用 'all' 或留空查询所有平台）
+        bbk_id: 分行ID筛选
         start_date: 可选的开始日期筛选
         end_date: 可选的结束日期筛选
 
@@ -123,7 +128,7 @@ async def get_overview(
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    return await service.get_overview_stats(actual_source_id, start, end)
+    return await service.get_overview_stats(actual_source_id, start, end, bbk_id)
 
 
 # ===== 用户分析 =====
@@ -677,18 +682,9 @@ async def get_growth_stats(
         "day",
         description="时间范围: day, week, month, custom",
     ),
+    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
-    """获取环比增长统计.
-
-    Args:
-        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
-        start_date: 当前周期开始日期 (YYYY-MM-DD)
-        end_date: 当前周期结束日期 (YYYY-MM-DD)
-        time_range: 时间范围类型，用于计算上一周期
-
-    Returns:
-        环比增长：callsGrowth, tokensGrowth, sessionGrowth, userGrowth, platformGrowth, avgDurationGrowth
-    """
+    """获取环比增长统计."""
     actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
@@ -705,6 +701,7 @@ async def get_growth_stats(
         start,
         end,
         time_range,
+        bbk_id,
     )
 
 
@@ -723,24 +720,44 @@ async def get_daily_trend(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
-    """获取日趋势数据.
-
-    Args:
-        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
-        start_date: 开始日期筛选
-        end_date: 结束日期筛选
-
-    Returns:
-        趋势数据列表：{ date, calls, tokens, users }
-    """
+    """获取日趋势数据."""
     actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    trend = await service.get_daily_trend(actual_source_id, start, end)
+    trend = await service.get_daily_trend(actual_source_id, start, end, bbk_id)
+    return {"trendData": trend}
+
+
+@router.get("/hourly-trend", response_model=dict)
+async def get_hourly_trend(
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="Source ID filter, use 'all' for all platforms",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="Start date (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(
+        None,
+        description="End date (YYYY-MM-DD)",
+    ),
+    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
+) -> dict:
+    """Get hourly trend data for single-day charts."""
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    trend = await service.get_hourly_trend(actual_source_id, start, end, bbk_id)
     return {"trendData": trend}
 
 
@@ -827,19 +844,9 @@ async def get_skill_usage(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
-    """获取技能调用排行榜（分页）.
-
-    Args:
-        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
-        page: 页码
-        page_size: 每页数量
-        start_date: 开始日期筛选
-        end_date: 结束日期筛选
-
-    Returns:
-        分页的技能调用排行榜
-    """
+    """获取技能调用排行榜（分页）."""
     actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
@@ -852,6 +859,7 @@ async def get_skill_usage(
         page_size,
         start,
         end,
+        bbk_id,
     )
     return {
         "items": [s.model_dump() for s in skills],
@@ -929,19 +937,9 @@ async def get_mcp_usage(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
-    """获取 MCP 服务调用排行榜（分页）.
-
-    Args:
-        source_id: 数据源标识（使用 'all' 或留空查询所有平台）
-        page: 页码
-        page_size: 每页数量
-        start_date: 开始日期筛选
-        end_date: 结束日期筛选
-
-    Returns:
-        分页的 MCP 服务调用排行榜
-    """
+    """获取 MCP 服务调用排行榜（分页）."""
     actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
@@ -954,6 +952,7 @@ async def get_mcp_usage(
         page_size,
         start,
         end,
+        bbk_id,
     )
     return {
         "items": [s.model_dump() for s in servers],

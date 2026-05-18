@@ -18,6 +18,29 @@ export interface OverviewStats {
   top_mcp_tools: MCPToolUsage[];
   mcp_servers: MCPServerUsage[];
   daily_trend: DailyStats[];
+  branch_breakdown: OverviewBranchBreakdown;
+  task_status_breakdown: TaskStatusBreakdown;
+}
+
+export interface BranchMetricItem {
+  bbk_id: string;
+  bbk_name: string;
+  value: number;
+  percent: number;
+}
+
+export interface OverviewBranchBreakdown {
+  users: BranchMetricItem[];
+  conversations: BranchMetricItem[];
+  sessions: BranchMetricItem[];
+  tokens: BranchMetricItem[];
+  skills: BranchMetricItem[];
+}
+
+export interface TaskStatusBreakdown {
+  success: number;
+  failed: number;
+  running: number;
 }
 
 export interface ModelUsage {
@@ -270,11 +293,13 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
+    bbkId?: string,
   ): Promise<OverviewStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
+    if (bbkId) params.append("bbk_id", bbkId);
     return request(`/monitor/tracing/overview?${params.toString()}`);
   },
 
@@ -324,7 +349,9 @@ export const tracingApi = {
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
-    return request(`/monitor/tracing/users/${encodeURIComponent(userId)}${query}`);
+    return request(
+      `/monitor/tracing/users/${encodeURIComponent(userId)}${query}`,
+    );
   },
 
   getTraces: async (
@@ -480,7 +507,9 @@ export const tracingApi = {
     }
     // Use the proper API URL and include authorization token
     const { getApiUrl } = await import("../config");
-    const url = getApiUrl(`/monitor/tracing/user-messages/export?${params.toString()}`);
+    const url = getApiUrl(
+      `/monitor/tracing/user-messages/export?${params.toString()}`,
+    );
     const headers = new Headers(buildAuthHeaders());
     const response = await fetch(url, { headers });
     if (!response.ok) {
@@ -501,7 +530,9 @@ export const tracingApi = {
   },
 
   // Timeline with skill hierarchy
-  getTraceTimeline: async (traceId: string): Promise<TraceDetailWithTimeline> => {
+  getTraceTimeline: async (
+    traceId: string,
+  ): Promise<TraceDetailWithTimeline> => {
     return request(`/monitor/tracing/traces/${traceId}/timeline`);
   },
 
@@ -539,19 +570,20 @@ export const tracingApi = {
     endDate: string,
     timeRange: string = "day",
     sourceId?: string,
+    bbkId?: string,
   ): Promise<{
-    callsGrowth: number;
-    tokensGrowth: number;
-    sessionGrowth: number;
-    userGrowth: number;
-    platformGrowth: number;
-    avgDurationGrowth: number;
+    callsGrowth: number | null;
+    tokensGrowth: number | null;
+    sessionGrowth: number | null;
+    userGrowth: number | null;
+    skillGrowth: number | null;
   }> => {
     const params = new URLSearchParams();
     params.append("start_date", startDate);
     params.append("end_date", endDate);
     params.append("time_range", timeRange);
     if (sourceId) params.append("source_id", sourceId);
+    if (bbkId) params.append("bbk_id", bbkId);
     return request(`/monitor/tracing/growth-stats?${params.toString()}`);
   },
 
@@ -559,6 +591,7 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
+    bbkId?: string,
   ): Promise<{
     trendData: { date: string; calls: number; tokens: number; users: number }[];
   }> => {
@@ -566,11 +599,29 @@ export const tracingApi = {
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     if (sourceId) params.append("source_id", sourceId);
+    if (bbkId) params.append("bbk_id", bbkId);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/daily-trend${query}`);
   },
 
   // 技能调用排行榜（分页）
+  getHourlyTrend: async (
+    startDate?: string,
+    endDate?: string,
+    sourceId?: string,
+    bbkId?: string,
+  ): Promise<{
+    trendData: { date: string; calls: number; tokens: number; users: number }[];
+  }> => {
+    const params = new URLSearchParams();
+    if (startDate) params.append("start_date", startDate);
+    if (endDate) params.append("end_date", endDate);
+    if (sourceId) params.append("source_id", sourceId);
+    if (bbkId) params.append("bbk_id", bbkId);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/hourly-trend${query}`);
+  },
+
   getSkills: async (
     page = 1,
     pageSize = 10,
@@ -578,6 +629,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: SkillUsage[];
@@ -605,6 +657,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -621,7 +674,9 @@ export const tracingApi = {
       });
     }
     return request(
-      `/monitor/tracing/skills/${encodeURIComponent(skillName)}/traces?${params.toString()}`,
+      `/monitor/tracing/skills/${encodeURIComponent(
+        skillName,
+      )}/traces?${params.toString()}`,
     );
   },
 
@@ -633,6 +688,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
+      bbk_id?: string;
     },
   ): Promise<{
     items: MCPServerUsage[];

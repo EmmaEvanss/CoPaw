@@ -30,7 +30,7 @@ from .fs import (
     load_mcp_config,
     save_index,
     save_mcp_config,
-    sanitize_skill_name,
+    normalize_skill_name,
 )
 from .models import MarketItem
 from .schemas import (
@@ -336,6 +336,31 @@ def _read_preview_file(root: Path, file_path: str) -> tuple[str | None, str]:
         return None, "binary"
     except Exception:
         return None, "error"
+
+
+def _parse_md_frontmatter(
+    md_content: str,
+    fallback_name: str,
+) -> tuple[str, str]:
+    """从 SKILL.md frontmatter 中提取 name 和 description."""
+    try:
+        end_idx = md_content.index("---", 3)
+        fm_text = md_content[3:end_idx].strip()
+    except ValueError:
+        return fallback_name, ""
+
+    name = fallback_name
+    description = ""
+    for line in fm_text.split("\n"):
+        if ":" in line:
+            key, val = line.split(":", 1)
+            key = key.strip().lower()
+            val = val.strip()
+            if key == "name" and val:
+                name = val
+            elif key == "description" and val:
+                description = val
+    return name, description
 
 
 class MarketplaceService:
@@ -825,8 +850,8 @@ class MarketplaceService:
         if item is None:
             raise ValueError(f"Item {item_id} not found in source {source_id}")
 
-        # 将技能名称转换为安全的目录名（处理空格、斜杠等非法字符）
-        safe_skill_name = sanitize_skill_name(item.name)
+        # 将技能名称规范化为目录名（保留中文等 Unicode 字符）
+        safe_skill_name = normalize_skill_name(item.name)
 
         target_users = await self._resolve_target_users(source_id, req)
         count = 0
@@ -918,16 +943,37 @@ class MarketplaceService:
             if not skill_dir.is_dir():
                 continue
             skill_json_path = skill_dir / "skill.json"
+
+            # 无 skill.json 时视为「我创建的」，从 SKILL.md 尝试提取展示名
             if not skill_json_path.exists():
-                continue
-            try:
-                data = json.loads(skill_json_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                continue
+                data = {"source": "customized"}
+                display_name = skill_dir.name
+                description = ""
+                # 尝试从 SKILL.md frontmatter 提取名称
+                skill_md_path = skill_dir / "SKILL.md"
+                if skill_md_path.exists():
+                    try:
+                        md_content = skill_md_path.read_text(encoding="utf-8")
+                        if md_content.startswith("---"):
+                            display_name, description = _parse_md_frontmatter(
+                                md_content,
+                                display_name,
+                            )
+                    except Exception:
+                        pass
+            else:
+                try:
+                    data = json.loads(
+                        skill_json_path.read_text(encoding="utf-8"),
+                    )
+                except (json.JSONDecodeError, OSError):
+                    continue
+                skill_name = skill_dir.name
+                # 从 skill.json 的 name 字段获取展示名称，如果没有则用目录名
+                display_name = data.get("name") or skill_name
+                description = data.get("description", "")
 
             skill_name = skill_dir.name
-            # 从 skill.json 的 name 字段获取展示名称，如果没有则用目录名
-            display_name = data.get("name") or skill_name
             source = data.get("source", "customized")
             is_received = source.startswith("marketplace:")
             received_version = data.get("received_version")
@@ -949,7 +995,7 @@ class MarketplaceService:
                     skill_name=skill_name,
                     display_name=display_name,
                     source=source,
-                    description=data.get("description", ""),
+                    description=description,
                     version=data.get("version"),
                     received_version=received_version,
                     distributed_by=data.get("distributed_by"),
@@ -960,6 +1006,8 @@ class MarketplaceService:
                     creator_name=_decode_creator_name(
                         data.get("creator_name", ""),
                     ),
+                    created_at=data.get("created_at"),
+                    updated_at=data.get("updated_at"),
                 ),
             )
         return result
@@ -1122,10 +1170,11 @@ class MarketplaceService:
         skill_name: str,
         file_path: str,
         content: str,
+        user_name: str | None = None,
         agent_id: str = "default",
         source_id: str | None = None,
     ) -> bool:
-        """保存技能文件内容."""
+        """保存技能文件内容，自动创建 skill.json（如不存在）."""
         skills_dir = get_user_skills_dir(
             self.swe_root,
             user_id,
@@ -1145,6 +1194,57 @@ class MarketplaceService:
 
         try:
             target.write_text(content, encoding="utf-8")
+
+            # 处理 skill.json：自动创建或更新
+            skill_json_path = skill_dir / "skill.json"
+            current_time = datetime.now(timezone.utc).isoformat()
+
+            if skill_json_path.exists():
+                # 更新现有 skill.json 的 updated_at
+                try:
+                    skill_data = json.loads(
+                        skill_json_path.read_text(encoding="utf-8"),
+                    )
+                    skill_data["updated_at"] = current_time
+                    skill_json_path.write_text(
+                        json.dumps(skill_data, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                except (json.JSONDecodeError, OSError) as e:
+                    logger.warning(
+                        "Failed to update skill.json updated_at: %s",
+                        e,
+                    )
+            else:
+                # 自动创建基础 skill.json
+                base_skill_data = {
+                    "name": skill_name,
+                    "description": "",
+                    "version": "1.0.0",
+                    "creator_id": user_id,
+                    "creator_name": user_name or "",
+                    "created_at": current_time,
+                    "source": "customized",
+                }
+                try:
+                    skill_json_path.write_text(
+                        json.dumps(
+                            base_skill_data,
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+                    logger.info(
+                        "Auto-created skill.json for %s",
+                        skill_name,
+                    )
+                except OSError as e:
+                    logger.warning(
+                        "Failed to auto-create skill.json: %s",
+                        e,
+                    )
+
             return True
         except Exception:
             return False

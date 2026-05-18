@@ -1,0 +1,442 @@
+/* 我的技能页面样式 - 适配暖色调配色体系 */
+
+/* Markdown 预览样式 - 复用 SkillDetailDrawer */
+.streamingMarkdown {
+  font-size: 15px;
+  line-height: 1.85;
+  color: rgba(20, 20, 19, 0.94);
+  font-weight: 400;
+  letter-spacing: 0.005em;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+
+  p {
+    margin: 0 0 0.6em;
+  }
+
+  p:last-child {
+    margin-bottom: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+    margin-top: 0.8em;
+    margin-bottom: 0.4em;
+    color: #141413;
+    line-height: 1.35;
+  }
+
+  h1 {
+    font-size: 1.5em;
+  }
+
+  h2 {
+    font-size: 1.25em;
+  }
+
+  h3 {
+    font-size: 1.125em;
+  }
+
+  h4,
+  h5,
+  h6 {
+    font-size: 1em;
+  }
+
+  ul,
+  ol {
+    margin: 0 0 0.6em 1.4em;
+    padding-left: 0.2em;
+  }
+
+  ul {
+    list-style-type: disc;
+  }
+
+  ol {
+    list-style-type: decimal;
+  }
+
+  li {
+    margin-bottom: 0.25em;
+  }
+
+  code {
+    padding: 0.125em 0.25em;
+    border-radius: 3px;
+    font-size: 0.84em;
+    border: 1px solid rgba(220, 220, 220, 0.7);
+    background: #f5f5f5;
+    margin-inline: 2px;
+    font-family: "SF Mono", "Consolas", "Monaco", monospace;
+  }
+
+  pre {
+    background-color: #f6f6f6;
+    padding: 0.6em 0.8em;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin-bottom: 0.6em;
+    border: 1px solid rgba(200, 200, 200, 0.2);
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  pre code {
+    background-color: transparent;
+    padding: 0;
+    border: none;
+    margin: 0;
+  }
+
+  blockquote {
+    border-left: 3px solid #d3d3d3;
+    padding-left: 0.8em;
+    margin: 0 0 0.6em;
+    color: #6b6b6b;
+  }
+
+  a {
+    color: #1890ff;
+    text-decoration: underline;
+  }
+
+  a:hover {
+    opacity: 0.85;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.6em;
+    display: block;
+    overflow-x: auto;
+  }
+
+  th,
+  td {
+    border: 1px solid #f0f0f0;
+    padding: 0.4em;
+    text-align: left;
+    min-width: 70px;
+  }
+
+  th {
+    background-color: #fafafa;
+    font-weight: 600;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid #f0f0f0;
+    margin: 0.8em 0;
+  }
+
+  img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    display: block;
+  }
+}
+
+/* 编辑态样式 - 琥珀暖色调（淡化版） */
+.editModeContainer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #fdebd6;
+  background-color: #fefaf5;
+  overflow: hidden;
+}
+
+.editModeTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background-color: #fefaf5;
+  color: #c4956a;
+  border: 1px solid #fdebd6;
+}
+
+.editModeTextarea {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #fdebd6;
+  background-color: #fff;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  overflow-y: auto;
+
+  &:focus {
+    border-color: #c4956a;
+    box-shadow: 0 0 0 2px rgba(196, 149, 106, 0.1);
+  }
+}
+
+.frontmatterNote {
+  font-size: 12px;
+  color: #874d00;
+  padding: 6px 10px;
+  background-color: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 6px;
+}
+
+/* 分组样式 */
+.skillGroupCard {
+  border-radius: 16px;
+  border: 1px solid #f0eee6;
+  background-color: #fff;
+  padding: 6px;
+  box-shadow: rgba(0, 0, 0, 0.04) 0px 4px 16px;
+}
+
+.skillGroupHeaderCreated {
+  background-color: #eef4ff;
+  border: 1px solid #d7e2f5;
+  color: #365d97;
+}
+
+.skillGroupHeaderReceived {
+  background-color: #edf7f0;
+  border: 1px solid #c4e8d1;
+  color: #2e7d4f;
+}
+
+.skillGroupDotCreated {
+  background-color: #365d97;
+}
+
+.skillGroupDotReceived {
+  background-color: #2e7d4f;
+}
+
+.skillGroupBadge {
+  height: 20px;
+  min-width: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 999px;
+  background-color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.skillGroupBadgeCreated {
+  border: 1px solid #d7e2f5;
+  color: #365d97;
+}
+
+.skillGroupBadgeReceived {
+  border: 1px solid #c4e8d1;
+  color: #2e7d4f;
+}
+
+/* 技能条目样式 */
+.skillItemCard {
+  border-radius: 8px;
+  border: 1px solid #f0eee6;
+  margin-bottom: 4px;
+  overflow: hidden;
+  background-color: #fff;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background-color: #faf9f5;
+  }
+}
+
+.skillItemCardSelected {
+  border: 1px solid #d7e2f5;
+  background-color: #eef4ff;
+}
+
+/* Tag 样式统一 */
+.skillTag {
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 0 6px;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.skillTagReceived {
+  background-color: #fdf3e7;
+  color: #c4956a;
+  border: 1px solid #f5d9c4;
+}
+
+.skillTagUpdate {
+  background-color: #fff2f0;
+  color: #cf1322;
+  border: 1px solid #ffccc7;
+}
+
+.skillTagDisabled {
+  background-color: #fff2f0;
+  color: #cf1322;
+  border: 1px solid #ffccc7;
+}
+
+.skillTagCustomized {
+  background-color: #edf7f0;
+  color: #2e7d4f;
+  border: 1px solid #c4e8d1;
+}
+
+/* 详情面板样式 */
+.detailPanelCard {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid #f0f0f0;
+  background-color: #fff;
+  box-shadow: rgba(0, 0, 0, 0.04) 0px 4px 16px;
+}
+
+.detailPanelHeader {
+  padding: 16px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detailPanelDescription {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.detailPanelContent {
+  flex: 1;
+  padding: 16px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.detailPanelEmpty {
+  border-radius: 8px;
+  border: 1px solid #f0f0f0;
+  background-color: #f5f4ed;
+  padding: 16px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 内容预览样式 */
+.previewContainer {
+  border-radius: 10px;
+  border: 1px solid #f0f0f0;
+  background-color: #fafafa;
+  padding: 16px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.previewContainerMarkdown {
+  border-radius: 10px;
+  border: 1px solid #f0f0f0;
+  background-color: #fff;
+  padding: 10px;
+  line-height: 1.7;
+  overflow: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.previewContainerJson {
+  border-radius: 10px;
+  border: 1px solid #f0eee6;
+  background-color: #faf9f5;
+  color: rgba(20, 20, 19, 0.94);
+  padding: 10px;
+  overflow: auto;
+  font-size: 12px;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Frontmatter 提示样式 */
+.frontmatterPreviewNote {
+  font-size: 12px;
+  color: #874d00;
+  margin-bottom: 12px;
+  padding: 4px 8px;
+  background-color: #fff7e6;
+  border: 1px solid #ffd591;
+  border-radius: 4px;
+}
+
+/* 按钮样式 */
+.actionButton {
+  height: 28px;
+  font-size: 12px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.syncToMarketButton {
+  height: 28px;
+  font-size: 12px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #c4956a 0%, #b85a3a 100%);
+  border: none;
+  color: #fff;
+}
+
+/* 文件树样式 */
+.fileTreeItem {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  margin-bottom: 2px;
+  transition: background-color 0.15s ease;
+}
+
+.fileTreeItemSelected {
+  background-color: #eef4ff;
+  border: 1px solid #d7e2f5;
+}
+
+.fileTreeItemHover {
+  &:hover {
+    background-color: #faf9f5;
+  }
+}

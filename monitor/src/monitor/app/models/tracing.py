@@ -249,6 +249,39 @@ class OverviewStats(BaseModel):
     top_mcp_tools: list[MCPToolUsage] = Field(default_factory=list)
     mcp_servers: list[MCPServerUsage] = Field(default_factory=list)
     daily_trend: list[DailyStats] = Field(default_factory=list)
+    branch_breakdown: "OverviewBranchBreakdown" = Field(
+        default_factory=lambda: OverviewBranchBreakdown(),
+    )
+    task_status_breakdown: "TaskStatusBreakdown" = Field(
+        default_factory=lambda: TaskStatusBreakdown(),
+    )
+
+
+class BranchMetricItem(BaseModel):
+    """Single branch metric item used in dashboard breakdowns."""
+
+    bbk_id: str = ""
+    bbk_name: str = ""
+    value: float = 0
+    percent: float = 0
+
+
+class OverviewBranchBreakdown(BaseModel):
+    """Branch breakdowns for each overview metric card."""
+
+    users: list[BranchMetricItem] = Field(default_factory=list)
+    conversations: list[BranchMetricItem] = Field(default_factory=list)
+    sessions: list[BranchMetricItem] = Field(default_factory=list)
+    tokens: list[BranchMetricItem] = Field(default_factory=list)
+    skills: list[BranchMetricItem] = Field(default_factory=list)
+
+
+class TaskStatusBreakdown(BaseModel):
+    """Task execution status summary for dashboard donut chart."""
+
+    success: int = 0
+    failed: int = 0
+    running: int = 0
 
 
 class UserStats(BaseModel):

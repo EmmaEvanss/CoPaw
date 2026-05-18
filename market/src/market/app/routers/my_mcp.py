@@ -379,10 +379,9 @@ async def create_my_mcp(
             await marketplace.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     context.source_id,
@@ -390,11 +389,7 @@ async def create_my_mcp(
                     context.user_name,
                     "create",
                     "mcp",
-                    body.client_key,
                     body.name,
-                    context.user_id,
-                    context.user_name,
-                    None,
                 ),
             )
         except Exception as e:
@@ -459,10 +454,9 @@ async def update_my_mcp(
             await marketplace.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     context.source_id,
@@ -470,11 +464,7 @@ async def update_my_mcp(
                     context.user_name,
                     "edit",
                     "mcp",
-                    client_key,
                     updated_client.name,
-                    context.user_id,
-                    context.user_name,
-                    None,
                 ),
             )
         except Exception as e:
@@ -514,10 +504,9 @@ async def delete_my_mcp(
             await marketplace.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     context.source_id,
@@ -525,11 +514,7 @@ async def delete_my_mcp(
                     context.user_name,
                     "delete",
                     "mcp",
-                    client_key,
                     deleted_name,
-                    context.user_id,
-                    context.user_name,
-                    None,
                 ),
             )
         except Exception as e:

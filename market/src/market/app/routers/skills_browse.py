@@ -745,27 +745,14 @@ async def upload_skill_to_workspace(
 
     # Log upload operation
     imported_skills = result.get("imported") or []
-    logger.info(
-        "Upload result check: imported=%s, db_connected=%s, db_type=%s",
-        imported_skills,
-        svc.db.is_connected,
-        type(svc.db).__name__,
-    )
     if svc.db.is_connected and imported_skills:
         try:
-            logger.info(
-                "Attempting to insert upload log: source=%s, user=%s, skills=%s",
-                source_id,
-                x_user_id,
-                imported_skills,
-            )
             await svc.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     source_id,
@@ -773,26 +760,11 @@ async def upload_skill_to_workspace(
                     user_name,
                     "upload",
                     "skill",
-                    "",
                     ",".join(imported_skills),
-                    x_user_id,
-                    user_name,
-                    bbk_id,
                 ),
             )
-            logger.info(
-                "Logged upload operation success: user=%s, skills=%s",
-                x_user_id,
-                imported_skills,
-            )
         except Exception as e:
-            logger.error(
-                "Failed to log upload operation: %s",
-                e,
-                exc_info=True,
-            )
-    elif not svc.db.is_connected:
-        logger.warning("Database not connected, skipping upload log")
+            logger.warning("Failed to log upload operation: %s", e)
 
     # 注册技能到 manifest
     if result.get("imported"):
@@ -919,10 +891,9 @@ async def save_skill_file(
             await svc.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     source_id,
@@ -930,11 +901,7 @@ async def save_skill_file(
                     x_user_name,
                     "edit",
                     "skill",
-                    "",
                     skill_name,
-                    x_user_id,
-                    x_user_name,
-                    None,
                 ),
             )
         except Exception as e:
@@ -977,10 +944,9 @@ async def delete_my_skill(
             await svc.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     source_id,
@@ -988,11 +954,7 @@ async def delete_my_skill(
                     x_user_name,
                     "delete",
                     "skill",
-                    "",
                     skill_name,
-                    x_user_id,
-                    x_user_name,
-                    None,
                 ),
             )
         except Exception as e:

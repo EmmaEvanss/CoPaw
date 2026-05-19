@@ -19,6 +19,8 @@ from starlette.responses import Response
 from starlette.types import ASGIApp
 
 from swe.config.context import (
+    canonicalize_scope_id,
+    resolve_runtime_tenant_id,
     set_current_workspace_dir,
     reset_current_workspace_dir,
 )
@@ -30,7 +32,7 @@ def _get_effective_request_tenant_id(request: Request) -> str | None:
     """Return the runtime scope used for workspace isolation."""
     scope_id = getattr(request.state, "scope_id", None)
     if isinstance(scope_id, str) and scope_id:
-        return scope_id
+        return canonicalize_scope_id(scope_id)
 
     effective_tenant_id = getattr(request.state, "effective_tenant_id", None)
     if isinstance(effective_tenant_id, str) and effective_tenant_id:
@@ -205,14 +207,21 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
         try:
             # Get source_id from request state (set by TenantIdentityMiddleware)
             source_id = getattr(request.state, "source_id", None)
+            raw_scope_id = getattr(request.state, "scope_id", None)
+            scope_id = (
+                raw_scope_id
+                if isinstance(raw_scope_id, str) and raw_scope_id
+                else None
+            )
             # Get user_name and bbk_id from request state for database record
             user_name = getattr(request.state, "user_name", None)
             bbk_id = getattr(request.state, "bbk_id", None)
 
             # Ensure tenant is bootstrapped (minimal - directories only)
             await pool.ensure_bootstrap(
-                tenant_id,
+                getattr(request.state, "tenant_id", None) or tenant_id,
                 source_id=source_id,
+                scope_id=scope_id,
                 tenant_name=user_name,
                 bbk_id=bbk_id,
             )

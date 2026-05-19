@@ -354,6 +354,7 @@ def test_distribute_active_model_uses_request_scope_for_source_dir(
     )
     target_manager = FakeManager()
     scope_id = "scope.v1.dGVuYW50LXNvdXJjZQ.cnVpY2U"
+    canonical_scope_id = "dGVuYW50LXNvdXJjZQ.cnVpY2U"
     observed: dict[str, str | None] = {}
 
     def fake_get_tenant_working_dir_strict(
@@ -411,7 +412,7 @@ def test_distribute_active_model_uses_request_scope_for_source_dir(
         ),
     )
 
-    assert observed["tenant_id"] == scope_id
+    assert observed["tenant_id"] == canonical_scope_id
     assert result.source_active_llm == ModelSlotConfig(
         provider_id="openai",
         model="gpt-5.4",

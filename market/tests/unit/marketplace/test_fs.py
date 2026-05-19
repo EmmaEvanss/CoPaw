@@ -88,6 +88,25 @@ def test_get_user_skills_dir_allows_main_service_identity_values(tmp_path):
     )
 
 
+def test_get_user_skills_dir_keeps_legacy_scope_directory_untouched(tmp_path):
+    from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
+
+    canonical_scope_id = encode_scope_id("user1", "source_a")
+    legacy_scope_dir = tmp_path / f"scope.v1.{canonical_scope_id}"
+    legacy_skills_dir = legacy_scope_dir / "workspaces" / "agent1" / "skills"
+    legacy_skills_dir.mkdir(parents=True)
+    (legacy_skills_dir / "legacy.txt").write_text("legacy", encoding="utf-8")
+
+    result = get_user_skills_dir(tmp_path, "user1", "agent1", "source_a")
+
+    assert result == (
+        tmp_path / canonical_scope_id / "workspaces" / "agent1" / "skills"
+    )
+    assert legacy_scope_dir.exists()
+    assert not (result / "legacy.txt").exists()
+
+
 def test_copy_skill_to_user_happy_path(tmp_path):
     from market.marketplace.fs import (
         copy_skill_to_user,

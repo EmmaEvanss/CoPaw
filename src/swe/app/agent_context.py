@@ -11,6 +11,7 @@ from fastapi import Request
 
 from ..config.utils import load_config, get_tenant_config_path
 from ..config.context import (
+    canonicalize_scope_id,
     get_current_scope_id,
     get_current_tenant_id,
     get_current_user_id,
@@ -52,7 +53,9 @@ def _resolve_scope_id(request: Request | None = None) -> Optional[str]:
     scope_id = get_current_scope_id()
     if scope_id is None and request is not None:
         scope_id = getattr(request.state, "scope_id", None)
-    return scope_id
+    if scope_id is None:
+        return None
+    return canonicalize_scope_id(scope_id)
 
 
 def _resolve_effective_tenant_id(
@@ -63,7 +66,7 @@ def _resolve_effective_tenant_id(
     """Resolve the runtime tenant ID for scoped workspace/config access."""
     resolved_scope_id = scope_id or get_current_scope_id()
     if resolved_scope_id is not None:
-        return resolved_scope_id
+        return canonicalize_scope_id(resolved_scope_id)
     if tenant_id is None:
         return None
     return resolve_runtime_tenant_id(tenant_id, source_id)

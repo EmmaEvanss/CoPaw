@@ -782,14 +782,15 @@ class TestCronManagerState:
         ) as prefetch_mock:
             await manager._prefetch_callback(job.id)
 
+        canonical_scope_id = "dGVzdC10ZW5hbnQ.c291cmNlLWE"
         prefetch_mock.assert_called_once_with(
-            tenant_id=job.scope_id,
+            tenant_id=canonical_scope_id,
             workspace_dir="/tmp/test",
         )
-        assert observed["tenant_id"] == job.scope_id
+        assert observed["tenant_id"] == canonical_scope_id
         assert observed["workspace_dir"] == "/tmp/test"
         assert observed["source_id"] == "source-a"
-        assert observed["effective_tenant_id"] == job.scope_id
+        assert observed["effective_tenant_id"] == canonical_scope_id
         state = manager.get_state(job.id)
         assert state.last_prefetch_at is not None
         assert state.last_error is None

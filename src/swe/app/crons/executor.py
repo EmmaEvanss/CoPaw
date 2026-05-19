@@ -14,7 +14,7 @@ from .models import CronJobSpec
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
-from ...config.context import resolve_scope_id
+from ...config.context import canonicalize_scope_id, resolve_scope_id
 from ...tracing import has_trace_manager, get_trace_manager
 from ...tracing.models import TraceStatus
 
@@ -101,9 +101,11 @@ class CronExecutor:
         # Extract tenant_id from job spec (added for tenant isolation)
         tenant_id = getattr(job, "tenant_id", None)
         source_id = getattr(job, "source_id", None)
-        scope_id = getattr(job, "scope_id", None) or resolve_scope_id(
-            tenant_id,
-            source_id,
+        job_scope_id = getattr(job, "scope_id", None)
+        scope_id = (
+            canonicalize_scope_id(job_scope_id)
+            if job_scope_id is not None
+            else resolve_scope_id(tenant_id, source_id)
         )
         if tenant_id:
             dispatch_meta["tenant_id"] = tenant_id
@@ -322,9 +324,13 @@ class CronExecutor:
         # 传递 source_id 用于 tracing 数据隔离
         if job.source_id:
             req["source_id"] = job.source_id
-        scope_id = job.scope_id or resolve_scope_id(
-            getattr(job, "tenant_id", None),
-            job.source_id,
+        scope_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                job.source_id,
+            )
         )
         if scope_id:
             req["scope_id"] = scope_id
@@ -343,9 +349,13 @@ class CronExecutor:
         req: Dict[str, Any],
     ) -> None:
         """Resolve and apply auth token to request."""
-        runtime_tenant_id = job.scope_id or resolve_scope_id(
-            getattr(job, "tenant_id", None),
-            getattr(job, "source_id", None),
+        runtime_tenant_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                getattr(job, "source_id", None),
+            )
         )
         try:
             resolved = resolve_auth_token_for_execution(

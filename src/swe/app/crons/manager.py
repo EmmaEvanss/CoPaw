@@ -21,7 +21,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
-from ...config.context import resolve_runtime_identity, resolve_scope_id
+from ...config.context import (
+    canonicalize_scope_id,
+    resolve_runtime_identity,
+    resolve_scope_id,
+)
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
 from .coordination import (
     CoordinationConfig,
@@ -2122,9 +2126,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 source_id=job.source_id,
                 scope_id=job.scope_id,
             ):
-                runtime_tenant_id = job.scope_id or resolve_scope_id(
-                    job.tenant_id,
-                    job.source_id,
+                runtime_tenant_id = (
+                    canonicalize_scope_id(job.scope_id)
+                    if job.scope_id is not None
+                    else resolve_scope_id(job.tenant_id, job.source_id)
                 )
                 prefetch_auth_token(
                     tenant_id=runtime_tenant_id,

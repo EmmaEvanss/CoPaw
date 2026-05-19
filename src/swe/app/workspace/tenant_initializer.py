@@ -41,6 +41,7 @@ class TenantInitializer:
         base_working_dir: Path,
         tenant_id: str,
         source_id: str | None = None,
+        scope_id: str | None = None,
     ):
         """Initialize tenant bootstrapper.
 
@@ -51,22 +52,31 @@ class TenantInitializer:
                 Used to select the appropriate default_{source} template.
                 Runtime-scoped working directories use the encoded scope_id
                 when source_id is present.
+            scope_id: Optional explicit runtime scope. When provided, it takes
+                precedence over tenant/source recomputation.
         """
         from ...config.context import resolve_runtime_tenant_id
+        from ...config.utils import migrate_legacy_scope_dir_if_needed
 
         self.base_working_dir = Path(base_working_dir).expanduser().resolve()
         self.tenant_id = tenant_id
         self.source_id = source_id or None
         self._template_created_from_default = False  # 标记模板是否动态创建
+        self.scope_id = scope_id or None
         self.template_name = self._resolve_template_name()
         self.effective_tenant_id = (
-            resolve_runtime_tenant_id(
+            resolve_runtime_tenant_id(self.scope_id, None)
+            if self.scope_id is not None
+            else resolve_runtime_tenant_id(
                 tenant_id,
                 self.source_id,
             )
             or tenant_id
         )
-        self.tenant_dir = self.base_working_dir / self.effective_tenant_id
+        self.tenant_dir = migrate_legacy_scope_dir_if_needed(
+            self.base_working_dir,
+            self.effective_tenant_id,
+        )
 
     def _resolve_template_name(self) -> str:
         """Determine which default_xxx template directory to use.

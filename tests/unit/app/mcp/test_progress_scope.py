@@ -56,6 +56,6 @@ async def test_patched_mcp_call_namespaces_progress_tokens_by_scope(
             pass
 
     assert captured_tokens == [
-        "scope.v1.dGVuYW50LWE.c291cmNlLWE@uuid-a",
-        "scope.v1.dGVuYW50LWE.c291cmNlLWI@uuid-b",
+        "dGVuYW50LWE.c291cmNlLWE@uuid-a",
+        "dGVuYW50LWE.c291cmNlLWI@uuid-b",
     ]

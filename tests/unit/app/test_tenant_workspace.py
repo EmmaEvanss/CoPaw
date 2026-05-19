@@ -134,6 +134,7 @@ class TestTenantWorkspaceHelpers:
         mock_req.state = MagicMock()
         mock_req.state.tenant_id = "default"
         mock_req.state.effective_tenant_id = scope_id
+        mock_req.state.scope_id = scope_id
         mock_req.state.source_id = "RMASSIST"
         mock_req.url = MagicMock()
         mock_req.url.path = "/api/test"
@@ -154,8 +155,9 @@ class TestTenantWorkspaceHelpers:
 
         assert response.status_code == 200
         pool.ensure_bootstrap.assert_awaited_once_with(
-            scope_id,
+            "default",
             source_id="RMASSIST",
+            scope_id=scope_id,
             tenant_name=mock_req.state.user_name,
             bbk_id=mock_req.state.bbk_id,
         )

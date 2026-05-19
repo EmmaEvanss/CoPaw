@@ -64,7 +64,9 @@ def schedule_agent_reload(
         if request_scope_id and (
             tenant_id is None or tenant_id == request_tenant_id
         ):
-            runtime_tenant_id = request_scope_id
+            from ..config.context import canonicalize_scope_id
+
+            runtime_tenant_id = canonicalize_scope_id(request_scope_id)
         elif tenant_id is not None:
             from ..config.context import resolve_runtime_tenant_id
 

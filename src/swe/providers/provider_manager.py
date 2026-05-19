@@ -141,7 +141,13 @@ class ProviderManager:
         Returns:
             Path to the tenant's provider configuration directory.
         """
-        return SECRET_DIR / tenant_id / "providers"
+        from ..config.utils import migrate_legacy_scope_dir_if_needed
+
+        tenant_root_dir = migrate_legacy_scope_dir_if_needed(
+            SECRET_DIR,
+            tenant_id,
+        )
+        return tenant_root_dir / "providers"
 
     @staticmethod
     def _do_initialize_provider_storage(
@@ -270,6 +276,7 @@ class ProviderManager:
     ) -> str:
         """解析 provider 存储使用的运行时租户标识。"""
         from ..config.context import (
+            canonicalize_scope_id,
             get_current_scope_id,
             get_current_source_id,
             resolve_runtime_identity,
@@ -284,7 +291,7 @@ class ProviderManager:
             )
             source_id = source_id or current_source_id
             if tenant_id is None or requested_tenant_id == current_scope_id:
-                return current_scope_id
+                return canonicalize_scope_id(current_scope_id)
 
         _, _, scope_id = resolve_runtime_identity(
             requested_tenant_id,
@@ -320,7 +327,9 @@ class ProviderManager:
         effective_tenant_id = (
             ProviderManager._resolve_effective_provider_tenant_id(tenant_id)
         )
-        tenant_providers_dir = SECRET_DIR / effective_tenant_id / "providers"
+        tenant_providers_dir = ProviderManager._get_tenant_root_path(
+            effective_tenant_id,
+        )
 
         # Fast path: already exists
         if tenant_providers_dir.exists():

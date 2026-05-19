@@ -68,5 +68,5 @@ def test_schedule_agent_reload_prefers_request_scope_id(monkeypatch) -> None:
     asyncio.run(scheduled[0])
     manager.reload_agent.assert_awaited_once_with(
         "default",
-        tenant_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        tenant_id="dGVuYW50LWE.c291cmNlLWE",
     )

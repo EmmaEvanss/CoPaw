@@ -236,7 +236,7 @@ def test_skills_router_prefers_request_scope_id_over_logical_tenant() -> None:
 
     resolved = skills_router._request_effective_tenant_id(scoped_request)
 
-    assert resolved == "scope.v1.dGVuYW50LWE.cnVpY2U"
+    assert resolved == "dGVuYW50LWE.cnVpY2U"
 
 
 def test_update_pool_skill_config_uses_tenant_manifest_path(

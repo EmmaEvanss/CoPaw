@@ -156,6 +156,27 @@ async def test_unscoped_resolution_cannot_mutate_scoped_pending() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pending_approval_uses_canonical_scope_key_for_legacy_input() -> (
+    None
+):
+    service = ApprovalService()
+    with tenant_context(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        scope_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+    ):
+        pending = await service.create_pending(
+            session_id="session-1",
+            user_id="user-1",
+            channel="console",
+            tool_name="execute_shell_command",
+            result=_result(),
+        )
+
+    assert pending.scope_id == "dGVuYW50LWE.c291cmNlLWE"
+
+
+@pytest.mark.asyncio
 async def test_runner_approves_requested_pending_id_not_fifo_head(
     monkeypatch,
 ) -> None:

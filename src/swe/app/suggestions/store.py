@@ -39,11 +39,18 @@ class QAContentEntry:
 def _resolve_scope_key(tenant_id: Optional[str] = None) -> str:
     """解析瞬时建议存储使用的隔离键。"""
     try:
-        from swe.config.context import get_current_scope_id
+        from swe.config.context import (
+            get_current_scope_id,
+            resolve_scope_preferred_tenant_id,
+        )
 
-        scope_id = get_current_scope_id()
-        if scope_id:
-            return scope_id
+        scope_key = resolve_scope_preferred_tenant_id(
+            tenant_id,
+            None,
+            get_current_scope_id(),
+        )
+        if scope_key is not None:
+            return scope_key
     except Exception:
         pass
     return tenant_id or "default"

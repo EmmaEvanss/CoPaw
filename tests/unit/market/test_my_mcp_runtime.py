@@ -113,3 +113,33 @@ def test_load_and_save_agent_config_under_market_runtime(tmp_path) -> None:
         (workspace_dir / "agent.json").read_text(encoding="utf-8"),
     )
     assert raw["mcp"]["clients"]["weather-tool"]["name"] == "weather-tool"
+
+
+def test_market_runtime_load_agent_config_requires_existing_agent_json(
+    tmp_path,
+) -> None:
+    """market runtime 不应在读取时隐式回填 agent.json。"""
+    swe_root = tmp_path / ".swe"
+    scope_id = encode_scope_id("default", "SRC_A")
+    workspace_dir = swe_root / scope_id / "workspaces" / "default"
+
+    save_root_config(
+        swe_root,
+        scope_id,
+        AgentsRootConfig(
+            agents=RootAgentsSection(
+                active_agent="default",
+                profiles={
+                    "default": AgentProfileRef(
+                        id="default",
+                        workspace_dir=str(workspace_dir),
+                    ),
+                },
+            ),
+        ),
+    )
+
+    with pytest.raises(FileNotFoundError):
+        load_agent_config(swe_root, scope_id, "default")
+
+    assert not (workspace_dir / "agent.json").exists()

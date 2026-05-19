@@ -22,7 +22,10 @@ from pathlib import Path
 from typing import Optional
 
 from .models import MarketItem
-from ..runtime.context import encode_scope_id
+from ..runtime.context import (
+    encode_scope_id,
+    migrate_legacy_scope_dir_if_needed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +146,8 @@ def get_user_skills_dir(
     effective_user_id = resolve_effective_user_id(user_id, source_id)
     _validate_path_segment(effective_user_id, "user_id")
     _validate_path_segment(agent_id, "agent_id")
-    return swe_root / effective_user_id / "workspaces" / agent_id / "skills"
+    user_root = migrate_legacy_scope_dir_if_needed(swe_root, effective_user_id)
+    return user_root / "workspaces" / agent_id / "skills"
 
 
 def load_index(marketplace_root: Path, source_id: str) -> list[MarketItem]:
@@ -254,9 +258,10 @@ def get_user_skill_manifest_path(
     source_id: str | None = None,
 ) -> Path:
     """获取用户工作空间的 skill.json 路径."""
-    effective_user_id = resolve_effective_user_id(user_id, source_id)
-    workspace_dir = swe_root / effective_user_id / "workspaces" / agent_id
-    return workspace_dir / "skill.json"
+    return (
+        get_user_skills_dir(swe_root, user_id, agent_id, source_id)
+        / "skill.json"
+    )
 
 
 def read_user_skill_manifest(

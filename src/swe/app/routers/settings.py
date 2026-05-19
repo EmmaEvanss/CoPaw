@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Request
 
+from ...config.context import canonicalize_scope_id
 from ...config.utils import get_tenant_working_dir
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -32,6 +33,8 @@ def _get_settings_file(request: Request) -> Path:
     tenant_id = getattr(request.state, "scope_id", None)
     if tenant_id is None:
         tenant_id = getattr(request.state, "tenant_id", None)
+    else:
+        tenant_id = canonicalize_scope_id(tenant_id)
 
     # Use tenant-specific directory
     tenant_dir = get_tenant_working_dir(tenant_id)

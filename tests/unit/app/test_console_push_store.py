@@ -66,6 +66,22 @@ class TestTenantPushStoreIsolation:
         assert [m["text"] for m in taken_a] == ["msg-a"]
         assert [m["text"] for m in taken_b] == ["msg-b"]
 
+    def test_legacy_scope_key_is_retrievable_via_canonical_scope(self):
+        append = console_push_store.append
+        clear_tenant = console_push_store.clear_tenant
+        take = console_push_store.take
+
+        async def scenario():
+            canonical_scope = "dGVuYW50LWE.c291cmNlLWE"
+            legacy_scope = f"scope.v1.{canonical_scope}"
+            await clear_tenant(canonical_scope)
+            await append("session-a", "msg-a", tenant_id=legacy_scope)
+            return await take("session-a", tenant_id=canonical_scope)
+
+        taken = asyncio.run(scenario())
+
+        assert [m["text"] for m in taken] == ["msg-a"]
+
     @pytest.mark.skip(reason="Requires full app dependencies")
     async def test_append_creates_tenant_isolated_message(self):
         """Appended messages include tenant_id for isolation."""

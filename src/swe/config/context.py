@@ -42,7 +42,7 @@ current_scope_id: ContextVar[str | None] = ContextVar(
     default=None,
 )
 
-_SCOPE_ID_PREFIX = "scope.v1"
+_LEGACY_SCOPE_ID_PREFIX = "scope.v1"
 _IDENTITY_MAX_LENGTH = 256
 
 
@@ -158,14 +158,13 @@ def _decode_scope_component(value: str) -> str:
 
 
 def encode_scope_id(tenant_id: str, source_id: str) -> str:
-    """Encode a reversible runtime scope ID from tenant/source."""
+    """根据 tenant/source 生成可逆的 canonical runtime scope 标识。"""
     if not is_valid_identity_value(tenant_id):
         raise ValueError("Invalid tenant_id for scope encoding")
     if not is_valid_identity_value(source_id):
         raise ValueError("Invalid source_id for scope encoding")
     return ".".join(
         (
-            _SCOPE_ID_PREFIX,
             _encode_scope_component(tenant_id),
             _encode_scope_component(source_id),
         ),
@@ -173,11 +172,12 @@ def encode_scope_id(tenant_id: str, source_id: str) -> str:
 
 
 def decode_scope_id(scope_id: str) -> tuple[str, str]:
-    """Decode a runtime scope ID back to logical tenant/source."""
-    prefix = f"{_SCOPE_ID_PREFIX}."
-    if not scope_id.startswith(prefix):
-        raise ValueError("Invalid scope_id prefix")
-    parts = scope_id[len(prefix) :].split(".")
+    """把新旧两种 scope 标识还原为 logical tenant/source。"""
+    prefix = f"{_LEGACY_SCOPE_ID_PREFIX}."
+    payload = (
+        scope_id[len(prefix) :] if scope_id.startswith(prefix) else scope_id
+    )
+    parts = payload.split(".")
     if len(parts) != 2 or not parts[0] or not parts[1]:
         raise ValueError("Invalid scope_id payload")
     return (
@@ -186,14 +186,38 @@ def decode_scope_id(scope_id: str) -> tuple[str, str]:
     )
 
 
+def canonicalize_scope_id(scope_id: str) -> str:
+    """把 legacy scope 输入统一收敛为 canonical 无前缀格式。"""
+    tenant_id, source_id = decode_scope_id(scope_id)
+    return encode_scope_id(tenant_id, source_id)
+
+
 def resolve_scope_id(
     tenant_id: str | None,
     source_id: str | None,
 ) -> str | None:
-    """Resolve a runtime scope ID when both tenant and source are present."""
+    """在 tenant/source 同时存在时生成 canonical runtime scope 标识。"""
     if tenant_id is None or source_id is None:
         return None
     return encode_scope_id(tenant_id, source_id)
+
+
+def _decode_runtime_scope_identity(
+    runtime_tenant_id: str,
+    source_id: str | None,
+) -> tuple[str, str, str] | None:
+    """在 source 未冲突时，把 runtime scope 还原为逻辑身份。"""
+    try:
+        tenant_id, decoded_source_id = decode_scope_id(runtime_tenant_id)
+    except ValueError:
+        return None
+    if source_id is not None and source_id != decoded_source_id:
+        return None
+    return (
+        tenant_id,
+        decoded_source_id,
+        canonicalize_scope_id(runtime_tenant_id),
+    )
 
 
 def resolve_runtime_tenant_id(
@@ -208,16 +232,30 @@ def resolve_runtime_tenant_id(
     """
     if tenant_id is None:
         return None
-    try:
-        decode_scope_id(tenant_id)
-    except ValueError:
-        pass
-    else:
-        return tenant_id
+    legacy_prefix = f"{_LEGACY_SCOPE_ID_PREFIX}."
+    if tenant_id.startswith(legacy_prefix):
+        return canonicalize_scope_id(tenant_id)
+    decoded_identity = _decode_runtime_scope_identity(
+        tenant_id,
+        source_id,
+    )
+    if decoded_identity is not None:
+        return decoded_identity[2]
     scope_id = resolve_scope_id(tenant_id, source_id)
     if scope_id is not None:
         return scope_id
     return tenant_id
+
+
+def resolve_scope_preferred_tenant_id(
+    tenant_id: str | None,
+    source_id: str | None = None,
+    scope_id: str | None = None,
+) -> str | None:
+    """统一解析运行时隔离键，优先使用显式 scope_id。"""
+    if scope_id is not None:
+        return canonicalize_scope_id(scope_id)
+    return resolve_runtime_tenant_id(tenant_id, source_id)
 
 
 def resolve_runtime_identity(
@@ -230,7 +268,8 @@ def resolve_runtime_identity(
         runtime_tenant_id: 运行时租户标识，既可能是逻辑 tenant，
             也可能已经是编码后的 ``scope_id``。
         source_id: 显式来源标识；当 ``runtime_tenant_id`` 仍是逻辑
-            tenant 时用于补齐 ``scope_id``。
+            tenant 时用于补齐 ``scope_id``；若与已编码 scope
+            中的 source 不一致，则按 raw tenant 处理。
 
     Returns:
         ``(tenant_id, source_id, scope_id)`` 三元组。若传入的
@@ -240,13 +279,20 @@ def resolve_runtime_identity(
     if runtime_tenant_id is None:
         return (None, source_id, None)
 
-    try:
-        tenant_id, decoded_source_id = decode_scope_id(runtime_tenant_id)
-    except ValueError:
-        scope_id = resolve_scope_id(runtime_tenant_id, source_id)
-        return (runtime_tenant_id, source_id, scope_id)
+    decoded_identity = _decode_runtime_scope_identity(
+        runtime_tenant_id,
+        source_id,
+    )
+    if decoded_identity is not None:
+        return decoded_identity
 
-    return (tenant_id, decoded_source_id, runtime_tenant_id)
+    if source_id is not None:
+        return (
+            runtime_tenant_id,
+            source_id,
+            resolve_scope_id(runtime_tenant_id, source_id),
+        )
+    return (runtime_tenant_id, source_id, None)
 
 
 def set_current_source_id(source_id: str | None) -> Token:
@@ -401,7 +447,11 @@ def tenant_context(
         # Context restored after exit
     """
     tokens: list[tuple[str, Token[Any]]] = []
-    resolved_scope_id = scope_id or resolve_scope_id(tenant_id, source_id)
+    resolved_scope_id = (
+        canonicalize_scope_id(scope_id)
+        if scope_id is not None
+        else resolve_scope_id(tenant_id, source_id)
+    )
     try:
         if tenant_id is not None:
             tokens.append(("tenant", current_tenant_id.set(tenant_id)))

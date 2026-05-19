@@ -645,8 +645,9 @@ class TestTenantBootstrapInitSourceMapping:
         pool = TenantWorkspacePool(tmp_path)
 
         await pool.ensure_bootstrap(
-            scope_id,
+            "tenant-1",
             source_id="ruice",
+            scope_id=scope_id,
             tenant_name="张三",
             bbk_id="bbk-1",
         )

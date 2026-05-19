@@ -63,6 +63,7 @@ def bind_tenant_context(
             result = execute_job(job)
     """
     from swe.config.context import (
+        canonicalize_scope_id,
         resolve_scope_id,
         set_current_tenant_id,
         set_current_user_id,
@@ -77,7 +78,11 @@ def bind_tenant_context(
     )
 
     tokens = []
-    resolved_scope_id = scope_id or resolve_scope_id(tenant_id, source_id)
+    resolved_scope_id = (
+        canonicalize_scope_id(scope_id)
+        if scope_id is not None
+        else resolve_scope_id(tenant_id, source_id)
+    )
     try:
         if tenant_id is not None:
             tokens.append(("tenant", set_current_tenant_id(tenant_id)))

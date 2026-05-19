@@ -80,11 +80,15 @@ class ApprovalService:
         """Resolve the current runtime scope for approval isolation."""
         try:
             from ...config.context import (
+                canonicalize_scope_id,
                 get_current_effective_tenant_id,
                 get_current_scope_id,
             )
 
-            return get_current_scope_id() or get_current_effective_tenant_id()
+            scope_id = get_current_scope_id()
+            if scope_id is not None:
+                return canonicalize_scope_id(scope_id)
+            return get_current_effective_tenant_id()
         except Exception:
             return None
 

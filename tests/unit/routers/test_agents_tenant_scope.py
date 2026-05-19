@@ -360,7 +360,7 @@ def test_agents_router_prefers_request_scope_id_over_logical_tenant() -> None:
 
     resolved = agents_router._request_effective_tenant_id(request)
 
-    assert resolved == "scope.v1.dGVuYW50LWE.cnVpY2U"
+    assert resolved == "dGVuYW50LWE.cnVpY2U"
 
 
 def test_update_agent_schedules_reload_for_effective_tenant(monkeypatch):

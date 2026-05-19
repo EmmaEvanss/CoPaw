@@ -134,7 +134,8 @@ def test_distribute_providers_uses_request_scope_for_source_dir(
     """Source-scoped 请求必须从 runtime scope 目录读取源 providers。"""
     secret_dir = tmp_path / "secret"
     scope_id = "scope.v1.dGVuYW50LXNvdXJjZQ.cnVpY2U"
-    _setup_source_providers(secret_dir, scope_id)
+    canonical_scope_id = "dGVuYW50LXNvdXJjZQ.cnVpY2U"
+    _setup_source_providers(secret_dir, canonical_scope_id)
     observed: dict[str, str | None] = {}
 
     monkeypatch.setattr(providers_router, "SECRET_DIR", secret_dir)
@@ -187,8 +188,8 @@ def test_distribute_providers_uses_request_scope_for_source_dir(
         ),
     )
 
-    assert observed["tenant_id"] == scope_id
-    assert result.source_tenant_id == scope_id
+    assert observed["tenant_id"] == canonical_scope_id
+    assert result.source_tenant_id == canonical_scope_id
     assert result.results[0].success is True
     assert (
         secret_dir

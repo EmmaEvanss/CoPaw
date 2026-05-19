@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...config.context import resolve_runtime_tenant_id
+from ...config.context import resolve_scope_preferred_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +21,11 @@ def _request_runtime_tenant_id(request: Request) -> Optional[str]:
     if request_state is None:
         return None
 
-    scope_id = getattr(request_state, "scope_id", None)
-    if scope_id:
-        return scope_id
-
-    tenant_id = getattr(request_state, "tenant_id", None)
-    source_id = getattr(request_state, "source_id", None)
-    return resolve_runtime_tenant_id(tenant_id, source_id)
+    return resolve_scope_preferred_tenant_id(
+        getattr(request_state, "tenant_id", None),
+        getattr(request_state, "source_id", None),
+        getattr(request_state, "scope_id", None),
+    )
 
 
 def _get_multi_agent_manager(request: Request):

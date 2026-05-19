@@ -1018,6 +1018,13 @@ async def _generate_and_store_suggestions(
     tenant_id: str | None = None,
 ) -> None:
     """异步生成并存储建议（后台任务）."""
+    from ...config.context import resolve_runtime_tenant_id
+
+    runtime_tenant_id = (
+        resolve_runtime_tenant_id(tenant_id, None)
+        if tenant_id is not None
+        else None
+    )
     logger.info(
         "Generating suggestions for session %s: user_msg=%s chars, "
         "assistant_msg=%s chars",
@@ -1043,7 +1050,7 @@ async def _generate_and_store_suggestions(
             await store_suggestions(
                 session_id,
                 suggestions,
-                tenant_id=tenant_id,
+                tenant_id=runtime_tenant_id,
             )
             logger.info(
                 "Stored %d suggestions for session %s: %s",
@@ -1220,13 +1227,19 @@ class AgentRunner(Runner):
         task_tracker: Any | None = None,
         tenant_id: str | None = None,
     ) -> None:
+        from ...config.context import resolve_runtime_tenant_id
+
         super().__init__()
         self.framework_type = "agentscope"
         self.agent_id = agent_id  # Store agent_id for config loading
         self.workspace_dir = (
             workspace_dir  # Store workspace_dir for prompt building
         )
-        self.tenant_id = tenant_id  # Store tenant_id for config loading
+        self.tenant_id = (
+            resolve_runtime_tenant_id(tenant_id, None)
+            if tenant_id is not None
+            else None
+        )  # Store tenant_id for config loading
         self._chat_manager = None  # Store chat_manager reference
         self._workspace: Any = None  # Workspace instance for control commands
         self.memory_manager: BaseMemoryManager | None = None

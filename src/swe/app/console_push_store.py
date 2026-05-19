@@ -26,11 +26,18 @@ _MAX_MESSAGES = 500
 def _resolve_store_key(tenant_id: Optional[str] = None) -> str:
     """Resolve the isolation key for transient console messages."""
     try:
-        from swe.config.context import get_current_scope_id
+        from swe.config.context import (
+            get_current_scope_id,
+            resolve_scope_preferred_tenant_id,
+        )
 
-        scope_id = get_current_scope_id()
-        if scope_id:
-            return scope_id
+        store_key = resolve_scope_preferred_tenant_id(
+            tenant_id,
+            None,
+            get_current_scope_id(),
+        )
+        if store_key is not None:
+            return store_key
     except Exception:
         pass
     return tenant_id or "default"
@@ -41,7 +48,14 @@ def _iter_matching_store_keys(tenant_id: Optional[str]) -> List[str]:
     if tenant_id is None:
         return ["default"]
 
-    keys = {tenant_id}
+    try:
+        from swe.config.context import resolve_runtime_tenant_id
+
+        canonical_tenant_id = resolve_runtime_tenant_id(tenant_id, None)
+    except Exception:
+        canonical_tenant_id = tenant_id
+
+    keys = {canonical_tenant_id or tenant_id}
     try:
         from swe.config.context import decode_scope_id
 

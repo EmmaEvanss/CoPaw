@@ -429,6 +429,7 @@ class TestMiddlewareIntegration:
         pool.ensure_bootstrap.assert_awaited_once_with(
             "tenant-1",
             source_id=None,
+            scope_id=None,
             tenant_name=None,
             bbk_id=None,
         )

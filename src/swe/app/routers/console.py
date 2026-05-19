@@ -31,7 +31,7 @@ from ..post_turn_continuation_store import (
     claim_pending_continuation,
     peek_latest_pending_continuation,
 )
-from ...config.context import resolve_runtime_tenant_id
+from ...config.context import resolve_scope_preferred_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +125,11 @@ _PREVIEW_TYPE_BY_MIME: dict[str, PreviewType] = {
 
 def _request_runtime_tenant_id(request: Request) -> str | None:
     """优先返回请求已解析的 runtime scope，避免回退到逻辑 tenant。"""
-    scope_id = getattr(request.state, "scope_id", None)
-    if scope_id is not None:
-        return scope_id
-
-    tenant_id = getattr(request.state, "tenant_id", None)
-    source_id = getattr(request.state, "source_id", None)
-    return resolve_runtime_tenant_id(tenant_id, source_id)
+    return resolve_scope_preferred_tenant_id(
+        getattr(request.state, "tenant_id", None),
+        getattr(request.state, "source_id", None),
+        getattr(request.state, "scope_id", None),
+    )
 
 
 _PREVIEW_MIME_PREFIXES: tuple[tuple[str, PreviewType], ...] = (

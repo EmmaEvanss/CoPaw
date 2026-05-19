@@ -280,6 +280,28 @@ def test_ensure_storage_uses_requested_tenant_with_current_source(
     assert not (isolated_secret_dir / current_scope_id / "providers").exists()
 
 
+def test_provider_storage_keeps_legacy_scope_directory_untouched(
+    isolated_secret_dir,
+) -> None:
+    canonical_scope_id = encode_scope_id("tenant-a", "source-a")
+    legacy_scope_id = f"scope.v1.{canonical_scope_id}"
+    legacy_provider_dir = isolated_secret_dir / legacy_scope_id / "providers"
+    legacy_provider_dir.mkdir(parents=True)
+    (legacy_provider_dir / "active_model.json").write_text(
+        '{"provider_id": "openai", "model": "gpt-5"}',
+        encoding="utf-8",
+    )
+
+    ProviderManager.ensure_tenant_provider_storage(legacy_scope_id)
+
+    canonical_provider_dir = (
+        isolated_secret_dir / canonical_scope_id / "providers"
+    )
+    assert canonical_provider_dir.exists()
+    assert legacy_provider_dir.parent.exists()
+    assert not (canonical_provider_dir / "active_model.json").exists()
+
+
 async def test_remove_custom_provider_missing_file_is_safe(
     isolated_secret_dir,
 ) -> None:

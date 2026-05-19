@@ -45,7 +45,7 @@ async def test_generate_and_store_suggestions_passes_scope_tenant(
     store.assert_awaited_once_with(
         "session-a",
         ["next question"],
-        tenant_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        tenant_id="dGVuYW50LWE.c291cmNlLWE",
     )
 
 
@@ -104,7 +104,7 @@ async def test_store_pending_continuation_passes_scope_tenant(
         assistant_response="",
         reason="still work left",
         follow_up_prompt="继续处理剩余步骤",
-        tenant_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        tenant_id="dGVuYW50LWE.c291cmNlLWE",
         confirmed_turn_index=0,
     )
 
@@ -170,5 +170,5 @@ async def test_store_qa_content_passes_scope_tenant(monkeypatch) -> None:
         chat_id="chat-a",
         user_message="请帮我整理一下",
         assistant_response="整理后的答案",
-        tenant_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        tenant_id="dGVuYW50LWE.c291cmNlLWE",
     )

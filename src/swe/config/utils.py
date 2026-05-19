@@ -34,6 +34,7 @@ from .config import (
 )
 from .context import (
     TenantContextError,
+    canonicalize_scope_id,
     decode_scope_id,
     get_current_effective_tenant_id,
     get_current_scope_id,
@@ -56,15 +57,37 @@ def _normalize_working_dir_bound_paths(data: object) -> object:
     legacy_root_tilde = "~/.swe"
     legacy_root_abs = str(Path(legacy_root_tilde).expanduser().resolve())
     new_root_abs = str(WORKING_DIR)
+    legacy_scope_prefix = "scope.v1."
 
     def _rewrite_path_value(v: object) -> object:
         if not isinstance(v, str) or not v:
             return v
         if v.startswith(legacy_root_tilde):
-            return new_root_abs + v[len(legacy_root_tilde) :]
+            v = new_root_abs + v[len(legacy_root_tilde) :]
         if v.startswith(legacy_root_abs):
-            return new_root_abs + v[len(legacy_root_abs) :]
-        return v
+            v = new_root_abs + v[len(legacy_root_abs) :]
+
+        path = Path(v).expanduser()
+        normalized_parts: list[str] = []
+        changed = False
+        for part in path.parts:
+            if not part.startswith(legacy_scope_prefix):
+                normalized_parts.append(part)
+                continue
+
+            try:
+                normalized_parts.append(canonicalize_scope_id(part))
+            except ValueError:
+                normalized_parts.append(part[len(legacy_scope_prefix) :])
+            else:
+                changed = True
+                continue
+
+            changed = True
+
+        if changed:
+            return str(Path(*normalized_parts))
+        return str(path)
 
     def _walk(obj: object, key: str | None = None) -> object:
         if isinstance(obj, dict):
@@ -700,17 +723,27 @@ def _resolve_runtime_tenant_for_paths(
     if tenant_id is None:
         return get_current_effective_tenant_id()
 
+    current_scope_id = get_current_scope_id()
+    if current_scope_id is not None and tenant_id == get_current_tenant_id():
+        return canonicalize_scope_id(current_scope_id)
+
     try:
         decode_scope_id(tenant_id)
-        return tenant_id
+        return canonicalize_scope_id(tenant_id)
     except ValueError:
         pass
 
-    current_scope_id = get_current_scope_id()
-    if current_scope_id is not None and tenant_id == get_current_tenant_id():
-        return current_scope_id
-
     return resolve_runtime_tenant_id(tenant_id, get_current_source_id())
+
+
+def migrate_legacy_scope_dir_if_needed(base_dir: Path, tenant_id: str) -> Path:
+    """返回 canonical scope 目录，不在路径查询阶段执行迁移。"""
+    try:
+        canonical_scope_id = canonicalize_scope_id(tenant_id)
+    except ValueError:
+        return base_dir / tenant_id
+
+    return base_dir / canonical_scope_id
 
 
 def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
@@ -729,7 +762,7 @@ def get_tenant_working_dir(tenant_id: str | None = None) -> Path:
     if not tenant_id:
         tenant_id = "default"
 
-    return WORKING_DIR / tenant_id
+    return migrate_legacy_scope_dir_if_needed(WORKING_DIR, tenant_id)
 
 
 def get_tenant_config_path(tenant_id: str | None = None) -> Path:
@@ -856,7 +889,7 @@ def get_tenant_working_dir_strict(tenant_id: str | None = None) -> Path:
             "Ensure this code runs within a tenant-scoped request or context.",
         )
 
-    return WORKING_DIR / tenant_id
+    return migrate_legacy_scope_dir_if_needed(WORKING_DIR, tenant_id)
 
 
 def get_tenant_config_path_strict(tenant_id: str | None = None) -> Path:

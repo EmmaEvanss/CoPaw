@@ -202,6 +202,15 @@ class TestSourceSystemConfigStore:
         assert result[0].config.as_dict() == {"source_name": "Portal"}
 
     @pytest.mark.asyncio
+    async def test_get_config_version_returns_version(self, store, mock_db):
+        """版本探测查询应返回整数版本。"""
+        mock_db.fetch_one.return_value = {"version": 9}
+
+        result = await store.get_config_version("portal")
+
+        assert result == 9
+
+    @pytest.mark.asyncio
     async def test_delete_config_removes_row(self, store, mock_db):
         """删除配置时应按 source_id 删除数据库行。"""
         result = await store.delete_config("portal")
@@ -226,6 +235,8 @@ class TestSourceSystemConfigStore:
         with pytest.raises(SourceSystemConfigStoreUnavailable):
             await store.get_config("portal")
         with pytest.raises(SourceSystemConfigStoreUnavailable):
+            await store.get_config_version("portal")
+        with pytest.raises(SourceSystemConfigStoreUnavailable):
             await store.list_configs()
         with pytest.raises(SourceSystemConfigStoreUnavailable):
             await store.upsert_config("portal", payload)
@@ -236,14 +247,26 @@ class TestSourceSystemConfigStore:
 class _FakeStore:
     """为 service 测试提供可控的异步 store。"""
 
-    def __init__(self, *responses):
+    def __init__(self, *responses, version_responses=None):
         self.responses = list(responses)
-        self.calls: list[str] = []
+        self.version_responses = list(version_responses or [])
+        self.get_calls: list[str] = []
+        self.version_calls: list[str] = []
 
     async def get_config(self, source_id: str):
         """按顺序返回测试指定的响应。"""
-        self.calls.append(source_id)
+        self.get_calls.append(source_id)
         response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def get_config_version(self, source_id: str):
+        """按顺序返回版本探测结果。"""
+        self.version_calls.append(source_id)
+        if not self.version_responses:
+            return None
+        response = self.version_responses.pop(0)
         if isinstance(response, Exception):
             raise response
         return response
@@ -304,8 +327,8 @@ class TestSourceSystemConfigService:
         assert result.config.as_dict() == {}
 
     @pytest.mark.asyncio
-    async def test_cache_refreshes_after_ttl(self):
-        """TTL 内复用缓存，过期后按 version 刷新。"""
+    async def test_cache_refreshes_after_probe_interval(self):
+        """探测窗口内复用缓存，超时后按 version 刷新。"""
         now = {"value": 100.0}
         first = SourceSystemConfigRecord(
             source_id="portal",
@@ -321,23 +344,59 @@ class TestSourceSystemConfigService:
             ),
             version=2,
         )
-        store = _FakeStore(first, second)
+        store = _FakeStore(
+            first,
+            second,
+            version_responses=[1, 2],
+        )
         service = SourceSystemConfigService(
             store,
-            ttl_seconds=10,
+            ttl_seconds=30,
+            probe_interval_seconds=10,
             time_fn=lambda: now["value"],
         )
 
         cached = await service.resolve_config("portal")
         still_cached = await service.resolve_config("portal")
         now["value"] = 111.0
+        unchanged = await service.resolve_config("portal")
+        now["value"] = 122.0
         refreshed = await service.resolve_config("portal")
 
         assert cached.version == 1
         assert still_cached.version == 1
+        assert unchanged.version == 1
         assert refreshed.version == 2
         assert refreshed.config.as_dict() == {"source_name": "Portal 2"}
-        assert store.calls == ["portal", "portal"]
+        assert store.get_calls == ["portal", "portal"]
+        assert store.version_calls == ["portal", "portal"]
+
+    @pytest.mark.asyncio
+    async def test_no_version_probe_within_10_seconds(self):
+        """10 秒探测窗口内，重复请求不触发版本查询。"""
+        now = {"value": 100.0}
+        store = _FakeStore(
+            SourceSystemConfigRecord(
+                source_id="portal",
+                config=SourceSystemConfig.model_validate(
+                    {"source_name": "Portal"},
+                ),
+                version=2,
+            ),
+            version_responses=[2],
+        )
+        service = SourceSystemConfigService(
+            store,
+            probe_interval_seconds=10,
+            time_fn=lambda: now["value"],
+        )
+
+        await service.resolve_config("portal")
+        now["value"] = 105.0
+        await service.resolve_config("portal")
+
+        assert store.get_calls == ["portal"]
+        assert store.version_calls == []
 
     @pytest.mark.asyncio
     async def test_storage_failure_uses_last_known_good_cache(self):
@@ -351,8 +410,13 @@ class TestSourceSystemConfigService:
             version=3,
         )
         service = SourceSystemConfigService(
-            _FakeStore(record, RuntimeError("db down")),
-            ttl_seconds=1,
+            _FakeStore(
+                record,
+                RuntimeError("db down"),
+                version_responses=[4],
+            ),
+            ttl_seconds=30,
+            probe_interval_seconds=1,
             time_fn=lambda: now["value"],
         )
 
@@ -364,6 +428,58 @@ class TestSourceSystemConfigService:
         assert fallback.version == 3
         assert fallback.stale is True
         assert "db down" in (fallback.last_error or "")
+
+    @pytest.mark.asyncio
+    async def test_cross_instance_sync_by_version_probe(self):
+        """实例 A 更新后，实例 B 在探测窗口后可感知新版本。"""
+        now = {"value": 100.0}
+
+        class _SharedStore:
+            """两个 service 共享的可变 store。"""
+
+            def __init__(self):
+                self.record = None
+
+            async def get_config(self, source_id: str):
+                return self.record
+
+            async def get_config_version(self, source_id: str):
+                if self.record is None:
+                    return None
+                return self.record.version
+
+        shared_store = _SharedStore()
+        service_a = SourceSystemConfigService(
+            shared_store,
+            probe_interval_seconds=10,
+            time_fn=lambda: now["value"],
+        )
+        service_b = SourceSystemConfigService(
+            shared_store,
+            probe_interval_seconds=10,
+            time_fn=lambda: now["value"],
+        )
+
+        before_a = await service_a.resolve_config("portal")
+        before_b = await service_b.resolve_config("portal")
+        shared_store.record = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {"source_name": "Portal V2"},
+            ),
+            version=1,
+        )
+
+        now["value"] = 105.0
+        within_window = await service_b.resolve_config("portal")
+        now["value"] = 111.0
+        after_probe = await service_b.resolve_config("portal")
+
+        assert before_a.version == 0
+        assert before_b.version == 0
+        assert within_window.version == 0
+        assert after_probe.version == 1
+        assert after_probe.config.as_dict() == {"source_name": "Portal V2"}
 
     @pytest.mark.asyncio
     async def test_storage_failure_without_cache_fails(self):

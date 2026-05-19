@@ -69,6 +69,17 @@ class SourceSystemConfigStore:
         rows = await db.fetch_all(query)
         return [self._row_to_record(row) for row in rows]
 
+    async def get_config_version(self, source_id: str) -> int | None:
+        """查询指定 source 配置版本，不存在时返回 None。"""
+        db = self._require_db()
+        row = await db.fetch_one(
+            "SELECT version FROM swe_source_system_config WHERE source_id = %s",
+            (source_id,),
+        )
+        if row is None:
+            return None
+        return int(row["version"])
+
     async def upsert_config(
         self,
         source_id: str,

@@ -22,24 +22,34 @@ class SourceSystemConfigUnavailable(RuntimeError):
 
 @dataclass
 class _CacheEntry:
-    """缓存项包含配置、加载时间和 last-known-good 状态。"""
+    """缓存项包含配置、完整加载时间和最近探测时间。"""
 
     effective: EffectiveSourceSystemConfig
     loaded_at: float
+    checked_at: float
 
 
 class SourceSystemConfigService:
-    """解析 source effective config，并提供短 TTL 缓存。"""
+    """解析 source effective config，并提供版本探测缓存。"""
 
     def __init__(
         self,
         store: SourceSystemConfigStore,
         ttl_seconds: int = 30,
+        probe_interval_seconds: int | None = None,
         time_fn: Callable[[], float] | None = None,
     ):
         """初始化运行时服务。"""
         self.store = store
         self.ttl_seconds = ttl_seconds
+        self.probe_interval_seconds = max(
+            1,
+            (
+                probe_interval_seconds
+                if probe_interval_seconds is not None
+                else 10
+            ),
+        )
         self._time_fn = time_fn or time.time
         self._cache: dict[str, _CacheEntry] = {}
 
@@ -55,53 +65,35 @@ class SourceSystemConfigService:
         if (
             cached is not None
             and not force_refresh
-            and now - cached.loaded_at < self.ttl_seconds
+            and now - cached.checked_at < self.probe_interval_seconds
         ):
             return cached.effective
 
         try:
+            if cached is not None and not force_refresh:
+                remote_version = await self.store.get_config_version(source_id)
+                cached_version = int(cached.effective.version)
+                current_version = int(remote_version or 0)
+                if current_version == cached_version:
+                    fresh = cached.effective.model_copy(
+                        update={"stale": False, "last_error": None},
+                    )
+                    self._cache[source_id] = _CacheEntry(
+                        fresh,
+                        cached.loaded_at,
+                        now,
+                    )
+                    return fresh
+
             record = await self.store.get_config(source_id)
             effective = self._build_effective(source_id, record)
-            self._cache[source_id] = _CacheEntry(effective, now)
+            self._cache[source_id] = _CacheEntry(effective, now, now)
             return effective
         except SourceSystemConfigStoreUnavailable as exc:
-            if cached is not None:
-                logger.warning(
-                    "source 配置存储不可用，返回缓存: source=%s, error=%s",
-                    source_id,
-                    exc,
-                )
-                stale = cached.effective.model_copy(
-                    update={
-                        "stale": True,
-                        "last_error": str(exc),
-                    },
-                )
-                self._cache[source_id] = _CacheEntry(stale, now)
-                return stale
-            fallback = self._build_effective(source_id, None).model_copy(
-                update={
-                    "stale": True,
-                    "last_error": str(exc),
-                },
-            )
-            self._cache[source_id] = _CacheEntry(fallback, now)
-            return fallback
+            return self._fallback_on_error(source_id, cached, now, exc)
         except Exception as exc:
             if cached is not None:
-                logger.warning(
-                    "使用 source 系统配置 last-known-good 缓存: source=%s, error=%s",
-                    source_id,
-                    exc,
-                )
-                stale = cached.effective.model_copy(
-                    update={
-                        "stale": True,
-                        "last_error": str(exc),
-                    },
-                )
-                self._cache[source_id] = _CacheEntry(stale, now)
-                return stale
+                return self._fallback_on_error(source_id, cached, now, exc)
             raise SourceSystemConfigUnavailable(
                 f"source system config unavailable for {source_id}: {exc}",
             ) from exc
@@ -112,6 +104,41 @@ class SourceSystemConfigService:
             self._cache.clear()
             return
         self._cache.pop(source_id, None)
+
+    def _fallback_on_error(
+        self,
+        source_id: str,
+        cached: _CacheEntry | None,
+        now: float,
+        exc: Exception,
+    ) -> EffectiveSourceSystemConfig:
+        """存储异常时返回 stale 缓存或 stale 默认配置。"""
+        if cached is not None:
+            logger.warning(
+                "使用 source 配置缓存兜底: source=%s, error=%s",
+                source_id,
+                exc,
+            )
+            stale = cached.effective.model_copy(
+                update={
+                    "stale": True,
+                    "last_error": str(exc),
+                },
+            )
+            self._cache[source_id] = _CacheEntry(
+                stale,
+                cached.loaded_at,
+                now,
+            )
+            return stale
+        fallback = self._build_effective(source_id, None).model_copy(
+            update={
+                "stale": True,
+                "last_error": str(exc),
+            },
+        )
+        self._cache[source_id] = _CacheEntry(fallback, now, now)
+        return fallback
 
     def _build_effective(
         self,

@@ -54,7 +54,7 @@ export interface TaskStatusSummary {
 export interface DepthSummary {
   avg_rounds: number;
   multi_round_ratio: number;
-  avg_stay_seconds: number;
+  avg_duration_seconds: number;
   avg_sessions_per_user: number;
 }
 

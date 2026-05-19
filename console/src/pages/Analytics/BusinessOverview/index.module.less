@@ -561,22 +561,18 @@
 }
 
 .rankUser {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  overflow: hidden;
   min-width: 0;
   color: #111827;
   font-size: 14px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rankUser em {
-  overflow: hidden;
   color: #64748b;
-  font-size: 12px;
   font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .rankCalls {

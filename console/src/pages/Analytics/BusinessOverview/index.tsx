@@ -36,7 +36,7 @@ import {
 } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
 import SkillDetailModal from "./components/SkillDetailModal";
-import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../../constants/bbk";
+import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP, getBbkDisplayName } from "../../../constants/bbk";
 import { useIframeStore, getIframeContext } from "../../../stores/iframeStore";
 import {
   formatChange,
@@ -188,7 +188,7 @@ function buildDepthCards(
   growthStats: {
     avgRoundsGrowth: number | null;
     multiRoundRatioGrowth: number | null;
-    avgStayGrowth: number | null;
+    avgDurationGrowth: number | null;
     avgSessionsPerUserGrowth: number | null;
   },
 ): DepthStatCard[] {
@@ -208,11 +208,11 @@ function buildDepthCards(
       changeDirection: toChangeDirection(growthStats.multiRoundRatioGrowth),
     },
     {
-      key: "avg-stay",
-      title: "用户平均停留时长",
-      valueText: formatDuration(safeNumber(summary?.avg_stay_seconds)),
-      changeText: formatChange(growthStats.avgStayGrowth),
-      changeDirection: toChangeDirection(growthStats.avgStayGrowth),
+      key: "avg-duration",
+      title: "平均对话时长",
+      valueText: formatDuration(safeNumber(summary?.avg_duration_seconds)),
+      changeText: formatChange(growthStats.avgDurationGrowth),
+      changeDirection: toChangeDirection(growthStats.avgDurationGrowth),
     },
     {
       key: "avg-sessions",
@@ -510,7 +510,7 @@ export default function BusinessOverviewPage() {
     cronGrowth: number | null;
     avgRoundsGrowth: number | null;
     multiRoundRatioGrowth: number | null;
-    avgStayGrowth: number | null;
+    avgDurationGrowth: number | null;
     avgSessionsPerUserGrowth: number | null;
   }>({
     callsGrowth: null,
@@ -521,7 +521,7 @@ export default function BusinessOverviewPage() {
     cronGrowth: null,
     avgRoundsGrowth: null,
     multiRoundRatioGrowth: null,
-    avgStayGrowth: null,
+    avgDurationGrowth: null,
     avgSessionsPerUserGrowth: null,
   });
   const [trendData, setTrendData] = useState<TrendDatum[]>([]);
@@ -989,8 +989,11 @@ export default function BusinessOverviewPage() {
             <Select
               className={styles.scopeSelect}
               value={displayPlatformValue}
-              onChange={setPlatform}
+              onChange={(value) => {
+                setPlatform(value || "all");
+              }}
               disabled={!isSuperManager}
+              allowClear
             >
               <Option value="all">全部平台</Option>
               {sources.map((source) => (
@@ -1305,6 +1308,18 @@ export default function BusinessOverviewPage() {
                     ? styles.rankBadgeBronze
                     : styles.rankBadge;
 
+                // 格式化显示：分行名称/用户姓名(用户ID)
+                const displayParts: string[] = [];
+                if (item.bbkId && getBbkDisplayName(item.bbkId) !== "-") {
+                  displayParts.push(getBbkDisplayName(item.bbkId));
+                }
+                if (item.userName) {
+                  displayParts.push(item.userName);
+                }
+                const displayName = displayParts.length > 0
+                  ? `${displayParts.join("/")}(${item.userId})`
+                  : item.userId;
+
                 return (
                   <button
                     key={`${item.userId}-${rank}`}
@@ -1316,10 +1331,11 @@ export default function BusinessOverviewPage() {
                     }}
                   >
                     <span className={rankClass}>{rank}</span>
-                    <span className={styles.rankUser}>
-                      {truncateName(item.userName || item.name, 16)}
-                      <em>{item.userId}</em>
-                    </span>
+                    <Tooltip title={displayName} placement="top">
+                      <span className={styles.rankUser}>
+                        {displayName}
+                      </span>
+                    </Tooltip>
                     <span className={styles.rankCalls}>
                       {formatNumber(item.calls)}
                     </span>
@@ -1343,7 +1359,7 @@ export default function BusinessOverviewPage() {
                 <div className={styles.depthIconWrap}>
                   {card.key === "avg-rounds" && <MessageCircleMore size={19} />}
                   {card.key === "multi-round" && <Users size={19} />}
-                  {card.key === "avg-stay" && <Clock3 size={19} />}
+                  {card.key === "avg-duration" && <Clock3 size={19} />}
                   {card.key === "avg-sessions" && <ArrowUpRight size={19} />}
                 </div>
                 <div className={styles.depthBody}>

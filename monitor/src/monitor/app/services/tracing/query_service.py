@@ -447,7 +447,7 @@ class TracingQueryService:
         - `avgRoundsGrowth`：单次会话平均轮数环比，口径为 `calls/sessions`。
         - `multiRoundRatioGrowth`：多轮会话占比环比，口径为大于 3 轮
           会话的占比。
-        - `avgStayGrowth`：用户平均停留时长环比，口径为秒。
+        - `avgDurationGrowth`：平均对话时长环比，口径为秒。
         - `avgSessionsPerUserGrowth`：人均会话数环比，口径为
           `sessions/users`。
         """
@@ -646,13 +646,13 @@ class TracingQueryService:
             prev_end,
             bbk_ids,
         )
-        curr_avg_user_stay = await self._get_avg_user_stay(
+        curr_avg_duration = await self._get_avg_duration_seconds(
             source_id,
             start_date,
             end_date,
             bbk_ids,
         )
-        prev_avg_user_stay = await self._get_avg_user_stay(
+        prev_avg_duration = await self._get_avg_duration_seconds(
             source_id,
             prev_start,
             prev_end,
@@ -683,8 +683,8 @@ class TracingQueryService:
             prev_multi_round_ratio,
         )
 
-        # 3. 用户平均停留时长环比：以秒为单位比较。
-        avg_stay_growth = calc_growth(curr_avg_user_stay, prev_avg_user_stay)
+        # 3. 平均对话时长环比：以秒为单位比较。
+        avg_duration_growth = calc_growth(curr_avg_duration, prev_avg_duration)
 
         # 4. 人均会话数环比 = 当前周期 sessions/users 相对上一周期的变化。
         curr_avg_sessions_per_user = curr["sessions"] / max(curr["users"], 1)
@@ -703,7 +703,7 @@ class TracingQueryService:
             "cronGrowth": calc_growth(curr_cron_tasks, prev_cron_tasks),  # cron 执行记录数口径
             "avgRoundsGrowth": avg_rounds_growth,  # 单次会话平均轮数口径
             "multiRoundRatioGrowth": multi_round_ratio_growth,  # >3 轮会话占比口径
-            "avgStayGrowth": avg_stay_growth,  # 用户平均停留时长（秒）口径
+            "avgDurationGrowth": avg_duration_growth,  # 平均对话时长（秒）口径
             "avgSessionsPerUserGrowth": avg_sessions_per_user_growth,  # 人均会话数口径
         }
 
@@ -1029,7 +1029,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.user_id
@@ -1053,7 +1053,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 GROUP BY t.user_id
@@ -1071,7 +1071,7 @@ class TracingQueryService:
             UserListItem(
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 total_sessions=row["total_sessions"] or 0,
                 total_conversations=row["total_conversations"] or 0,
                 total_tokens=row["total_tokens"] or 0,
@@ -1675,6 +1675,52 @@ class TracingQueryService:
         avg_stay = float((row or {}).get("avg_stay") or 0)
         return int(avg_stay)
 
+    async def _get_avg_duration_seconds(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        bbk_ids: Optional[str] = None,
+    ) -> int:
+        """获取平均对话时长（秒）.
+
+        计算所有对话的平均耗时。
+        """
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            query = f"""
+                SELECT AVG(duration_ms) as avg_duration_ms
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                  AND duration_ms IS NOT NULL
+                  {bbk_filter_sql}
+            """
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
+            row = await self._db.fetch_one(query, params)
+        else:
+            query = f"""
+                SELECT AVG(duration_ms) as avg_duration_ms
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
+                  AND duration_ms IS NOT NULL
+                  {bbk_filter_sql}
+            """
+            params = (source_id, start_date, end_date, *bbk_filter_params)
+            row = await self._db.fetch_one(query, params)
+
+        avg_duration_ms = float((row or {}).get("avg_duration_ms") or 0)
+        # 转换为秒
+        return int(avg_duration_ms / 1000)
+
     async def get_skills_paginated(
         self,
         source_id: str,
@@ -1942,15 +1988,15 @@ class TracingQueryService:
             source_id, start_date, end_date, bbk_ids
         )
 
-        # 用户平均停留时长
-        avg_stay_seconds = await self._get_avg_user_stay(
+        # 平均对话时长（秒）
+        avg_duration_seconds = await self._get_avg_duration_seconds(
             source_id, start_date, end_date, bbk_ids
         )
 
         return DepthSummary(
             avg_rounds=avg_rounds,
             multi_round_ratio=multi_round_ratio,
-            avg_stay_seconds=avg_stay_seconds,
+            avg_duration_seconds=avg_duration_seconds,
             avg_sessions_per_user=avg_sessions_per_user,
         )
 

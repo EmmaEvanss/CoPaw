@@ -6,15 +6,9 @@
 运行方式:
     cd monitor
     .venv/Scripts/python scripts/insert_tracing_test_data.py
-
-环境变量配置 (可选):
-    export MONITOR_DB_HOST=localhost
-    export MONITOR_DB_PORT=3306
-    export MONITOR_DB_USER=root
-    export MONITOR_DB_ACCESS=your_password
-    export MONITOR_DB_NAME=monitor
 """
 import asyncio
+import json
 import random
 import sys
 import uuid
@@ -26,7 +20,25 @@ from typing import Any
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
-from monitor.app.database.config import get_database_config
+
+def load_db_config_from_env_file() -> dict[str, Any]:
+    """从环境配置文件加载数据库配置."""
+    # 尝试加载 prd.json
+    env_file = src_path / "monitor" / "config" / "envs" / "prd.json"
+    if env_file.exists():
+        with open(env_file, encoding="utf-8") as f:
+            env_config = json.load(f)
+            return {
+                "host": env_config.get("MONITOR_DB_HOST", "localhost"),
+                "port": int(env_config.get("MONITOR_DB_PORT", 3306)),
+                "user": env_config.get("MONITOR_DB_USER", "root"),
+                "password": env_config.get("MONITOR_DB_ACCESS", ""),
+                "database": env_config.get("MONITOR_DB_NAME", "monitor"),
+            }
+    return {}
+
+
+from monitor.app.database.config import MonitorDatabaseConfig
 from monitor.app.database.connection import DatabaseConnection
 
 
@@ -321,8 +333,8 @@ async def insert_test_data(
                 trace["total_input_tokens"],
                 trace["total_output_tokens"],
                 trace["total_tokens"],
-                trace["tools_used"],
-                trace["skills_used"],
+                json.dumps(trace["tools_used"]) if trace["tools_used"] else None,
+                json.dumps(trace["skills_used"]) if trace["skills_used"] else None,
                 trace["status"],
                 trace["error"],
                 trace["user_message"],
@@ -450,8 +462,19 @@ async def main():
     print("运营看板测试数据插入脚本")
     print("=" * 60)
 
-    # 获取数据库配置
-    config = get_database_config()
+    # 从配置文件加载数据库配置
+    db_config = load_db_config_from_env_file()
+    if not db_config:
+        print("错误: 无法从 prd.json 加载数据库配置")
+        return
+
+    config = MonitorDatabaseConfig(
+        host=db_config["host"],
+        port=db_config["port"],
+        user=db_config["user"],
+        password=db_config["password"],
+        database=db_config["database"],
+    )
     print(f"数据库配置: {config.host}:{config.port}/{config.database}")
 
     # 创建连接

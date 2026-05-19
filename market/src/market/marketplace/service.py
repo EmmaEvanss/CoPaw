@@ -28,6 +28,7 @@ from .fs import (
     mutate_user_skill_manifest,
     read_user_skill_manifest,
     load_mcp_config,
+    resolve_effective_user_id,
     save_index,
     save_mcp_config,
     sanitize_skill_name,
@@ -1453,9 +1454,13 @@ class MarketplaceService:
 
         for tenant_id in req.target_tenant_ids:
             try:
+                effective_user_id = resolve_effective_user_id(
+                    tenant_id,
+                    source_id,
+                )
                 user_config_path = (
                     self.swe_root
-                    / tenant_id
+                    / effective_user_id
                     / "workspaces"
                     / "default"
                     / "agent.json"

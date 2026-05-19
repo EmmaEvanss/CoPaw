@@ -453,9 +453,10 @@ def copy_mcp_to_user(
     if mcp_config is None:
         raise ValueError(f"MCP config not found for item {item_id}")
 
-    # 加载用户 agent.json
+    # 使用 resolve_effective_user_id 解析运行时 scope 目录
+    effective_user_id = resolve_effective_user_id(user_id, source_id)
     user_config_path = (
-        swe_root / user_id / "workspaces" / agent_id / "agent.json"
+        swe_root / effective_user_id / "workspaces" / agent_id / "agent.json"
     )
     user_config_path.parent.mkdir(parents=True, exist_ok=True)
 

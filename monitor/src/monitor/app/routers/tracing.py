@@ -21,6 +21,9 @@ from ..models.tracing import (
     SessionStats,
     UserStats,
     ModelOutputRequest,
+    MCPSummary,
+    TaskStatusSummary,
+    DepthSummary,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
 from ..database import get_es_client
@@ -705,7 +708,17 @@ async def get_growth_stats(
     ),
     bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
-    """获取环比增长统计."""
+    """获取运营看板环比指标。
+
+    口径说明：
+    - 该接口返回的是“当前统计窗口”相对“上一对比窗口”的环比结果。
+    - 平台维度通过 `source_id` 过滤；分行维度通过 `bbk_ids` 过滤，
+      两者为叠加筛选关系。
+    - `time_range` 只决定上一对比窗口的回溯长度，不改变当前窗口
+      的起止日期输入。
+    - 返回字段的业务口径由服务层统一定义，供总览卡片和使用深度卡片
+      复用，避免前端自行推导环比口径。
+    """
     actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
@@ -954,6 +967,36 @@ async def get_skill_traces(
 # ===== MCP 使用 =====
 
 
+@router.get("/mcp/summary", response_model=MCPSummary)
+async def get_mcp_summary(
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
+) -> MCPSummary:
+    """获取 MCP 全局调用汇总统计."""
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    summary = await service.get_mcp_summary(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
+    return summary
+
+
 @router.get("/mcp", response_model=dict)
 async def get_mcp_usage(
     request: Request,
@@ -991,6 +1034,72 @@ async def get_mcp_usage(
         "page": page,
         "page_size": page_size,
     }
+
+
+# ===== 定时任务执行统计 =====
+
+
+@router.get("/task-status/summary", response_model=TaskStatusSummary)
+async def get_task_status_summary(
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
+) -> TaskStatusSummary:
+    """获取定时任务执行汇总统计."""
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    summary = await service.get_task_status_summary(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
+    return summary
+
+
+# ===== 使用深度统计 =====
+
+
+@router.get("/depth/summary", response_model=DepthSummary)
+async def get_depth_summary(
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
+) -> DepthSummary:
+    """获取使用深度汇总统计."""
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    summary = await service.get_depth_summary(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
+    return summary
 
 
 # ===== Model Output 写入 =====

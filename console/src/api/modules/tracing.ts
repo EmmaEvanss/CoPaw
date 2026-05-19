@@ -12,19 +12,14 @@ export interface OverviewStats {
   output_tokens: number;
   total_sessions: number;
   total_conversations: number;
-  total_cron_tasks: number;  // 定时任务执行次数
   total_skill_calls: number;  // 技能调用总次数
   avg_duration_ms: number;
-  // 使用深度真实统计
-  multi_round_session_ratio: number;  // 多轮会话占比(>3轮)百分比
-  avg_user_stay_seconds: number;  // 用户平均停留时长（秒）
   top_tools: ToolUsage[];
   top_skills: SkillUsage[];
   top_mcp_tools: MCPToolUsage[];
   mcp_servers: MCPServerUsage[];
   daily_trend: DailyStats[];
   branch_breakdown: OverviewBranchBreakdown;
-  task_status_breakdown: TaskStatusBreakdown;
 }
 
 export interface BranchMetricItem {
@@ -47,6 +42,20 @@ export interface TaskStatusBreakdown {
   success: number;
   failed: number;
   running: number;
+}
+
+export interface TaskStatusSummary {
+  total_tasks: number;
+  success: number;
+  failed: number;
+  cancelled: number;
+}
+
+export interface DepthSummary {
+  avg_rounds: number;
+  multi_round_ratio: number;
+  avg_stay_seconds: number;
+  avg_sessions_per_user: number;
 }
 
 export interface ModelUsage {
@@ -85,6 +94,12 @@ export interface MCPServerUsage {
   avg_duration_ms: number;
   error_count: number;
   tools: MCPToolUsage[];
+}
+
+export interface MCPSummary {
+  total_calls: number;
+  error_count: number;
+  server_count: number;
 }
 
 export interface DailyStats {
@@ -721,5 +736,62 @@ export const tracingApi = {
       });
     }
     return request(`/monitor/tracing/mcp?${params.toString()}`);
+  },
+
+  // MCP 全局调用汇总统计
+  getMCPSummary: async (
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+      bbk_ids?: string;
+    },
+  ): Promise<MCPSummary> => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/mcp/summary${query}`);
+  },
+
+  // 定时任务执行汇总统计
+  getTaskStatusSummary: async (
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+      bbk_ids?: string;
+    },
+  ): Promise<TaskStatusSummary> => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/task-status/summary${query}`);
+  },
+
+  // 使用深度汇总统计
+  getDepthSummary: async (
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+      bbk_ids?: string;
+    },
+  ): Promise<DepthSummary> => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/depth/summary${query}`);
   },
 };

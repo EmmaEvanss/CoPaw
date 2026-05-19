@@ -14,6 +14,7 @@ from ...models.tracing import (
     ModelUsage,
     MCPToolUsage,
     MCPServerUsage,
+    MCPSummary,
     OverviewStats,
     SessionListItem,
     SessionStats,
@@ -31,6 +32,8 @@ from ...models.tracing import (
     UserListItem,
     UserMessageItem,
     UserStats,
+    TaskStatusSummary,
+    DepthSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,11 +122,7 @@ class TracingQueryService:
             top_skills,
             (top_mcp_tools, mcp_servers),
             branch_breakdown,
-            task_status_breakdown,
-            total_cron_tasks,
             total_skill_calls,
-            multi_round_ratio,
-            avg_user_stay_seconds,
         ) = await self._fetch_overview_data(
             source_id,
             start_date,
@@ -142,11 +141,7 @@ class TracingQueryService:
             top_mcp_tools=top_mcp_tools,
             mcp_servers=mcp_servers,
             branch_breakdown=branch_breakdown,
-            task_status_breakdown=task_status_breakdown,
-            total_cron_tasks=total_cron_tasks,
             total_skill_calls=total_skill_calls,
-            multi_round_ratio=multi_round_ratio,
-            avg_user_stay_seconds=avg_user_stay_seconds,
         )
 
     async def _fetch_overview_data(
@@ -176,31 +171,12 @@ class TracingQueryService:
                 end_date,
                 bbk_ids,
             ),
-            self._get_task_status_breakdown(
-                source_id,
-                start_date,
-                end_date,
-                bbk_ids,
-            ),
-            self._get_cron_tasks_count(
-                source_id,
-                start_date,
-                end_date,
-                bbk_ids,
-            ),
             self._get_total_skill_calls(
                 source_id,
                 start_date,
                 end_date,
                 bbk_ids,
             ),
-            self._get_multi_round_ratio(
-                source_id,
-                start_date,
-                end_date,
-                bbk_ids,
-            ),
-            self._get_avg_user_stay(source_id, start_date, end_date, bbk_ids),
         )
 
     def _build_overview_stats(
@@ -215,11 +191,7 @@ class TracingQueryService:
         top_mcp_tools: list,
         mcp_servers: list,
         branch_breakdown: Any,
-        task_status_breakdown: Any,
-        total_cron_tasks: int = 0,
         total_skill_calls: int = 0,
-        multi_round_ratio: float = 0.0,
-        avg_user_stay_seconds: int = 0,
     ) -> OverviewStats:
         """构建运营概览统计对象."""
         return OverviewStats(
@@ -236,18 +208,14 @@ class TracingQueryService:
             total_conversations=(
                 token_row["total_traces"] or 0 if token_row else 0
             ),
-            total_cron_tasks=total_cron_tasks,
             total_skill_calls=total_skill_calls,
             avg_duration_ms=self._extract_avg_duration(token_row),
-            multi_round_session_ratio=multi_round_ratio,
-            avg_user_stay_seconds=avg_user_stay_seconds,
             top_tools=top_tools,
             top_skills=top_skills,
             top_mcp_tools=top_mcp_tools,
             mcp_servers=mcp_servers,
             daily_trend=[],
             branch_breakdown=branch_breakdown,
-            task_status_breakdown=task_status_breakdown,
         )
 
     def _extract_avg_duration(self, token_row: Optional[dict]) -> int:
@@ -441,77 +409,6 @@ class TracingQueryService:
             cron_tasks=build_branch_items(cron_rows),
         )
 
-    async def _get_task_status_breakdown(
-        self,
-        source_id: str,
-        start_date: datetime,
-        end_date: datetime,
-        bbk_ids: Optional[str] = None,
-    ) -> Any:
-        """获取定时任务执行状态统计.
-
-        从 swe_cron_executions 表查询定时任务的执行状态分布。
-        """
-        from ...models.tracing import TaskStatusBreakdown
-
-        bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(bbk_ids)
-        cron_exclude_placeholders = ", ".join(
-            ["%s"] * len(EXCLUDED_SOURCE_IDS),
-        )
-        if source_id == "all":
-            query = f"""
-                SELECT e.status, COUNT(*) AS count
-                FROM swe_cron_executions e
-                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
-                WHERE e.actual_time >= %s AND e.actual_time < %s
-                  AND j.status != 'deleted'
-                  AND j.deleted_at IS NULL
-                  AND j.source_id NOT IN ({cron_exclude_placeholders})
-                  AND j.tenant_id != 'default'
-                  {bbk_filter_sql}
-                GROUP BY e.status
-            """
-            params = (
-                start_date,
-                end_date,
-                *EXCLUDED_SOURCE_IDS,
-                *bbk_filter_params,
-            )
-        else:
-            query = f"""
-                SELECT e.status, COUNT(*) AS count
-                FROM swe_cron_executions e
-                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
-                WHERE e.actual_time >= %s AND e.actual_time < %s
-                  AND j.status != 'deleted'
-                  AND j.deleted_at IS NULL
-                  AND j.tenant_id != 'default'
-                  AND j.source_id = %s
-                  {bbk_filter_sql}
-                GROUP BY e.status
-            """
-            params = (start_date, end_date, source_id, *bbk_filter_params)
-
-        rows = await self._db.fetch_all(query, params)
-        status_map = {row["status"]: row["count"] for row in rows}
-
-        # 定时任务状态映射：
-        # success -> 成功
-        # error, timeout -> 失败
-        # cancelled, skipped -> 已取消/跳过
-        success = status_map.get("success", 0)
-        failed = status_map.get("error", 0) + status_map.get("timeout", 0)
-        cancelled = status_map.get("cancelled", 0) + status_map.get(
-            "skipped",
-            0,
-        )
-
-        return TaskStatusBreakdown(
-            success=success,
-            failed=failed,
-            running=cancelled,  # 使用 running 字段存储已取消/跳过
-        )
-
     async def get_growth_stats(
         self,
         source_id: str,
@@ -520,8 +417,42 @@ class TracingQueryService:
         time_range: str = "day",
         bbk_ids: Optional[str] = None,
     ) -> dict[str, Any]:
-        """获取环比增长统计."""
-        # Calculate previous period based on time_range
+        """获取运营看板核心指标的环比结果。
+
+        统计范围：
+        - 主事实表为 `swe_tracing_traces`，用于调用量、Token、会话数、
+          活跃用户数等核心规模指标。
+        - 技能调用量来自 `swe_tracing_spans`，仅统计
+          `event_type='skill_invocation'` 且 `skill_name` 非空的记录。
+        - 定时任务执行量来自 `swe_cron_executions` 与 `swe_cron_jobs` 的
+          关联结果，口径为有效任务的执行记录数。
+        - `source_id='all'` 时汇总全部正式平台，并排除
+          `EXCLUDED_SOURCE_IDS`；指定 `source_id` 时仅统计单个平台。
+        - `bbk_ids` 为分行并集过滤条件，作用于 trace、span 与 cron
+          相关统计。
+
+        对比周期：
+        - 当前周期由调用方传入 `start_date`、`end_date` 定义。
+        - 上一周期的回溯长度由 `time_range` 决定：`day/week/month`
+          分别对应 1/7/30 天，`custom` 对应当前时间窗的自然日差值。
+        - 上一周期的结束边界与当前周期起点对齐，避免两个周期发生重叠。
+
+        返回字段口径：
+        - `callsGrowth`：调用量环比，口径为 trace 记录数。
+        - `tokensGrowth`：资源消耗环比，口径为 `total_tokens` 汇总值。
+        - `sessionGrowth`：会话数环比，口径为 `session_id` 去重数。
+        - `userGrowth`：活跃用户数环比，口径为 `user_id` 去重数。
+        - `skillGrowth`：技能调用次数环比，口径为技能调用 span 数。
+        - `cronGrowth`：定时任务执行次数环比，口径为 cron 执行记录数。
+        - `avgRoundsGrowth`：单次会话平均轮数环比，口径为 `calls/sessions`。
+        - `multiRoundRatioGrowth`：多轮会话占比环比，口径为大于 3 轮
+          会话的占比。
+        - `avgStayGrowth`：用户平均停留时长环比，口径为秒。
+        - `avgSessionsPerUserGrowth`：人均会话数环比，口径为
+          `sessions/users`。
+        """
+        # 环比回溯长度与看板筛选粒度保持一致，确保上一周期和当前周期
+        # 在展示层具备可直接比较的业务含义。
         period_days = 1
         if time_range == "week":
             period_days = 7
@@ -535,7 +466,7 @@ class TracingQueryService:
         # 避免使用 timedelta(seconds=1) 造成的时间间隙问题
         prev_end = start_date
 
-        # 预构建 bbk IN 过滤条件，供内部函数使用
+        # 分行筛选口径在所有子指标上保持一致，避免不同卡片的环比基线不一致。
         bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
 
         async def get_stats(
@@ -543,6 +474,8 @@ class TracingQueryService:
             e: datetime,
             is_prev: bool = False,
         ) -> dict:
+            # 基础规模指标统一从 trace 主表读取，确保调用量、Token、
+            # 会话数、活跃用户数共享同一事实口径。
             # 对于上一周期，使用 < 比较；对于当前周期，使用 <= 比较
             time_compare = "<" if is_prev else "<="
             if source_id == "all":
@@ -595,6 +528,7 @@ class TracingQueryService:
             e: datetime,
             is_prev: bool = False,
         ) -> int:
+            # 技能调用量单独取 span 表口径，避免把普通 trace 误计为技能调用。
             time_compare = "<" if is_prev else "<="
             if source_id == "all":
                 exclude_placeholders = ", ".join(
@@ -629,7 +563,11 @@ class TracingQueryService:
             e: datetime,
             is_prev: bool = False,
         ) -> int:
-            """查询定时任务执行次数（cron_executions 表）."""
+            """查询定时任务执行次数（cron_executions 表）.
+
+            统计的是有效任务的执行记录数，不是任务定义数；删除态任务、
+            默认租户任务和被排除平台的数据均不纳入口径。
+            """
             time_compare = "<" if is_prev else "<="
             bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(
                 bbk_ids,
@@ -694,7 +632,8 @@ class TracingQueryService:
             is_prev=True,
         )
 
-        # 获取深度指标的当前周期和上一周期数据
+        # 深度指标与看板“使用深度”卡片口径保持一致：占比类指标和时长类
+        # 指标都通过专用聚合函数获取，不与基础规模指标混算。
         curr_multi_round_ratio = await self._get_multi_round_ratio(
             source_id,
             start_date,
@@ -721,6 +660,10 @@ class TracingQueryService:
         )
 
         def calc_growth(curr_val: float, prev_val: float) -> float | None:
+            # 环比空值约定：
+            # - 上期为 0 且本期有值：按 100% 展示，表示从无到有。
+            # - 上期和本期都为 0：按 0.0 处理。
+            # - 本期为 0 且上期有值：返回 None，由上层按“当前无数据”展示。
             if prev_val == 0:
                 return 100.0 if curr_val > 0 else 0.0
             if curr_val == 0:
@@ -728,22 +671,22 @@ class TracingQueryService:
                 return None
             return round(((curr_val - prev_val) / prev_val) * 100, 1)
 
-        # 计算深度指标环比
-        # 1. 单次会话平均轮数环比 = (calls/sessions) 的环比
+        # 深度指标环比直接对齐页面卡片展示公式，保证卡片值与环比基线可追溯。
+        # 1. 单次会话平均轮数环比 = 当前周期 calls/sessions 相对上一周期的变化。
         curr_avg_rounds = curr["calls"] / max(curr["sessions"], 1)
         prev_avg_rounds = prev["calls"] / max(prev["sessions"], 1)
         avg_rounds_growth = calc_growth(curr_avg_rounds, prev_avg_rounds)
 
-        # 2. 多轮会话占比环比
+        # 2. 多轮会话占比环比：以 >3 轮会话的占比作为口径。
         multi_round_ratio_growth = calc_growth(
             curr_multi_round_ratio,
             prev_multi_round_ratio,
         )
 
-        # 3. 用户平均停留时长环比
+        # 3. 用户平均停留时长环比：以秒为单位比较。
         avg_stay_growth = calc_growth(curr_avg_user_stay, prev_avg_user_stay)
 
-        # 4. 人均会话数环比 = (sessions/users) 的环比
+        # 4. 人均会话数环比 = 当前周期 sessions/users 相对上一周期的变化。
         curr_avg_sessions_per_user = curr["sessions"] / max(curr["users"], 1)
         prev_avg_sessions_per_user = prev["sessions"] / max(prev["users"], 1)
         avg_sessions_per_user_growth = calc_growth(
@@ -752,17 +695,16 @@ class TracingQueryService:
         )
 
         return {
-            "callsGrowth": calc_growth(curr["calls"], prev["calls"]),
-            "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),
-            "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),
-            "userGrowth": calc_growth(curr["users"], prev["users"]),
-            "skillGrowth": calc_growth(curr_skill_calls, prev_skill_calls),
-            "cronGrowth": calc_growth(curr_cron_tasks, prev_cron_tasks),
-            # 深度指标环比
-            "avgRoundsGrowth": avg_rounds_growth,
-            "multiRoundRatioGrowth": multi_round_ratio_growth,
-            "avgStayGrowth": avg_stay_growth,
-            "avgSessionsPerUserGrowth": avg_sessions_per_user_growth,
+            "callsGrowth": calc_growth(curr["calls"], prev["calls"]),  # trace 记录数口径
+            "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),  # total_tokens 汇总口径
+            "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),  # session_id 去重口径
+            "userGrowth": calc_growth(curr["users"], prev["users"]),  # user_id 去重口径
+            "skillGrowth": calc_growth(curr_skill_calls, prev_skill_calls),  # skill_invocation span 数口径
+            "cronGrowth": calc_growth(curr_cron_tasks, prev_cron_tasks),  # cron 执行记录数口径
+            "avgRoundsGrowth": avg_rounds_growth,  # 单次会话平均轮数口径
+            "multiRoundRatioGrowth": multi_round_ratio_growth,  # >3 轮会话占比口径
+            "avgStayGrowth": avg_stay_growth,  # 用户平均停留时长（秒）口径
+            "avgSessionsPerUserGrowth": avg_sessions_per_user_growth,  # 人均会话数口径
         }
 
     async def get_daily_trend(
@@ -1399,65 +1341,6 @@ class TracingQueryService:
             params = (source_id, start_date, end_date, *bbk_filter_params)
             return await self._db.fetch_one(query, params)
 
-    async def _get_cron_tasks_count(
-        self,
-        source_id: str,
-        start_date: datetime,
-        end_date: datetime,
-        bbk_ids: Optional[str] = None,
-    ) -> int:
-        """获取定时任务执行次数.
-
-        从 swe_cron_executions 表查询指定时间范围内的执行记录数。
-
-        Args:
-            source_id: 数据源标识（使用 'all' 或留空查询所有平台）
-            start_date: 开始时间
-            end_date: 结束时间
-            bbk_ids: 可选的分行ID过滤（逗号分隔多值）
-
-        Returns:
-            定时任务执行次数
-        """
-        bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(bbk_ids)
-        cron_exclude_placeholders = ", ".join(
-            ["%s"] * len(EXCLUDED_SOURCE_IDS),
-        )
-        if source_id == "all":
-            query = f"""
-                SELECT COUNT(*) as total
-                FROM swe_cron_executions e
-                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
-                WHERE e.actual_time >= %s AND e.actual_time < %s
-                  AND j.status != 'deleted'
-                  AND j.deleted_at IS NULL
-                  AND j.source_id NOT IN ({cron_exclude_placeholders})
-                  AND j.tenant_id != 'default'
-                  {bbk_filter_sql}
-            """
-            params = (
-                start_date,
-                end_date,
-                *EXCLUDED_SOURCE_IDS,
-                *bbk_filter_params,
-            )
-        else:
-            query = f"""
-                SELECT COUNT(*) as total
-                FROM swe_cron_executions e
-                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
-                WHERE e.actual_time >= %s AND e.actual_time < %s
-                  AND j.status != 'deleted'
-                  AND j.deleted_at IS NULL
-                  AND j.tenant_id != 'default'
-                  AND j.source_id = %s
-                  {bbk_filter_sql}
-            """
-            params = (start_date, end_date, source_id, *bbk_filter_params)
-
-        result = await self._db.fetch_one(query, params)
-        return result["total"] if result else 0
-
     async def _get_model_distribution(
         self,
         source_id: str,
@@ -1866,6 +1749,206 @@ class TracingQueryService:
             for row in rows
         ]
         return skills, total
+
+    async def get_mcp_summary(
+        self,
+        source_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        bbk_ids: Optional[str] = None,
+    ) -> MCPSummary:
+        """获取 MCP 全局调用汇总统计."""
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+        # 构建基础查询条件
+        if source_id == "all":
+            exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+            base_where = f"""
+                start_time >= %s AND start_time <= %s
+                AND event_type = 'tool_call_end'
+                AND mcp_server IS NOT NULL
+                AND source_id NOT IN ({exclude_placeholders})
+                AND user_id != 'default'{bbk_filter_sql}
+            """
+            params = [
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            ]
+        else:
+            base_where = f"""
+                source_id = %s AND start_time >= %s AND start_time <= %s
+                AND event_type = 'tool_call_end'
+                AND mcp_server IS NOT NULL
+                AND user_id != 'default'{bbk_filter_sql}
+            """
+            params = [
+                source_id,
+                start_date,
+                end_date,
+                *bbk_filter_params,
+            ]
+
+        # 全局汇总统计
+        summary_query = f"""
+            SELECT COUNT(*) as total_calls,
+                   SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count,
+                   COUNT(DISTINCT mcp_server) as server_count
+            FROM swe_tracing_spans
+            WHERE {base_where}
+        """
+        row = await self._db.fetch_one(summary_query, tuple(params))
+        return MCPSummary(
+            total_calls=row["total_calls"] or 0,
+            error_count=row["error_count"] or 0,
+            server_count=row["server_count"] or 0,
+        )
+
+    async def get_task_status_summary(
+        self,
+        source_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        bbk_ids: Optional[str] = None,
+    ) -> TaskStatusSummary:
+        """获取定时任务执行汇总统计."""
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(bbk_ids)
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+
+        if source_id == "all":
+            query = f"""
+                SELECT e.status, COUNT(*) AS count
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.source_id NOT IN ({exclude_placeholders})
+                  AND j.tenant_id != 'default'
+                  {bbk_filter_sql}
+                GROUP BY e.status
+            """
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
+        else:
+            query = f"""
+                SELECT e.status, COUNT(*) AS count
+                FROM swe_cron_executions e
+                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                WHERE e.actual_time >= %s AND e.actual_time < %s
+                  AND j.status != 'deleted'
+                  AND j.deleted_at IS NULL
+                  AND j.tenant_id != 'default'
+                  AND j.source_id = %s
+                  {bbk_filter_sql}
+                GROUP BY e.status
+            """
+            params = (start_date, end_date, source_id, *bbk_filter_params)
+
+        rows = await self._db.fetch_all(query, params)
+        status_map = {row["status"]: row["count"] for row in rows}
+
+        success = status_map.get("success", 0)
+        failed = status_map.get("error", 0) + status_map.get("timeout", 0)
+        cancelled = status_map.get("cancelled", 0) + status_map.get("skipped", 0)
+        total_tasks = success + failed + cancelled
+
+        return TaskStatusSummary(
+            total_tasks=total_tasks,
+            success=success,
+            failed=failed,
+            cancelled=cancelled,
+        )
+
+    async def get_depth_summary(
+        self,
+        source_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        bbk_ids: Optional[str] = None,
+    ) -> DepthSummary:
+        """获取使用深度汇总统计."""
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+
+        # 获取基础统计数据
+        if source_id == "all":
+            base_query = f"""
+                SELECT
+                    COUNT(*) as total_traces,
+                    COUNT(DISTINCT session_id) as total_sessions,
+                    COUNT(DISTINCT user_id) as total_users
+                FROM swe_tracing_traces
+                WHERE start_time >= %s AND start_time <= %s
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND user_id != 'default'
+                  {bbk_filter_sql}
+            """
+            base_params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+            )
+        else:
+            base_query = f"""
+                SELECT
+                    COUNT(*) as total_traces,
+                    COUNT(DISTINCT session_id) as total_sessions,
+                    COUNT(DISTINCT user_id) as total_users
+                FROM swe_tracing_traces
+                WHERE source_id = %s AND start_time >= %s AND start_time <= %s
+                  AND user_id != 'default'
+                  {bbk_filter_sql}
+            """
+            base_params = (source_id, start_date, end_date, *bbk_filter_params)
+
+        base_row = await self._db.fetch_one(base_query, base_params)
+        total_traces = int((base_row or {}).get("total_traces") or 0)
+        total_sessions = max(int((base_row or {}).get("total_sessions") or 0), 1)
+        total_users = max(int((base_row or {}).get("total_users") or 0), 1)
+
+        # 单次会话平均轮数
+        avg_rounds = round(total_traces / total_sessions, 1)
+
+        # 人均会话数
+        avg_sessions_per_user = round(total_sessions / total_users, 1)
+
+        # 多轮会话占比 (>3轮)
+        multi_round_ratio = await self._get_multi_round_ratio(
+            source_id, start_date, end_date, bbk_ids
+        )
+
+        # 用户平均停留时长
+        avg_stay_seconds = await self._get_avg_user_stay(
+            source_id, start_date, end_date, bbk_ids
+        )
+
+        return DepthSummary(
+            avg_rounds=avg_rounds,
+            multi_round_ratio=multi_round_ratio,
+            avg_stay_seconds=avg_stay_seconds,
+            avg_sessions_per_user=avg_sessions_per_user,
+        )
 
     async def get_mcp_servers_paginated(
         self,

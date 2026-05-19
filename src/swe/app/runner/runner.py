@@ -1453,7 +1453,11 @@ class AgentRunner(Runner):
         request: AgentRequest,
         msgs: list[Any],
     ) -> str | None:
-        """启动 query 追踪；追踪不可用时只记录日志并继续主流程。"""
+        """启动 query 追踪；追踪不可用时只记录日志并继续主流程。
+
+        如果 request 中已有 trace_id（由外部传入），则使用 attach_existing 模式
+        仅设置 context 而不创建新的数据库记录。
+        """
         if not has_trace_manager():
             return None
 
@@ -1461,6 +1465,8 @@ class AgentRunner(Runner):
             trace_mgr = get_trace_manager()
             if not trace_mgr.enabled:
                 return None
+            # 检查是否已有外部传入的 trace_id
+            existing_trace_id = getattr(request, "trace_id", None)
             return await trace_mgr.start_trace(
                 user_id=getattr(request, "user_id", "") or "",
                 session_id=getattr(request, "session_id", "") or "",
@@ -1470,6 +1476,9 @@ class AgentRunner(Runner):
                 user_name=_request_user_name(request),
                 bbk_id=_request_bbk_id(request),
                 session_name=_session_name_from_messages(msgs),
+                trace_id=existing_trace_id,  # 使用传入的 trace_id 或 None
+                attach_existing=existing_trace_id
+                is not None,  # 如果有传入 trace_id，仅 attach
             )
         except Exception as e:
             logger.warning("Failed to start trace: %s", e)
@@ -2254,8 +2263,24 @@ class AgentRunner(Runner):
         status: TraceStatus,
         error: str | None = None,
     ) -> None:
-        """结束 trace，失败时只记录日志避免影响主链路。"""
+        """结束 trace，失败时只记录日志避免影响主链路。
+
+        如果 trace 是 attach 到外部已存在的 trace（attached=True），则跳过结束，
+        让外部创建者负责结束。
+        """
         if not trace_id or not has_trace_manager():
+            return
+
+        # 检查是否是 attach 的 trace，如果是则跳过结束
+        from ..tracing import get_current_trace
+
+        ctx = get_current_trace()
+        if ctx and ctx.attached:
+            logger.debug(
+                "Skip ending attached trace (owned by external): trace_id=%s",
+                trace_id[:20] if trace_id else "(empty)",
+            )
+            # 清除 context，让外部创建者可以正确结束
             return
 
         try:

@@ -39,6 +39,7 @@ class TraceContext:
         user_name: Optional[str] = None,
         bbk_id: Optional[str] = None,
         session_name: Optional[str] = None,
+        attached: bool = False,  # 标记是否是 attach 到已存在的 trace
     ):
         self.trace_id = trace_id
         self.user_id = user_id
@@ -54,6 +55,7 @@ class TraceContext:
         self._active_skills: list[str] = []  # Active skill context stack
         self.skill_detector: Optional[Any] = None  # SkillInvocationDetector
         self.enabled_skills: list[str] = []  # Skills enabled for this trace
+        self.attached = attached  # 如果为 True，表示不应由当前代码结束 trace
 
     def push_span(self, span_id: str) -> None:
         """Push a span ID onto the stack."""
@@ -262,8 +264,9 @@ class TraceManager:
         bbk_id: Optional[str] = None,
         session_name: Optional[str] = None,
         model_output: Optional[str] = None,
+        attach_existing: bool = False,
     ) -> str:
-        """Start a new trace.
+        """Start a new trace or attach to an existing one.
 
         Args:
             user_id: User identifier
@@ -276,6 +279,8 @@ class TraceManager:
             bbk_id: Optional BBK identifier
             session_name: Optional session name (derived from first message)
             model_output: Optional model output (for text-type cron jobs)
+            attach_existing: If True and trace_id exists in DB, only set context
+                without creating new database record
 
         Returns:
             Trace ID
@@ -284,6 +289,28 @@ class TraceManager:
             return trace_id or str(uuid.uuid4())
 
         trace_id = trace_id or str(uuid.uuid4())
+
+        # 如果是 attach_existing 模式，检查 trace 是否已存在
+        if attach_existing:
+            existing_trace = self._active_traces.get(
+                trace_id,
+            ) or await self.store.get_trace(trace_id)
+            if existing_trace:
+                # 仅设置 context，不创建数据库记录
+                ctx = TraceContext(
+                    trace_id,
+                    existing_trace.user_id or user_id,
+                    existing_trace.session_id or session_id,
+                    existing_trace.channel or channel,
+                    existing_trace.source_id or source_id,
+                    user_name=user_name or existing_trace.user_name,
+                    bbk_id=bbk_id or existing_trace.bbk_id,
+                    session_name=session_name or existing_trace.session_name,
+                    attached=True,  # 标记为 attach，不应由当前代码结束
+                )
+                ctx.trace = existing_trace
+                set_current_trace(ctx)
+                return trace_id
 
         # Sanitize user message
         if self.config.sanitize_output and user_message:

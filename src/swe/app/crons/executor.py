@@ -423,15 +423,28 @@ class CronExecutor:
         console_text_parts: list[str] = []
         try:
             # Wrap the entire agent execution in a timeout
-            timeout_ctx = asyncio.timeout(job.runtime.timeout_seconds)
-            async with timeout_ctx:
-                await self._run_agent_stream(
-                    job,
-                    target_user_id,
-                    target_session_id,
-                    dispatch_meta,
-                    req,
-                    console_text_parts,
+            # asyncio.timeout 是 Python 3.11+ 的特性，低版本使用 wait_for
+            if hasattr(asyncio, "timeout"):
+                async with asyncio.timeout(job.runtime.timeout_seconds):
+                    await self._run_agent_stream(
+                        job,
+                        target_user_id,
+                        target_session_id,
+                        dispatch_meta,
+                        req,
+                        console_text_parts,
+                    )
+            else:
+                await asyncio.wait_for(
+                    self._run_agent_stream(
+                        job,
+                        target_user_id,
+                        target_session_id,
+                        dispatch_meta,
+                        req,
+                        console_text_parts,
+                    ),
+                    timeout=job.runtime.timeout_seconds,
                 )
             # 推送结果到 console
             task_chat_id: Optional[str] = (job.meta or {}).get("task_chat_id")

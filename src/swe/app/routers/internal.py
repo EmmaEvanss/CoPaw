@@ -88,6 +88,7 @@ async def register_missing_cron_jobs(request: Request):
         "agent_count": 0,
         "total": 0,
         "registered": 0,
+        "updated": 0,
         "skipped": 0,
         "failed": 0,
         "results": [],
@@ -137,6 +138,7 @@ async def register_missing_cron_jobs(request: Request):
 
             summary["total"] += int(result.get("total", 0))
             summary["registered"] += int(result.get("registered", 0))
+            summary["updated"] += int(result.get("updated", 0))
             summary["skipped"] += int(result.get("skipped", 0))
             summary["failed"] += int(result.get("failed", 0))
             summary["errors"].extend(result.get("errors", []))

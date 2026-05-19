@@ -461,6 +461,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 return str(existing_ext_id)
         return ""
 
+    def _get_external_scheduler_tenant_id(self, spec: CronJobSpec) -> str:
+        # 外部调度归属必须跟当前运行时租户一致，避免旧任务里的 tenant_id 污染回调路由。
+        return self._tenant_id or spec.tenant_id or ""
+
     async def _sync_job_to_external_scheduler(
         self,
         spec: CronJobSpec,
@@ -472,10 +476,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         callback_url = self._build_callback_url("job", spec.id)
         ext_id = self._get_existing_external_job_id(spec, existing)
+        tenant_id = self._get_external_scheduler_tenant_id(spec)
         if ext_id:
             await self._scheduler_adapter.update_job(
                 external_id=ext_id,
-                tenant_id=spec.tenant_id or self._tenant_id or "",
+                tenant_id=tenant_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -485,7 +490,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             )
         else:
             ext_id = await self._scheduler_adapter.register_job(
-                tenant_id=spec.tenant_id or self._tenant_id or "",
+                tenant_id=tenant_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -517,6 +522,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             "agent_id": self._agent_id,
             "total": 0,
             "registered": 0,
+            "updated": 0,
             "skipped": 0,
             "failed": 0,
             "errors": [],
@@ -524,12 +530,19 @@ class CronManager:  # pylint: disable=too-many-public-methods
         for job in await self._repo.list_jobs():
             result["total"] += 1
             if self._get_existing_external_job_id(job):
+                if await self._repair_external_scheduler_tenant(job):
+                    result["updated"] += 1
+                    continue
                 result["skipped"] += 1
                 continue
             try:
                 synced = await self._sync_job_to_external_scheduler(job)
                 ext_id = (synced.meta or {}).get("external_job_id", "")
-                await self._persist_external_job_id(job.id, ext_id)
+                await self._persist_external_job_binding(
+                    job.id,
+                    ext_id,
+                    self._tenant_id,
+                )
                 st = self._states.get(job.id, CronJobState())
                 st.external_job_id = ext_id
                 self._states[job.id] = st
@@ -549,6 +562,21 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     exc_info=True,
                 )
         return result
+
+    async def _repair_external_scheduler_tenant(
+        self,
+        job: CronJobSpec,
+    ) -> bool:
+        if not self._tenant_id or job.tenant_id == self._tenant_id:
+            return False
+        synced = await self._sync_job_to_external_scheduler(job)
+        ext_id = (synced.meta or {}).get("external_job_id", "")
+        await self._persist_external_job_binding(
+            job.id,
+            ext_id,
+            self._tenant_id,
+        )
+        return True
 
     async def _ensure_persisted_task_binding(
         self,
@@ -1746,18 +1774,27 @@ class CronManager:  # pylint: disable=too-many-public-methods
         ext_id: str,
     ) -> None:
         """将 external_job_id 写入 jobs.json 中对应任务的 meta 字段。"""
+        await self._persist_external_job_binding(job_id, ext_id)
+
+    async def _persist_external_job_binding(
+        self,
+        job_id: str,
+        ext_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> None:
         try:
             async with self._lock:
                 await self._mutate_jobs_file_locked(
-                    lambda jobs_file: self._set_job_meta_in_jobs_file(
+                    lambda jobs_file: self._set_job_binding_in_jobs_file(
                         jobs_file,
                         job_id,
-                        {"external_job_id": ext_id},
+                        ext_id,
+                        tenant_id,
                     ),
                 )
         except Exception:
             logger.warning(
-                "Failed to persist external_job_id for %s",
+                "Failed to persist external scheduler binding for %s",
                 job_id,
                 exc_info=True,
             )
@@ -1773,6 +1810,24 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 meta = dict(job.meta or {})
                 meta.update(meta_updates)
                 jobs_file.jobs[index] = job.model_copy(update={"meta": meta})
+                return True, None
+        return False, None
+
+    @staticmethod
+    def _set_job_binding_in_jobs_file(
+        jobs_file,
+        job_id: str,
+        ext_id: str,
+        tenant_id: Optional[str] = None,
+    ) -> tuple[bool, None]:
+        for index, job in enumerate(jobs_file.jobs):
+            if job.id == job_id:
+                meta = dict(job.meta or {})
+                meta["external_job_id"] = ext_id
+                update = {"meta": meta}
+                if tenant_id:
+                    update["tenant_id"] = tenant_id
+                jobs_file.jobs[index] = job.model_copy(update=update)
                 return True, None
         return False, None
 

@@ -555,11 +555,11 @@ export default function BusinessOverviewPage() {
     () => dateRange[1].format("YYYY-MM-DD"),
     [dateRange],
   );
-  // 平台筛选参数：与 Header X-Source-Id 构建逻辑完全一致
+  // 平台筛选参数：超级管理员选择 "all" 时传递 "all"，其他情况按实际值传递
   // 使用 useMemo 缓存，避免每次渲染重新创建导致请求循环
   const effectiveSourceId = useMemo(() => {
     if (isSuperManager) {
-      return platform === "all" ? undefined : platform;
+      return platform === "all" ? "all" : platform;
     }
     const sourceFromContext = getIframeContext().source || DEFAULT_SOURCE_ID;
     return sourceFromContext ? sourceFromContext : undefined;
@@ -1476,9 +1476,11 @@ export default function BusinessOverviewPage() {
                       setSkillModalOpen(true);
                     }}
                   >
-                    <span className={styles.skillName}>
-                      {truncateName(skill.skill_name, 8)}
-                    </span>
+                    <Tooltip title={skill.skill_name} placement="top">
+                      <span className={styles.skillName}>
+                        {truncateName(skill.skill_name, 12)}
+                      </span>
+                    </Tooltip>
                     <div className={styles.skillTrack}>
                       <div
                         className={styles.skillBar}

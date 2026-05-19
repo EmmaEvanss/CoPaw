@@ -12,14 +12,18 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from .models import CronJobSpec
 
 logger = logging.getLogger(__name__)
+
+# 东八区时区（北京时间）
+_BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 # Default Monitor API URL
 DEFAULT_MONITOR_API_URL = "http://localhost:9090/api"
@@ -361,15 +365,24 @@ class MonitorSyncClient:
             )
 
     def _format_optional_time(self, time: Optional[datetime]) -> Optional[str]:
-        """Format optional datetime to ISO string.
+        """Format optional datetime to ISO string in Beijing timezone.
+
+        将 UTC 时间转换为东八区时间后再存储，前端读取后可直接展示。
 
         Args:
-            time: Optional datetime
+            time: Optional datetime (假设为 UTC 时区)
 
         Returns:
-            ISO format string or None
+            ISO format string in Beijing timezone or None
         """
-        return time.isoformat() if time else None
+        if time is None:
+            return None
+        # 如果时间没有时区信息，假设为 UTC
+        if time.tzinfo is None:
+            time = time.replace(tzinfo=timezone.utc)
+        # 转换为东八区时间
+        beijing_time = time.astimezone(_BEIJING_TZ)
+        return beijing_time.isoformat()
 
     def _format_optional_json(self, data: Optional[Dict[str, Any]]) -> str:
         """Format optional dict to JSON string.
@@ -497,7 +510,7 @@ class MonitorSyncClient:
             "job_name": job.name,
             "tenant_id": job.tenant_id or "",
             "scheduled_time": self._format_optional_time(scheduled_time),
-            "actual_time": actual_time.isoformat(),
+            "actual_time": self._format_actual_time(actual_time),
             "end_time": self._format_optional_time(end_time),
             "duration_ms": duration_ms,
             "status": status,
@@ -511,6 +524,24 @@ class MonitorSyncClient:
             "output_preview": self._truncate_preview(output_preview),
             "meta": "",
         }
+
+    def _format_actual_time(self, time: datetime) -> str:
+        """Format actual_time datetime to ISO string in Beijing timezone.
+
+        将 UTC 时间转换为东八区时间后再存储，前端读取后可直接展示。
+
+        Args:
+            time: datetime (假设为 UTC 时区)
+
+        Returns:
+            ISO format string in Beijing timezone
+        """
+        # 如果时间没有时区信息，假设为 UTC
+        if time.tzinfo is None:
+            time = time.replace(tzinfo=timezone.utc)
+        # 转换为东八区时间
+        beijing_time = time.astimezone(_BEIJING_TZ)
+        return beijing_time.isoformat()
 
     async def _do_record_execution(self, exec_data: Dict[str, Any]) -> None:
         """Actually perform the record execution HTTP call.

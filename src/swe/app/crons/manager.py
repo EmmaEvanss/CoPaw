@@ -701,6 +701,9 @@ class CronManager:  # pylint: disable=too-many-public-methods
     async def resume_job(self, job_id: str) -> bool:
         """Resume a paused job - enables execution and persists to repository.
 
+        This also marks all unread execution records as read, since the user
+        has acknowledged the task status by resuming it.
+
         Args:
             job_id: The job ID to resume.
 
@@ -730,14 +733,17 @@ class CronManager:  # pylint: disable=too-many-public-methods
             # Sync to Monitor (async, non-blocking)
             if self._monitor_sync_client is not None:
                 await self._monitor_sync_client.sync_job(job)
+                # 恢复任务时同时标记历史未读记录为已读
+                await self._monitor_sync_client.mark_job_as_read(job_id)
 
             return True
 
-    async def run_job(self, job_id: str) -> None:
+    async def run_job(self, job_id: str, is_manual: bool = True) -> None:
         """Trigger a job to run in the background (fire-and-forget).
 
-        This is a MANUAL execution outside scheduler ownership semantics.
-        It does not use scheduler-originated lease preflight.
+        This is called either by:
+        - User manual trigger (is_manual=True)
+        - External scheduler callback (is_manual=False)
 
         Raises KeyError if the job does not exist.
         The actual execution happens asynchronously; errors are logged
@@ -751,12 +757,12 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return
         job = await self._ensure_persisted_task_binding(job)
         logger.info(
-            "cron run_job (manual, outside scheduler ownership semantics): "
-            "job_id=%s channel=%s task_type=%s "
+            "cron run_job: job_id=%s channel=%s task_type=%s is_manual=%s "
             "target_user_id=%s target_session_id=%s",
             job_id,
             job.dispatch.channel,
             job.task_type,
+            is_manual,
             (job.dispatch.target.user_id or "")[:40],
             (job.dispatch.target.session_id or "")[:40],
         )
@@ -766,7 +772,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self._states[job_id] = st
         with bind_llm_workload(LLM_WORKLOAD_CRON):
             task = asyncio.create_task(
-                self._execute_once(job, is_manual=True),
+                self._execute_once(job, is_manual=is_manual),
                 name=f"cron-run-{job_id}",
             )
         task.add_done_callback(lambda t: self._task_done_cb(t, job))

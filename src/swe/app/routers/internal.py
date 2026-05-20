@@ -176,7 +176,10 @@ async def internal_cron_callback(
             params = json.loads(base64.urlsafe_b64decode(job_param))
         except Exception as e:
             logger.warning("Failed to decode jobParam: %s", e)
-            raise HTTPException(status_code=400, detail=f"Invalid jobParam: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid jobParam: {e}",
+            )
     else:
         # 直接参数格式：外部平台直接将参数字段展开在 body 中
         params = body
@@ -212,7 +215,8 @@ async def internal_cron_callback(
                     status_code=400,
                     detail="job_id required for task_type=job",
                 )
-            await mgr.run_job(job_id)
+            # 调度回调触发的执行是自动执行，不是手动执行
+            await mgr.run_job(job_id, is_manual=False)
 
         logger.info(
             "Callback dispatched: type=%s tenant=%s agent=%s job=%s",

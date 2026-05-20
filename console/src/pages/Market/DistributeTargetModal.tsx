@@ -137,11 +137,33 @@ export function DistributeTargetModal({
         };
         const result = await marketApi.distributeSkill(sourceId, (item as MarketSkill).item_id, payload);
         const distributedCount = result.distributed_count ?? 0;
+        const conflictCount = result.conflict_count ?? 0;
+        const conflicts = result.conflicts ?? [];
 
-        if (distributedCount === 0) {
+        if (distributedCount === 0 && conflictCount === 0) {
           message.warning("分发未生效，无用户实际收到该技能");
-        } else if (distributedCount < finalTenantIds.length) {
-          message.warning(`部分分发成功，实际分发 ${distributedCount} 个用户（预期 ${finalTenantIds.length} 个）`);
+        } else if (conflictCount > 0) {
+          const conflictLines = conflicts.map(
+            (c) => `• ${c.user_id}（${c.reason === "customized" ? "已有自建技能" : c.reason}）`,
+          );
+          Modal.confirm({
+            title: distributedCount > 0 ? "部分分发成功" : "分发未生效",
+            content: (
+              <div style={{ display: "grid", gap: 8 }}>
+                {distributedCount > 0 && (
+                  <div>成功分发/更新 {distributedCount} 个用户</div>
+                )}
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div>以下 {conflictCount} 个用户跳过（已有自建技能）：</div>
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                    {conflictLines.join("\n")}
+                  </pre>
+                </div>
+              </div>
+            ),
+            okText: "关闭",
+            cancelButtonProps: { style: { display: "none" } },
+          });
         } else {
           message.success(`分发成功，共 ${distributedCount} 个用户`);
         }

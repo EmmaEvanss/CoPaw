@@ -36,6 +36,8 @@ def build_env_context(
     user_id: Optional[str] = None,
     channel: Optional[str] = None,
     working_dir: Optional[str] = None,
+    source_id: Optional[str] = None,
+    user_name: Optional[str] = None,
     add_hint: bool = True,
 ) -> str:
     """
@@ -46,6 +48,8 @@ def build_env_context(
         user_id: Current user ID
         channel: Current channel name
         working_dir: Working directory path
+        source_id: Current source ID (request origin)
+        user_name: Current user name
         add_hint: Whether to add hint context
     Returns:
         Formatted environment context string
@@ -63,6 +67,10 @@ def build_env_context(
         parts.append(f"- Session ID: {session_id}")
     if user_id is not None:
         parts.append(f"- User ID: {user_id}")
+    if user_name is not None:
+        parts.append(f"- User Name: {user_name}")
+    if source_id is not None:
+        parts.append(f"- Source ID: {source_id}")
     if channel is not None:
         parts.append(f"- Channel: {channel}")
 

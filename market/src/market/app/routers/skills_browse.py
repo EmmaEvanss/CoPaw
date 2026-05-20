@@ -21,6 +21,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from pydantic import BaseModel, Field
 
 from ...marketplace.fs import (
     get_user_skills_dir,
@@ -38,7 +39,7 @@ from ...marketplace.schemas import (
     OperationResponse,
     UploadSkillResponse,
 )
-from ..deps import require_source_id
+from ..deps import decode_user_name, require_source_id
 
 logger = logging.getLogger(__name__)
 
@@ -717,7 +718,7 @@ async def upload_skill_to_workspace(
 
     svc = request.app.state.marketplace
     swe_root = svc.swe_root
-    user_name = x_user_name or x_user_id
+    user_name = decode_user_name(x_user_name) or x_user_id
     bbk_id = x_bbk_id or "100"
     agent_id = "default"
 
@@ -878,7 +879,7 @@ async def save_skill_file(
         skill_name,
         file_path,
         content,
-        user_name=x_user_name,
+        user_name=decode_user_name(x_user_name),
         agent_id=agent_id,
         source_id=source_id,
     )
@@ -898,7 +899,7 @@ async def save_skill_file(
                 (
                     source_id,
                     x_user_id,
-                    x_user_name,
+                    decode_user_name(x_user_name),
                     "edit",
                     "skill",
                     skill_name,
@@ -951,7 +952,7 @@ async def delete_my_skill(
                 (
                     source_id,
                     x_user_id,
-                    x_user_name,
+                    decode_user_name(x_user_name),
                     "delete",
                     "skill",
                     skill_name,
@@ -1126,3 +1127,64 @@ async def batch_disable_my_skills(
         success_count=success_count,
         failed_count=len(body.skills) - success_count,
     )
+
+
+# -----------------------------------------------------------
+# 操作日志上报端点
+# -----------------------------------------------------------
+
+
+class OperationLogRequest(BaseModel):
+    """操作日志上报请求体。"""
+
+    operation: str = Field(..., description="操作类型: create/edit/delete")
+    item_type: str = Field(default="skill", description="条目类型: skill/mcp")
+    item_name: str = Field(..., description="条目名称")
+    user_name: Optional[str] = Field(default=None, description="用户名称")
+    bbk_id: Optional[str] = Field(default=None, description="机构ID")
+
+
+@router.post("/market/skills/operation-log")
+async def log_skill_operation(
+    request: Request,
+    body: OperationLogRequest,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+):
+    """上报技能操作日志。
+
+    用于 Agent 通过 skill_creator 创建技能后记录操作日志。
+    采用失败忽略策略，写入失败不影响业务。
+    """
+    source_id = require_source_id(x_source_id)
+    if not x_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Id header is required",
+        )
+
+    svc = request.app.state.marketplace
+    user_name = decode_user_name(body.user_name) or x_user_id
+
+    if svc.db.is_connected:
+        try:
+            await svc.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source_id,
+                    x_user_id,
+                    user_name,
+                    body.operation,
+                    body.item_type,
+                    body.item_name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log operation: %s", e)
+
+    return {"success": True}

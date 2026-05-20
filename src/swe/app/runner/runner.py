@@ -1707,6 +1707,8 @@ class AgentRunner(Runner):
                 if self.workspace_dir
                 else str(WORKING_DIR)
             ),
+            source_id=_request_source_id(request),
+            user_name=_request_user_name(request),
         )
         env_context = _with_hook_context(
             env_context,

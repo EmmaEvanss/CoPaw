@@ -54,7 +54,7 @@ export interface TaskStatusSummary {
 export interface DepthSummary {
   avg_rounds: number;
   multi_round_ratio: number;
-  avg_stay_seconds: number;
+  avg_duration_seconds: number;
   avg_sessions_per_user: number;
 }
 
@@ -319,6 +319,7 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/overview?${params.toString()}`);
@@ -348,7 +349,7 @@ export const tracingApi = {
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
         // filter_user_type 需要传递 "all" 或 "filtered"
-        // source_id 使用 "all" 表示查询全部
+        // source_id 为 "all" 时不需要传递，后端 /users 接口默认为 "all"
         if (key === "filter_user_type") {
           if (value) params.append(key, value);
         } else if (value && value !== "all") {
@@ -369,6 +370,7 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
@@ -400,6 +402,7 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
+        // source_id 使用 "all" 表示查询全部平台，需要显式传递
         if (value) params.append(key, value);
       });
     }
@@ -458,6 +461,7 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
+        // source_id 使用 "all" 表示查询全部平台，需要显式传递
         if (value) params.append(key, value);
       });
     }
@@ -474,6 +478,7 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
@@ -583,6 +588,7 @@ export const tracingApi = {
     totalPlatforms: number;
   }> => {
     const params = new URLSearchParams();
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
@@ -606,13 +612,14 @@ export const tracingApi = {
     // 深度指标环比
     avgRoundsGrowth: number | null;
     multiRoundRatioGrowth: number | null;
-    avgStayGrowth: number | null;
+    avgDurationGrowth: number | null;
     avgSessionsPerUserGrowth: number | null;
   }> => {
     const params = new URLSearchParams();
     params.append("start_date", startDate);
     params.append("end_date", endDate);
     params.append("time_range", timeRange);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/growth-stats?${params.toString()}`);
@@ -629,6 +636,7 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
@@ -647,6 +655,7 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";

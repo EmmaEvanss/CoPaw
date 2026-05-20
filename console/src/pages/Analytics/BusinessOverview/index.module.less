@@ -298,6 +298,33 @@
   cursor: pointer;
 }
 
+.filterTab {
+  display: flex;
+  font-size: 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  overflow: hidden;
+
+  .filterTabItem {
+    padding: 4px 10px;
+    cursor: pointer;
+    color: #666;
+    background: #fff;
+    transition: all 0.2s;
+
+    &:hover {
+      color: #1677ff;
+    }
+  }
+
+  .filterTabActive {
+    padding: 4px 10px;
+    cursor: pointer;
+    color: #fff;
+    background: #1677ff;
+  }
+}
+
 .trendLegend {
   display: flex;
   align-items: center;
@@ -534,22 +561,18 @@
 }
 
 .rankUser {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  overflow: hidden;
   min-width: 0;
   color: #111827;
   font-size: 14px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rankUser em {
-  overflow: hidden;
   color: #64748b;
-  font-size: 12px;
   font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .rankCalls {
@@ -730,9 +753,9 @@
 
 .skillRow {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr) 110px;
+  grid-template-columns: minmax(120px, 1.5fr) minmax(60px, 0.5fr) 90px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -744,6 +767,9 @@
   color: #25324b;
   font-size: 14px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skillTrack {

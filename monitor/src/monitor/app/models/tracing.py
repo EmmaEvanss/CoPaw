@@ -305,7 +305,7 @@ class DepthSummary(BaseModel):
 
     avg_rounds: float = 0.0  # 单次会话平均轮数
     multi_round_ratio: float = 0.0  # 多轮会话占比(>3轮)百分比
-    avg_stay_seconds: int = 0  # 用户平均停留时长（秒）
+    avg_duration_seconds: int = 0  # 平均对话时长（秒）
     avg_sessions_per_user: float = 0.0  # 人均会话数
 
 

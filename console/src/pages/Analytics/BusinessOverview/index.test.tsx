@@ -131,4 +131,17 @@ describe("BusinessOverview trend chart", () => {
     expect(within(tooltip).getByText("3,200")).toBeInTheDocument();
     expect(within(tooltip).getByText("15,800")).toBeInTheDocument();
   });
+
+  it("maps avgStayGrowth into the average duration growth card", async () => {
+    render(<BusinessOverviewPage />);
+
+    expect(await screen.findByText("30s")).toBeInTheDocument();
+    expect(
+      await screen.findByText((_, element) =>
+        typeof element?.className === "string" &&
+        element.className.includes("metricChangeUp") &&
+        (element.textContent || "").includes("环比+6.0%"),
+      ),
+    ).toBeInTheDocument();
+  });
 });

@@ -89,6 +89,16 @@ export function formatTokens(
   if (Number.isNaN(numberValue)) {
     return "0";
   }
+  // 使用英文单位：B、M、K
+  if (numberValue >= 1000000000) {
+    return `${(numberValue / 1000000000).toFixed(2)}B`;
+  }
+  if (numberValue >= 1000000) {
+    return `${(numberValue / 1000000).toFixed(1)}M`;
+  }
+  if (numberValue >= 1000) {
+    return `${(numberValue / 1000).toFixed(0)}K`;
+  }
   return formatNumber(numberValue, 0);
 }
 

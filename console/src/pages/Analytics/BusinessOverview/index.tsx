@@ -36,8 +36,8 @@ import {
 } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
 import SkillDetailModal from "./components/SkillDetailModal";
-import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../../constants/bbk";
-import { useIframeStore } from "../../../stores/iframeStore";
+import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP, getBbkDisplayName } from "../../../constants/bbk";
+import { useIframeStore, getIframeContext } from "../../../stores/iframeStore";
 import {
   formatChange,
   formatDuration,
@@ -54,7 +54,7 @@ import {
   type TrendDatum,
   type UserRow,
 } from "./types";
-import {DEFAULT_SOURCE_ID} from "@/constants/identity.ts";
+import {DEFAULT_SOURCE_ID, DEFAULT_BBK_ID} from "@/constants/identity.ts";
 const { Option } = Select;
 
 const PLATFORM_NAME_MAP: Record<string, string> = {
@@ -188,7 +188,7 @@ function buildDepthCards(
   growthStats: {
     avgRoundsGrowth: number | null;
     multiRoundRatioGrowth: number | null;
-    avgStayGrowth: number | null;
+    avgDurationGrowth: number | null;
     avgSessionsPerUserGrowth: number | null;
   },
 ): DepthStatCard[] {
@@ -208,11 +208,11 @@ function buildDepthCards(
       changeDirection: toChangeDirection(growthStats.multiRoundRatioGrowth),
     },
     {
-      key: "avg-stay",
-      title: "用户平均停留时长",
-      valueText: formatDuration(safeNumber(summary?.avg_stay_seconds)),
-      changeText: formatChange(growthStats.avgStayGrowth),
-      changeDirection: toChangeDirection(growthStats.avgStayGrowth),
+      key: "avg-duration",
+      title: "平均对话时长",
+      valueText: formatDuration(safeNumber(summary?.avg_duration_seconds)),
+      changeText: formatChange(growthStats.avgDurationGrowth),
+      changeDirection: toChangeDirection(growthStats.avgDurationGrowth),
     },
     {
       key: "avg-sessions",
@@ -510,7 +510,7 @@ export default function BusinessOverviewPage() {
     cronGrowth: number | null;
     avgRoundsGrowth: number | null;
     multiRoundRatioGrowth: number | null;
-    avgStayGrowth: number | null;
+    avgDurationGrowth: number | null;
     avgSessionsPerUserGrowth: number | null;
   }>({
     callsGrowth: null,
@@ -521,7 +521,7 @@ export default function BusinessOverviewPage() {
     cronGrowth: null,
     avgRoundsGrowth: null,
     multiRoundRatioGrowth: null,
-    avgStayGrowth: null,
+    avgDurationGrowth: null,
     avgSessionsPerUserGrowth: null,
   });
   const [trendData, setTrendData] = useState<TrendDatum[]>([]);
@@ -530,6 +530,8 @@ export default function BusinessOverviewPage() {
   const [activeHasMore, setActiveHasMore] = useState(true);
   const [activeLoading, setActiveLoading] = useState(false);
   const activeLoadingRef = useRef(false);
+  // 用户过滤类型：filtered(已过滤内部用户) / all(全部用户)
+  const [activeFilterType, setActiveFilterType] = useState<"filtered" | "all">("filtered");
   const [skills, setSkills] = useState<SkillUsage[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const skillsLoadingRef = useRef(false);
@@ -553,11 +555,25 @@ export default function BusinessOverviewPage() {
     () => dateRange[1].format("YYYY-MM-DD"),
     [dateRange],
   );
-  const effectiveSourceId = platform === "all" ? undefined : platform;
-  // 非管理员：使用用户 bbk；管理员：使用选择的 bbkIds（空数组表示全部）
-  const effectiveBbkIds = isSuperManager
-    ? bbkIds.length === 0 ? undefined : bbkIds
-    : userBbk ? [userBbk] : undefined;
+  // 平台筛选参数：超级管理员选择 "all" 时传递 "all"，其他情况按实际值传递
+  // 使用 useMemo 缓存，避免每次渲染重新创建导致请求循环
+  const effectiveSourceId = useMemo(() => {
+    if (isSuperManager) {
+      return platform === "all" ? "all" : platform;
+    }
+    const sourceFromContext = getIframeContext().source || DEFAULT_SOURCE_ID;
+    return sourceFromContext ? sourceFromContext : undefined;
+  }, [isSuperManager, platform]);
+  // Select 显示用的平台值
+  const displayPlatformValue = useMemo(() => {
+    if (isSuperManager) return platform;
+    const sourceFromContext = getIframeContext().source || DEFAULT_SOURCE_ID;
+    return sourceFromContext || "all";
+  }, [isSuperManager, platform]);
+  // 分行筛选参数：直接使用 UI 选择的 bbkIds，空数组表示全部分行
+  const effectiveBbkIds = useMemo(() => {
+    return bbkIds.length === 0 ? undefined : bbkIds;
+  }, [bbkIds]);
 
   const transformUserData = useCallback(
     (items: Record<string, unknown>[]): UserRow[] =>
@@ -666,7 +682,7 @@ export default function BusinessOverviewPage() {
           source_id: effectiveSourceId,
           bbk_ids: effectiveBbkIds?.join(","),
           sort_by: "conversations",
-          filter_user_type: "filtered",
+          filter_user_type: activeFilterType,
         });
         const mappedUsers = transformUserData(
           result.items as unknown as Record<string, unknown>[],
@@ -682,7 +698,7 @@ export default function BusinessOverviewPage() {
         setActiveLoading(false);
       }
     },
-    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText, transformUserData],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText, transformUserData, activeFilterType],
   );
 
   const fetchSkills = useCallback(
@@ -773,19 +789,25 @@ export default function BusinessOverviewPage() {
 
   useEffect(() => {
     fetchDashboard();
-    setActivePage(1);
-    fetchActiveUsers(1, false);
     fetchSkills();
     fetchMcpSummary();
     fetchTaskStatusSummary();
     fetchDepthSummary();
+    // 活跃用户请求由独立的 useEffect 处理
   }, [
-    fetchActiveUsers,
     fetchDashboard,
     fetchDepthSummary,
     fetchMcpSummary,
     fetchSkills,
     fetchTaskStatusSummary,
+  ]);
+
+  // 活跃用户请求独立处理，避免 activeFilterType 变化触发其他请求
+  useEffect(() => {
+    setActivePage(1);
+    fetchActiveUsers(1, false);
+  }, [
+    fetchActiveUsers,
   ]);
 
   useEffect(() => {
@@ -940,7 +962,7 @@ export default function BusinessOverviewPage() {
             <Select
               className={styles.scopeSelect}
               mode="multiple"
-              value={isSuperManager ? bbkIds : (userBbk ? [userBbk] : [])}
+              value={bbkIds}
               onChange={setBbkIds}
               placeholder="全部分行"
               maxTagCount="responsive"
@@ -957,7 +979,6 @@ export default function BusinessOverviewPage() {
                 </Tooltip>
               )}
               allowClear
-              disabled={!isSuperManager}
             >
               {BBK_ID_MAP.map((item) => (
                 <Option key={item.value} value={item.value}>
@@ -967,9 +988,12 @@ export default function BusinessOverviewPage() {
             </Select>
             <Select
               className={styles.scopeSelect}
-              value={platform}
-              onChange={setPlatform}
+              value={displayPlatformValue}
+              onChange={(value) => {
+                setPlatform(value || "all");
+              }}
               disabled={!isSuperManager}
+              allowClear
             >
               <Option value="all">全部平台</Option>
               {sources.map((source) => (
@@ -1235,6 +1259,34 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelMedium}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>活跃用户排行榜</h3>
+            <div className={styles.filterTab}>
+              <span
+                className={activeFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                onClick={() => {
+                  if (activeFilterType !== "filtered") {
+                    setActiveFilterType("filtered");
+                    setActiveUsers([]);
+                    setActivePage(1);
+                    setActiveHasMore(true);
+                  }
+                }}
+              >
+                已过滤
+              </span>
+              <span
+                className={activeFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                onClick={() => {
+                  if (activeFilterType !== "all") {
+                    setActiveFilterType("all");
+                    setActiveUsers([]);
+                    setActivePage(1);
+                    setActiveHasMore(true);
+                  }
+                }}
+              >
+                全部
+              </span>
+            </div>
           </div>
           <div className={styles.rankHeader}>
             <span>排名</span>
@@ -1256,6 +1308,18 @@ export default function BusinessOverviewPage() {
                     ? styles.rankBadgeBronze
                     : styles.rankBadge;
 
+                // 格式化显示：分行名称/用户姓名(用户ID)
+                const displayParts: string[] = [];
+                if (item.bbkId && getBbkDisplayName(item.bbkId) !== "-") {
+                  displayParts.push(getBbkDisplayName(item.bbkId));
+                }
+                if (item.userName) {
+                  displayParts.push(item.userName);
+                }
+                const displayName = displayParts.length > 0
+                  ? `${displayParts.join("/")}(${item.userId})`
+                  : item.userId;
+
                 return (
                   <button
                     key={`${item.userId}-${rank}`}
@@ -1267,10 +1331,11 @@ export default function BusinessOverviewPage() {
                     }}
                   >
                     <span className={rankClass}>{rank}</span>
-                    <span className={styles.rankUser}>
-                      {truncateName(item.userName || item.name, 16)}
-                      <em>{item.userId}</em>
-                    </span>
+                    <Tooltip title={displayName} placement="top">
+                      <span className={styles.rankUser}>
+                        {displayName}
+                      </span>
+                    </Tooltip>
                     <span className={styles.rankCalls}>
                       {formatNumber(item.calls)}
                     </span>
@@ -1294,7 +1359,7 @@ export default function BusinessOverviewPage() {
                 <div className={styles.depthIconWrap}>
                   {card.key === "avg-rounds" && <MessageCircleMore size={19} />}
                   {card.key === "multi-round" && <Users size={19} />}
-                  {card.key === "avg-stay" && <Clock3 size={19} />}
+                  {card.key === "avg-duration" && <Clock3 size={19} />}
                   {card.key === "avg-sessions" && <ArrowUpRight size={19} />}
                 </div>
                 <div className={styles.depthBody}>
@@ -1411,9 +1476,11 @@ export default function BusinessOverviewPage() {
                       setSkillModalOpen(true);
                     }}
                   >
-                    <span className={styles.skillName}>
-                      {truncateName(skill.skill_name, 8)}
-                    </span>
+                    <Tooltip title={skill.skill_name} placement="top">
+                      <span className={styles.skillName}>
+                        {truncateName(skill.skill_name, 20)}
+                      </span>
+                    </Tooltip>
                     <div className={styles.skillTrack}>
                       <div
                         className={styles.skillBar}

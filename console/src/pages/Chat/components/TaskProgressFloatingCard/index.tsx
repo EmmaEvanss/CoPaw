@@ -6,7 +6,6 @@ import {
   SparkDownLine,
 } from "@agentscope-ai/icons";
 import type { ChatTaskProgressData } from "../../taskProgressEvents";
-import { emitTaskProgressUpdate } from "../../taskProgressEvents";
 import Style from "./style";
 
 export default function TaskProgressFloatingCard(props: {
@@ -22,45 +21,7 @@ export default function TaskProgressFloatingCard(props: {
     }
   }, [progress?.turn_id]);
 
-  useEffect(() => {
-    if (!progress) return;
-    if (progress.phase_status === "completed") {
-      const timer = setTimeout(() => emitTaskProgressUpdate(null), 1500);
-      return () => clearTimeout(timer);
-    }
-    if (progress.phase_status === "cancelled") {
-      const timer = setTimeout(() => emitTaskProgressUpdate(null), 800);
-      return () => clearTimeout(timer);
-    }
-  }, [progress?.turn_id, progress?.phase_status]);
-
-  if (!progress) return null;
-
-  // 完成态
-  if (progress.phase_status === "completed") {
-    return (
-      <>
-        <Style />
-        <div className="task-progress-floating--completed">
-          <SparkCheckCircleLine style={{ fontSize: 16 }} />
-          所有步骤已完成
-        </div>
-      </>
-    );
-  }
-
-  // 取消态
-  if (progress.phase_status === "cancelled") {
-    return (
-      <>
-        <Style />
-        <div className="task-progress-floating--cancelled">
-          <SparkProjectNoLine style={{ fontSize: 16 }} />
-          任务已取消
-        </div>
-      </>
-    );
-  }
+  if (!progress || progress.phase_status !== "active") return null;
 
   // active 态
   const currentIndex = progress.current_step_index ?? 0;

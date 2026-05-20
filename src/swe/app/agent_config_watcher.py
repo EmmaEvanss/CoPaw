@@ -239,29 +239,22 @@ class AgentConfigWatcher:
         self._last_channels_hash = self._channels_hash(new_channels)
 
     async def _apply_heartbeat_change(self, agent_config: Any) -> None:
-        """Update heartbeat hash and reschedule if changed."""
+        """Update heartbeat hash. Scheduling is handled externally."""
         new_hb_hash = _heartbeat_hash(agent_config.heartbeat)
         if (
             self._cron_manager is not None
             and new_hb_hash != self._last_heartbeat_hash
         ):
             self._last_heartbeat_hash = new_hb_hash
-            try:
-                await self._cron_manager.reschedule_heartbeat()
-                logger.info(
-                    f"AgentConfigWatcher ({self._agent_id}): "
-                    f"heartbeat rescheduled",
-                )
-            except Exception:
-                logger.exception(
-                    f"AgentConfigWatcher ({self._agent_id}): "
-                    f"failed to reschedule heartbeat",
-                )
+            logger.info(
+                f"AgentConfigWatcher ({self._agent_id}): "
+                f"heartbeat config updated (external scheduling)",
+            )
         else:
             self._last_heartbeat_hash = new_hb_hash
 
     async def _apply_memory_job_change(self, agent_config: Any) -> None:
-        """Update memory job hash and reschedule if changed."""
+        """Update memory job hash. Scheduling is handled externally."""
         new_memory_summary = getattr(
             agent_config.running,
             "memory_summary",
@@ -273,17 +266,10 @@ class AgentConfigWatcher:
             and new_memory_job_hash != self._last_memory_job_hash
         ):
             self._last_memory_job_hash = new_memory_job_hash
-            try:
-                await self._cron_manager.reschedule_dream()
-                logger.info(
-                    f"AgentConfigWatcher ({self._agent_id}): "
-                    f"memory job rescheduled",
-                )
-            except Exception:
-                logger.exception(
-                    f"AgentConfigWatcher ({self._agent_id}): "
-                    f"failed to reschedule memory job",
-                )
+            logger.info(
+                f"AgentConfigWatcher ({self._agent_id}): "
+                f"memory job config updated (external scheduling)",
+            )
         else:
             self._last_memory_job_hash = new_memory_job_hash
 

@@ -28,13 +28,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/monitor/cron", tags=["cron"])
 
 
+@router.get("/filter-options")
+async def get_filter_options(
+    service: QueryService = Depends(get_query_service),
+) -> dict:
+    """获取筛选项下拉框选项列表。
+
+    返回用户、分行、渠道、来源、任务名称等筛选项的可选值列表，
+    用于前端下拉框组件。
+
+    Args:
+        service: Query service
+
+    Returns:
+        包含各筛选项列表的字典
+    """
+    return await service.get_filter_options()
+
+
 @router.get("/jobs", response_model=PaginatedResponse[CronJobModel])
 async def list_jobs(
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
     bbk_id: str | None = Query(default=None, description="分行号筛选"),
     source_id: str | None = Query(default=None, description="来源标识筛选"),
     creator_user_id: str | None = Query(
-        default=None, description="创建者ID筛选"
+        default=None,
+        description="创建者ID筛选",
     ),
     status: str | None = Query(default=None, description="状态筛选"),
     enabled: bool | None = Query(default=None, description="是否启用筛选"),
@@ -100,10 +119,12 @@ async def list_executions(
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
     status: str | None = Query(default=None, description="执行状态筛选"),
     start_time: datetime | None = Query(
-        default=None, description="开始时间范围"
+        default=None,
+        description="开始时间范围",
     ),
     end_time: datetime | None = Query(
-        default=None, description="结束时间范围"
+        default=None,
+        description="结束时间范围",
     ),
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
@@ -171,10 +192,12 @@ async def export_data(
     enabled: bool | None = Query(default=None, description="是否启用筛选"),
     status: str | None = Query(default=None, description="状态筛选"),
     start_time: datetime | None = Query(
-        default=None, description="开始时间范围"
+        default=None,
+        description="开始时间范围",
     ),
     end_time: datetime | None = Query(
-        default=None, description="结束时间范围"
+        default=None,
+        description="结束时间范围",
     ),
     export_type: str = Query(
         default="executions",

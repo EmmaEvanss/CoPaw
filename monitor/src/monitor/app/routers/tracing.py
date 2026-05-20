@@ -21,6 +21,9 @@ from ..models.tracing import (
     SessionStats,
     UserStats,
     ModelOutputRequest,
+    MCPSummary,
+    TaskStatusSummary,
+    DepthSummary,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
 from ..database import get_es_client
@@ -100,7 +103,7 @@ async def get_overview(
         None,
         description="数据源标识，使用 'all' 查询所有平台",
     ),
-    bbk_id: Optional[str] = Query(
+    bbk_ids: Optional[str] = Query(
         None,
         description="分行ID筛选",
     ),
@@ -114,7 +117,7 @@ async def get_overview(
 
     Args:
         source_id: 数据源标识（使用 'all' 或留空查询所有平台）
-        bbk_id: 分行ID筛选
+        bbk_ids: 分行ID筛选
         start_date: 可选的开始日期筛选
         end_date: 可选的结束日期筛选
 
@@ -128,7 +131,12 @@ async def get_overview(
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    return await service.get_overview_stats(actual_source_id, start, end, bbk_id)
+    return await service.get_overview_stats(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
 
 
 # ===== 用户分析 =====
@@ -160,7 +168,7 @@ async def get_users(
         "filtered",
         description="用户过滤类型: filtered(过滤80/IT开头用户), all(仅过滤default用户)",
     ),
-    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
+    bbk_ids: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户列表及其统计信息.
 
@@ -192,7 +200,7 @@ async def get_users(
         end,
         sort_by,
         filter_user_type,
-        bbk_id,
+        bbk_ids,
     )
     return {
         "items": [u.model_dump() for u in users],
@@ -212,6 +220,10 @@ async def get_user_stats(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(
+        None,
+        description="分行ID筛选",
+    ),
 ) -> UserStats:
     """获取指定用户的统计详情.
 
@@ -220,6 +232,7 @@ async def get_user_stats(
         source_id: 数据源标识（可选，默认从请求头获取）
         start_date: 可选的开始日期筛选
         end_date: 可选的结束日期筛选
+        bbk_ids: 分行ID筛选
 
     Returns:
         用户统计信息
@@ -230,7 +243,13 @@ async def get_user_stats(
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    return await service.get_user_stats(actual_source_id, user_id, start, end)
+    return await service.get_user_stats(
+        actual_source_id,
+        user_id,
+        start,
+        end,
+        bbk_ids,
+    )
 
 
 # ===== 对话分析 =====
@@ -253,7 +272,7 @@ async def get_traces(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
+    bbk_ids: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取对话列表.
 
@@ -285,7 +304,7 @@ async def get_traces(
         status=status,
         start_date=start,
         end_date=end,
-        bbk_id=bbk_id,
+        bbk_ids=bbk_ids,
     )
     return {
         "items": [t.model_dump() for t in traces],
@@ -381,7 +400,7 @@ async def get_sessions(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
+    bbk_ids: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取会话列表及其统计信息.
 
@@ -411,7 +430,7 @@ async def get_sessions(
         session_id=session_id,
         start_date=start,
         end_date=end,
-        bbk_id=bbk_id,
+        bbk_ids=bbk_ids,
     )
     return {
         "items": [s.model_dump() for s in sessions],
@@ -431,6 +450,10 @@ async def get_session_stats(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(
+        None,
+        description="分行标识，多个用逗号分隔",
+    ),
 ) -> SessionStats:
     """获取指定会话的统计详情.
 
@@ -454,6 +477,7 @@ async def get_session_stats(
         session_id,
         start,
         end,
+        bbk_ids,
     )
 
 
@@ -480,7 +504,7 @@ async def get_user_messages(
         None,
         description="搜索用户消息内容",
     ),
-    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
+    bbk_ids: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> dict:
     """获取用户消息列表（含 Token 信息）.
 
@@ -515,7 +539,7 @@ async def get_user_messages(
         end_date=end,
         query_text=query,
         export=False,
-        bbk_id=bbk_id,
+        bbk_ids=bbk_ids,
     )
     return {
         "items": [m.model_dump() for m in messages],
@@ -548,7 +572,7 @@ async def export_user_messages(
         description="导出格式: csv, json 或 xlsx",
         alias="format",
     ),
-    bbk_id: Optional[str] = Query(None, description="按分行号筛选"),
+    bbk_ids: Optional[str] = Query(None, description="按分行号筛选"),
 ) -> StreamingResponse:
     """导出用户消息.
 
@@ -578,7 +602,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
-            bbk_id=bbk_id,
+            bbk_id=bbk_ids,
         )
     if export_format == "xlsx":
         return await export_service.export_user_messages_xlsx(
@@ -588,7 +612,7 @@ async def export_user_messages(
             start_date=start,
             end_date=end,
             query_text=query,
-            bbk_id=bbk_id,
+            bbk_id=bbk_ids,
         )
     return await export_service.export_user_messages_csv(
         source_id=actual_source_id,
@@ -597,7 +621,7 @@ async def export_user_messages(
         start_date=start,
         end_date=end,
         query_text=query,
-        bbk_id=bbk_id,
+        bbk_id=bbk_ids,
     )
 
 
@@ -682,9 +706,19 @@ async def get_growth_stats(
         "day",
         description="时间范围: day, week, month, custom",
     ),
-    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
-    """获取环比增长统计."""
+    """获取运营看板环比指标。
+
+    口径说明：
+    - 该接口返回的是“当前统计窗口”相对“上一对比窗口”的环比结果。
+    - 平台维度通过 `source_id` 过滤；分行维度通过 `bbk_ids` 过滤，
+      两者为叠加筛选关系。
+    - `time_range` 只决定上一对比窗口的回溯长度，不改变当前窗口
+      的起止日期输入。
+    - 返回字段的业务口径由服务层统一定义，供总览卡片和使用深度卡片
+      复用，避免前端自行推导环比口径。
+    """
     actual_source_id = source_id or "all"
     service = TracingQueryService.get_instance()
 
@@ -701,7 +735,7 @@ async def get_growth_stats(
         start,
         end,
         time_range,
-        bbk_id,
+        bbk_ids,
     )
 
 
@@ -720,7 +754,7 @@ async def get_daily_trend(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
     """获取日趋势数据."""
     actual_source_id = source_id or "all"
@@ -729,7 +763,12 @@ async def get_daily_trend(
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    trend = await service.get_daily_trend(actual_source_id, start, end, bbk_id)
+    trend = await service.get_daily_trend(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
     return {"trendData": trend}
 
 
@@ -748,7 +787,7 @@ async def get_hourly_trend(
         None,
         description="End date (YYYY-MM-DD)",
     ),
-    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
     """Get hourly trend data for single-day charts."""
     actual_source_id = source_id or "all"
@@ -757,7 +796,12 @@ async def get_hourly_trend(
     start = _parse_date(start_date, "start_date")
     end = _parse_date(end_date, "end_date", add_day=True)
 
-    trend = await service.get_hourly_trend(actual_source_id, start, end, bbk_id)
+    trend = await service.get_hourly_trend(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
     return {"trendData": trend}
 
 
@@ -844,7 +888,7 @@ async def get_skill_usage(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
     """获取技能调用排行榜（分页）."""
     actual_source_id = source_id or "all"
@@ -859,7 +903,7 @@ async def get_skill_usage(
         page_size,
         start,
         end,
-        bbk_id,
+        bbk_ids,
     )
     return {
         "items": [s.model_dump() for s in skills],
@@ -923,6 +967,36 @@ async def get_skill_traces(
 # ===== MCP 使用 =====
 
 
+@router.get("/mcp/summary", response_model=MCPSummary)
+async def get_mcp_summary(
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
+) -> MCPSummary:
+    """获取 MCP 全局调用汇总统计."""
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    summary = await service.get_mcp_summary(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
+    return summary
+
+
 @router.get("/mcp", response_model=dict)
 async def get_mcp_usage(
     request: Request,
@@ -937,7 +1011,7 @@ async def get_mcp_usage(
         description="开始日期 (YYYY-MM-DD)",
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
-    bbk_id: Optional[str] = Query(None, description="分行ID筛选"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
 ) -> dict:
     """获取 MCP 服务调用排行榜（分页）."""
     actual_source_id = source_id or "all"
@@ -952,7 +1026,7 @@ async def get_mcp_usage(
         page_size,
         start,
         end,
-        bbk_id,
+        bbk_ids,
     )
     return {
         "items": [s.model_dump() for s in servers],
@@ -960,6 +1034,72 @@ async def get_mcp_usage(
         "page": page,
         "page_size": page_size,
     }
+
+
+# ===== 定时任务执行统计 =====
+
+
+@router.get("/task-status/summary", response_model=TaskStatusSummary)
+async def get_task_status_summary(
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
+) -> TaskStatusSummary:
+    """获取定时任务执行汇总统计."""
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    summary = await service.get_task_status_summary(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
+    return summary
+
+
+# ===== 使用深度统计 =====
+
+
+@router.get("/depth/summary", response_model=DepthSummary)
+async def get_depth_summary(
+    request: Request,
+    source_id: Optional[str] = Query(
+        None,
+        description="数据源标识，使用 'all' 查询所有平台",
+    ),
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
+) -> DepthSummary:
+    """获取使用深度汇总统计."""
+    actual_source_id = source_id or "all"
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    summary = await service.get_depth_summary(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+    )
+    return summary
 
 
 # ===== Model Output 写入 =====

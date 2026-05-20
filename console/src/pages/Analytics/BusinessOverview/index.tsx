@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Clock3,
   Coins,
+  Database,
   MessageCircleMore,
   RotateCw,
   Sparkles,
@@ -20,22 +21,23 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { DatePicker, Select, message } from "antd";
+import { DatePicker, Select, Tooltip, message } from "antd";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
 import {
   tracingApi,
   type BranchMetricItem,
-  type MCPServerUsage,
+  type MCPSummary,
   type OverviewStats,
   type SkillUsage,
+  type TaskStatusSummary,
+  type DepthSummary,
 } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
 import SkillDetailModal from "./components/SkillDetailModal";
-import { BBK_ID_MAP } from "../../../constants/bbk";
-import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
-import { useIframeStore } from "../../../stores/iframeStore";
+import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP, getBbkDisplayName } from "../../../constants/bbk";
+import { useIframeStore, getIframeContext } from "../../../stores/iframeStore";
 import {
   formatChange,
   formatDuration,
@@ -52,6 +54,7 @@ import {
   type TrendDatum,
   type UserRow,
 } from "./types";
+import {DEFAULT_SOURCE_ID, DEFAULT_BBK_ID} from "@/constants/identity.ts";
 const { Option } = Select;
 
 const PLATFORM_NAME_MAP: Record<string, string> = {
@@ -73,6 +76,15 @@ const METRIC_ACCENT_COLORS = [
   "#7c3aed",
 ];
 
+// 技能使用TOP5的颜色数组
+const SKILL_BAR_COLORS = [
+  "#2563eb", // 蓝色
+  "#22c55e", // 绿色
+  "#f97316", // 橙色
+  "#7c3aed", // 紫色
+  "#06b6d4", // 青色
+];
+
 const DONUT_COLORS = ["#18b368", "#ef4444", "#94a3b8"];
 
 const safeNumber = (value: unknown): number =>
@@ -89,20 +101,10 @@ const iconMap = {
   skills: Zap,
 };
 
-function buildPlaceholderBreakdown(): BreakdownItem[] {
-  return [
-    { name: "总行", value: 8, valueText: "--" },
-    { name: "北京分行", value: 8, valueText: "--" },
-    { name: "上海分行", value: 8, valueText: "--" },
-    { name: "深圳分行", value: 8, valueText: "--" },
-    { name: "广州分行", value: 8, valueText: "--" },
-  ];
-}
-
 function mapBreakdown(
   rows: BranchMetricItem[] | undefined,
   formatter?: (value: number) => string,
-): BreakdownItem[] {
+): BreakdownItem[] | null {
   const mapped = (rows || []).slice(0, 5).map((item) => ({
     name: item.bbk_name || item.bbk_id || "-",
     value: Math.max(item.percent || 0, 8),
@@ -111,15 +113,9 @@ function mapBreakdown(
       : formatPercent(item.percent || 0),
   }));
 
+  // 无真实数据时返回 null，由渲染层显示空状态
   if (mapped.length === 0) {
-    return buildPlaceholderBreakdown();
-  }
-
-  if (mapped.length < 5) {
-    return [
-      ...mapped,
-      ...buildPlaceholderBreakdown().slice(0, 5 - mapped.length),
-    ];
+    return null;
   }
 
   return mapped;
@@ -127,19 +123,17 @@ function mapBreakdown(
 
 function buildMetricCards(
   overviewStats: OverviewStats | null,
+  taskStatusSummary: TaskStatusSummary | null,
   growthStats: {
     callsGrowth: number | null;
     tokensGrowth: number | null;
     sessionGrowth: number | null;
     userGrowth: number | null;
     skillGrowth: number | null;
+    cronGrowth: number | null;
   },
   skills: SkillUsage[],
 ): OverviewMetricCard[] {
-  const totalSkillCalls = (
-    skills.length ? skills : overviewStats?.top_skills || []
-  ).reduce((sum, item) => sum + safeNumber(item.count), 0);
-
   return [
     {
       key: "users",
@@ -151,22 +145,22 @@ function buildMetricCards(
       breakdown: mapBreakdown(overviewStats?.branch_breakdown?.users),
     },
     {
-      key: "conversations",
-      title: "总会话数",
-      valueText: formatNumber(overviewStats?.total_conversations ?? 0),
-      changeText: formatChange(growthStats.callsGrowth),
-      changeDirection: toChangeDirection(growthStats.callsGrowth),
-      accentColor: METRIC_ACCENT_COLORS[1],
-      breakdown: mapBreakdown(overviewStats?.branch_breakdown?.conversations),
-    },
-    {
       key: "sessions",
-      title: "定制任务数",
+      title: "总会话数",
       valueText: formatNumber(overviewStats?.total_sessions ?? 0),
       changeText: formatChange(growthStats.sessionGrowth),
       changeDirection: toChangeDirection(growthStats.sessionGrowth),
-      accentColor: METRIC_ACCENT_COLORS[2],
+      accentColor: METRIC_ACCENT_COLORS[1],
       breakdown: mapBreakdown(overviewStats?.branch_breakdown?.sessions),
+    },
+    {
+      key: "cron_tasks",
+      title: "定时任务数",
+      valueText: formatNumber(taskStatusSummary?.total_tasks ?? 0),
+      changeText: formatChange(growthStats.cronGrowth),
+      changeDirection: toChangeDirection(growthStats.cronGrowth),
+      accentColor: METRIC_ACCENT_COLORS[2],
+      breakdown: mapBreakdown(overviewStats?.branch_breakdown?.cron_tasks),
     },
     {
       key: "tokens",
@@ -180,7 +174,7 @@ function buildMetricCards(
     {
       key: "skills",
       title: "技能调用次数",
-      valueText: formatNumber(totalSkillCalls),
+      valueText: formatNumber(overviewStats?.total_skill_calls ?? 0),
       changeText: formatChange(growthStats.skillGrowth),
       changeDirection: toChangeDirection(growthStats.skillGrowth),
       accentColor: METRIC_ACCENT_COLORS[4],
@@ -190,111 +184,87 @@ function buildMetricCards(
 }
 
 function buildDepthCards(
-  overviewStats: OverviewStats | null,
+  summary: DepthSummary | null,
   growthStats: {
-    callsGrowth: number | null;
-    tokensGrowth: number | null;
-    sessionGrowth: number | null;
-    userGrowth: number | null;
+    avgRoundsGrowth: number | null;
+    multiRoundRatioGrowth: number | null;
+    avgDurationGrowth: number | null;
+    avgSessionsPerUserGrowth: number | null;
   },
 ): DepthStatCard[] {
-  const totalConversations = safeNumber(overviewStats?.total_conversations);
-  const totalSessions = Math.max(safeNumber(overviewStats?.total_sessions), 1);
-  const totalUsers = Math.max(safeNumber(overviewStats?.total_users), 1);
-  const avgRounds = totalConversations / totalSessions;
-  const multiRoundRatio = Math.min(92, Math.max(18, avgRounds * 14.8));
-  const avgStaySeconds = Math.max(
-    60,
-    (safeNumber(overviewStats?.avg_duration_ms) / 1000) * 12,
-  );
-  const avgSessionsPerUser = totalSessions / totalUsers;
-
   return [
     {
       key: "avg-rounds",
       title: "单次会话平均轮数",
-      valueText: avgRounds.toFixed(1),
-      changeText: formatChange(growthStats.callsGrowth / 2),
-      changeDirection: toChangeDirection(growthStats.callsGrowth / 2),
+      valueText: safeNumber(summary?.avg_rounds).toFixed(1),
+      changeText: formatChange(growthStats.avgRoundsGrowth),
+      changeDirection: toChangeDirection(growthStats.avgRoundsGrowth),
     },
     {
       key: "multi-round",
       title: "多轮会话占比(>3轮)",
-      valueText: formatPercent(multiRoundRatio),
-      changeText: formatChange(growthStats.userGrowth / 2),
-      changeDirection: toChangeDirection(growthStats.userGrowth / 2),
+      valueText: formatPercent(safeNumber(summary?.multi_round_ratio)),
+      changeText: formatChange(growthStats.multiRoundRatioGrowth),
+      changeDirection: toChangeDirection(growthStats.multiRoundRatioGrowth),
     },
     {
-      key: "avg-stay",
-      title: "用户平均停留时长",
-      valueText: formatDuration(avgStaySeconds),
-      changeText: formatChange(growthStats.sessionGrowth / 1.5),
-      changeDirection: toChangeDirection(growthStats.sessionGrowth / 1.5),
+      key: "avg-duration",
+      title: "平均对话时长",
+      valueText: formatDuration(safeNumber(summary?.avg_duration_seconds)),
+      changeText: formatChange(growthStats.avgDurationGrowth),
+      changeDirection: toChangeDirection(growthStats.avgDurationGrowth),
     },
     {
       key: "avg-sessions",
       title: "人均会话数",
-      valueText: avgSessionsPerUser.toFixed(1),
-      changeText: formatChange(growthStats.tokensGrowth / 1.7),
-      changeDirection: toChangeDirection(growthStats.tokensGrowth / 1.7),
+      valueText: safeNumber(summary?.avg_sessions_per_user).toFixed(1),
+      changeText: formatChange(growthStats.avgSessionsPerUserGrowth),
+      changeDirection: toChangeDirection(growthStats.avgSessionsPerUserGrowth),
     },
   ];
 }
 
 function buildExecutionSummary(
-  overviewStats: OverviewStats | null,
+  summary: TaskStatusSummary | null,
 ): SummaryLegendItem[] {
   return [
     {
       key: "success",
       label: "成功",
-      value: safeNumber(overviewStats?.task_status_breakdown?.success),
+      value: safeNumber(summary?.success),
       color: DONUT_COLORS[0],
     },
     {
       key: "failed",
       label: "失败",
-      value: safeNumber(overviewStats?.task_status_breakdown?.failed),
+      value: safeNumber(summary?.failed),
       color: DONUT_COLORS[1],
     },
     {
-      key: "running",
-      label: "执行中",
-      value: safeNumber(overviewStats?.task_status_breakdown?.running),
+      key: "cancelled",
+      label: "已取消/跳过",
+      value: safeNumber(summary?.cancelled),
       color: DONUT_COLORS[2],
     },
   ];
 }
 
-function buildMcpSummary(mcpServers: MCPServerUsage[]): SummaryLegendItem[] {
-  const totalCalls = mcpServers.reduce(
-    (sum, item) => sum + safeNumber(item.total_calls),
-    0,
-  );
-  const totalErrors = mcpServers.reduce(
-    (sum, item) => sum + safeNumber(item.error_count),
-    0,
-  );
-  const cancelled = Math.max(0, Math.round(totalCalls * 0.031));
+function buildMcpSummary(summary: MCPSummary | null): SummaryLegendItem[] {
+  const totalCalls = safeNumber(summary?.total_calls);
+  const errorCount = safeNumber(summary?.error_count);
 
   return [
     {
       key: "mcp-success",
       label: "成功运行",
-      value: Math.max(totalCalls - totalErrors - cancelled, 0),
+      value: Math.max(totalCalls - errorCount, 0),
       color: DONUT_COLORS[0],
     },
     {
       key: "mcp-error",
       label: "报错",
-      value: totalErrors,
+      value: errorCount,
       color: DONUT_COLORS[1],
-    },
-    {
-      key: "mcp-cancelled",
-      label: "超时/取消",
-      value: cancelled,
-      color: DONUT_COLORS[2],
     },
   ];
 }
@@ -333,7 +303,69 @@ function getBarWidth(dataLength: number, step: number): number {
   return Math.max(4, Math.min(5, maxWidth));
 }
 
-function buildTrendSvgData(trendData: TrendDatum[]) {
+interface TrendAxisTick {
+  value: number;
+  label: string;
+}
+
+interface TrendHoverZone {
+  key: string;
+  label: string;
+  users: number;
+  calls: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  pointX: number;
+  pointY: number;
+}
+
+function getNiceAxisMax(value: number): number {
+  if (value <= 0) {
+    return 0;
+  }
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const normalized = value / magnitude;
+  if (normalized <= 1) return magnitude;
+  if (normalized <= 2) return 2 * magnitude;
+  if (normalized <= 5) return 5 * magnitude;
+  return 10 * magnitude;
+}
+
+function formatTrendAxisLabel(value: number, axisMax: number): string {
+  if (value === 0) {
+    return "0";
+  }
+  if (axisMax >= 10000) {
+    const scaled = value / 10000;
+    return `${scaled.toFixed(Number.isInteger(scaled) ? 0 : 1)}W`;
+  }
+  if (axisMax >= 1000) {
+    const scaled = value / 1000;
+    return `${scaled.toFixed(Number.isInteger(scaled) ? 0 : 1)}K`;
+  }
+  return formatNumber(value);
+}
+
+function buildTrendAxisTicks(axisMax: number): TrendAxisTick[] {
+  if (axisMax <= 0) {
+    return Array.from({ length: 6 }, () => ({
+      value: 0,
+      label: "0",
+    }));
+  }
+  const step = axisMax / 5;
+  return Array.from({ length: 6 }, (_, index) => {
+    const value = step * (5 - index);
+    return {
+      value,
+      label: formatTrendAxisLabel(value, axisMax),
+    };
+  });
+}
+
+export function buildTrendSvgData(trendData: TrendDatum[]) {
   const width = 428;
   const height = 244;
   const chartLeft = 34;
@@ -342,14 +374,24 @@ function buildTrendSvgData(trendData: TrendDatum[]) {
   const chartBottom = 34;
   const chartWidth = width - chartLeft - chartRight;
   const chartHeight = height - chartTop - chartBottom;
-  const maxCalls = Math.max(
+  const rawMaxCalls = Math.max(
     ...trendData.map((item) => safeNumber(item.calls)),
+    0,
+  );
+  const rawMaxUsers = Math.max(
+    ...trendData.map((item) => safeNumber(item.users)),
+    0,
+  );
+  const maxCalls = Math.max(
+    rawMaxCalls,
     1,
   );
   const maxUsers = Math.max(
-    ...trendData.map((item) => safeNumber(item.users)),
+    rawMaxUsers,
     1,
   );
+  const leftAxisMax = getNiceAxisMax(rawMaxUsers);
+  const rightAxisMax = getNiceAxisMax(rawMaxCalls);
   const step = trendData.length > 1 ? chartWidth / (trendData.length - 1) : 0;
   const labelInterval = getLabelInterval(trendData.length);
   const barWidth = getBarWidth(trendData.length, step);
@@ -380,6 +422,36 @@ function buildTrendSvgData(trendData: TrendDatum[]) {
     return { x, y };
   });
 
+  const hoverZones: TrendHoverZone[] = trendData.map((item, index) => {
+    const pointX = points[index]?.x ?? chartLeft;
+    const pointY = points[index]?.y ?? chartTop + chartHeight;
+    const zoneStart =
+      trendData.length === 1
+        ? chartLeft
+        : index === 0
+        ? chartLeft
+        : pointX - step / 2;
+    const zoneEnd =
+      trendData.length === 1
+        ? width - chartRight
+        : index === trendData.length - 1
+        ? width - chartRight
+        : pointX + step / 2;
+
+    return {
+      key: item.date,
+      label: bars[index]?.label ?? item.date,
+      users: safeNumber(item.users),
+      calls: safeNumber(item.calls),
+      x: zoneStart,
+      y: chartTop,
+      width: Math.max(zoneEnd - zoneStart, barWidth),
+      height: chartHeight,
+      pointX,
+      pointY,
+    };
+  });
+
   return {
     width,
     height,
@@ -388,8 +460,11 @@ function buildTrendSvgData(trendData: TrendDatum[]) {
     chartTop,
     chartBottom,
     chartHeight,
+    leftAxisTicks: buildTrendAxisTicks(leftAxisMax),
+    rightAxisTicks: buildTrendAxisTicks(rightAxisMax),
     bars,
     points,
+    hoverZones,
     polyline: points.map((point) => `${point.x},${point.y}`).join(" "),
   };
 }
@@ -397,14 +472,30 @@ function buildTrendSvgData(trendData: TrendDatum[]) {
 export default function BusinessOverviewPage() {
   const isSuperManager = useIframeStore((state) => state.isSuperManager);
   const userSource = useIframeStore((state) => state.source);
+  const userBbk = useIframeStore((state) => state.bbk);
 
   const [timeRange, setTimeRange] = useState<TimeRange>("day");
-  const [startDate, setStartDate] = useState<Dayjs>(dayjs());
-  const [endDate, setEndDate] = useState<Dayjs>(dayjs());
-  const [platform, setPlatform] = useState<string>(
-    isSuperManager ? "all" : userSource || DEFAULT_SOURCE_ID || "all",
-  );
-  const [bbkId, setBbkId] = useState<string>("all");
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([dayjs(), dayjs()]);
+    // 非超级管理员的平台初始值为用户所属平台，超级管理员默认为 "all"
+  const [platform, setPlatform] = useState<string>(() => {
+    // 初始化时从 sessionStorage 获取，避免闪烁
+    try {
+      const stored = sessionStorage.getItem("swe-iframe-context");
+      if (stored) {
+        const ctx = JSON.parse(stored);
+        if (ctx.state?.isSuperManager) {
+          return "all";
+        }
+        return ctx.state?.source || DEFAULT_SOURCE_ID || "all";
+      }
+    } catch {
+      // ignore
+    }
+    // 非 iframe 模式下使用默认 source
+    return DEFAULT_SOURCE_ID || "all";
+  });
+  // 管理员多选分行；非管理员使用用户所属分行
+  const [bbkIds, setBbkIds] = useState<string[]>([]);
 
   const [sources, setSources] = useState<string[]>([]);
   const [overviewStats, setOverviewStats] = useState<OverviewStats | null>(
@@ -416,12 +507,22 @@ export default function BusinessOverviewPage() {
     sessionGrowth: number | null;
     userGrowth: number | null;
     skillGrowth: number | null;
+    cronGrowth: number | null;
+    avgRoundsGrowth: number | null;
+    multiRoundRatioGrowth: number | null;
+    avgDurationGrowth: number | null;
+    avgSessionsPerUserGrowth: number | null;
   }>({
     callsGrowth: null,
     tokensGrowth: null,
     sessionGrowth: null,
     userGrowth: null,
     skillGrowth: null,
+    cronGrowth: null,
+    avgRoundsGrowth: null,
+    multiRoundRatioGrowth: null,
+    avgDurationGrowth: null,
+    avgSessionsPerUserGrowth: null,
   });
   const [trendData, setTrendData] = useState<TrendDatum[]>([]);
   const [activeUsers, setActiveUsers] = useState<UserRow[]>([]);
@@ -429,45 +530,50 @@ export default function BusinessOverviewPage() {
   const [activeHasMore, setActiveHasMore] = useState(true);
   const [activeLoading, setActiveLoading] = useState(false);
   const activeLoadingRef = useRef(false);
+  // 用户过滤类型：filtered(已过滤内部用户) / all(全部用户)
+  const [activeFilterType, setActiveFilterType] = useState<"filtered" | "all">("filtered");
   const [skills, setSkills] = useState<SkillUsage[]>([]);
-  const [skillsPage, setSkillsPage] = useState(1);
-  const [skillsHasMore, setSkillsHasMore] = useState(true);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const skillsLoadingRef = useRef(false);
-  const [mcpServers, setMcpServers] = useState<MCPServerUsage[]>([]);
-  const [mcpPage, setMcpPage] = useState(1);
-  const [mcpHasMore, setMcpHasMore] = useState(true);
+  const [mcpSummaryData, setMcpSummaryData] = useState<MCPSummary | null>(null);
+  const [taskStatusSummary, setTaskStatusSummary] =
+    useState<TaskStatusSummary | null>(null);
+  const [depthSummary, setDepthSummary] = useState<DepthSummary | null>(null);
   const [mcpLoading, setMcpLoading] = useState(false);
   const mcpLoadingRef = useRef(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [selectedSkillName, setSelectedSkillName] = useState("");
+  const [activeTrendIndex, setActiveTrendIndex] = useState<number | null>(null);
 
-  const calculatedEndDate = useMemo(() => {
-    switch (timeRange) {
-      case "day":
-        return startDate;
-      case "week":
-        return startDate.add(6, "day");
-      case "month":
-        return startDate.add(29, "day");
-      case "custom":
-        return endDate;
-      default:
-        return startDate;
-    }
-  }, [endDate, startDate, timeRange]);
   const startDateText = useMemo(
-    () => startDate.format("YYYY-MM-DD"),
-    [startDate],
+    () => dateRange[0].format("YYYY-MM-DD"),
+    [dateRange],
   );
   const endDateText = useMemo(
-    () => calculatedEndDate.format("YYYY-MM-DD"),
-    [calculatedEndDate],
+    () => dateRange[1].format("YYYY-MM-DD"),
+    [dateRange],
   );
-  const effectiveSourceId = platform === "all" ? undefined : platform;
-  const effectiveBbkId = bbkId === "all" ? undefined : bbkId;
+  // 平台筛选参数：超级管理员选择 "all" 时传递 "all"，其他情况按实际值传递
+  // 使用 useMemo 缓存，避免每次渲染重新创建导致请求循环
+  const effectiveSourceId = useMemo(() => {
+    if (isSuperManager) {
+      return platform === "all" ? "all" : platform;
+    }
+    const sourceFromContext = getIframeContext().source || DEFAULT_SOURCE_ID;
+    return sourceFromContext ? sourceFromContext : undefined;
+  }, [isSuperManager, platform]);
+  // Select 显示用的平台值
+  const displayPlatformValue = useMemo(() => {
+    if (isSuperManager) return platform;
+    const sourceFromContext = getIframeContext().source || DEFAULT_SOURCE_ID;
+    return sourceFromContext || "all";
+  }, [isSuperManager, platform]);
+  // 分行筛选参数：直接使用 UI 选择的 bbkIds，空数组表示全部分行
+  const effectiveBbkIds = useMemo(() => {
+    return bbkIds.length === 0 ? undefined : bbkIds;
+  }, [bbkIds]);
 
   const transformUserData = useCallback(
     (items: Record<string, unknown>[]): UserRow[] =>
@@ -485,17 +591,29 @@ export default function BusinessOverviewPage() {
     [],
   );
 
+  // 获取平台列表
   const fetchSources = useCallback(async () => {
     try {
-      const result = await tracingApi.getSources();
-      setSources(result.sources || []);
+      // 超级管理员：加载所有平台选项
+      if (isSuperManager) {
+        const res = await tracingApi.getSources();
+        setSources(res.sources || []);
+      } else {
+        // 非超级管理员：只显示用户所属平台
+        const effectiveSource = userSource || DEFAULT_SOURCE_ID;
+        if (effectiveSource) {
+          setSources([effectiveSource]);
+        } else {
+          setSources([]);
+        }
+      }
     } catch (error) {
       console.error("Failed to fetch sources:", error);
     }
-  }, []);
+  }, [isSuperManager, userSource]);
 
   const fetchDashboard = useCallback(async () => {
-    const isSingleDay = startDate.isSame(calculatedEndDate, "day");
+    const isSingleDay = dateRange[0].isSame(dateRange[1], "day");
 
     try {
       const [overviewRes, growthRes, trendRes] = await Promise.allSettled([
@@ -503,27 +621,27 @@ export default function BusinessOverviewPage() {
           startDateText,
           endDateText,
           effectiveSourceId,
-          effectiveBbkId,
+          effectiveBbkIds?.join(","),
         ),
         tracingApi.getGrowthStats(
           startDateText,
           endDateText,
           timeRange,
           effectiveSourceId,
-          effectiveBbkId,
+          effectiveBbkIds?.join(","),
         ),
         isSingleDay
           ? tracingApi.getHourlyTrend(
               startDateText,
               endDateText,
               effectiveSourceId,
-              effectiveBbkId,
+              effectiveBbkIds?.join(","),
             )
           : tracingApi.getDailyTrend(
               startDateText,
               endDateText,
               effectiveSourceId,
-              effectiveBbkId,
+              effectiveBbkIds?.join(","),
             ),
       ]);
 
@@ -541,11 +659,10 @@ export default function BusinessOverviewPage() {
       message.error("获取总览数据失败");
     }
   }, [
-    calculatedEndDate,
-    effectiveBbkId,
+    dateRange,
+    effectiveBbkIds,
     effectiveSourceId,
     endDateText,
-    startDate,
     startDateText,
     timeRange,
   ]);
@@ -563,9 +680,9 @@ export default function BusinessOverviewPage() {
           start_date: startDateText,
           end_date: endDateText,
           source_id: effectiveSourceId,
-          bbk_id: effectiveBbkId,
+          bbk_ids: effectiveBbkIds?.join(","),
           sort_by: "conversations",
-          filter_user_type: "filtered",
+          filter_user_type: activeFilterType,
         });
         const mappedUsers = transformUserData(
           result.items as unknown as Record<string, unknown>[],
@@ -581,11 +698,11 @@ export default function BusinessOverviewPage() {
         setActiveLoading(false);
       }
     },
-    [effectiveBbkId, effectiveSourceId, endDateText, startDateText, transformUserData],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText, transformUserData, activeFilterType],
   );
 
   const fetchSkills = useCallback(
-    async (page: number, append = false) => {
+    async () => {
       if (skillsLoadingRef.current) {
         return;
       }
@@ -593,15 +710,15 @@ export default function BusinessOverviewPage() {
       setSkillsLoading(true);
 
       try {
-        const result = await tracingApi.getSkills(page, 10, {
+        // 只请求TOP5数据
+        const result = await tracingApi.getSkills(1, 5, {
           start_date: startDateText,
           end_date: endDateText,
           source_id: effectiveSourceId,
-          bbk_id: effectiveBbkId,
+          bbk_ids: effectiveBbkIds?.join(","),
         });
         const rows = result.items || [];
-        setSkills((previous) => (append ? [...previous, ...rows] : rows));
-        setSkillsHasMore(rows.length === 10);
+        setSkills(rows);
       } catch (error) {
         console.error("Failed to fetch skills:", error);
       } finally {
@@ -609,11 +726,11 @@ export default function BusinessOverviewPage() {
         setSkillsLoading(false);
       }
     },
-    [effectiveBbkId, effectiveSourceId, endDateText, startDateText],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText],
   );
 
-  const fetchMcpServers = useCallback(
-    async (page: number, append = false) => {
+  const fetchMcpSummary = useCallback(
+    async () => {
       if (mcpLoadingRef.current) {
         return;
       }
@@ -621,24 +738,50 @@ export default function BusinessOverviewPage() {
       setMcpLoading(true);
 
       try {
-        const result = await tracingApi.getMCPServers(page, 10, {
+        const result = await tracingApi.getMCPSummary({
           start_date: startDateText,
           end_date: endDateText,
           source_id: effectiveSourceId,
-          bbk_id: effectiveBbkId,
+          bbk_ids: effectiveBbkIds?.join(","),
         });
-        const rows = result.items || [];
-        setMcpServers((previous) => (append ? [...previous, ...rows] : rows));
-        setMcpHasMore(rows.length === 10);
+        setMcpSummaryData(result);
       } catch (error) {
-        console.error("Failed to fetch MCP servers:", error);
+        console.error("Failed to fetch MCP summary:", error);
       } finally {
         mcpLoadingRef.current = false;
         setMcpLoading(false);
       }
     },
-    [effectiveBbkId, effectiveSourceId, endDateText, startDateText],
+    [effectiveBbkIds, effectiveSourceId, endDateText, startDateText],
   );
+
+  const fetchTaskStatusSummary = useCallback(async () => {
+    try {
+      const result = await tracingApi.getTaskStatusSummary({
+        start_date: startDateText,
+        end_date: endDateText,
+        source_id: effectiveSourceId,
+        bbk_ids: effectiveBbkIds?.join(","),
+      });
+      setTaskStatusSummary(result);
+    } catch (error) {
+      console.error("Failed to fetch task status summary:", error);
+    }
+  }, [effectiveBbkIds, effectiveSourceId, endDateText, startDateText]);
+
+  const fetchDepthSummary = useCallback(async () => {
+    try {
+      const result = await tracingApi.getDepthSummary({
+        start_date: startDateText,
+        end_date: endDateText,
+        source_id: effectiveSourceId,
+        bbk_ids: effectiveBbkIds?.join(","),
+      });
+      setDepthSummary(result);
+    } catch (error) {
+      console.error("Failed to fetch depth summary:", error);
+    }
+  }, [effectiveBbkIds, effectiveSourceId, endDateText, startDateText]);
 
   useEffect(() => {
     fetchSources();
@@ -646,63 +789,70 @@ export default function BusinessOverviewPage() {
 
   useEffect(() => {
     fetchDashboard();
+    fetchSkills();
+    fetchMcpSummary();
+    fetchTaskStatusSummary();
+    fetchDepthSummary();
+    // 活跃用户请求由独立的 useEffect 处理
+  }, [
+    fetchDashboard,
+    fetchDepthSummary,
+    fetchMcpSummary,
+    fetchSkills,
+    fetchTaskStatusSummary,
+  ]);
+
+  // 活跃用户请求独立处理，避免 activeFilterType 变化触发其他请求
+  useEffect(() => {
     setActivePage(1);
-    setSkillsPage(1);
-    setMcpPage(1);
     fetchActiveUsers(1, false);
-    fetchSkills(1, false);
-    fetchMcpServers(1, false);
-  }, [fetchActiveUsers, fetchDashboard, fetchMcpServers, fetchSkills]);
+  }, [
+    fetchActiveUsers,
+  ]);
+
+  useEffect(() => {
+    setActiveTrendIndex(null);
+  }, [trendData]);
 
   const handleModeChange = (nextRange: TimeRange) => {
     setTimeRange(nextRange);
+    const today = dayjs();
 
-    if (nextRange === "week") {
-      setStartDate(dayjs().subtract(6, "day"));
-      setEndDate(dayjs());
-      return;
-    }
-    if (nextRange === "month") {
-      setStartDate(dayjs().subtract(29, "day"));
-      setEndDate(dayjs());
-      return;
-    }
     if (nextRange === "day") {
-      setStartDate(dayjs());
-      setEndDate(dayjs());
-      return;
+      setDateRange([today, today]);
+    } else if (nextRange === "week") {
+      setDateRange([today.subtract(6, "day"), today]);
+    } else if (nextRange === "month") {
+      setDateRange([today.subtract(29, "day"), today]);
     }
-
-    setEndDate(calculatedEndDate);
   };
 
-  const handleStartDateChange = (date: Dayjs | null) => {
-    if (!date) {
+  const handleDateRangeChange = (dates: [Dayjs | null, Dayjs | null] | null) => {
+    if (!dates || !dates[0] || !dates[1]) {
       return;
     }
 
-    setStartDate(date);
-    if (timeRange === "day") {
-      setEndDate(date);
-      return;
-    }
-    if (timeRange === "week") {
-      setEndDate(date.add(6, "day"));
-      return;
-    }
-    if (timeRange === "month") {
-      setEndDate(date.add(29, "day"));
-      return;
-    }
-    setTimeRange("custom");
-  };
+    const [start, end] = dates;
+    const today = dayjs().startOf("day");
 
-  const handleEndDateChange = (date: Dayjs | null) => {
-    if (!date) {
-      return;
+    // 检测是否匹配快捷按钮范围
+    if (start.isSame(today, "day") && end.isSame(today, "day")) {
+      setTimeRange("day");
+    } else if (
+      start.isSame(today.subtract(6, "day"), "day") &&
+      end.isSame(today, "day")
+    ) {
+      setTimeRange("week");
+    } else if (
+      start.isSame(today.subtract(29, "day"), "day") &&
+      end.isSame(today, "day")
+    ) {
+      setTimeRange("month");
+    } else {
+      setTimeRange("custom");
     }
-    setTimeRange("custom");
-    setEndDate(date);
+
+    setDateRange([start, end]);
   };
 
   const handleActiveScroll = useCallback(
@@ -721,65 +871,34 @@ export default function BusinessOverviewPage() {
     [activeHasMore, activePage, fetchActiveUsers],
   );
 
-  const handleSkillsScroll = useCallback(
-    (event: UIEvent<HTMLDivElement>) => {
-      const target = event.currentTarget;
-      if (
-        target.scrollHeight - target.scrollTop <= target.clientHeight + 40 &&
-        skillsHasMore &&
-        !skillsLoadingRef.current
-      ) {
-        const nextPage = skillsPage + 1;
-        setSkillsPage(nextPage);
-        fetchSkills(nextPage, true);
-      }
-    },
-    [fetchSkills, skillsHasMore, skillsPage],
-  );
-
-  const handleMcpScroll = useCallback(
-    (event: UIEvent<HTMLDivElement>) => {
-      const target = event.currentTarget;
-      if (
-        target.scrollHeight - target.scrollTop <= target.clientHeight + 40 &&
-        mcpHasMore &&
-        !mcpLoadingRef.current
-      ) {
-        const nextPage = mcpPage + 1;
-        setMcpPage(nextPage);
-        fetchMcpServers(nextPage, true);
-      }
-    },
-    [fetchMcpServers, mcpHasMore, mcpPage],
-  );
-
-  const disabledStartDate = (current: Dayjs | null): boolean =>
+  const disabledDate = (current: Dayjs | null): boolean =>
     !!current && current.isAfter(dayjs().startOf("day"), "day");
 
-  const disabledEndDate = (current: Dayjs | null): boolean => {
-    if (!current) {
-      return false;
-    }
-    if (current.isAfter(dayjs().startOf("day"), "day")) {
-      return true;
-    }
-    return current.isBefore(startDate, "day");
-  };
-
   const metricCards = useMemo(
-    () => buildMetricCards(overviewStats, growthStats, skills),
-    [growthStats, overviewStats, skills],
+    () => buildMetricCards(overviewStats, taskStatusSummary, growthStats, skills),
+    [growthStats, overviewStats, skills, taskStatusSummary],
   );
   const depthCards = useMemo(
-    () => buildDepthCards(overviewStats, growthStats),
-    [growthStats, overviewStats],
+    () => buildDepthCards(depthSummary, growthStats),
+    [growthStats, depthSummary],
   );
   const executionSummary = useMemo(
-    () => buildExecutionSummary(overviewStats),
-    [overviewStats],
+    () => buildExecutionSummary(taskStatusSummary),
+    [taskStatusSummary],
   );
-  const mcpSummary = useMemo(() => buildMcpSummary(mcpServers), [mcpServers]);
+  const mcpSummaryItems = useMemo(
+    () => buildMcpSummary(mcpSummaryData),
+    [mcpSummaryData],
+  );
   const trendSvg = useMemo(() => buildTrendSvgData(trendData), [trendData]);
+  const activeTrendZone =
+    activeTrendIndex === null ? null : trendSvg.hoverZones[activeTrendIndex] ?? null;
+  const trendTooltipStyle = activeTrendZone
+    ? {
+        left: `${Math.min(92, Math.max(8, (activeTrendZone.pointX / trendSvg.width) * 100))}%`,
+        top: `${Math.min(78, Math.max(10, (activeTrendZone.pointY / trendSvg.height) * 100))}%`,
+      }
+    : undefined;
   const skillsTotal = Math.max(
     skills.reduce((sum, item) => sum + safeNumber(item.count), 0),
     1,
@@ -827,22 +946,14 @@ export default function BusinessOverviewPage() {
             </div>
 
             <div className={styles.dateRangePanel}>
-              <DatePicker
-                className={styles.datePicker}
-                value={startDate}
-                onChange={handleStartDateChange}
+              <DatePicker.RangePicker
+                className={styles.rangePicker}
+                value={dateRange}
+                onChange={handleDateRangeChange}
                 format="YYYY-MM-DD"
                 suffixIcon={<CalendarDays size={16} />}
-                disabledDate={disabledStartDate}
-              />
-              <span className={styles.dateDivider}>~</span>
-              <DatePicker
-                className={styles.datePicker}
-                value={calculatedEndDate}
-                onChange={handleEndDateChange}
-                format="YYYY-MM-DD"
-                suffixIcon={<CalendarDays size={16} />}
-                disabledDate={disabledEndDate}
+                disabledDate={disabledDate}
+                allowClear={false}
               />
             </div>
           </div>
@@ -850,10 +961,25 @@ export default function BusinessOverviewPage() {
           <div className={styles.toolbarRight}>
             <Select
               className={styles.scopeSelect}
-              value={bbkId}
-              onChange={setBbkId}
+              mode="multiple"
+              value={bbkIds}
+              onChange={setBbkIds}
+              placeholder="全部分行"
+              maxTagCount="responsive"
+              maxTagPlaceholder={(omittedValues) => (
+                <Tooltip
+                  title={omittedValues
+                    .map((item) => {
+                      const value = String(item.value ?? "");
+                      return BBK_ID_TO_NAME_MAP[value] || value;
+                    })
+                    .join("、")}
+                >
+                  <span>+{omittedValues.length} 个分行</span>
+                </Tooltip>
+              )}
+              allowClear
             >
-              <Option value="all">全部分行</Option>
               {BBK_ID_MAP.map((item) => (
                 <Option key={item.value} value={item.value}>
                   {item.label}
@@ -862,8 +988,12 @@ export default function BusinessOverviewPage() {
             </Select>
             <Select
               className={styles.scopeSelect}
-              value={platform}
-              onChange={setPlatform}
+              value={displayPlatformValue}
+              onChange={(value) => {
+                setPlatform(value || "all");
+              }}
+              disabled={!isSuperManager}
+              allowClear
             >
               <Option value="all">全部平台</Option>
               {sources.map((source) => (
@@ -878,8 +1008,10 @@ export default function BusinessOverviewPage() {
               onClick={() => {
                 fetchDashboard();
                 fetchActiveUsers(1, false);
-                fetchSkills(1, false);
-                fetchMcpServers(1, false);
+                fetchSkills();
+                fetchMcpSummary();
+                fetchTaskStatusSummary();
+                fetchDepthSummary();
               }}
             >
               <RotateCw size={16} />
@@ -929,30 +1061,37 @@ export default function BusinessOverviewPage() {
                 </div>
               </div>
               <div className={styles.breakdownTitle}>Top5分行</div>
-              <div className={styles.breakdownList}>
-                {card.breakdown.map((item) => (
-                  <div
-                    key={`${card.key}-${item.name}`}
-                    className={styles.breakdownRow}
-                  >
-                    <span className={styles.breakdownName}>
-                      {truncateName(item.name, 6)}
-                    </span>
-                    <div className={styles.breakdownTrack}>
-                      <div
-                        className={styles.breakdownBar}
-                        style={{
-                          width: `${Math.max(item.value, 10)}%`,
-                          background: card.accentColor,
-                        }}
-                      />
+              {card.breakdown && card.breakdown.length > 0 ? (
+                <div className={styles.breakdownList}>
+                  {card.breakdown.map((item) => (
+                    <div
+                      key={`${card.key}-${item.name}`}
+                      className={styles.breakdownRow}
+                    >
+                      <span className={styles.breakdownName}>
+                        {truncateName(item.name, 6)}
+                      </span>
+                      <div className={styles.breakdownTrack}>
+                        <div
+                          className={styles.breakdownBar}
+                          style={{
+                            width: `${Math.max(item.value, 10)}%`,
+                            background: card.accentColor,
+                          }}
+                        />
+                      </div>
+                      <span className={styles.breakdownValue}>
+                        {item.valueText}
+                      </span>
                     </div>
-                    <span className={styles.breakdownValue}>
-                      {item.valueText}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.emptyBreakdown}>
+                  <Database className={styles.emptyBreakdownIcon} />
+                  <span className={styles.emptyBreakdownText}>暂无分行数据</span>
+                </div>
+              )}
             </article>
           );
         })}
@@ -978,77 +1117,140 @@ export default function BusinessOverviewPage() {
           </div>
           <div className={styles.trendChart}>
             <div className={styles.axisLeft}>
-              {[5, 4, 3, 2, 1, 0].map((value) => (
-                <span key={`left-${value}`}>{value}K</span>
+              {trendSvg.leftAxisTicks.map((tick, index) => (
+                <span key={`left-${tick.value}-${index}`}>{tick.label}</span>
               ))}
             </div>
-            <svg
-              viewBox={`0 0 ${trendSvg.width} ${trendSvg.height}`}
-              className={styles.trendSvg}
+            <div
+              className={styles.trendPlotArea}
+              onMouseLeave={() => {
+                setActiveTrendIndex(null);
+              }}
             >
-              <defs>
-                <linearGradient
-                  id="overviewBarGradient"
-                  x1="0%"
-                  y1="0%"
-                  x2="0%"
-                  y2="100%"
-                >
-                  <stop offset="0%" stopColor="#4f7fff" />
-                  <stop offset="100%" stopColor="#2563eb" />
-                </linearGradient>
-              </defs>
+              <svg
+                viewBox={`0 0 ${trendSvg.width} ${trendSvg.height}`}
+                className={styles.trendSvg}
+              >
+                <defs>
+                  <linearGradient
+                    id="overviewBarGradient"
+                    x1="0%"
+                    y1="0%"
+                    x2="0%"
+                    y2="100%"
+                  >
+                    <stop offset="0%" stopColor="#4f7fff" />
+                    <stop offset="100%" stopColor="#2563eb" />
+                  </linearGradient>
+                </defs>
 
-              {[0, 1, 2, 3, 4].map((row) => {
-                const y = trendSvg.chartTop + (trendSvg.chartHeight / 4) * row;
-                return (
+                {[0, 1, 2, 3, 4].map((row) => {
+                  const y = trendSvg.chartTop + (trendSvg.chartHeight / 4) * row;
+                  return (
+                    <line
+                      key={`grid-${row}`}
+                      x1={trendSvg.chartLeft}
+                      y1={y}
+                      x2={trendSvg.width - trendSvg.chartRight}
+                      y2={y}
+                      className={styles.gridLine}
+                    />
+                  );
+                })}
+
+                {activeTrendZone && (
                   <line
-                    key={`grid-${row}`}
-                    x1={trendSvg.chartLeft}
-                    y1={y}
-                    x2={trendSvg.width - trendSvg.chartRight}
-                    y2={y}
-                    className={styles.gridLine}
+                    x1={activeTrendZone.pointX}
+                    y1={trendSvg.chartTop}
+                    x2={activeTrendZone.pointX}
+                    y2={trendSvg.chartTop + trendSvg.chartHeight}
+                    className={styles.trendGuideLine}
                   />
-                );
-              })}
+                )}
 
-              {trendSvg.bars.map((bar) => (
-                <g key={bar.key}>
-                  <rect
-                    x={bar.x}
-                    y={bar.y}
-                    width={bar.width}
-                    height={bar.height}
-                    rx="4"
-                    fill="url(#overviewBarGradient)"
-                  />
-                  {bar.showLabel && (
-                    <text x={bar.x + bar.width / 2} y={233} className={styles.axisLabel}>
-                      {bar.label}
-                    </text>
-                  )}
-                </g>
-              ))}
+                {trendSvg.bars.map((bar, index) => (
+                  <g key={bar.key}>
+                    <rect
+                      x={bar.x}
+                      y={bar.y}
+                      width={bar.width}
+                      height={bar.height}
+                      rx="4"
+                      fill="url(#overviewBarGradient)"
+                      className={
+                        activeTrendIndex === index
+                          ? styles.trendBarActive
+                          : styles.trendBar
+                      }
+                    />
+                    {bar.showLabel && (
+                      <text x={bar.x + bar.width / 2} y={233} className={styles.axisLabel}>
+                        {bar.label}
+                      </text>
+                    )}
+                  </g>
+                ))}
 
-              <polyline
-                points={trendSvg.polyline}
-                className={styles.trendLine}
-              />
-
-              {trendSvg.points.map((point) => (
-                <circle
-                  key={`${point.x}-${point.y}`}
-                  cx={point.x}
-                  cy={point.y}
-                  r="4.5"
-                  className={styles.trendPoint}
+                <polyline
+                  points={trendSvg.polyline}
+                  className={styles.trendLine}
                 />
-              ))}
-            </svg>
+
+                {trendSvg.points.map((point, index) => (
+                  <circle
+                    key={`${point.x}-${point.y}`}
+                    cx={point.x}
+                    cy={point.y}
+                    r={activeTrendIndex === index ? "5.5" : "4.5"}
+                    className={
+                      activeTrendIndex === index
+                        ? styles.trendPointActive
+                        : styles.trendPoint
+                    }
+                  />
+                ))}
+
+                {trendSvg.hoverZones.map((zone, index) => (
+                  <rect
+                    key={`hover-${zone.key}`}
+                    data-testid={`trend-hover-zone-${index}`}
+                    x={zone.x}
+                    y={zone.y}
+                    width={zone.width}
+                    height={zone.height}
+                    className={styles.trendHoverZone}
+                    onMouseEnter={() => {
+                      setActiveTrendIndex(index);
+                    }}
+                  />
+                ))}
+              </svg>
+
+              {activeTrendZone && (
+                <div
+                  data-testid="trend-tooltip"
+                  className={styles.trendTooltip}
+                  style={trendTooltipStyle}
+                >
+                  <div className={styles.trendTooltipDate}>{activeTrendZone.label}</div>
+                  <div className={styles.trendTooltipRow}>
+                    <span className={styles.trendTooltipLabel}>调用用户</span>
+                    <strong className={styles.trendTooltipValue}>
+                      {formatNumber(activeTrendZone.users)}
+                    </strong>
+                  </div>
+                  <div className={styles.trendTooltipRow}>
+                    <span className={styles.trendTooltipLabel}>调用次数</span>
+                    <strong className={styles.trendTooltipValue}>
+                      {formatNumber(activeTrendZone.calls)}
+                    </strong>
+                  </div>
+                </div>
+              )}
+            </div>
             <div className={styles.axisRight}>
-              {[20, 16, 12, 8, 4, 0].map((value) => (
-                <span key={`right-${value}`}>{value}K</span>
+              {trendSvg.rightAxisTicks.map((tick, index) => (
+                <span key={`right-${tick.value}-${index}`}>{tick.label}</span>
               ))}
             </div>
           </div>
@@ -1057,6 +1259,34 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelMedium}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>活跃用户排行榜</h3>
+            <div className={styles.filterTab}>
+              <span
+                className={activeFilterType === "filtered" ? styles.filterTabActive : styles.filterTabItem}
+                onClick={() => {
+                  if (activeFilterType !== "filtered") {
+                    setActiveFilterType("filtered");
+                    setActiveUsers([]);
+                    setActivePage(1);
+                    setActiveHasMore(true);
+                  }
+                }}
+              >
+                已过滤
+              </span>
+              <span
+                className={activeFilterType === "all" ? styles.filterTabActive : styles.filterTabItem}
+                onClick={() => {
+                  if (activeFilterType !== "all") {
+                    setActiveFilterType("all");
+                    setActiveUsers([]);
+                    setActivePage(1);
+                    setActiveHasMore(true);
+                  }
+                }}
+              >
+                全部
+              </span>
+            </div>
           </div>
           <div className={styles.rankHeader}>
             <span>排名</span>
@@ -1078,6 +1308,18 @@ export default function BusinessOverviewPage() {
                     ? styles.rankBadgeBronze
                     : styles.rankBadge;
 
+                // 格式化显示：分行名称/用户姓名(用户ID)
+                const displayParts: string[] = [];
+                if (item.bbkId && getBbkDisplayName(item.bbkId) !== "-") {
+                  displayParts.push(getBbkDisplayName(item.bbkId));
+                }
+                if (item.userName) {
+                  displayParts.push(item.userName);
+                }
+                const displayName = displayParts.length > 0
+                  ? `${displayParts.join("/")}(${item.userId})`
+                  : item.userId;
+
                 return (
                   <button
                     key={`${item.userId}-${rank}`}
@@ -1089,10 +1331,11 @@ export default function BusinessOverviewPage() {
                     }}
                   >
                     <span className={rankClass}>{rank}</span>
-                    <span className={styles.rankUser}>
-                      {truncateName(item.userName || item.name, 16)}
-                      <em>{item.userId}</em>
-                    </span>
+                    <Tooltip title={displayName} placement="top">
+                      <span className={styles.rankUser}>
+                        {displayName}
+                      </span>
+                    </Tooltip>
                     <span className={styles.rankCalls}>
                       {formatNumber(item.calls)}
                     </span>
@@ -1116,11 +1359,13 @@ export default function BusinessOverviewPage() {
                 <div className={styles.depthIconWrap}>
                   {card.key === "avg-rounds" && <MessageCircleMore size={19} />}
                   {card.key === "multi-round" && <Users size={19} />}
-                  {card.key === "avg-stay" && <Clock3 size={19} />}
+                  {card.key === "avg-duration" && <Clock3 size={19} />}
                   {card.key === "avg-sessions" && <ArrowUpRight size={19} />}
                 </div>
                 <div className={styles.depthBody}>
-                  <div className={styles.depthTitle}>{card.title}</div>
+                  <Tooltip title={card.title} placement="top">
+                    <div className={styles.depthTitle}>{card.title}</div>
+                  </Tooltip>
                   <div className={styles.depthValue}>{card.valueText}</div>
                   <div
                     className={
@@ -1181,7 +1426,7 @@ export default function BusinessOverviewPage() {
               </svg>
               <div className={styles.donutCenter}>
                 <strong>
-                  {formatNumber(overviewStats?.total_sessions ?? 0)}
+                  {formatNumber(taskStatusSummary?.total_tasks ?? 0)}
                 </strong>
                 <span>总任务数</span>
               </div>
@@ -1214,12 +1459,13 @@ export default function BusinessOverviewPage() {
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>技能使用TOP5</h3>
           </div>
-          <div className={styles.skillList} onScroll={handleSkillsScroll}>
+          <div className={styles.skillList}>
             {skills.length === 0 ? (
               <div className={styles.emptyState}>暂无数据</div>
             ) : (
-              skills.map((skill) => {
+              skills.slice(0, 5).map((skill, index) => {
                 const percent = (safeNumber(skill.count) / skillsTotal) * 100;
+                const barColor = SKILL_BAR_COLORS[index] || SKILL_BAR_COLORS[0];
                 return (
                   <button
                     key={skill.skill_name}
@@ -1230,13 +1476,15 @@ export default function BusinessOverviewPage() {
                       setSkillModalOpen(true);
                     }}
                   >
-                    <span className={styles.skillName}>
-                      {truncateName(skill.skill_name, 8)}
-                    </span>
+                    <Tooltip title={skill.skill_name} placement="top">
+                      <span className={styles.skillName}>
+                        {truncateName(skill.skill_name, 20)}
+                      </span>
+                    </Tooltip>
                     <div className={styles.skillTrack}>
                       <div
                         className={styles.skillBar}
-                        style={{ width: `${Math.max(percent, 10)}%` }}
+                        style={{ width: `${Math.max(percent, 10)}%`, background: barColor }}
                       />
                     </div>
                     <span className={styles.skillStat}>
@@ -1263,11 +1511,11 @@ export default function BusinessOverviewPage() {
               </button>
             )}
           </div>
-          <div className={styles.donutLayout} onScroll={handleMcpScroll}>
+          <div className={styles.donutLayout}>
             <div className={styles.donutWrap}>
               <svg viewBox="0 0 120 120" className={styles.donutSvg}>
                 <circle cx="60" cy="60" r="45" className={styles.donutTrack} />
-                {buildDonutSegments(mcpSummary).map((item) => (
+                {buildDonutSegments(mcpSummaryItems).map((item) => (
                   <circle
                     key={item.key}
                     cx="60"
@@ -1284,20 +1532,15 @@ export default function BusinessOverviewPage() {
               </svg>
               <div className={styles.donutCenter}>
                 <strong>
-                  {formatNumber(
-                    mcpServers.reduce(
-                      (sum, item) => sum + safeNumber(item.total_calls),
-                      0,
-                    ),
-                  )}
+                  {formatNumber(safeNumber(mcpSummaryData?.total_calls))}
                 </strong>
                 <span>总调用数</span>
               </div>
             </div>
             <div className={styles.legendList}>
-              {mcpSummary.map((item) => {
+              {mcpSummaryItems.map((item) => {
                 const total = Math.max(
-                  mcpSummary.reduce((sum, row) => sum + row.value, 0),
+                  mcpSummaryItems.reduce((sum, row) => sum + row.value, 0),
                   1,
                 );
 
@@ -1325,9 +1568,10 @@ export default function BusinessOverviewPage() {
       <UserDetailModal
         open={modalOpen}
         userId={selectedUserId}
-        startDate={startDate.format("YYYY-MM-DD")}
-        endDate={calculatedEndDate.format("YYYY-MM-DD")}
+        startDate={startDateText}
+        endDate={endDateText}
         sourceId={effectiveSourceId}
+        bbkIds={effectiveBbkIds?.join(",")}
         onClose={() => {
           setModalOpen(false);
           setSelectedUserId(null);
@@ -1337,8 +1581,8 @@ export default function BusinessOverviewPage() {
       <SkillDetailModal
         open={skillModalOpen}
         skillName={selectedSkillName}
-        startDate={startDate.format("YYYY-MM-DD")}
-        endDate={calculatedEndDate.format("YYYY-MM-DD")}
+        startDate={startDateText}
+        endDate={endDateText}
         sourceId={effectiveSourceId}
         onClose={() => {
           setSkillModalOpen(false);

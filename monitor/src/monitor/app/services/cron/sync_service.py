@@ -6,13 +6,26 @@ from SWE to Monitor database.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from ...database import get_db_connection
 from ...models.cron import CronJobSyncRequest, ExecutionSyncRequest
 
 logger = logging.getLogger(__name__)
+
+# 东八区时区（北京时间）
+_BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _get_beijing_now() -> datetime:
+    """获取当前东八区时间（无 tzinfo），用于数据库存储。
+
+    Returns:
+        当前北京时间（无时区信息）
+    """
+    return datetime.now(_BEIJING_TZ).replace(tzinfo=None)
 
 
 class SyncService:
@@ -43,7 +56,7 @@ class SyncService:
             (request.id,),
         )
 
-        now = datetime.utcnow()
+        now = _get_beijing_now()
 
         if existing:
             # Update existing job, clear deleted_at if it was deleted
@@ -198,7 +211,7 @@ class SyncService:
             return True
 
         # Soft delete
-        now = datetime.utcnow()
+        now = _get_beijing_now()
         await db.execute(
             """
             UPDATE swe_cron_jobs SET
@@ -228,7 +241,7 @@ class SyncService:
         """
         db = get_db_connection()
 
-        now = datetime.utcnow()
+        now = _get_beijing_now()
 
         await db.execute(
             """

@@ -139,36 +139,5 @@ export default createGlobalStyle`
     }
   }
 
-  &--completed {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    background: ${(p) => p.theme.colorSuccessBg};
-    border: 1px solid ${(p) => p.theme.colorSuccessBorder};
-    border-radius: 10px;
-    color: ${(p) => p.theme.colorSuccess};
-    font-size: 13px;
-    font-weight: 500;
-    animation: task-progress-fade-out 0.5s 1s forwards;
-  }
-
-  &--cancelled {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    background: ${(p) => p.theme.colorFillTertiary};
-    border: 1px solid ${(p) => p.theme.colorBorderSecondary};
-    border-radius: 10px;
-    color: ${(p) => p.theme.colorTextTertiary};
-    font-size: 13px;
-    font-weight: 500;
-    animation: task-progress-fade-out 0.3s 0.5s forwards;
-  }
-
-  @keyframes task-progress-fade-out {
-    to { opacity: 0; }
-  }
 }
 `;

@@ -81,6 +81,7 @@ def is_tenant_exempt(path: str) -> bool:
         "/assets/",
         "/static/",
         "/console/",
+        "/api/internal/",
     )
     if any(path.startswith(prefix) for prefix in exempt_prefixes):
         return True

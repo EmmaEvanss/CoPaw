@@ -12,6 +12,7 @@ export interface OverviewStats {
   output_tokens: number;
   total_sessions: number;
   total_conversations: number;
+  total_skill_calls: number;  // 技能调用总次数
   avg_duration_ms: number;
   top_tools: ToolUsage[];
   top_skills: SkillUsage[];
@@ -19,7 +20,6 @@ export interface OverviewStats {
   mcp_servers: MCPServerUsage[];
   daily_trend: DailyStats[];
   branch_breakdown: OverviewBranchBreakdown;
-  task_status_breakdown: TaskStatusBreakdown;
 }
 
 export interface BranchMetricItem {
@@ -35,12 +35,27 @@ export interface OverviewBranchBreakdown {
   sessions: BranchMetricItem[];
   tokens: BranchMetricItem[];
   skills: BranchMetricItem[];
+  cron_tasks: BranchMetricItem[];
 }
 
 export interface TaskStatusBreakdown {
   success: number;
   failed: number;
   running: number;
+}
+
+export interface TaskStatusSummary {
+  total_tasks: number;
+  success: number;
+  failed: number;
+  cancelled: number;
+}
+
+export interface DepthSummary {
+  avg_rounds: number;
+  multi_round_ratio: number;
+  avg_duration_seconds: number;
+  avg_sessions_per_user: number;
 }
 
 export interface ModelUsage {
@@ -79,6 +94,12 @@ export interface MCPServerUsage {
   avg_duration_ms: number;
   error_count: number;
   tools: MCPToolUsage[];
+}
+
+export interface MCPSummary {
+  total_calls: number;
+  error_count: number;
+  server_count: number;
 }
 
 export interface DailyStats {
@@ -293,13 +314,14 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<OverviewStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/overview?${params.toString()}`);
   },
 
@@ -313,7 +335,7 @@ export const tracingApi = {
       source_id?: string;
       sort_by?: string;
       filter_user_type?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: UserListItem[];
@@ -327,7 +349,7 @@ export const tracingApi = {
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
         // filter_user_type 需要传递 "all" 或 "filtered"
-        // source_id 使用 "all" 表示查询全部
+        // source_id 为 "all" 时不需要传递，后端 /users 接口默认为 "all"
         if (key === "filter_user_type") {
           if (value) params.append(key, value);
         } else if (value && value !== "all") {
@@ -343,11 +365,14 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
+    bbkIds?: string,
   ): Promise<UserStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
       `/monitor/tracing/users/${encodeURIComponent(userId)}${query}`,
@@ -364,7 +389,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -377,6 +402,7 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
+        // source_id 使用 "all" 表示查询全部平台，需要显式传递
         if (value) params.append(key, value);
       });
     }
@@ -422,7 +448,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -435,6 +461,7 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
+        // source_id 使用 "all" 表示查询全部平台，需要显式传递
         if (value) params.append(key, value);
       });
     }
@@ -446,11 +473,14 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
+    bbkIds?: string,
   ): Promise<SessionStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
       `/monitor/tracing/sessions/${encodeURIComponent(sessionId)}${query}`,
@@ -467,7 +497,7 @@ export const tracingApi = {
       end_date?: string;
       query?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: UserMessageItem[];
@@ -494,7 +524,7 @@ export const tracingApi = {
       end_date?: string;
       query?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
     format: string = "xlsx",
   ): Promise<Blob> => {
@@ -558,6 +588,7 @@ export const tracingApi = {
     totalPlatforms: number;
   }> => {
     const params = new URLSearchParams();
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
@@ -570,20 +601,27 @@ export const tracingApi = {
     endDate: string,
     timeRange: string = "day",
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<{
     callsGrowth: number | null;
     tokensGrowth: number | null;
     sessionGrowth: number | null;
     userGrowth: number | null;
     skillGrowth: number | null;
+    cronGrowth: number | null;
+    // 深度指标环比
+    avgRoundsGrowth: number | null;
+    multiRoundRatioGrowth: number | null;
+    avgDurationGrowth: number | null;
+    avgSessionsPerUserGrowth: number | null;
   }> => {
     const params = new URLSearchParams();
     params.append("start_date", startDate);
     params.append("end_date", endDate);
     params.append("time_range", timeRange);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/growth-stats?${params.toString()}`);
   },
 
@@ -591,15 +629,16 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<{
     trendData: { date: string; calls: number; tokens: number; users: number }[];
   }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/daily-trend${query}`);
   },
@@ -609,15 +648,16 @@ export const tracingApi = {
     startDate?: string,
     endDate?: string,
     sourceId?: string,
-    bbkId?: string,
+    bbkIds?: string,
   ): Promise<{
     trendData: { date: string; calls: number; tokens: number; users: number }[];
   }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
+    // source_id 使用 "all" 表示查询全部平台，需要显式传递
     if (sourceId) params.append("source_id", sourceId);
-    if (bbkId) params.append("bbk_id", bbkId);
+    if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/hourly-trend${query}`);
   },
@@ -629,7 +669,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: SkillUsage[];
@@ -657,7 +697,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -688,7 +728,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       source_id?: string;
-      bbk_id?: string;
+      bbk_ids?: string;
     },
   ): Promise<{
     items: MCPServerUsage[];
@@ -705,5 +745,62 @@ export const tracingApi = {
       });
     }
     return request(`/monitor/tracing/mcp?${params.toString()}`);
+  },
+
+  // MCP 全局调用汇总统计
+  getMCPSummary: async (
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+      bbk_ids?: string;
+    },
+  ): Promise<MCPSummary> => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/mcp/summary${query}`);
+  },
+
+  // 定时任务执行汇总统计
+  getTaskStatusSummary: async (
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+      bbk_ids?: string;
+    },
+  ): Promise<TaskStatusSummary> => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/task-status/summary${query}`);
+  },
+
+  // 使用深度汇总统计
+  getDepthSummary: async (
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      source_id?: string;
+      bbk_ids?: string;
+    },
+  ): Promise<DepthSummary> => {
+    const params = new URLSearchParams();
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/depth/summary${query}`);
   },
 };

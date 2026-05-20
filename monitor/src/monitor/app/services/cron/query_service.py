@@ -4,6 +4,7 @@
 Provides methods to query job definitions and execution history
 for the frontend overview page.
 """
+
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Tuple
@@ -21,6 +22,7 @@ from ...models.cron import (
 BEIJING_TZ = timezone(timedelta(hours=8))
 
 logger = logging.getLogger(__name__)
+
 
 def convert_utc_to_beijing(dt: Optional[datetime]) -> Optional[datetime]:
     """将 UTC 时间转换为北京时间。
@@ -66,6 +68,7 @@ EXECUTION_TIME_FIELDS = [
     "end_time",
     "created_at",
 ]
+
 
 class QueryService:
     """Service for querying cron data."""
@@ -139,7 +142,9 @@ class QueryService:
 
         # 转换 UTC 时间为北京时间
         items = [
-            CronJobModel.model_validate(convert_row_times_to_beijing(row, JOB_TIME_FIELDS))
+            CronJobModel.model_validate(
+                convert_row_times_to_beijing(row, JOB_TIME_FIELDS),
+            )
             for row in rows
         ]
         # Query execution count for each job
@@ -187,7 +192,7 @@ class QueryService:
 
         # 转换 UTC 时间为北京时间
         return CronJobModel.model_validate(
-            convert_row_times_to_beijing(row, JOB_TIME_FIELDS)
+            convert_row_times_to_beijing(row, JOB_TIME_FIELDS),
         )
 
     async def list_executions(
@@ -209,38 +214,40 @@ class QueryService:
         sql_params: List = []
 
         if params.job_id:
-            conditions.append("job_id = %s")
+            conditions.append("e.job_id = %s")
             sql_params.append(params.job_id)
 
         if params.tenant_id:
-            conditions.append("tenant_id = %s")
+            conditions.append("e.tenant_id = %s")
             sql_params.append(params.tenant_id)
 
         if params.status:
-            conditions.append("status = %s")
+            conditions.append("e.status = %s")
             sql_params.append(params.status)
 
         if params.start_time:
-            conditions.append("actual_time >= %s")
+            conditions.append("e.actual_time >= %s")
             sql_params.append(params.start_time)
 
         if params.end_time:
-            conditions.append("actual_time <= %s")
+            conditions.append("e.actual_time <= %s")
             sql_params.append(params.end_time)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         # Count total
-        count_sql = f"SELECT COUNT(*) as count FROM swe_cron_executions WHERE {where_clause}"
+        count_sql = f"SELECT COUNT(*) as count FROM swe_cron_executions e WHERE {where_clause}"
         count_result = await db.fetch_one(count_sql, tuple(sql_params))
         total = count_result.get("count", 0) if count_result else 0
 
-        # Query with pagination
+        # Query with pagination - JOIN with jobs table to get tenant_name
         offset = (params.page - 1) * params.page_size
         query_sql = f"""
-            SELECT * FROM swe_cron_executions
+            SELECT e.*, j.tenant_name
+            FROM swe_cron_executions e
+            LEFT JOIN swe_cron_jobs j ON e.job_id = j.id
             WHERE {where_clause}
-            ORDER BY actual_time DESC
+            ORDER BY e.actual_time DESC
             LIMIT %s OFFSET %s
         """
         query_params = tuple(sql_params) + (params.page_size, offset)
@@ -249,7 +256,9 @@ class QueryService:
 
         # 转换 UTC 时间为北京时间
         items = [
-            ExecutionModel.model_validate(convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS))
+            ExecutionModel.model_validate(
+                convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS),
+            )
             for row in rows
         ]
 
@@ -284,7 +293,7 @@ class QueryService:
 
         # 转换 UTC 时间为北京时间
         return ExecutionModel.model_validate(
-            convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS)
+            convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS),
         )
 
     async def get_executions_for_export(
@@ -349,9 +358,12 @@ class QueryService:
 
         # 转换 UTC 时间为北京时间
         return [
-            ExecutionModel.model_validate(convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS))
+            ExecutionModel.model_validate(
+                convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS),
+            )
             for row in rows
         ]
+
     async def get_jobs_for_export(
         self,
         tenant_id: Optional[str] = None,
@@ -414,7 +426,9 @@ class QueryService:
 
         # 转换 UTC 时间为北京时间
         items = [
-            CronJobModel.model_validate(convert_row_times_to_beijing(row, JOB_TIME_FIELDS))
+            CronJobModel.model_validate(
+                convert_row_times_to_beijing(row, JOB_TIME_FIELDS),
+            )
             for row in rows
         ]
         # Query execution count for each job
@@ -435,6 +449,105 @@ class QueryService:
                 job.execution_count = count_map.get(job.id, 0)
 
         return items
+
+
+async def get_filter_options(self) -> dict:
+    """获取所有筛选项的下拉选项列表。
+
+    从任务表和执行表中聚合获取可选值，用于前端下拉框。
+
+    Returns:
+        包含各筛选项列表的字典
+    """
+    db = get_db_connection()
+
+    # 获取用户列表（tenant_id + tenant_name）
+    users_sql = """
+            SELECT DISTINCT tenant_id, tenant_name
+            FROM swe_cron_jobs
+            WHERE deleted_at IS NULL AND tenant_id IS NOT NULL AND tenant_id != ''
+            ORDER BY tenant_name, tenant_id
+        """
+    users_rows = await db.fetch_all(users_sql)
+    users = [
+        {
+            "value": row["tenant_id"],
+            "label": row["tenant_name"] or row["tenant_id"],
+        }
+        for row in users_rows
+    ]
+
+    # 获取分行列表（bbk_id）
+    bbk_sql = """
+            SELECT DISTINCT bbk_id
+            FROM swe_cron_jobs
+            WHERE deleted_at IS NULL AND bbk_id IS NOT NULL AND bbk_id != ''
+            ORDER BY bbk_id
+        """
+    bbk_rows = await db.fetch_all(bbk_sql)
+    bbk_ids = [
+        {"value": row["bbk_id"], "label": row["bbk_id"]} for row in bbk_rows
+    ]
+
+    # 获取渠道列表（channel）
+    channel_sql = """
+            SELECT DISTINCT channel
+            FROM swe_cron_jobs
+            WHERE deleted_at IS NULL AND channel IS NOT NULL AND channel != ''
+            ORDER BY channel
+        """
+    channel_rows = await db.fetch_all(channel_sql)
+    channels = [
+        {"value": row["channel"], "label": row["channel"]}
+        for row in channel_rows
+    ]
+
+    # 获取来源/平台列表（source_id）
+    source_sql = """
+            SELECT DISTINCT source_id
+            FROM swe_cron_jobs
+            WHERE deleted_at IS NULL AND source_id IS NOT NULL AND source_id != ''
+            ORDER BY source_id
+        """
+    source_rows = await db.fetch_all(source_sql)
+    source_ids = [
+        {"value": row["source_id"], "label": row["source_id"]}
+        for row in source_rows
+    ]
+
+    # 获取任务名称列表（name）
+    job_names_sql = """
+            SELECT DISTINCT name
+            FROM swe_cron_jobs
+            WHERE deleted_at IS NULL AND name IS NOT NULL AND name != ''
+            ORDER BY name
+        """
+    job_names_rows = await db.fetch_all(job_names_sql)
+    job_names = [
+        {"value": row["name"], "label": row["name"]} for row in job_names_rows
+    ]
+
+    # 获取任务ID列表（用于执行记录筛选）
+    job_ids_sql = """
+            SELECT DISTINCT id, name
+            FROM swe_cron_jobs
+            WHERE deleted_at IS NULL
+            ORDER BY name
+        """
+    job_ids_rows = await db.fetch_all(job_ids_sql)
+    job_ids = [
+        {"value": row["id"], "label": row["name"] or row["id"]}
+        for row in job_ids_rows
+    ]
+
+    return {
+        "users": users,
+        "bbk_ids": bbk_ids,
+        "channels": channels,
+        "source_ids": source_ids,
+        "job_names": job_names,
+        "job_ids": job_ids,
+    }
 
 
 # Global query service instance

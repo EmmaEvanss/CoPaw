@@ -1341,10 +1341,11 @@ export default function ChatPage() {
           const logicalSessionId = resolveLogicalRequestSessionId(data);
           const chatId = resolveRequestChatId(data, logicalSessionId);
           if (chatId) {
-            chatApi.stopChat(chatId).catch((err) => {
+            return chatApi.stopChat(chatId).catch((err) => {
               console.error("Failed to stop chat:", err);
             });
           }
+          return Promise.resolve();
         },
         async reconnect(data: {
           session_id: string;

@@ -75,6 +75,10 @@
   width: 132px;
 }
 
+.rangePicker {
+  width: 260px;
+}
+
 .dateDivider {
   color: #94a3b8;
   font-size: 14px;
@@ -294,6 +298,33 @@
   cursor: pointer;
 }
 
+.filterTab {
+  display: flex;
+  font-size: 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  overflow: hidden;
+
+  .filterTabItem {
+    padding: 4px 10px;
+    cursor: pointer;
+    color: #666;
+    background: #fff;
+    transition: all 0.2s;
+
+    &:hover {
+      color: #1677ff;
+    }
+  }
+
+  .filterTabActive {
+    padding: 4px 10px;
+    cursor: pointer;
+    color: #fff;
+    background: #1677ff;
+  }
+}
+
 .trendLegend {
   display: flex;
   align-items: center;
@@ -348,9 +379,15 @@
   text-align: right;
 }
 
+.trendPlotArea {
+  position: relative;
+  min-width: 0;
+}
+
 .trendSvg {
   width: 100%;
   height: 248px;
+  display: block;
 }
 
 .gridLine {
@@ -372,10 +409,85 @@
   stroke-linejoin: round;
 }
 
+.trendGuideLine {
+  stroke: #cbd5e1;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+
+.trendBar,
+.trendPoint {
+  transition: opacity 0.2s ease, stroke-width 0.2s ease, r 0.2s ease;
+}
+
+.trendBar {
+  opacity: 0.82;
+}
+
+.trendBarActive {
+  opacity: 1;
+  stroke: rgba(37, 99, 235, 0.2);
+  stroke-width: 2;
+}
+
 .trendPoint {
   fill: #ffffff;
   stroke: #22c55e;
   stroke-width: 3;
+}
+
+.trendPointActive {
+  fill: #22c55e;
+  stroke: #ffffff;
+  stroke-width: 3;
+}
+
+.trendHoverZone {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.trendTooltip {
+  position: absolute;
+  z-index: 2;
+  min-width: 144px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.22);
+  color: #f8fafc;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 12px));
+}
+
+.trendTooltipDate {
+  margin-bottom: 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trendTooltipRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trendTooltipRow + .trendTooltipRow {
+  margin-top: 6px;
+}
+
+.trendTooltipLabel {
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.trendTooltipValue {
+  color: #f8fafc;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .rankHeader {
@@ -449,22 +561,18 @@
 }
 
 .rankUser {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  overflow: hidden;
   min-width: 0;
   color: #111827;
   font-size: 14px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rankUser em {
-  overflow: hidden;
   color: #64748b;
-  font-size: 12px;
   font-style: normal;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .rankCalls {
@@ -645,9 +753,9 @@
 
 .skillRow {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr) 110px;
+  grid-template-columns: minmax(120px, 1.5fr) minmax(60px, 0.5fr) 90px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -659,6 +767,9 @@
   color: #25324b;
   font-size: 14px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skillTrack {

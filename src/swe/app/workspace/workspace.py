@@ -11,6 +11,7 @@ All existing single-agent components are reused without modification.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
@@ -23,7 +24,10 @@ from .service_factories import (
 from ..runner import AgentRunner
 from ..runner.task_tracker import TaskTracker
 from ..crons.manager import CronManager
-from ..crons.coordination import CoordinationConfig
+from ..crons.scheduler_adapter import (
+    NoopSchedulerAdapter,
+    RealSchedulerAdapter,
+)
 from ..crons.repo.json_repo import JsonJobRepository
 from ...config.config import load_agent_config
 from ...agents.memory.reme_light_memory_manager import (
@@ -35,6 +39,31 @@ if TYPE_CHECKING:
     from ..channels.base import BaseChannel
 
 logger = logging.getLogger(__name__)
+
+
+def _build_scheduler_adapter():
+    """根据环境变量构造调度平台适配器。
+
+    有 SWE_CRON_SCHEDULER_BASE_URL 时返回 RealSchedulerAdapter，
+    否则返回 NoopSchedulerAdapter（本地/测试环境）。
+    """
+    base_url = os.environ.get("SWE_CRON_SCHEDULER_BASE_URL", "").strip()
+    if not base_url:
+        return NoopSchedulerAdapter()
+
+    def _env(key: str, default: str = "") -> str:
+        return os.environ.get(key, default).strip()
+
+    job_group_str = _env("SWE_CRON_SCHEDULER_JOB_GROUP", "0")
+    return RealSchedulerAdapter(
+        base_url=base_url,
+        job_group=int(job_group_str) if job_group_str else 0,
+        author=_env("SWE_CRON_SCHEDULER_AUTHOR"),
+        alarm_email=_env("SWE_CRON_SCHEDULER_ALARM_EMAIL"),
+        client_no=_env("SWE_CRON_SCHEDULER_CLIENT_NO"),
+        client_key=_env("SWE_CRON_SCHEDULER_CLIENT_KEY"),
+        client_remark=_env("SWE_CRON_SCHEDULER_CLIENT_REMARK"),
+    )
 
 
 def _resolve_memory_class(backend: str) -> type:
@@ -157,50 +186,6 @@ class Workspace:
         except Exception:
             return "UTC"
 
-    def _get_cron_coordination_config(self) -> "CoordinationConfig":
-        """Get coordination config from environment-backed constants.
-
-        Returns:
-            CoordinationConfig for cron leadership election, scheduler
-            preflight, and definition convergence built from environment-
-            derived values and hardcoded defaults.
-        """
-        from ...constant import (
-            CRON_COORDINATION_ENABLED,
-            CRON_CLUSTER_MODE,
-            CRON_REDIS_URL,
-            CRON_CLUSTER_NODES,
-            CRON_LEASE_TTL_SECONDS,
-            CRON_LEASE_RENEW_INTERVAL_SECONDS,
-            CRON_LEASE_RENEW_FAILURE_THRESHOLD,
-            CRON_LOCK_SAFETY_MARGIN_SECONDS,
-            CRON_REDIS_ACCESS,
-        )
-        from ...config.config import _parse_cluster_nodes
-
-        cluster_nodes = _parse_cluster_nodes(CRON_CLUSTER_NODES)
-
-        # Validate lease configuration only when coordination is enabled
-        if CRON_COORDINATION_ENABLED:
-            if CRON_LEASE_TTL_SECONDS <= CRON_LEASE_RENEW_INTERVAL_SECONDS:
-                raise ValueError(
-                    "lease_ttl_seconds must be greater than "
-                    f"lease_renew_interval_seconds (got {CRON_LEASE_TTL_SECONDS} <= "
-                    f"{CRON_LEASE_RENEW_INTERVAL_SECONDS})",
-                )
-
-        return CoordinationConfig(
-            enabled=CRON_COORDINATION_ENABLED,
-            redis_url=CRON_REDIS_URL,
-            redis_access=decrypt_string(CRON_REDIS_ACCESS),
-            cluster_mode=CRON_CLUSTER_MODE,
-            cluster_nodes=cluster_nodes if CRON_CLUSTER_MODE else None,
-            lease_ttl_seconds=CRON_LEASE_TTL_SECONDS,
-            lease_renew_interval_seconds=CRON_LEASE_RENEW_INTERVAL_SECONDS,
-            lease_renew_failure_threshold=CRON_LEASE_RENEW_FAILURE_THRESHOLD,
-            lock_safety_margin_seconds=CRON_LOCK_SAFETY_MARGIN_SECONDS,
-        )
-
     def _register_services(  # pylint: disable=too-many-statements
         self,
     ) -> None:
@@ -309,10 +294,10 @@ class Workspace:
                     "timezone": ws._get_user_timezone(),
                     "agent_id": ws.agent_id,
                     "tenant_id": ws.tenant_id,
-                    "coordination_config": ws._get_cron_coordination_config(),
+                    "scheduler_adapter": _build_scheduler_adapter(),
                 },
-                start_method="activate",
-                stop_method="deactivate",
+                start_method="start",
+                stop_method="stop",
                 priority=40,
                 concurrent_init=False,
             ),

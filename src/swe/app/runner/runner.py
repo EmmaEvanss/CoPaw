@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Collection
@@ -34,6 +34,7 @@ from .command_dispatch import (
     run_command_path,
 )
 from .query_error_dump import write_query_error_dump
+from .retry_classifier import is_query_retryable
 from .session import SafeJSONSession
 from .stream_boundary import normalize_reasoning_boundary_stream
 from .task_progress import attach_task_progress
@@ -1207,6 +1208,17 @@ def _build_cron_merged_state(
     return merged_state, existing_content, current_content, stripped_count
 
 
+@dataclass
+class _RetryState:
+    """查询级重试过程中需要跨重试轮次保持的状态。"""
+
+    agent: Any = None
+    prev_agent: Any = None
+    session_state_loaded: bool = False
+    prev_session_state_loaded: bool = False
+    task_completed: bool = False
+
+
 class AgentRunner(Runner):
     def __init__(
         self,
@@ -1441,7 +1453,11 @@ class AgentRunner(Runner):
         request: AgentRequest,
         msgs: list[Any],
     ) -> str | None:
-        """启动 query 追踪；追踪不可用时只记录日志并继续主流程。"""
+        """启动 query 追踪；追踪不可用时只记录日志并继续主流程。
+
+        如果 request 中已有 trace_id（由外部传入），则使用 attach_existing 模式
+        仅设置 context 而不创建新的数据库记录。
+        """
         if not has_trace_manager():
             return None
 
@@ -1449,6 +1465,8 @@ class AgentRunner(Runner):
             trace_mgr = get_trace_manager()
             if not trace_mgr.enabled:
                 return None
+            # 检查是否已有外部传入的 trace_id
+            existing_trace_id = getattr(request, "trace_id", None)
             return await trace_mgr.start_trace(
                 user_id=getattr(request, "user_id", "") or "",
                 session_id=getattr(request, "session_id", "") or "",
@@ -1458,6 +1476,9 @@ class AgentRunner(Runner):
                 user_name=_request_user_name(request),
                 bbk_id=_request_bbk_id(request),
                 session_name=_session_name_from_messages(msgs),
+                trace_id=existing_trace_id,  # 使用传入的 trace_id 或 None
+                attach_existing=existing_trace_id
+                is not None,  # 如果有传入 trace_id，仅 attach
             )
         except Exception as e:
             logger.warning("Failed to start trace: %s", e)
@@ -2244,8 +2265,24 @@ class AgentRunner(Runner):
         status: TraceStatus,
         error: str | None = None,
     ) -> None:
-        """结束 trace，失败时只记录日志避免影响主链路。"""
+        """结束 trace，失败时只记录日志避免影响主链路。
+
+        如果 trace 是 attach 到外部已存在的 trace（attached=True），则跳过结束，
+        让外部创建者负责结束。
+        """
         if not trace_id or not has_trace_manager():
+            return
+
+        # 检查是否是 attach 的 trace，如果是则跳过结束
+        from ..tracing import get_current_trace
+
+        ctx = get_current_trace()
+        if ctx and ctx.attached:
+            logger.debug(
+                "Skip ending attached trace (owned by external): trace_id=%s",
+                trace_id[:20] if trace_id else "(empty)",
+            )
+            # 清除 context，让外部创建者可以正确结束
             return
 
         try:
@@ -2571,6 +2608,121 @@ class AgentRunner(Runner):
             len(extracted_assistant),
         )
 
+    # ── Query 级别重试辅助方法 ──
+
+    @staticmethod
+    def _summarize_retry_error(exc: BaseException) -> str:
+        """从重试异常中提取用户可读的错误摘要。"""
+        for candidate in (
+            exc,
+            getattr(exc, "__cause__", None),
+            getattr(exc, "__context__", None),
+        ):
+            if candidate is None:
+                continue
+            status_code = getattr(candidate, "status_code", None)
+            if status_code is not None:
+                status_messages = {
+                    429: "请求频率超限",
+                    432: "输入Token数已达上限",
+                    433: "服务过载",
+                    500: "服务内部错误",
+                    502: "网关错误",
+                    503: "服务暂不可用",
+                    504: "请求超时",
+                    529: "站点过载",
+                }
+                return status_messages.get(
+                    status_code,
+                    f"服务错误({status_code})",
+                )
+        if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+            return "请求超时"
+        if isinstance(
+            exc,
+            (ConnectionError, ConnectionResetError, BrokenPipeError),
+        ):
+            return "网络连接异常"
+        msg = str(exc)
+        if "rate limiter" in msg.lower():
+            return "请求频率超限"
+        if "timed out" in msg.lower():
+            return "请求超时"
+        return "服务暂时不可用"
+
+    @staticmethod
+    def _extract_retry_config(
+        agent_config,
+    ) -> tuple[bool, int, float, float]:
+        """从 agent 配置中提取重试参数。
+
+        Returns:
+            (retry_enabled, max_retries, backoff_base, backoff_cap)
+        """
+        query_retry_config = getattr(
+            getattr(agent_config, "running", None),
+            "query_retry",
+            None,
+        )
+        if not query_retry_config:
+            return False, 0, 2.0, 30.0
+        return (
+            getattr(query_retry_config, "enabled", False),
+            getattr(query_retry_config, "max_retries", 0),
+            getattr(query_retry_config, "backoff_base", 2.0),
+            getattr(query_retry_config, "backoff_cap", 30.0),
+        )
+
+    @staticmethod
+    def _compute_retry_backoff(
+        retry_attempt: int,
+        backoff_cap: float,
+        backoff_base: float,
+    ) -> float:
+        """计算重试退避时间。"""
+        return min(
+            backoff_cap,
+            backoff_base * (2 ** (retry_attempt - 1)),
+        )
+
+    @staticmethod
+    def _should_retry(
+        retry_attempt: int,
+        max_retry_attempts: int,
+        exc: BaseException,
+    ) -> bool:
+        """判断当前异常是否应该重试。"""
+        return retry_attempt < max_retry_attempts - 1 and is_query_retryable(
+            exc,
+        )
+
+    async def _save_state_before_retry(
+        self,
+        agent: Any,
+        session_state_loaded: bool,
+        session_id: str,
+        skip_history: bool,
+        user_id: str,
+    ) -> None:
+        """重试前保存当前会话状态。"""
+        if agent is None or not session_state_loaded:
+            return
+        try:
+            await asyncio.wait_for(
+                self.save_job_session_state(
+                    agent,
+                    session_id,
+                    skip_history,
+                    user_id,
+                ),
+                timeout=QUERY_CLEANUP_TIMEOUT,
+            )
+        except Exception as save_err:
+            logger.warning(
+                "Failed to save state before retry: %s",
+                save_err,
+            )
+
     async def _stream_query_after_preflight(
         self,
         msgs,
@@ -2596,113 +2748,234 @@ class AgentRunner(Runner):
         trace_id = await self._start_query_trace(request, msgs)
         outcome = _QueryTurnOutcome()
 
+        # ── Query 级别重试循环 ──
+        retry_state = _RetryState()
+        agent_config_for_retry = None
         try:
-            runtime_start = await self._prepare_query_runtime(
-                request=request,
-                msgs=msgs,
-                query=query,
-                preflight=preflight,
+            agent_config_for_retry = load_agent_config(
+                self.agent_id,
+                tenant_id=self.tenant_id,
             )
-            if runtime_start.block_response is not None:
-                yield runtime_start.block_response, True
-                return
-            runtime = runtime_start.runtime
-            if runtime is None:
-                return
+        except Exception:
+            pass
+        retry_enabled, max_retries, backoff_base, backoff_cap = (
+            self._extract_retry_config(agent_config_for_retry)
+        )
+        max_retry_attempts = max_retries + 1 if retry_enabled else 1
 
-            if trace_id:
-                await runtime.agent.setup_skill_detector(trace_id)
-
-            logger.debug(f"Agent Query msgs {msgs}")
-
-            session_state_loaded = await self.get_state_loaded(
-                runtime.agent,
-                runtime.session_id,
-                session_state_loaded,
-                runtime.skip_history,
-                runtime.user_id,
+        for retry_attempt in range(max_retry_attempts):
+            retry_state.prev_agent = retry_state.agent
+            retry_state.prev_session_state_loaded = (
+                retry_state.session_state_loaded
             )
+            retry_state.agent = None
+            retry_state.session_state_loaded = False
+            runtime = None
+            runtime_start = None
+            session_state_loaded = False
 
-            # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
-            runtime.agent.rebuild_sys_prompt()
+            if retry_attempt > 0:
+                backoff = self._compute_retry_backoff(
+                    retry_attempt,
+                    backoff_cap,
+                    backoff_base,
+                )
+                logger.info(
+                    "Query retry attempt %d/%d, backoff=%.1fs (session=%s)",
+                    retry_attempt,
+                    max_retries,
+                    backoff,
+                    session_id,
+                )
+                retry_msg = Msg(
+                    name="Friday",
+                    role="assistant",
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text=(
+                                f"正在重试 ({retry_attempt}/{max_retries})..."
+                            ),
+                        ),
+                    ],
+                    metadata={"retry_status": True},
+                )
+                yield retry_msg, False
+                if retry_state.prev_agent is not None:
+                    try:
+                        await retry_state.prev_agent.memory.add(retry_msg)
+                    except Exception:
+                        pass
+                await asyncio.sleep(backoff)
 
-            plan_result = await self._build_turn_plan(
-                runtime=runtime,
-                request=request,
-                msgs=msgs,
-                query=query,
-            )
-            if plan_result.response is not None:
-                outcome.task_completed = False
-                yield plan_result.response, True
+            try:
+                runtime_start = await self._prepare_query_runtime(
+                    request=request,
+                    msgs=msgs,
+                    query=query,
+                    preflight=preflight,
+                )
+                if runtime_start.block_response is not None:
+                    yield runtime_start.block_response, True
+                    return
+                runtime = runtime_start.runtime
+                if runtime is None:
+                    return
+
+                if trace_id:
+                    await runtime.agent.setup_skill_detector(trace_id)
+
+                logger.debug(f"Agent Query msgs {msgs}")
+
+                session_state_loaded = await self.get_state_loaded(
+                    runtime.agent,
+                    runtime.session_id,
+                    session_state_loaded,
+                    runtime.skip_history,
+                    runtime.user_id,
+                )
+                retry_state.agent = runtime.agent
+                retry_state.session_state_loaded = session_state_loaded
+
+                # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
+                runtime.agent.rebuild_sys_prompt()
+
+                plan_result = await self._build_turn_plan(
+                    runtime=runtime,
+                    request=request,
+                    msgs=msgs,
+                    query=query,
+                )
+                if plan_result.response is not None:
+                    outcome.task_completed = False
+                    yield plan_result.response, True
+                    return
+                plan = plan_result.plan
+                if plan is None:
+                    return
+
+                async for msg, last in self._stream_completion_lifecycle(
+                    request=request,
+                    runtime=runtime,
+                    plan=plan,
+                    outcome=outcome,
+                ):
+                    yield msg, last
+
+                if outcome.completion_blocked:
+                    if outcome.completion_marked_incomplete:
+                        await self._index_model_output_if_needed(
+                            trace_id=trace_id,
+                            agent=runtime.agent,
+                        )
+                        await self._end_trace_if_needed(
+                            trace_id,
+                            TraceStatus.COMPLETED,
+                        )
+                    return
+
+                await self._store_pending_validation_if_needed(
+                    runtime=runtime,
+                    plan=plan,
+                    outcome=outcome,
+                )
+                await self._generate_backend_suggestions_if_needed(
+                    runtime=runtime,
+                    plan=plan,
+                    outcome=outcome,
+                )
+                await self._index_model_output_if_needed(
+                    trace_id=trace_id,
+                    agent=runtime.agent,
+                )
+                await self._end_trace_if_needed(
+                    trace_id,
+                    TraceStatus.COMPLETED,
+                )
+
+                retry_state.task_completed = outcome.task_completed
+                break  # 成功，跳出重试循环
+
+            except asyncio.CancelledError as exc:
+                await self._handle_query_cancelled(
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    agent=runtime.agent if runtime is not None else None,
+                    exc=exc,
+                )
                 return
-            plan = plan_result.plan
-            if plan is None:
-                return
-
-            async for msg, last in self._stream_completion_lifecycle(
-                request=request,
-                runtime=runtime,
-                plan=plan,
-                outcome=outcome,
-            ):
-                yield msg, last
-
-            if outcome.completion_blocked:
-                if outcome.completion_marked_incomplete:
-                    await self._index_model_output_if_needed(
+            except Exception as e:
+                if not self._should_retry(
+                    retry_attempt,
+                    max_retry_attempts,
+                    e,
+                ):
+                    await self._handle_query_error(
+                        request=request,
+                        exc=e,
                         trace_id=trace_id,
-                        agent=runtime.agent,
+                        locals_snapshot=locals(),
                     )
-                    await self._end_trace_if_needed(
-                        trace_id,
-                        TraceStatus.COMPLETED,
-                    )
-                return
+                    raise
+                # 可重试错误：发送重试消息、保存状态、继续循环
+                error_summary = self._summarize_retry_error(e)
+                logger.warning(
+                    "Query failed with retryable error (attempt %d/%d): %s "
+                    "(summary: %s)",
+                    retry_attempt + 1,
+                    max_retry_attempts,
+                    e,
+                    error_summary,
+                )
+                retry_msg = Msg(
+                    name="Friday",
+                    role="assistant",
+                    content=[
+                        TextBlock(
+                            type="text",
+                            text=(
+                                f"{error_summary}，"
+                                f"正在重试 ({retry_attempt + 1}/{max_retries})..."
+                            ),
+                        ),
+                    ],
+                    metadata={"retry_status": True},
+                )
+                yield retry_msg, False
+                if retry_state.agent is not None:
+                    try:
+                        await retry_state.agent.memory.add(retry_msg)
+                    except Exception:
+                        pass
+                await self._save_state_before_retry(
+                    retry_state.agent,
+                    retry_state.session_state_loaded,
+                    session_id,
+                    runtime.skip_history if runtime is not None else False,
+                    runtime.user_id if runtime is not None else "",
+                )
 
-            await self._store_pending_validation_if_needed(
-                runtime=runtime,
-                plan=plan,
-                outcome=outcome,
+        # finally 清理：使用 retry_state 确保取消场景下也能正确清理
+        cleanup_runtime = runtime
+        cleanup_state_loaded = session_state_loaded
+        if cleanup_runtime is None and retry_state.prev_agent is not None:
+            # 重试循环中被取消时 runtime 可能为 None，
+            # 但仍需保存 prev_agent 的状态
+            cleanup_state_loaded = (
+                retry_state.session_state_loaded
+                or retry_state.prev_session_state_loaded
             )
-            await self._generate_backend_suggestions_if_needed(
-                runtime=runtime,
-                plan=plan,
-                outcome=outcome,
-            )
-            await self._index_model_output_if_needed(
-                trace_id=trace_id,
-                agent=runtime.agent,
-            )
-            await self._end_trace_if_needed(trace_id, TraceStatus.COMPLETED)
-
-        except asyncio.CancelledError as exc:
-            await self._handle_query_cancelled(
-                trace_id=trace_id,
-                session_id=session_id,
-                agent=runtime.agent if runtime is not None else None,
-                exc=exc,
-            )
-        except Exception as e:
-            await self._handle_query_error(
-                request=request,
-                exc=e,
-                trace_id=trace_id,
-                locals_snapshot=locals(),
-            )
-            raise
-        finally:
-            await self._cleanup_query_resources(
-                runtime=runtime,
-                session_state_loaded=session_state_loaded,
-                session_id=session_id,
-            )
-            await self._cleanup_blocked_runtime_start(runtime_start)
-            await self._store_qa_content_if_needed(
-                runtime=runtime,
-                query=query,
-                outcome=outcome,
-            )
+        await self._cleanup_query_resources(
+            runtime=cleanup_runtime,
+            session_state_loaded=cleanup_state_loaded,
+            session_id=session_id,
+        )
+        await self._cleanup_blocked_runtime_start(runtime_start)
+        await self._store_qa_content_if_needed(
+            runtime=cleanup_runtime,
+            query=query,
+            outcome=outcome,
+        )
 
     async def _stream_query_entry(
         self,

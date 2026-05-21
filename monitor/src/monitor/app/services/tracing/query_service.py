@@ -695,12 +695,30 @@ class TracingQueryService:
         )
 
         return {
-            "callsGrowth": calc_growth(curr["calls"], prev["calls"]),  # trace 记录数口径
-            "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),  # total_tokens 汇总口径
-            "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),  # session_id 去重口径
-            "userGrowth": calc_growth(curr["users"], prev["users"]),  # user_id 去重口径
-            "skillGrowth": calc_growth(curr_skill_calls, prev_skill_calls),  # skill_invocation span 数口径
-            "cronGrowth": calc_growth(curr_cron_tasks, prev_cron_tasks),  # cron 执行记录数口径
+            "callsGrowth": calc_growth(
+                curr["calls"],
+                prev["calls"],
+            ),  # trace 记录数口径
+            "tokensGrowth": calc_growth(
+                curr["tokens"],
+                prev["tokens"],
+            ),  # total_tokens 汇总口径
+            "sessionGrowth": calc_growth(
+                curr["sessions"],
+                prev["sessions"],
+            ),  # session_id 去重口径
+            "userGrowth": calc_growth(
+                curr["users"],
+                prev["users"],
+            ),  # user_id 去重口径
+            "skillGrowth": calc_growth(
+                curr_skill_calls,
+                prev_skill_calls,
+            ),  # skill_invocation span 数口径
+            "cronGrowth": calc_growth(
+                curr_cron_tasks,
+                prev_cron_tasks,
+            ),  # cron 执行记录数口径
             "avgRoundsGrowth": avg_rounds_growth,  # 单次会话平均轮数口径
             "multiRoundRatioGrowth": multi_round_ratio_growth,  # >3 轮会话占比口径
             "avgDurationGrowth": avg_duration_growth,  # 平均对话时长（秒）口径
@@ -1914,7 +1932,10 @@ class TracingQueryService:
 
         success = status_map.get("success", 0)
         failed = status_map.get("error", 0) + status_map.get("timeout", 0)
-        cancelled = status_map.get("cancelled", 0) + status_map.get("skipped", 0)
+        cancelled = status_map.get("cancelled", 0) + status_map.get(
+            "skipped",
+            0,
+        )
         total_tasks = success + failed + cancelled
 
         return TaskStatusSummary(
@@ -1974,7 +1995,10 @@ class TracingQueryService:
 
         base_row = await self._db.fetch_one(base_query, base_params)
         total_traces = int((base_row or {}).get("total_traces") or 0)
-        total_sessions = max(int((base_row or {}).get("total_sessions") or 0), 1)
+        total_sessions = max(
+            int((base_row or {}).get("total_sessions") or 0),
+            1,
+        )
         total_users = max(int((base_row or {}).get("total_users") or 0), 1)
 
         # 单次会话平均轮数
@@ -1985,12 +2009,18 @@ class TracingQueryService:
 
         # 多轮会话占比 (>3轮)
         multi_round_ratio = await self._get_multi_round_ratio(
-            source_id, start_date, end_date, bbk_ids
+            source_id,
+            start_date,
+            end_date,
+            bbk_ids,
         )
 
         # 平均对话时长（秒）
         avg_duration_seconds = await self._get_avg_duration_seconds(
-            source_id, start_date, end_date, bbk_ids
+            source_id,
+            start_date,
+            end_date,
+            bbk_ids,
         )
 
         return DepthSummary(
@@ -2149,7 +2179,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_spans s
                 JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
                 WHERE {base_where}
@@ -2170,7 +2200,7 @@ class TracingQueryService:
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s
                           AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_spans s
                 JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
                 WHERE {base_where}
@@ -2191,7 +2221,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 start_time=row["start_time"],
@@ -2656,8 +2686,11 @@ class TracingQueryService:
             where_clauses.append("session_id LIKE %s")
             params.append(f"%{session_id}%")
         if bbk_ids:
-            where_clauses.append("bbk_id IN (%s)")
-            params.append(bbk_ids)
+            bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
+            where_clauses.append(
+                f"bbk_id IN ({', '.join(['%s'] * len(bbk_params))})",
+            )
+            params.extend(bbk_params)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -2712,7 +2745,7 @@ class TracingQueryService:
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                         AND t3.source_id NOT IN ({exclude_placeholders})
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids,
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
                        COALESCE(
                            (SELECT t4.session_name FROM swe_tracing_traces t4
                             WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
@@ -2766,7 +2799,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids,
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
                        COALESCE(
                            (SELECT t4.session_name FROM swe_tracing_traces t4
                             WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
@@ -2802,7 +2835,7 @@ class TracingQueryService:
                 session_name=row.get("session_name"),
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 channel=row["channel"],
                 total_traces=row["total_traces"] or 0,
                 total_tokens=row["total_tokens"] or 0,
@@ -3274,8 +3307,11 @@ class TracingQueryService:
             where_clauses.append("status = %s")
             params.append(status)
         if bbk_ids:
-            where_clauses.append("bbk_id IN (%s)")
-            params.append(bbk_ids)
+            bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
+            where_clauses.append(
+                f"bbk_id IN ({', '.join(['%s'] * len(bbk_params))})",
+            )
+            params.extend(bbk_params)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -3308,7 +3344,7 @@ class TracingQueryService:
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            AND t3.source_id NOT IN ({exclude_placeholders})
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -3336,7 +3372,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.source_id = %s AND t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -3350,7 +3386,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 start_time=row["start_time"],
@@ -3539,8 +3575,11 @@ class TracingQueryService:
             where_clauses.append("user_message LIKE %s")
             params.append(f"%{query_text}%")
         if bbk_ids:
-            where_clauses.append("bbk_id IN (%s)")
-            params.append(bbk_ids)
+            bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
+            where_clauses.append(
+                f"bbk_id IN ({', '.join(['%s'] * len(bbk_params))})",
+            )
+            params.extend(bbk_params)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -3562,7 +3601,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -3583,7 +3622,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -3598,7 +3637,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 user_message=row["user_message"],

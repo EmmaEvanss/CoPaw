@@ -143,7 +143,9 @@ def test_distribute_skill_returns_200(tmp_path):
         },
     )
     assert resp.status_code == 200
-    assert resp.json()["distributed_count"] == 1
+    data = resp.json()
+    assert data["distributed_count"] == 1
+    assert data["conflict_count"] == 0
 
 
 def test_publish_skill_missing_source_id_returns_400(tmp_path):

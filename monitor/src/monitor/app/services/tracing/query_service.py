@@ -2262,7 +2262,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_spans s
                 JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
                 WHERE {base_where}
@@ -2283,7 +2283,7 @@ class TracingQueryService:
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s
                           AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id
                 FROM swe_tracing_spans s
                 JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
                 WHERE {base_where}
@@ -2304,7 +2304,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 start_time=row["start_time"],
@@ -2769,8 +2769,11 @@ class TracingQueryService:
             where_clauses.append("session_id LIKE %s")
             params.append(f"%{session_id}%")
         if bbk_ids:
-            where_clauses.append("bbk_id IN (%s)")
-            params.append(bbk_ids)
+            bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
+            where_clauses.append(
+                f"bbk_id IN ({', '.join(['%s'] * len(bbk_params))})",
+            )
+            params.extend(bbk_params)
         if start_date:
             where_clauses.append("start_time >= %s")
             params.append(start_date)
@@ -2825,7 +2828,7 @@ class TracingQueryService:
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                         AND t3.source_id NOT IN ({exclude_placeholders})
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids,
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
                        COALESCE(
                            (SELECT t4.session_name FROM swe_tracing_traces t4
                             WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
@@ -2879,7 +2882,7 @@ class TracingQueryService:
                         ORDER BY t2.start_time DESC LIMIT 1) as user_name,
                        (SELECT t3.bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_ids,
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
                        COALESCE(
                            (SELECT t4.session_name FROM swe_tracing_traces t4
                             WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
@@ -2915,7 +2918,7 @@ class TracingQueryService:
                 session_name=row.get("session_name"),
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 channel=row["channel"],
                 total_traces=row["total_traces"] or 0,
                 total_tokens=row["total_tokens"] or 0,
@@ -3387,8 +3390,11 @@ class TracingQueryService:
             where_clauses.append("t.status = %s")
             params.append(status)
         if bbk_ids:
-            where_clauses.append("t.bbk_id IN (%s)")
-            params.append(bbk_ids)
+            bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
+            where_clauses.append(
+                f"bbk_id IN ({', '.join(['%s'] * len(bbk_params))})",
+            )
+            params.extend(bbk_params)
         if start_date:
             where_clauses.append("t.start_time >= %s")
             params.append(start_date)
@@ -3422,7 +3428,7 @@ class TracingQueryService:
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            AND t3.source_id NOT IN ({exclude_placeholders})
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 {LATEST_FEEDBACK_JOIN_SQL}
                 WHERE {where_sql}
@@ -3452,7 +3458,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.source_id = %s AND t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 {LATEST_FEEDBACK_JOIN_SQL}
                 WHERE {where_sql}
@@ -3467,7 +3473,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 start_time=row["start_time"],
@@ -3698,8 +3704,11 @@ class TracingQueryService:
             where_clauses.append("user_message LIKE %s")
             params.append(f"%{query_text}%")
         if bbk_ids:
-            where_clauses.append("bbk_id IN (%s)")
-            params.append(bbk_ids)
+            bbk_filter_sql, bbk_params = build_bbk_in_filter(bbk_ids)
+            where_clauses.append(
+                f"bbk_id IN ({', '.join(['%s'] * len(bbk_params))})",
+            )
+            params.extend(bbk_params)
 
         where_sql = " AND ".join(where_clauses)
 
@@ -3721,7 +3730,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -3742,7 +3751,7 @@ class TracingQueryService:
                            SELECT t3.bbk_id FROM swe_tracing_traces t3
                            WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                            ORDER BY t3.start_time DESC LIMIT 1
-                       )) as bbk_ids
+                       )) as bbk_id
                 FROM swe_tracing_traces t
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
@@ -3757,7 +3766,7 @@ class TracingQueryService:
                 source_id=row["source_id"],
                 user_id=row["user_id"],
                 user_name=row["user_name"],
-                bbk_ids=row["bbk_ids"],
+                bbk_id=row["bbk_id"],
                 session_id=row["session_id"],
                 channel=row["channel"],
                 user_message=row["user_message"],

@@ -100,10 +100,20 @@ class BatchOperationResponse(BaseModel):
     failed_count: int
 
 
+class DistributeConflictItem(BaseModel):
+    """分发冲突明细."""
+
+    user_id: str
+    skill_name: str
+    reason: str
+
+
 class DistributeResponse(BaseModel):
     """分发结果."""
 
     distributed_count: int
+    conflict_count: int = 0
+    conflicts: list[DistributeConflictItem] = []
     item_id: str
 
 

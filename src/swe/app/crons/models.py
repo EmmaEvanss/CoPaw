@@ -121,7 +121,7 @@ class CronJobRequest(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    input: Any
+    input: Any = None
     session_id: Optional[str] = None
     user_id: Optional[str] = None
 
@@ -198,6 +198,7 @@ class CronJobState(BaseModel):
         Literal["success", "error", "running", "skipped", "cancelled"]
     ] = None
     last_error: Optional[str] = None
+    external_job_id: Optional[str] = None
 
 
 class CronJobView(BaseModel):

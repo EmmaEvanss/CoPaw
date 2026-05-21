@@ -135,3 +135,53 @@ class TestExecutionRecordFormat:
             status="success",
             actual_time=datetime.now(timezone.utc),
         )
+
+    def test_format_optional_time_converts_utc_to_beijing(self):
+        """Test _format_optional_time converts UTC to Beijing timezone."""
+        client = MonitorSyncClient("http://test:8080/api")
+
+        # UTC 时间: 2026-05-19 10:00:00+00:00
+        utc_time = datetime(2026, 5, 19, 10, 0, 0, tzinfo=timezone.utc)
+        result = client._format_optional_time(utc_time)
+
+        # 应转换为北京时间: 2026-05-19 18:00:00+08:00
+        assert result == "2026-05-19T18:00:00+08:00"
+
+    def test_format_optional_time_handles_none(self):
+        """Test _format_optional_time handles None."""
+        client = MonitorSyncClient("http://test:8080/api")
+        result = client._format_optional_time(None)
+        assert result is None
+
+    def test_format_optional_time_assumes_utc_if_no_timezone(self):
+        """Test _format_optional_time assumes UTC if no timezone info."""
+        client = MonitorSyncClient("http://test:8080/api")
+
+        # 无时区信息的 datetime，应假设为 UTC
+        naive_time = datetime(2026, 5, 19, 10, 0, 0)
+        result = client._format_optional_time(naive_time)
+
+        # 应假设为 UTC 并转换为北京时间
+        assert result == "2026-05-19T18:00:00+08:00"
+
+    def test_format_actual_time_converts_utc_to_beijing(self):
+        """Test _format_actual_time converts UTC to Beijing timezone."""
+        client = MonitorSyncClient("http://test:8080/api")
+
+        # UTC 时间: 2026-05-19 02:30:00+00:00
+        utc_time = datetime(2026, 5, 19, 2, 30, 0, tzinfo=timezone.utc)
+        result = client._format_actual_time(utc_time)
+
+        # 应转换为北京时间: 2026-05-19 10:30:00+08:00
+        assert result == "2026-05-19T10:30:00+08:00"
+
+    def test_format_actual_time_cross_day_boundary(self):
+        """Test time conversion when crossing day boundary."""
+        client = MonitorSyncClient("http://test:8080/api")
+
+        # UTC 时间: 2026-05-19 23:00:00+00:00 (晚上11点)
+        utc_time = datetime(2026, 5, 19, 23, 0, 0, tzinfo=timezone.utc)
+        result = client._format_actual_time(utc_time)
+
+        # 北京时间应为次日早上7点: 2026-05-20 07:00:00+08:00
+        assert result == "2026-05-20T07:00:00+08:00"

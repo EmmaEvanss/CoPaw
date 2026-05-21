@@ -4,6 +4,20 @@ import { getApiUrl } from "../config";
 
 // Types for Monitor Cron Overview
 
+export interface FilterOption {
+  value: string;
+  label: string;
+}
+
+export interface FilterOptionsResponse {
+  users: FilterOption[];
+  bbk_ids: FilterOption[];
+  channels: FilterOption[];
+  source_ids: FilterOption[];
+  job_names: FilterOption[];
+  job_ids: FilterOption[];
+}
+
 export interface CronJobItem {
   id: string;
   name: string;
@@ -40,6 +54,7 @@ export interface ExecutionItem {
   job_id: string;
   job_name: string;
   tenant_id: string;
+  tenant_name: string;
   scheduled_time: string | null;
   actual_time: string;
   end_time: string | null;
@@ -66,6 +81,11 @@ export interface PaginatedResponse<T> {
 
 // API functions
 export const monitorApi = {
+  // Get filter options for dropdown selects
+  getFilterOptions: async (): Promise<FilterOptionsResponse> => {
+    return request(`/monitor/cron/filter-options`);
+  },
+
   // Get cron jobs list
   getJobs: async (
     page = 1,

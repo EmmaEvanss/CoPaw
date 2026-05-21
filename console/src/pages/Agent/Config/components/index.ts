@@ -6,3 +6,5 @@ export { ContextCompactCard } from "./ContextCompactCard";
 export { ToolResultCompactCard } from "./ToolResultCompactCard";
 export { MemorySummaryCard } from "./MemorySummaryCard";
 export { EmbeddingConfigCard } from "./EmbeddingConfigCard";
+export { QueryRetryCard } from "./QueryRetryCard";
+export { DistributeModal } from "./DistributeModal";

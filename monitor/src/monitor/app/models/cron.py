@@ -153,6 +153,10 @@ class ExecutionModel(BaseModel):
     job_id: str = Field(..., description="任务ID")
     job_name: str = Field(default="", description="任务名称 (冗余存储)")
     tenant_id: str = Field(..., description="租户ID (分行号)")
+    tenant_name: str = Field(
+        default="",
+        description="租户姓名 (从任务表JOIN获取)",
+    )
 
     # 执行时间
     scheduled_time: Optional[datetime] = Field(

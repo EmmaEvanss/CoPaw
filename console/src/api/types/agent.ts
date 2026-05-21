@@ -58,12 +58,20 @@ export interface EmbeddingConfig {
   max_batch_size: number;
 }
 
+export interface QueryRetryConfig {
+  enabled: boolean;
+  max_retries: number;
+  backoff_base: number;
+  backoff_cap: number;
+}
+
 export interface AgentsRunningConfig {
   max_iters: number;
   llm_retry_enabled: boolean;
   llm_max_retries: number;
   llm_backoff_base: number;
   llm_backoff_cap: number;
+  query_retry: QueryRetryConfig;
   llm_max_concurrent: number;
   llm_chat_max_concurrent: number | null;
   llm_cron_max_concurrent: number | null;
@@ -80,4 +88,26 @@ export interface AgentsRunningConfig {
   memory_summary: MemorySummaryConfig;
   embedding_config: EmbeddingConfig;
   memory_manager_backend: "remelight";
+}
+
+export interface AgentConfigDistributionRequest {
+  config_groups: string[];
+  target_tenant_ids: string[];
+  overwrite: boolean;
+}
+
+export interface AgentConfigDistributionTenantResult {
+  tenant_id: string;
+  success: boolean;
+  updated_groups: string[];
+  bootstrapped: boolean;
+  error: string;
+}
+
+export interface AgentConfigDistributionResponse {
+  results: AgentConfigDistributionTenantResult[];
+}
+
+export interface AgentConfigDistributionTenantListResponse {
+  tenant_ids: string[];
 }

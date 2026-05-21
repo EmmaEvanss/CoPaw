@@ -8,11 +8,11 @@ import Message from "./Message";
 import Tool from "./Tool";
 import Reasoning from "./Reasoning";
 import Error from "./Error";
-import { Bubble, Markdown } from "@/components/agentscope-chat";
+import { Bubble } from "@/components/agentscope-chat";
 import Actions from "./Actions";
 import Suggestions from "./Suggestions";
+import RetryStatusMessage from "./RetryStatusMessage";
 import PostTurnValidationPrompt from "./PostTurnValidationPrompt";
-import { getCompletedReasoningFallbackText } from "./reasoningFallback";
 // import { Avatar, Flex } from "antd";
 // import { useChatAnywhereOptions } from "../../Context/ChatAnywhereOptionsContext";
 
@@ -27,9 +27,6 @@ export default function AgentScopeRuntimeResponseCard(props: {
       props.data.output,
     );
   }, [props.data.output]);
-  const reasoningFallbackText = useMemo(() => {
-    return getCompletedReasoningFallbackText(props.data, messages);
-  }, [messages, props.data]);
 
   if (
     !messages?.length &&
@@ -47,8 +44,17 @@ export default function AgentScopeRuntimeResponseCard(props: {
       )} */}
       {messages.map((item) => {
         switch (item.type) {
-          case AgentScopeRuntimeMessageType.MESSAGE:
+          case AgentScopeRuntimeMessageType.MESSAGE: {
+            // 检测重试状态消息，使用专用卡片渲染
+            // SSE 流式路径: metadata.retry_status
+            // 历史加载路径: metadata.metadata.retry_status（后端嵌套）
+            const meta = (item as any).metadata;
+            const retryStatus = meta?.retry_status || meta?.metadata?.retry_status;
+            if (retryStatus) {
+              return <RetryStatusMessage key={item.id} data={item} />;
+            }
             return <Message key={item.id} data={item} />;
+          }
           case AgentScopeRuntimeMessageType.PLUGIN_CALL:
           case AgentScopeRuntimeMessageType.PLUGIN_CALL_OUTPUT:
           case AgentScopeRuntimeMessageType.MCP_CALL:
@@ -67,7 +73,6 @@ export default function AgentScopeRuntimeResponseCard(props: {
             return null;
         }
       })}
-      {reasoningFallbackText && <Markdown content={reasoningFallbackText} />}
       {props.data.error && <Error data={props.data.error} />}
       <Actions {...props} />
       {props.data.post_turn_validation && (

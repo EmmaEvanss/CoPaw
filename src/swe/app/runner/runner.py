@@ -21,6 +21,7 @@ from agentscope_runtime.engine.runner import Runner
 from agentscope_runtime.engine.schemas.agent_schemas import (
     AgentRequest,
     Event,
+    Message,
 )
 from agentscope_runtime.engine.schemas.exception import AgentException
 from dotenv import load_dotenv
@@ -1487,7 +1488,7 @@ class AgentRunner(Runner):
                 return None
             # 检查是否已有外部传入的 trace_id
             existing_trace_id = getattr(request, "trace_id", None)
-            return await trace_mgr.start_trace(
+            trace_id = await trace_mgr.start_trace(
                 user_id=getattr(request, "user_id", "") or "",
                 session_id=getattr(request, "session_id", "") or "",
                 channel=getattr(request, "channel", DEFAULT_CHANNEL),
@@ -1500,9 +1501,43 @@ class AgentRunner(Runner):
                 attach_existing=existing_trace_id
                 is not None,  # 如果有传入 trace_id，仅 attach
             )
+            if trace_id:
+                # 通道层负责把事件发给前端，这里写回 request 让 SSE 能透传 trace_id。
+                setattr(request, "trace_id", trace_id)
+            return trace_id
         except Exception as e:
             logger.warning("Failed to start trace: %s", e)
             return None
+
+    @staticmethod
+    def _attach_trace_id_to_event(event: Any, trace_id: str | None) -> Any:
+        """把当前轮次 trace_id 附加到消息元数据，便于前端关联反馈。"""
+        if not trace_id or not isinstance(event, Message):
+            return event
+
+        metadata = event.metadata
+        if isinstance(metadata, dict):
+            if metadata.get("trace_id"):
+                return event
+            event.metadata = {**metadata, "trace_id": trace_id}
+        else:
+            event.metadata = {"trace_id": trace_id}
+        return event
+
+    @staticmethod
+    def _attach_trace_id_to_msg(msg: Any, trace_id: str | None) -> Any:
+        """在适配 Runtime Message 前，把 trace_id 写入 AgentScope 消息。"""
+        if not trace_id or not isinstance(msg, Msg):
+            return msg
+
+        metadata = getattr(msg, "metadata", None)
+        if isinstance(metadata, dict):
+            if metadata.get("trace_id"):
+                return msg
+            msg.metadata = {**metadata, "trace_id": trace_id}
+        else:
+            msg.metadata = {"trace_id": trace_id}
+        return msg
 
     async def _get_or_create_chat(
         self,
@@ -2297,7 +2332,7 @@ class AgentRunner(Runner):
             return
 
         # 检查是否是 attach 的 trace，如果是则跳过结束
-        from ..tracing import get_current_trace
+        from ...tracing import get_current_trace
 
         ctx = get_current_trace()
         if ctx and ctx.attached:
@@ -3063,6 +3098,8 @@ class AgentRunner(Runner):
             session_id=session_id,
             user_id=user_id,
         ):
+            trace_id = getattr(request, "trace_id", None)
+            msg = self._attach_trace_id_to_msg(msg, trace_id)
             yield msg, last
 
     async def get_state_loaded(
@@ -3439,6 +3476,8 @@ class AgentRunner(Runner):
         async for event in normalize_reasoning_boundary_stream(
             super().stream_query(request, **kwargs),
         ):
+            trace_id = getattr(request, "trace_id", None)
+            event = self._attach_trace_id_to_event(event, trace_id)
             progress = None
             if task_progress_enabled:
                 channel_meta = getattr(request, "channel_meta", None) or {}

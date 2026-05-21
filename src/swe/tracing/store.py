@@ -1405,6 +1405,8 @@ class TraceStore:
                    t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
                    t.model_name, t.status,
                    JSON_LENGTH(t.skills_used) as skills_count,
+                   rf.feedback_content as feedback_content,
+                   rf.updated_at as feedback_updated_at,
                    COALESCE(t.user_name, (
                        SELECT t2.user_name FROM swe_tracing_traces t2
                        WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
@@ -1416,6 +1418,16 @@ class TraceStore:
                        ORDER BY t3.start_time DESC LIMIT 1
                    )) as bbk_id
             FROM swe_tracing_traces t
+            LEFT JOIN (
+                SELECT rf1.id, rf1.trace_id, rf1.source_id, rf1.feedback_content, rf1.updated_at
+                FROM swe_response_feedback rf1
+                INNER JOIN (
+                    SELECT MAX(id) AS max_id
+                    FROM swe_response_feedback
+                    WHERE trace_id IS NOT NULL
+                    GROUP BY trace_id
+                ) latest ON latest.max_id = rf1.id
+            ) rf ON rf.trace_id = t.trace_id AND rf.source_id <=> t.source_id
             WHERE {where_sql}
             ORDER BY t.start_time DESC
             LIMIT %s OFFSET %s
@@ -1439,6 +1451,8 @@ class TraceStore:
                 model_name=row["model_name"],
                 status=row["status"],
                 skills_count=row["skills_count"] or 0,
+                feedback_content=row.get("feedback_content"),
+                feedback_updated_at=row.get("feedback_updated_at"),
             )
             for row in rows
         ]

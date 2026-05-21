@@ -259,7 +259,7 @@ class OverviewStats(BaseModel):
     mcp_servers: list[MCPServerUsage] = Field(default_factory=list)
     daily_trend: list[DailyStats] = Field(default_factory=list)
     branch_breakdown: "OverviewBranchBreakdown" = Field(
-        default_factory=lambda: OverviewBranchBreakdown(),
+        default_factory=lambda: OverviewBranchBreakdown(),  # pylint: disable=unnecessary-lambda
     )
 
 
@@ -335,6 +335,28 @@ class ToolCall(BaseModel):
     error: Optional[str] = None
 
 
+class TraceFeedback(BaseModel):
+    """终端用户提交的对话反馈。"""
+
+    id: int
+    source_id: Optional[str] = None
+    feedback_user_name: Optional[str] = None
+    feedback_user_sap: Optional[str] = None
+    feedback_branch: Optional[str] = None
+    feedback_sub_branch: Optional[str] = None
+    feedback_position: Optional[str] = None
+    cron_task_name: Optional[str] = None
+    cron_task_id: Optional[str] = None
+    response_id: Optional[str] = None
+    trace_id: Optional[str] = None
+    chat_id: Optional[str] = None
+    session_id: Optional[str] = None
+    feedback_options: list[str] = Field(default_factory=list)
+    feedback_content: str = ""
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class TraceDetail(BaseModel):
     """Detailed trace with spans."""
 
@@ -343,6 +365,7 @@ class TraceDetail(BaseModel):
     llm_duration_ms: int = 0
     tool_duration_ms: int = 0
     tools_called: list[dict[str, Any]] = Field(default_factory=list)
+    feedback: Optional[TraceFeedback] = None
 
 
 # Timeline models for hierarchical display
@@ -424,6 +447,7 @@ class TraceDetailWithTimeline(BaseModel):
     """
 
     trace: Trace
+    feedback: Optional[TraceFeedback] = None
 
     # Flat list (backward compatible)
     spans: list[Span] = Field(default_factory=list)
@@ -474,6 +498,7 @@ class TraceListItem(BaseModel):
     model_name: Optional[str] = None
     status: str
     skills_count: int = 0
+    feedback: Optional[TraceFeedback] = None
 
 
 class SessionListItem(BaseModel):

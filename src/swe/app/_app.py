@@ -373,10 +373,14 @@ async def lifespan(
         try:
             from .greeting.router import init_greeting_module
             from .featured_case.router import init_featured_case_module
+            from .feedback.router import init_feedback_module
 
             init_greeting_module(db_connection)
             init_featured_case_module(db_connection)
-            logger.info("Greeting and FeaturedCase modules initialized")
+            init_feedback_module(db_connection)
+            logger.info(
+                "Greeting, FeaturedCase and Feedback modules initialized",
+            )
 
             from .workspace.tenant_init_source_store import (
                 init_tenant_init_source_module,

@@ -1,5 +1,6 @@
 import { request } from "../request";
 import { buildAuthHeaders } from "../authHeaders";
+import type { FeedbackRecord } from "../types/feedback";
 
 // Types
 export interface OverviewStats {
@@ -149,6 +150,9 @@ export interface TraceListItem {
   model_name: string | null;
   status: string;
   skills_count: number;
+  feedback?: FeedbackRecord | null;
+  feedback_content?: string | null;
+  feedback_updated_at?: string | null;
 }
 
 export interface SessionListItem {
@@ -184,6 +188,7 @@ export interface SessionStats {
 
 export interface TraceDetail {
   trace: Trace;
+  feedback?: FeedbackRecord | null;
   spans: Span[];
   llm_duration_ms: number;
   tool_duration_ms: number;
@@ -284,6 +289,7 @@ export interface TimelineEvent {
 
 export interface TraceDetailWithTimeline {
   trace: Trace;
+  feedback?: FeedbackRecord | null;
   spans: Span[];
   timeline: TimelineEvent[];
   skill_invocations: SkillCallTimeline[];

@@ -117,6 +117,7 @@ export interface IAgentScopeRuntimeResponse {
   status: AgentScopeRuntimeRunStatus;
   created_at: number;
   completed_at?: number;
+  trace_id?: string;
   output: IAgentScopeRuntimeMessage[];
   usage?: Record<string, any>;
   error?: IAgentScopeRuntimeError;

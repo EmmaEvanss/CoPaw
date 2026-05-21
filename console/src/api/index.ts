@@ -27,6 +27,7 @@ import { marketApi } from "./modules/market";
 import { mySkillsApi } from "./modules/mySkills";
 import { myMcpApi } from "./modules/myMcp";
 import { marketMcpApi } from "./modules/marketMcp";
+import { feedbackApi } from "./modules/feedback";
 
 export const api = {
   // Root
@@ -96,6 +97,9 @@ export const api = {
 
   // Market MCP
   ...marketMcpApi,
+
+  // Feedback
+  ...feedbackApi,
 };
 
 export default api;

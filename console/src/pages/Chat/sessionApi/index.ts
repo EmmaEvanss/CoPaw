@@ -401,6 +401,19 @@ const buildResponseCard = (
     content: normalizeOutputMessageContent(msg.content),
   }));
 
+  const cardTraceId = normalizedMessages.reduce<string | null>(
+    (found, msg) => {
+      if (found) return found;
+      const metadata = msg.metadata;
+      if (!metadata || typeof metadata !== "object") return null;
+      const record = metadata as Record<string, unknown>;
+      const tid =
+        record.trace_id || record.traceId;
+      return typeof tid === "string" && tid.trim() ? tid : null;
+    },
+    null,
+  );
+
   const approvalAction =
     normalizedMessages.reduce<ChatApprovalActionCardData | null>(
       (found, message) => found ?? extractApprovalAction(message),
@@ -420,6 +433,7 @@ const buildResponseCard = (
         error: null,
         completed_at: createdAt,
         usage: null,
+        trace_id: cardTraceId || undefined,
         headerMeta: {
           timestamp,
         },

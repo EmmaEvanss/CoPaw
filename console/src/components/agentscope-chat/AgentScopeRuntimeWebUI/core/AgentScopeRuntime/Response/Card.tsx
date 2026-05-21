@@ -12,7 +12,6 @@ import { Bubble } from "@/components/agentscope-chat";
 import Actions from "./Actions";
 import Suggestions from "./Suggestions";
 import RetryStatusMessage from "./RetryStatusMessage";
-import PostTurnValidationPrompt from "./PostTurnValidationPrompt";
 // import { Avatar, Flex } from "antd";
 // import { useChatAnywhereOptions } from "../../Context/ChatAnywhereOptionsContext";
 
@@ -75,9 +74,6 @@ export default function AgentScopeRuntimeResponseCard(props: {
       })}
       {props.data.error && <Error data={props.data.error} />}
       <Actions {...props} />
-      {props.data.post_turn_validation && (
-        <PostTurnValidationPrompt data={props.data.post_turn_validation} />
-      )}
       {props.data.suggestions?.length > 0 && (
         <Suggestions
           suggestions={props.data.suggestions}

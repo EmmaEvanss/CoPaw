@@ -79,11 +79,6 @@ from ...tracing.models import TraceStatus
 from ...config.context import (
     get_current_passthrough_headers,
 )
-from ..post_turn_continuation_store import (
-    consume_pending_continuation,
-    store_pending_continuation,
-)
-from ..post_turn_validation import validate_task_completion
 from ..suggestions import generate_suggestions, store_suggestions
 from ..source_system_config import is_chat_task_progress_enabled
 from ..source_system_config.runtime import get_current_source_system_config
@@ -165,31 +160,18 @@ class _RuntimeStartResult:
 
 @dataclass
 class _TurnPlan:
-    """保存本轮 agent 调用及后置校验需要的输入。"""
+    """保存本轮 agent 调用需要的输入。"""
 
     original_user_message: str
-    confirmed_turn_index: int
     turn_msgs: list[Any]
-    validation_config: Any | None
-
-
-@dataclass
-class _TurnPlanResult:
-    """描述续跑状态是否可用，以及可执行的 turn 计划。"""
-
-    plan: _TurnPlan | None = None
-    response: Msg | None = None
 
 
 @dataclass
 class _QueryTurnOutcome:
-    """记录 agent 输出和 post-turn validation 的最终状态。"""
+    """记录 agent 输出与完成态。"""
 
     task_completed: bool = True
     assistant_response: str = ""
-    last_validation_result: Any | None = None
-    auto_follow_up_turns: int = 0
-    max_auto_turns: int = 0
     before_stop_follow_up_turns: int = 0
     max_before_stop_turns: int = 0
     automatic_follow_up_turns: int = 0
@@ -852,26 +834,6 @@ def _build_before_stop_incomplete_msg(reason: str) -> Msg:
     )
 
 
-def _resolve_max_confirmed_turns(validation_config: Any) -> int:
-    """Resolve the post-turn confirmation limit with backward compatibility."""
-    confirmed_turns = getattr(validation_config, "max_confirmed_turns", None)
-    if confirmed_turns is None:
-        confirmed_turns = 2
-    try:
-        return max(int(confirmed_turns), 0)
-    except (TypeError, ValueError):
-        return 2
-
-
-def _resolve_max_auto_turns(validation_config: Any) -> int:
-    """Resolve the automatic continuation limit."""
-    auto_turns = getattr(validation_config, "max_auto_turns", 2)
-    try:
-        return max(int(auto_turns), 0)
-    except (TypeError, ValueError):
-        return 2
-
-
 def _resolve_max_before_stop_turns(agent_config: Any) -> int:
     """解析 BeforeStop 自动续跑上限，未配置时使用保守默认值。"""
     running_config = getattr(agent_config, "running", None)
@@ -1122,33 +1084,6 @@ def _session_name_from_messages(msgs: list[Any]) -> str | None:
     if not content:
         return None
     return content[:10]
-
-
-def _validation_enabled(
-    validation_config: Any | None,
-    assistant_response: str,
-    original_user_message: str,
-) -> bool:
-    """集中判断本轮是否需要执行 post-turn validation。"""
-    return bool(
-        assistant_response
-        and original_user_message
-        and validation_config is not None
-        and getattr(validation_config, "enabled", False),
-    )
-
-
-def _should_auto_follow_up(
-    validation_result: Any,
-    auto_follow_up_turns: int,
-    max_auto_turns: int,
-) -> bool:
-    """判断校验失败时是否仍允许自动续跑。"""
-    return bool(
-        not validation_result.completed
-        and validation_result.follow_up_prompt
-        and auto_follow_up_turns < max_auto_turns,
-    )
 
 
 def _has_automatic_follow_up_budget(outcome: _QueryTurnOutcome) -> bool:
@@ -1862,90 +1797,13 @@ class AgentRunner(Runner):
         request: AgentRequest,
         msgs: list[Any],
         query: str | None,
-    ) -> _TurnPlanResult:
-        """根据普通请求或 validation 续跑请求构建本轮输入。"""
-        channel_meta = getattr(request, "channel_meta", {}) or {}
-        resume_id = channel_meta.get("post_turn_validation_resume_id")
+    ) -> _TurnPlan:
+        """根据普通请求构建本轮输入。"""
+        del runtime, request
         original_user_message = query or _get_last_user_text(msgs) or ""
-        validation_config = getattr(
-            runtime.agent_config.running,
-            "post_turn_validation",
-            None,
-        )
-        if not resume_id:
-            return _TurnPlanResult(
-                plan=_TurnPlan(
-                    original_user_message=original_user_message,
-                    confirmed_turn_index=0,
-                    turn_msgs=list(msgs),
-                    validation_config=validation_config,
-                ),
-            )
-
-        pending_continuation = await consume_pending_continuation(
-            validation_id=resume_id,
-            session_id=runtime.session_id,
-            tenant_id=self.tenant_id,
-        )
-        if pending_continuation is None:
-            return _TurnPlanResult(
-                response=Msg(
-                    name="Friday",
-                    role="assistant",
-                    content="续跑请求已过期或不存在，请重新发起任务。",
-                ),
-            )
-
-        return _TurnPlanResult(
-            plan=_TurnPlan(
-                original_user_message=(
-                    pending_continuation.user_message or original_user_message
-                ),
-                confirmed_turn_index=(
-                    pending_continuation.confirmed_turn_index + 1
-                ),
-                turn_msgs=[
-                    _build_internal_follow_up_msg(
-                        pending_continuation.follow_up_prompt,
-                    ),
-                ],
-                validation_config=validation_config,
-            ),
-        )
-
-    async def _validate_turn_if_needed(
-        self,
-        *,
-        plan: _TurnPlan,
-        assistant_response: str,
-    ) -> Any | None:
-        """按配置执行 post-turn validation，未启用时返回 None。"""
-        if not _validation_enabled(
-            plan.validation_config,
-            assistant_response,
-            plan.original_user_message,
-        ):
-            return None
-
-        return await validate_task_completion(
-            user_message=plan.original_user_message,
-            assistant_response=assistant_response,
-            agent_id=self.agent_id,
-            timeout_seconds=getattr(
-                plan.validation_config,
-                "timeout_seconds",
-                8.0,
-            ),
-            user_message_max_length=getattr(
-                plan.validation_config,
-                "user_message_max_length",
-                300,
-            ),
-            assistant_response_max_length=getattr(
-                plan.validation_config,
-                "assistant_response_max_length",
-                1200,
-            ),
+        return _TurnPlan(
+            original_user_message=original_user_message,
+            turn_msgs=list(msgs),
         )
 
     async def _stream_agent_turns(
@@ -1955,74 +1813,35 @@ class AgentRunner(Runner):
         plan: _TurnPlan,
         outcome: _QueryTurnOutcome,
     ):
-        """流式执行 agent，并在 validation 需要时自动续跑。"""
+        """流式执行当前 agent turn。"""
         turn_msgs = plan.turn_msgs
-        validation_auto_turns = (
-            _resolve_max_auto_turns(plan.validation_config)
-            if plan.validation_config is not None
-            else 0
-        )
         before_stop_turns = _resolve_max_before_stop_turns(
             runtime.agent_config,
         )
         outcome.max_before_stop_turns = before_stop_turns
-        outcome.max_auto_turns = validation_auto_turns
         outcome.max_automatic_follow_up_turns = (
             _resolve_max_automatic_follow_up_turns(
                 runtime.agent_config,
-                validation_auto_turns + before_stop_turns,
+                before_stop_turns,
             )
         )
-        while True:
-            async for msg, last in self._enforce_query_timeout(
-                stream_printing_messages(
-                    agents=[runtime.agent],
-                    coroutine_task=runtime.agent(turn_msgs),
-                ),
-                session_id=runtime.session_id,
-                agent=runtime.agent,
-                run_key=(
-                    runtime.chat.id if runtime.chat is not None else None
-                ),
-            ):
-                yield msg, last
+        async for msg, last in self._enforce_query_timeout(
+            stream_printing_messages(
+                agents=[runtime.agent],
+                coroutine_task=runtime.agent(turn_msgs),
+            ),
+            session_id=runtime.session_id,
+            agent=runtime.agent,
+            run_key=(
+                runtime.chat.id if runtime.chat is not None else None
+            ),
+        ):
+            yield msg, last
 
-            outcome.assistant_response = _extract_assistant_response(
-                runtime.agent,
-            )
-            outcome.task_completed = True
-            outcome.last_validation_result = (
-                await self._validate_turn_if_needed(
-                    plan=plan,
-                    assistant_response=outcome.assistant_response,
-                )
-            )
-            if outcome.last_validation_result is None:
-                break
-
-            outcome.task_completed = outcome.last_validation_result.completed
-            if not _should_auto_follow_up(
-                outcome.last_validation_result,
-                outcome.auto_follow_up_turns,
-                outcome.max_auto_turns,
-            ) or not _has_automatic_follow_up_budget(outcome):
-                break
-
-            outcome.auto_follow_up_turns += 1
-            outcome.automatic_follow_up_turns += 1
-            turn_msgs = [
-                _build_internal_follow_up_msg(
-                    outcome.last_validation_result.follow_up_prompt,
-                ),
-            ]
-            logger.info(
-                "Post-turn validation scheduled automatic "
-                "follow-up turn %d/%d for session %s: %s",
-                outcome.auto_follow_up_turns,
-                outcome.max_auto_turns,
-                runtime.session_id,
-                outcome.last_validation_result.reason or "continue",
-            )
+        outcome.assistant_response = _extract_assistant_response(
+            runtime.agent,
+        )
+        outcome.task_completed = True
 
     async def _emit_before_stop_hook_if_needed(
         self,
@@ -2186,55 +2005,6 @@ class AgentRunner(Runner):
             outcome.task_completed = False
             return _hook_block_message(stop_hook_result)
         return None
-
-    async def _store_pending_validation_if_needed(
-        self,
-        *,
-        runtime: _QueryRuntime,
-        plan: _TurnPlan,
-        outcome: _QueryTurnOutcome,
-    ) -> None:
-        """保存需要用户确认的 post-turn validation 续跑请求。"""
-        validation_result = outcome.last_validation_result
-        if (
-            outcome.task_completed
-            or validation_result is None
-            or not validation_result.follow_up_prompt
-        ):
-            return
-
-        max_confirmed_turns = _resolve_max_confirmed_turns(
-            plan.validation_config,
-        )
-        if plan.confirmed_turn_index >= max_confirmed_turns:
-            logger.info(
-                "Post-turn validation reached confirmed turn "
-                "limit %d for session %s",
-                max_confirmed_turns,
-                runtime.session_id,
-            )
-            return
-
-        await store_pending_continuation(
-            session_id=runtime.session_id,
-            user_message=plan.original_user_message,
-            assistant_response=_extract_assistant_response(runtime.agent),
-            reason=validation_result.reason,
-            follow_up_prompt=validation_result.follow_up_prompt,
-            tenant_id=self.tenant_id,
-            confirmed_turn_index=plan.confirmed_turn_index,
-        )
-        logger.info(
-            "Post-turn validation pending confirmation after "
-            "automatic turns %d/%d; confirmed turn %d/%d for "
-            "session %s: %s",
-            outcome.auto_follow_up_turns,
-            outcome.max_auto_turns,
-            plan.confirmed_turn_index + 1,
-            max_confirmed_turns,
-            runtime.session_id,
-            validation_result.reason or "continue",
-        )
 
     async def _generate_backend_suggestions_if_needed(
         self,
@@ -2859,19 +2629,12 @@ class AgentRunner(Runner):
                     # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
                     runtime.agent.rebuild_sys_prompt()
 
-                    plan_result = await self._build_turn_plan(
+                    plan = await self._build_turn_plan(
                         runtime=runtime,
                         request=request,
                         msgs=msgs,
                         query=query,
                     )
-                    if plan_result.response is not None:
-                        outcome.task_completed = False
-                        yield plan_result.response, True
-                        return
-                    plan = plan_result.plan
-                    if plan is None:
-                        return
 
                     async for msg, last in self._stream_completion_lifecycle(
                         request=request,
@@ -2893,11 +2656,6 @@ class AgentRunner(Runner):
                             )
                         return
 
-                    await self._store_pending_validation_if_needed(
-                        runtime=runtime,
-                        plan=plan,
-                        outcome=outcome,
-                    )
                     await self._generate_backend_suggestions_if_needed(
                         runtime=runtime,
                         plan=plan,

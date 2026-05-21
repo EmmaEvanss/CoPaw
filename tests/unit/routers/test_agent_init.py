@@ -149,6 +149,35 @@ def test_init_happy_path_appends_existing_top_level_md(
     assert target.read_text(encoding="utf-8") == "prefix\nappend"
 
 
+def test_init_skips_append_when_file_already_ends_with_text(
+    client: TestClient,
+    tmp_path: Path,
+):
+    workspace = tmp_path / "tenant-a" / "agents" / "agent-1"
+    workspace.mkdir(parents=True, exist_ok=True)
+    target = workspace / "PROFILE.md"
+    original = "prefix\nappend"
+    target.write_text(original, encoding="utf-8")
+
+    response = client.post(
+        "/api/agent/init",
+        headers={"X-Tenant-Id": "tenant-a"},
+        json={
+            "filename": "PROFILE.md",
+            "text": "append",
+            "agentId": "agent-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "appended": True,
+        "filename": "PROFILE.md",
+        "agent_id": "agent-1",
+    }
+    assert target.read_text(encoding="utf-8") == original
+
+
 def test_init_creates_file_when_missing(client: TestClient, tmp_path: Path):
     response = client.post(
         "/api/agent/init",

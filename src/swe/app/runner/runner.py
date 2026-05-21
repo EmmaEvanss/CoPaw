@@ -2292,7 +2292,7 @@ class AgentRunner(Runner):
             return
 
         # 检查是否是 attach 的 trace，如果是则跳过结束
-        from ..tracing import get_current_trace
+        from ...tracing import get_current_trace
 
         ctx = get_current_trace()
         if ctx and ctx.attached:

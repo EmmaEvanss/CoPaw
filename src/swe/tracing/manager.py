@@ -480,8 +480,42 @@ class TraceManager:
         if not self.enabled:
             return
 
-        # Flush pending spans before ending trace
-        await self._flush_spans()
+        # Flush pending spans before ending trace with retry mechanism
+        # 确保所有 spans 写入完成，避免 trace 结束后 spans 丢失
+        max_flush_retries = 3
+        for retry in range(max_flush_retries):
+            await self._flush_spans()
+            # 检查是否还有 pending spans（属于当前 trace 的）
+            async with self._span_queue_lock:
+                pending_for_trace = [
+                    s for s in self._span_queue if s.trace_id == trace_id
+                ]
+            if not pending_for_trace:
+                break
+            if retry < max_flush_retries - 1:
+                logger.warning(
+                    "Flush retry %d/%d for trace %s, %d spans pending",
+                    retry + 1,
+                    max_flush_retries,
+                    trace_id[:8],
+                    len(pending_for_trace),
+                )
+                await asyncio.sleep(0.1)  # 短暂等待后重试
+
+        # 最终检查：如果仍有 pending spans，记录错误但不阻塞
+        async with self._span_queue_lock:
+            final_pending = [
+                s for s in self._span_queue if s.trace_id == trace_id
+            ]
+        if final_pending:
+            logger.error(
+                "Failed to flush %d spans for trace %s after %d retries. "
+                "Spans may be lost: %s",
+                len(final_pending),
+                trace_id[:8],
+                max_flush_retries,
+                [s.span_id[:8] for s in final_pending[:5]],
+            )
 
         # End skill detection
         ctx = get_current_trace()
@@ -724,7 +758,9 @@ class TraceManager:
         # Only add input_tokens when first emitting the span, not when updating
         if span.input_tokens and not is_update:
             trace.total_input_tokens += span.input_tokens
-        if span.model_name:
+        # 只在 trace.model_name 为空时设置，保留第一个模型作为主模型
+        # 避免用户切换活跃模型后覆盖 trace 的 model_name
+        if span.model_name and not trace.model_name:
             trace.model_name = span.model_name
         if span.tool_name and span.tool_name not in trace.tools_used:
             trace.tools_used.append(span.tool_name)

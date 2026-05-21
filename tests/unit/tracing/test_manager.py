@@ -66,6 +66,7 @@ def mock_db():
     db.fetch_one = AsyncMock(return_value=None)
     db.fetch_all = AsyncMock(return_value=[])
     db.execute = AsyncMock(return_value=1)
+    db.execute_many = AsyncMock(return_value=3)  # 返回写入的行数
     return db
 
 

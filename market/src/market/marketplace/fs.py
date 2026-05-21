@@ -497,10 +497,10 @@ def copy_mcp_to_user(
     if mcp_config is None:
         raise ValueError(f"MCP config not found for item {item_id}")
 
-    # 加载用户 agent.json
-    user_config_path = (
-        swe_root / user_id / "workspaces" / agent_id / "agent.json"
-    )
+    # 解析运行时 scope 目录，并处理 legacy 目录迁移
+    effective_user_id = resolve_effective_user_id(user_id, source_id)
+    user_root = migrate_legacy_scope_dir_if_needed(swe_root, effective_user_id)
+    user_config_path = user_root / "workspaces" / agent_id / "agent.json"
     user_config_path.parent.mkdir(parents=True, exist_ok=True)
 
     user_config: dict = {}

@@ -25,9 +25,11 @@ from .fs import (
     get_skill_dir,
     get_user_skills_dir,
     load_index,
+    migrate_legacy_scope_dir_if_needed,
     mutate_user_skill_manifest,
     read_user_skill_manifest,
     load_mcp_config,
+    resolve_effective_user_id,
     save_index,
     save_mcp_config,
     normalize_skill_name,
@@ -1574,12 +1576,16 @@ class MarketplaceService:
 
         for tenant_id in req.target_tenant_ids:
             try:
+                effective_user_id = resolve_effective_user_id(
+                    tenant_id,
+                    source_id,
+                )
+                user_root = migrate_legacy_scope_dir_if_needed(
+                    self.swe_root,
+                    effective_user_id,
+                )
                 user_config_path = (
-                    self.swe_root
-                    / tenant_id
-                    / "workspaces"
-                    / "default"
-                    / "agent.json"
+                    user_root / "workspaces" / "default" / "agent.json"
                 )
                 bootstrapped = not user_config_path.exists()
                 copy_mcp_to_user(

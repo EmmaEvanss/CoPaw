@@ -624,7 +624,13 @@ class MarketplaceService:
         source_id: str,
         req: PublishSkillRequest,
     ) -> MarketItem:
-        """上架技能。同名技能已存在时递增 patch 版本号。"""
+        """上架技能。同名技能已存在时递增 patch 版本号。
+
+        如果请求中包含 skill_name，则从用户工作区复制整个技能目录到市场。
+        否则使用 skill_json 和 skill_md 字段创建目录。
+        """
+        import shutil
+
         items = load_index(self.marketplace_root, source_id)
         existing = next((i for i in items if i.name == req.name), None)
 
@@ -663,12 +669,54 @@ class MarketplaceService:
             item.item_id,
         )
         skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "skill.json").write_text(
-            json.dumps(req.skill_json, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        if req.skill_md:
-            (skill_dir / "SKILL.md").write_text(req.skill_md, encoding="utf-8")
+
+        # 如果提供了 skill_name，从用户工作区复制整个目录
+        if req.skill_name:
+            src_skill_dir = (
+                get_user_skills_dir(
+                    self.swe_root,
+                    req.creator_id,
+                    req.agent_id,
+                    source_id,
+                )
+                / req.skill_name
+            )
+            if src_skill_dir.exists() and src_skill_dir.is_dir():
+                # 删除旧目录，复制整个目录（保持与用户工作区一致）
+                if skill_dir.exists():
+                    shutil.rmtree(skill_dir)
+                shutil.copytree(src_skill_dir, skill_dir)
+                logger.info(
+                    "Copied entire skill directory from %s to %s",
+                    src_skill_dir,
+                    skill_dir,
+                )
+            else:
+                # 源目录不存在，回退到单文件写入
+                logger.warning(
+                    "Source skill directory %s not found, falling back to single files",
+                    src_skill_dir,
+                )
+                (skill_dir / "skill.json").write_text(
+                    json.dumps(req.skill_json, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                if req.skill_md:
+                    (skill_dir / "SKILL.md").write_text(
+                        req.skill_md,
+                        encoding="utf-8",
+                    )
+        else:
+            # 未提供 skill_name，使用单文件写入
+            (skill_dir / "skill.json").write_text(
+                json.dumps(req.skill_json, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            if req.skill_md:
+                (skill_dir / "SKILL.md").write_text(
+                    req.skill_md,
+                    encoding="utf-8",
+                )
 
         save_index(self.marketplace_root, source_id, items)
 

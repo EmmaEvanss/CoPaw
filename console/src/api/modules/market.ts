@@ -47,6 +47,9 @@ export interface PublishSkillRequest {
   bbk_ids?: string[];
   skill_json: Record<string, unknown>;
   skill_md?: string;
+  // 可选：指定用户技能目录名，用于同步整个目录
+  skill_name?: string;
+  agent_id?: string;
 }
 
 export interface DistributeRequest {

@@ -18,6 +18,9 @@ class PublishSkillRequest(BaseModel):
     bbk_ids: list[str] = Field(default_factory=list)
     skill_json: dict = Field(default_factory=dict)
     skill_md: str = ""
+    # 可选：指定用户技能目录名，用于同步整个目录
+    skill_name: Optional[str] = None
+    agent_id: str = "default"
 
 
 class DistributeRequest(BaseModel):

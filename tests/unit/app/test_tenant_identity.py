@@ -95,6 +95,16 @@ def test_missing_tenant_header_returns_400_for_stateful_route():
     assert response.json()["detail"] == "X-Tenant-Id header is required"
 
 
+def test_missing_source_header_returns_400_for_stateful_route():
+    client = TestClient(build_test_app(), raise_server_exceptions=False)
+    response = client.get(
+        "/api/settings",
+        headers={"X-Tenant-Id": "tenant-a"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "X-Source-Id header is required"
+
+
 def test_exempt_route_still_works_without_tenant_header():
     client = TestClient(build_test_app(), raise_server_exceptions=False)
     response = client.get("/api/version")
@@ -108,14 +118,45 @@ def test_static_route_works_without_tenant_header():
     assert response.json() == {"user_id": "alice", "filename": "demo.txt"}
 
 
+def test_public_text_asset_api_routes_are_exempt() -> None:
+    assert tenant_identity.is_tenant_exempt("/api/assets/text/read") is True
+    assert tenant_identity.is_source_exempt("/api/assets/text/write") is True
+
+
+def test_internal_api_routes_are_exempt() -> None:
+    assert (
+        tenant_identity.is_tenant_exempt("/api/internal/cron/callback") is True
+    )
+    assert (
+        tenant_identity.is_source_exempt("/api/internal/agents/default/reload")
+        is True
+    )
+
+
 def test_invalid_tenant_id_returns_400():
     client = TestClient(build_test_app(), raise_server_exceptions=False)
     response = client.get(
         "/api/settings",
-        headers={"X-Tenant-Id": "../bad"},
+        headers={
+            "X-Tenant-Id": "../bad",
+            "X-Source-Id": "source-a",
+        },
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid X-Tenant-Id format"
+
+
+def test_invalid_source_id_returns_400():
+    client = TestClient(build_test_app(), raise_server_exceptions=False)
+    response = client.get(
+        "/api/settings",
+        headers={
+            "X-Tenant-Id": "tenant-a",
+            "X-Source-Id": "../bad",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid X-Source-Id format"
 
 
 class TestTenantIdentityExemptions:

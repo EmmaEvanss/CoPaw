@@ -252,9 +252,10 @@ class SyncService:
                 instance_id, executor_leader, is_manual,
                 trace_id, session_id,
                 input_snapshot, output_preview, meta,
+                is_read, read_at,
                 created_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
             (
@@ -275,6 +276,8 @@ class SyncService:
                 request.input_snapshot,
                 request.output_preview,
                 request.meta,
+                request.is_read,
+                request.read_at,
                 now,
             ),
         )

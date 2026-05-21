@@ -17,7 +17,9 @@ router = APIRouter(prefix="/envs", tags=["envs"])
 
 def _get_tenant_envs_path(request: Request) -> Path:
     """Get tenant-specific envs.json path."""
-    tenant_id = getattr(request.state, "tenant_id", None)
+    tenant_id = getattr(request.state, "scope_id", None)
+    if tenant_id is None:
+        tenant_id = getattr(request.state, "tenant_id", None)
     secrets_dir = get_tenant_secrets_dir(tenant_id)
     return secrets_dir / "envs.json"
 

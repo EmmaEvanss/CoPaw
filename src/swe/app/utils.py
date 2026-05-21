@@ -55,13 +55,36 @@ def schedule_agent_reload(
         )
         return
 
+    runtime_tenant_id = tenant_id
+    request_state = getattr(request, "state", None)
+    if request_state is not None:
+        request_scope_id = getattr(request_state, "scope_id", None)
+        request_tenant_id = getattr(request_state, "tenant_id", None)
+        request_source_id = getattr(request_state, "source_id", None)
+        if request_scope_id and (
+            tenant_id is None or tenant_id == request_tenant_id
+        ):
+            from ..config.context import canonicalize_scope_id
+
+            runtime_tenant_id = canonicalize_scope_id(request_scope_id)
+        elif tenant_id is not None:
+            from ..config.context import resolve_runtime_tenant_id
+
+            runtime_tenant_id = resolve_runtime_tenant_id(
+                tenant_id,
+                request_source_id,
+            )
+
     async def reload_in_background():
         try:
-            await manager.reload_agent(agent_id, tenant_id=tenant_id)
+            await manager.reload_agent(
+                agent_id,
+                tenant_id=runtime_tenant_id,
+            )
         except Exception as e:
             logger.warning(
                 "Background reload failed for agent "
-                f"'{agent_id}' (tenant={tenant_id}): {e}",
+                f"'{agent_id}' (tenant={runtime_tenant_id}): {e}",
                 exc_info=True,
             )
 

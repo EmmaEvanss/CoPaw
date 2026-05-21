@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, AsyncMock
 from pathlib import Path
 
 from market.marketplace.service import MarketplaceService
-from market.marketplace.schemas import PublishMCPRequest, DistributeRequest
+from market.marketplace.schemas import (
+    MCPDistributionRequest,
+    PublishMCPRequest,
+    DistributeRequest,
+)
 from market.marketplace.models import MarketItem
 
 
@@ -374,9 +378,9 @@ class TestDistributeMCP:
         item = await service.publish_mcp(source_id, req)
 
         # 分发（因为没有数据库连接，target_type=user_id 直接使用传入值）
-        dist_req = DistributeRequest(
-            target_type="user_id",
-            target_values=["alice"],
+        dist_req = MCPDistributionRequest(
+            target_tenant_ids=["alice"],
+            overwrite=True,
         )
 
         # 由于数据库未连接，_resolve_target_users 会返回空列表
@@ -400,8 +404,10 @@ class TestDistributeMCP:
             dist_req,
         )
 
-        assert result.item_id == item.item_id
-        assert result.distributed_count == 1
+        assert result.source_agent_id
+        assert len(result.results) == 1
+        assert result.results[0].tenant_id == "alice"
+        assert result.results[0].success is True
 
         # 验证用户配置文件已创建
         user_config_path = (

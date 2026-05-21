@@ -352,14 +352,17 @@ async def test_cleanup_keeps_recent_qpm_window_state():
 async def test_retry_chat_model_without_explicit_scope_uses_current_agent(
     monkeypatch,
 ):
+    resolve_calls: list[tuple[object, str | None, str | None]] = []
+
+    def _resolve_scope(scope_key=None, tenant_id=None, agent_id=None):
+        resolve_calls.append((scope_key, tenant_id, agent_id))
+        return RateLimiterScopeKey("tenant-a", "agent-x")
+
     monkeypatch.setattr(
-        "swe.config.context.get_current_effective_tenant_id",
-        lambda: "tenant-a",
+        "swe.providers.retry_chat_model.resolve_rate_limiter_scope",
+        _resolve_scope,
     )
-    monkeypatch.setattr(
-        "swe.app.agent_context.get_current_agent_id",
-        lambda tenant_id=None: "agent-x",
-    )
+
     model = RetryChatModel(
         _StaticChatModel(),
         rate_limit_config=RateLimitConfig(
@@ -382,6 +385,7 @@ async def test_retry_chat_model_without_explicit_scope_uses_current_agent(
         jitter_range=0.0,
     )
 
+    assert resolve_calls == [(None, None, None)]
     assert limiter.stats()["total_acquired"] == 1
 
 

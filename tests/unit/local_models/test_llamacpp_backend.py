@@ -715,6 +715,7 @@ async def test_setup_server_falls_back_on_windows_not_implemented(
         fake_popen_factory,
     )
     monkeypatch.setattr(downloader, "server_ready", fake_server_ready)
+    monkeypatch.setattr(downloader, "_find_free_port", lambda: 11435)
 
     port = await downloader.setup_server(model_path, "demo-model")
     await asyncio.sleep(0)

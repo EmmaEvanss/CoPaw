@@ -13,10 +13,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 import pytest
 
+import swe.config.context as context_module
 from swe.config.context import (
     current_tenant_id,
     current_user_id,
     current_workspace_dir,
+    decode_scope_id,
+    encode_scope_id,
+    get_current_effective_tenant_id,
+    get_current_scope_id,
+    get_current_source_id,
     get_current_tenant_id,
     get_current_user_id,
     get_current_workspace_dir,
@@ -29,6 +35,9 @@ from swe.config.context import (
     get_current_tenant_id_strict,
     get_current_user_id_strict,
     get_current_workspace_dir_strict,
+    resolve_runtime_tenant_id,
+    resolve_runtime_identity,
+    resolve_scope_preferred_tenant_id,
     tenant_context,
     TenantContextError,
 )
@@ -286,10 +295,13 @@ class TestBindTenantContext:
             tenant_id="tenant-1",
             user_id="user-1",
             workspace_dir=Path("/tmp/ws"),
+            source_id="source-a",
         ):
             assert get_current_tenant_id() == "tenant-1"
             assert get_current_user_id() == "user-1"
             assert get_current_workspace_dir() == Path("/tmp/ws")
+            assert get_current_source_id() == "source-a"
+            assert get_current_effective_tenant_id() is not None
 
     def test_resets_context_on_exit(self):
         """bind_tenant_context resets values on exit."""
@@ -297,12 +309,23 @@ class TestBindTenantContext:
             tenant_id="tenant-1",
             user_id="user-1",
             workspace_dir=Path("/tmp/ws"),
+            source_id="source-a",
         ):
             pass
 
         assert get_current_tenant_id() is None
         assert get_current_user_id() is None
         assert get_current_workspace_dir() is None
+        assert get_current_source_id() is None
+
+    def test_legacy_scope_input_is_canonicalized(self):
+        """非 HTTP 边界传入旧 scope 时也必须绑定 canonical scope。"""
+        with bind_tenant_context(
+            tenant_id="tenant-a",
+            source_id="source-a",
+            scope_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        ):
+            assert get_current_scope_id() == "dGVuYW50LWE.c291cmNlLWE"
 
 
 class TestGetTenantContext:
@@ -373,3 +396,124 @@ class TestRequireFullContext:
             assert tenant_id == "tenant-1"
             assert user_id == "user-1"
             assert workspace_dir == Path("/tmp/ws")
+
+
+class TestRuntimeIdentityResolution:
+    """运行时 scope 展开辅助函数的回归测试。"""
+
+    def test_scope_encoding_uses_unprefixed_canonical_format(self):
+        """新的 scope 输出必须只保留 tenant/source 两段编码。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        assert scope_id == "dGVuYW50LWE.c291cmNlLWE"
+
+    def test_decode_scope_id_accepts_canonical_and_legacy_formats(self):
+        """scope 解码必须同时兼容新旧两种输入格式。"""
+        canonical_scope_id = "dGVuYW50LWE.c291cmNlLWE"
+        legacy_scope_id = f"scope.v1.{canonical_scope_id}"
+
+        assert decode_scope_id(canonical_scope_id) == ("tenant-a", "source-a")
+        assert decode_scope_id(legacy_scope_id) == ("tenant-a", "source-a")
+
+    def test_canonicalize_scope_id_normalizes_legacy_input(self):
+        """legacy scope 进入边界后必须收敛成 canonical 新格式。"""
+        assert hasattr(context_module, "canonicalize_scope_id")
+        assert (
+            context_module.canonicalize_scope_id(
+                "scope.v1.dGVuYW50LWE.c291cmNlLWE",
+            )
+            == "dGVuYW50LWE.c291cmNlLWE"
+        )
+
+    def test_encoded_scope_restores_logical_components(self):
+        """编码后的 scope 必须可还原出 logical tenant 和 source。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        identity = resolve_runtime_identity(scope_id)
+
+        assert identity == ("tenant-a", "source-a", scope_id)
+
+    def test_logical_tenant_with_source_builds_scope(self):
+        """逻辑租户配合 source 时必须解析出新的 scope。"""
+        identity = resolve_runtime_identity("tenant-a", "source-a")
+
+        assert identity == (
+            "tenant-a",
+            "source-a",
+            encode_scope_id("tenant-a", "source-a"),
+        )
+
+    def test_encoded_scope_with_matching_source_stays_idempotent(self):
+        """已编码 scope 配合同源 source 时仍必须保持幂等。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        assert resolve_runtime_identity(scope_id, "source-a") == (
+            "tenant-a",
+            "source-a",
+            scope_id,
+        )
+
+    def test_scope_like_raw_tenant_with_source_keeps_raw_identity(self):
+        """显式 source 存在时，形似 scope 的 tenant 仍必须按 raw 值处理。"""
+        tenant_id = "dGVzdA.c291cmNl"
+
+        assert resolve_runtime_identity(tenant_id, "ruice") == (
+            tenant_id,
+            "ruice",
+            encode_scope_id(tenant_id, "ruice"),
+        )
+
+    def test_runtime_tenant_resolution_keeps_encoded_scope_id(self):
+        """已编码 scope 再次解析时必须保持幂等，避免二次编码。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        resolved = resolve_runtime_tenant_id(scope_id, None)
+
+        assert resolved == scope_id
+
+    def test_runtime_tenant_resolution_keeps_scope_with_matching_source(self):
+        """已编码 scope 配合同源 source 时不能再次编码。"""
+        scope_id = encode_scope_id("tenant-a", "source-a")
+
+        assert resolve_runtime_tenant_id(scope_id, "source-a") == scope_id
+
+    def test_scope_preferred_tenant_resolution_uses_explicit_scope_id(self):
+        """统一 helper 必须始终以显式 scope_id 为准。"""
+        resolved = resolve_scope_preferred_tenant_id(
+            tenant_id="tenant-a",
+            source_id="source-b",
+            scope_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        )
+
+        assert resolved == "dGVuYW50LWE.c291cmNlLWE"
+
+    def test_scope_like_raw_tenant_still_combines_with_source(self):
+        """形似 scope 的 raw tenant 也必须继续参与 source 隔离。"""
+        tenant_id = "dGVzdA.c291cmNl"
+
+        assert resolve_runtime_tenant_id(tenant_id, "ruice") == (
+            encode_scope_id(tenant_id, "ruice")
+        )
+
+    def test_legacy_scope_is_canonicalized_during_runtime_resolution(self):
+        """legacy scope 作为输入时，下游只能观察到 canonical 结果。"""
+        legacy_scope_id = "scope.v1.dGVuYW50LWE.c291cmNlLWE"
+
+        assert (
+            resolve_runtime_tenant_id(legacy_scope_id, "source-a")
+            == "dGVuYW50LWE.c291cmNlLWE"
+        )
+        assert resolve_runtime_identity(legacy_scope_id) == (
+            "tenant-a",
+            "source-a",
+            "dGVuYW50LWE.c291cmNlLWE",
+        )
+
+    def test_tenant_context_canonicalizes_explicit_legacy_scope(self):
+        """底层 tenant_context 绑定旧 scope 时也必须收敛成 canonical。"""
+        with tenant_context(
+            tenant_id="tenant-a",
+            source_id="source-a",
+            scope_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        ):
+            assert get_current_scope_id() == "dGVuYW50LWE.c291cmNlLWE"

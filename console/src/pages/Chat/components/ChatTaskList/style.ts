@@ -113,6 +113,14 @@ export default createGlobalStyle`
     text-align: center;
   }
 
+  &-item-trailing {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
   &-item-actions {
     display: flex;
     align-items: center;

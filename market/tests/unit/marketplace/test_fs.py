@@ -56,9 +56,55 @@ def test_get_skill_dir_in_marketplace(tmp_path):
 
 def test_get_user_skills_dir(tmp_path):
     from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
 
-    result = get_user_skills_dir(tmp_path, "user1", "agent1")
-    assert result == tmp_path / "user1" / "workspaces" / "agent1" / "skills"
+    result = get_user_skills_dir(tmp_path, "user1", "agent1", "source_a")
+    assert result == (
+        tmp_path
+        / encode_scope_id("user1", "source_a")
+        / "workspaces"
+        / "agent1"
+        / "skills"
+    )
+
+
+def test_get_user_skills_dir_allows_main_service_identity_values(tmp_path):
+    from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
+
+    result = get_user_skills_dir(
+        tmp_path,
+        "alice@example.com",
+        "agent1",
+        "skill:xlsx",
+    )
+
+    assert result == (
+        tmp_path
+        / encode_scope_id("alice@example.com", "skill:xlsx")
+        / "workspaces"
+        / "agent1"
+        / "skills"
+    )
+
+
+def test_get_user_skills_dir_keeps_legacy_scope_directory_untouched(tmp_path):
+    from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
+
+    canonical_scope_id = encode_scope_id("user1", "source_a")
+    legacy_scope_dir = tmp_path / f"scope.v1.{canonical_scope_id}"
+    legacy_skills_dir = legacy_scope_dir / "workspaces" / "agent1" / "skills"
+    legacy_skills_dir.mkdir(parents=True)
+    (legacy_skills_dir / "legacy.txt").write_text("legacy", encoding="utf-8")
+
+    result = get_user_skills_dir(tmp_path, "user1", "agent1", "source_a")
+
+    assert result == (
+        tmp_path / canonical_scope_id / "workspaces" / "agent1" / "skills"
+    )
+    assert legacy_scope_dir.exists()
+    assert not (result / "legacy.txt").exists()
 
 
 def test_copy_skill_to_user_happy_path(tmp_path):
@@ -85,12 +131,15 @@ def test_copy_skill_to_user_happy_path(tmp_path):
         tmp_path / "swe",
         "user1",
         "my_skill",
-        "test_skill",  # original_name
-        "desc",  # description
-        "admin1",  # distributed_by
-        "1.0.0",  # version
+        "test_skill",
+        "desc",
+        "admin1",
+        "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill"
+    )
     assert (dst_dir / "SKILL.md").read_text() == "# Skill"
     data = json.loads((dst_dir / "skill.json").read_text())
     assert data["source"] == "marketplace:item-1"
@@ -120,12 +169,15 @@ def test_copy_skill_to_user_missing_skill_md(tmp_path):
         tmp_path / "swe",
         "user1",
         "my_skill2",
-        "test",  # original_name
-        "desc",  # description
-        "admin1",  # distributed_by
-        "1.0.0",  # version
+        "test",
+        "desc",
+        "admin1",
+        "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill2"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill2"
+    )
     assert not (dst_dir / "SKILL.md").exists()
     data = json.loads((dst_dir / "skill.json").read_text())
     assert data["source"] == "marketplace:item-2"
@@ -150,12 +202,15 @@ def test_copy_skill_to_user_missing_skill_json(tmp_path):
         tmp_path / "swe",
         "user1",
         "my_skill3",
-        "test",  # original_name
-        "desc",  # description
-        "admin1",  # distributed_by
-        "2.0.0",  # version
+        "test",
+        "desc",
+        "admin1",
+        "2.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill3"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill3"
+    )
     data = json.loads((dst_dir / "skill.json").read_text())
     assert data["source"] == "marketplace:item-3"
     assert data["received_version"] == "2.0.0"
@@ -314,7 +369,10 @@ def test_copy_skill_to_user_with_chinese_name(tmp_path):
         "admin1",
         "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "数据分析"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "数据分析"
+    )
     assert dst_dir.exists()
     assert (dst_dir / "SKILL.md").read_text(
         encoding="utf-8",
@@ -369,7 +427,9 @@ def test_copy_skill_to_user_preserves_created_at_on_redistribute(tmp_path):
     )
 
     user_skill_json = (
-        get_user_skills_dir(swe_root, user_id) / "test_skill" / "skill.json"
+        get_user_skills_dir(swe_root, user_id, source_id="test_source")
+        / "test_skill"
+        / "skill.json"
     )
     first_data = json.loads(user_skill_json.read_text(encoding="utf-8"))
     first_created_at = first_data["created_at"]
@@ -430,7 +490,14 @@ def test_copy_skill_to_user_writes_created_at(tmp_path):
     )
 
     # 验证用户技能文件
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "test_user") / "test_skill"
+    dst_dir = (
+        get_user_skills_dir(
+            tmp_path / "swe",
+            "test_user",
+            source_id="test_source",
+        )
+        / "test_skill"
+    )
     user_skill_json = dst_dir / "skill.json"
     assert user_skill_json.exists()
 

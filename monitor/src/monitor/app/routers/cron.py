@@ -19,6 +19,8 @@ from ..models.cron import (
     ExecutionQueryParams,
     PaginatedResponse,
     ExecutionDetailResponse,
+    MarkReadResponse,
+    UnreadCountResponse,
 )
 from ..services.cron import QueryService, get_query_service
 from ..services.cron.export_service import ExportService, get_export_service
@@ -258,3 +260,47 @@ async def export_data(
     except Exception as e:
         logger.error("Failed to export data: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobs/{job_id}/mark-read", response_model=MarkReadResponse)
+async def mark_job_as_read(
+    job_id: str,
+    service: QueryService = Depends(get_query_service),
+) -> MarkReadResponse:
+    """标记任务为已读。
+
+    将指定任务的所有成功执行的未读记录标记为已读。
+    用户查看任务执行结果后调用此接口。
+
+    Args:
+        job_id: 任务ID
+        service: Query service
+
+    Returns:
+        标记结果，包含更新的记录数
+    """
+    try:
+        count = await service.mark_job_as_read(job_id)
+        return MarkReadResponse(marked=True, count=count)
+    except Exception as e:
+        logger.error("Failed to mark job as read: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/unread-count", response_model=UnreadCountResponse)
+async def get_unread_count(
+    tenant_id: str | None = Query(default=None, description="租户ID筛选"),
+    service: QueryService = Depends(get_query_service),
+) -> UnreadCountResponse:
+    """获取未读任务数量统计。
+
+    返回各任务的未读成功执行记录数量，用于前端展示未读提醒。
+
+    Args:
+        tenant_id: 租户ID筛选（可选）
+        service: Query service
+
+    Returns:
+        未读数量统计
+    """
+    return await service.get_unread_count(tenant_id)

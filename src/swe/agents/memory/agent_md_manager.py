@@ -108,6 +108,10 @@ class AgentMdManager:
     def append_working_md(self, md_name: str, content: str):
         """Append markdown content to a file in the working directory."""
         file_path = self._resolve_md_path(self.working_dir, md_name)
+        if file_path.exists():
+            existing_content = read_text_file_with_encoding_fallback(file_path)
+            if existing_content.endswith(content):
+                return
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(content)
 

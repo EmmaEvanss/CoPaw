@@ -8,6 +8,8 @@ import pytest
 from datetime import datetime, timezone
 from io import BytesIO
 
+pytest.importorskip("openpyxl")
+
 from monitor.app.models.cron import CronJobModel, ExecutionModel
 from monitor.app.services.cron.export_service import ExportService
 

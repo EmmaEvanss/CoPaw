@@ -23,6 +23,7 @@ from swe.config.config import (  # noqa: E402
     AgentsConfig,
     AgentProfileRef,
 )
+from swe.config.context import encode_scope_id  # noqa: E402
 from swe.config.utils import save_config  # noqa: E402
 
 
@@ -93,6 +94,19 @@ class TestTenantWorkspaceCreation:
         workspace = await pool.get_or_create("tenant-1")
 
         assert workspace.agent_id == "default"
+
+    async def test_get_or_create_uses_pool_workspace_dir(
+        self,
+        mock_working_dir,
+    ):
+        """get_or_create 返回的 workspace 必须落在 pool 目录下。"""
+        pool = TenantWorkspacePool(mock_working_dir)
+
+        workspace = await pool.get_or_create("tenant-1")
+
+        assert workspace.workspace_dir == (
+            mock_working_dir / "tenant-1" / "workspaces" / "default"
+        )
 
     async def test_get_or_create_creates_tenant_dir(self, tmp_path):
         """get_or_create creates tenant workspace directory."""
@@ -588,6 +602,60 @@ class TestTenantBootstrapConcurrency:
         bootstrap_path = asyncio.run(run_test())
 
         assert not bootstrap_path.exists()
+
+
+class TestTenantBootstrapInitSourceMapping:
+    """租户启动来源映射的回归测试。"""
+
+    @pytest.mark.asyncio
+    async def test_scope_bootstrap_records_logical_tenant_id(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """运行时 scope 启动时，DB 映射应写入逻辑 tenant。"""
+        default_dir = tmp_path / "default"
+        default_dir.mkdir()
+        (default_dir / "config.json").write_text("{}", encoding="utf-8")
+        scope_id = encode_scope_id("tenant-1", "ruice")
+        observed: dict[str, str | None] = {}
+
+        class FakeStore:
+            """记录写入参数，避免依赖真实数据库。"""
+
+            async def get_or_create(self, **kwargs):
+                observed.update(kwargs)
+                return kwargs["init_source"]
+
+        def get_fake_store():
+            """返回伪造 store，确保测试只观察写入参数。"""
+            return FakeStore()
+
+        monkeypatch.setattr(
+            "swe.app.workspace.tenant_init_source_store"
+            ".get_tenant_init_source_store",
+            get_fake_store,
+        )
+        monkeypatch.setattr(
+            "swe.app.workspace.tenant_pool.TenantInitializer"
+            ".ensure_seeded_bootstrap",
+            lambda self: {"pool_seed": {}, "workspace_seed": {}},
+        )
+
+        pool = TenantWorkspacePool(tmp_path)
+
+        await pool.ensure_bootstrap(
+            "tenant-1",
+            source_id="ruice",
+            scope_id=scope_id,
+            tenant_name="张三",
+            bbk_id="bbk-1",
+        )
+
+        assert observed["tenant_id"] == "tenant-1"
+        assert observed["source_id"] == "ruice"
+        assert observed["init_source"] == "default_ruice"
+        assert scope_id in pool
 
 
 class TestTenantWorkspaceDirectoryLayout:

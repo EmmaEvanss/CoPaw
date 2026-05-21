@@ -7,6 +7,10 @@ from typing import Any, Literal
 from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
 
+from ...app.source_system_config import is_chat_task_progress_enabled
+from ...app.source_system_config.runtime import (
+    get_current_source_system_config,
+)
 from ...config.context import (
     get_current_task_progress_chat_id,
     get_current_task_progress_tracker,
@@ -52,6 +56,24 @@ async def update_task_progress(
         chat_id,
         turn_id,
     )
+
+    if not is_chat_task_progress_enabled(
+        get_current_source_system_config(),
+    ):
+        logger.info(
+            "update_task_progress SKIPPED: disabled for current source",
+        )
+        return ToolResponse(
+            content=[
+                TextBlock(
+                    type="text",
+                    text=(
+                        '{"ok":true,"skipped":true,'
+                        '"reason":"task progress disabled"}'
+                    ),
+                ),
+            ],
+        )
 
     if tracker is None or not chat_id or not turn_id:
         logger.warning(

@@ -6,6 +6,7 @@ and workspace directory to tool functions, enabling strict tenant isolation
 in a multi-tenant environment.
 """
 
+import base64
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any, Generator
@@ -34,6 +35,15 @@ current_source_id: ContextVar[str | None] = ContextVar(
     "current_source_id",
     default=None,
 )
+
+# Context variable to store the current runtime scope ID
+current_scope_id: ContextVar[str | None] = ContextVar(
+    "current_scope_id",
+    default=None,
+)
+
+_LEGACY_SCOPE_ID_PREFIX = "scope.v1"
+_IDENTITY_MAX_LENGTH = 256
 
 
 def get_current_tenant_id() -> str | None:
@@ -105,22 +115,184 @@ def get_current_source_id() -> str | None:
     return current_source_id.get()
 
 
+def get_current_scope_id() -> str | None:
+    """Get the current runtime scope ID from context."""
+    return current_scope_id.get()
+
+
+def set_current_scope_id(scope_id: str | None) -> Token:
+    """Set the current runtime scope ID in context."""
+    return current_scope_id.set(scope_id)
+
+
+def reset_current_scope_id(token: Token) -> None:
+    """Reset the current runtime scope ID using a token."""
+    current_scope_id.reset(token)
+
+
+def is_valid_identity_value(identity: str) -> bool:
+    """Validate a raw tenant/source identity component."""
+    if not identity:
+        return False
+    if len(identity) < 1 or len(identity) > _IDENTITY_MAX_LENGTH:
+        return False
+    if ".." in identity or "/" in identity or "\\" in identity:
+        return False
+    if any(ord(char) < 32 for char in identity):
+        return False
+    return True
+
+
+def _encode_scope_component(value: str) -> str:
+    encoded = base64.urlsafe_b64encode(value.encode("utf-8")).decode(
+        "ascii",
+    )
+    return encoded.rstrip("=")
+
+
+def _decode_scope_component(value: str) -> str:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(
+        (value + padding).encode("ascii"),
+    ).decode("utf-8")
+
+
+def encode_scope_id(tenant_id: str, source_id: str) -> str:
+    """根据 tenant/source 生成可逆的 canonical runtime scope 标识。"""
+    if not is_valid_identity_value(tenant_id):
+        raise ValueError("Invalid tenant_id for scope encoding")
+    if not is_valid_identity_value(source_id):
+        raise ValueError("Invalid source_id for scope encoding")
+    return ".".join(
+        (
+            _encode_scope_component(tenant_id),
+            _encode_scope_component(source_id),
+        ),
+    )
+
+
+def decode_scope_id(scope_id: str) -> tuple[str, str]:
+    """把新旧两种 scope 标识还原为 logical tenant/source。"""
+    prefix = f"{_LEGACY_SCOPE_ID_PREFIX}."
+    payload = (
+        scope_id[len(prefix) :] if scope_id.startswith(prefix) else scope_id
+    )
+    parts = payload.split(".")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise ValueError("Invalid scope_id payload")
+    return (
+        _decode_scope_component(parts[0]),
+        _decode_scope_component(parts[1]),
+    )
+
+
+def canonicalize_scope_id(scope_id: str) -> str:
+    """把 legacy scope 输入统一收敛为 canonical 无前缀格式。"""
+    tenant_id, source_id = decode_scope_id(scope_id)
+    return encode_scope_id(tenant_id, source_id)
+
+
+def resolve_scope_id(
+    tenant_id: str | None,
+    source_id: str | None,
+) -> str | None:
+    """在 tenant/source 同时存在时生成 canonical runtime scope 标识。"""
+    if tenant_id is None or source_id is None:
+        return None
+    return encode_scope_id(tenant_id, source_id)
+
+
+def _decode_runtime_scope_identity(
+    runtime_tenant_id: str,
+    source_id: str | None,
+) -> tuple[str, str, str] | None:
+    """在 source 未冲突时，把 runtime scope 还原为逻辑身份。"""
+    try:
+        tenant_id, decoded_source_id = decode_scope_id(runtime_tenant_id)
+    except ValueError:
+        return None
+    if source_id is not None and source_id != decoded_source_id:
+        return None
+    return (
+        tenant_id,
+        decoded_source_id,
+        canonicalize_scope_id(runtime_tenant_id),
+    )
+
+
 def resolve_runtime_tenant_id(
     tenant_id: str | None,
     source_id: str | None,
 ) -> str | None:
-    """Resolve the tenant ID used by runtime-scoped storage and workspaces.
+    """解析运行时存储和工作区使用的租户标识。
 
-    Unlike :func:`resolve_effective_tenant_id`, this helper is tolerant of
-    missing ``source_id`` and simply returns the original ``tenant_id`` in that
-    case. This makes it safe for generic runtime code paths that may run in
-    both source-scoped and non-source-scoped contexts.
+    该函数需要同时兼容逻辑租户和已编码的 scope。调用方可能已经通过
+    middleware 解析过 ``scope_id``，这里必须保持幂等，避免把 scope 当作
+    普通租户再次和 ``source_id`` 组合编码。
     """
     if tenant_id is None:
         return None
-    if tenant_id != "default" or not source_id:
-        return tenant_id
-    return resolve_effective_tenant_id(tenant_id, source_id)
+    legacy_prefix = f"{_LEGACY_SCOPE_ID_PREFIX}."
+    if tenant_id.startswith(legacy_prefix):
+        return canonicalize_scope_id(tenant_id)
+    decoded_identity = _decode_runtime_scope_identity(
+        tenant_id,
+        source_id,
+    )
+    if decoded_identity is not None:
+        return decoded_identity[2]
+    scope_id = resolve_scope_id(tenant_id, source_id)
+    if scope_id is not None:
+        return scope_id
+    return tenant_id
+
+
+def resolve_scope_preferred_tenant_id(
+    tenant_id: str | None,
+    source_id: str | None = None,
+    scope_id: str | None = None,
+) -> str | None:
+    """统一解析运行时隔离键，优先使用显式 scope_id。"""
+    if scope_id is not None:
+        return canonicalize_scope_id(scope_id)
+    return resolve_runtime_tenant_id(tenant_id, source_id)
+
+
+def resolve_runtime_identity(
+    runtime_tenant_id: str | None,
+    source_id: str | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """展开运行时身份，返回 logical tenant、source 与 scope。
+
+    Args:
+        runtime_tenant_id: 运行时租户标识，既可能是逻辑 tenant，
+            也可能已经是编码后的 ``scope_id``。
+        source_id: 显式来源标识；当 ``runtime_tenant_id`` 仍是逻辑
+            tenant 时用于补齐 ``scope_id``；若与已编码 scope
+            中的 source 不一致，则按 raw tenant 处理。
+
+    Returns:
+        ``(tenant_id, source_id, scope_id)`` 三元组。若传入的
+        ``runtime_tenant_id`` 已经是编码后的 scope，则会优先解码并
+        返回原始 tenant/source，避免后台任务只携带 opaque key。
+    """
+    if runtime_tenant_id is None:
+        return (None, source_id, None)
+
+    decoded_identity = _decode_runtime_scope_identity(
+        runtime_tenant_id,
+        source_id,
+    )
+    if decoded_identity is not None:
+        return decoded_identity
+
+    if source_id is not None:
+        return (
+            runtime_tenant_id,
+            source_id,
+            resolve_scope_id(runtime_tenant_id, source_id),
+        )
+    return (runtime_tenant_id, source_id, None)
 
 
 def set_current_source_id(source_id: str | None) -> Token:
@@ -155,6 +327,9 @@ def get_current_workspace_dir() -> Path | None:
 
 def get_current_effective_tenant_id() -> str | None:
     """Get the current runtime tenant ID with default+source isolation."""
+    scope_id = get_current_scope_id()
+    if scope_id is not None:
+        return scope_id
     return resolve_runtime_tenant_id(
         get_current_tenant_id(),
         get_current_source_id(),
@@ -246,10 +421,12 @@ def tenant_context(
     user_id: str | None = None,
     workspace_dir: Path | None = None,
     source_id: str | None = None,
+    scope_id: str | None = None,
 ) -> Generator[None, None, None]:
     """Context manager for binding tenant context.
 
-    Temporarily sets tenant_id, user_id, workspace_dir, and source_id
+    Temporarily sets tenant_id, user_id, workspace_dir, source_id, and
+    scope_id
     in context, restoring previous values on exit.
 
     Args:
@@ -257,6 +434,8 @@ def tenant_context(
         user_id: The user ID to set.
         workspace_dir: The workspace directory to set.
         source_id: The source ID to set.
+        scope_id: The runtime scope ID to set. If omitted, resolve from
+            tenant_id/source_id when possible.
 
     Yields:
         None
@@ -268,6 +447,11 @@ def tenant_context(
         # Context restored after exit
     """
     tokens: list[tuple[str, Token[Any]]] = []
+    resolved_scope_id = (
+        canonicalize_scope_id(scope_id)
+        if scope_id is not None
+        else resolve_scope_id(tenant_id, source_id)
+    )
     try:
         if tenant_id is not None:
             tokens.append(("tenant", current_tenant_id.set(tenant_id)))
@@ -279,6 +463,8 @@ def tenant_context(
             )
         if source_id is not None:
             tokens.append(("source", current_source_id.set(source_id)))
+        if resolved_scope_id is not None:
+            tokens.append(("scope", current_scope_id.set(resolved_scope_id)))
         yield
     finally:
         for name, token in reversed(tokens):
@@ -290,6 +476,8 @@ def tenant_context(
                 current_workspace_dir.reset(token)
             elif name == "source":
                 current_source_id.reset(token)
+            elif name == "scope":
+                current_scope_id.reset(token)
 
 
 # Context variable to store the recent_max_bytes limit
@@ -420,21 +608,9 @@ def resolve_effective_tenant_id(
     tenant_id: str,
     source_id: str | None,
 ) -> str:
-    """Resolve the effective tenant ID considering source isolation.
+    """兼容旧调用方的 runtime tenant 解析别名。
 
-    - Default tenant with source_id: effective = ``default_{source_id}``
-    - Default tenant without source_id: effective = ``default``
-    - Non-default tenant: effective = tenant_id (unchanged)
-
-    Args:
-        tenant_id: The original tenant ID from X-Tenant-Id header.
-        source_id: The source ID from X-Source-Id header.
-
-    Returns:
-        The effective tenant ID to use for directory resolution.
+    新运行时统一使用编码后的 scope_id；保留该函数仅用于兼容历史导入，
+    避免调用方通过旧名称重新引入 ``default_{source}`` 目录语义。
     """
-    if tenant_id == "default":
-        if source_id:
-            return f"default_{source_id}"
-        return "default"
-    return tenant_id
+    return resolve_runtime_tenant_id(tenant_id, source_id) or tenant_id

@@ -38,6 +38,7 @@ from .renderer import MessageRenderer, RenderStyle
 from .schema import ChannelType
 from ..tenant_context import bind_tenant_context
 from ...config.llm_workload import LLM_WORKLOAD_CHAT, bind_llm_workload
+from ...config.context import resolve_runtime_identity
 from ...config.utils import load_config
 
 # Optional callback to enqueue payload (set by manager)
@@ -789,15 +790,21 @@ class BaseChannel(ABC):
             )
             if not is_control:
                 request = self._payload_to_request(payload)
+                tenant_id, source_id, scope_id = self._resolve_bound_identity(
+                    request,
+                    payload,
+                )
                 with (
                     bind_tenant_context(
-                        tenant_id=getattr(self._workspace, "tenant_id", None),
+                        tenant_id=tenant_id,
                         user_id=getattr(request, "user_id", None),
                         workspace_dir=getattr(
                             self._workspace,
                             "workspace_dir",
                             None,
                         ),
+                        source_id=source_id,
+                        scope_id=scope_id,
                     ),
                     bind_llm_workload(LLM_WORKLOAD_CHAT),
                 ):
@@ -805,7 +812,10 @@ class BaseChannel(ABC):
                 return
 
         request = self._payload_to_request(payload)
-        tenant_id = getattr(self._workspace, "tenant_id", None)
+        tenant_id, source_id, scope_id = self._resolve_bound_identity(
+            request,
+            payload,
+        )
         workspace_dir = getattr(self._workspace, "workspace_dir", None)
         # Build meta from payload so session_webhook is never lost when
         # request has no channel_meta (e.g. AgentRequest schema has no field).
@@ -824,6 +834,8 @@ class BaseChannel(ABC):
                 tenant_id=tenant_id,
                 user_id=getattr(request, "user_id", None),
                 workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CHAT),
         ):
@@ -848,6 +860,43 @@ class BaseChannel(ABC):
                 bool((send_meta or {}).get("session_webhook")),
             )
             await self._run_process_loop(request, to_handle, send_meta)
+
+    def _resolve_bound_identity(
+        self,
+        request: "AgentRequest",
+        payload: Any | None = None,
+    ) -> tuple[str | None, str | None, str | None]:
+        """还原后台消费时需要绑定的完整 runtime 身份。"""
+        runtime_tenant_id = getattr(self._workspace, "tenant_id", None)
+        request_scope_id = getattr(request, "scope_id", None)
+        channel_meta = getattr(request, "channel_meta", None) or {}
+        payload_meta = (
+            payload.get("meta", {}) if isinstance(payload, dict) else {}
+        )
+        scope_id = (
+            request_scope_id
+            or channel_meta.get("scope_id")
+            or payload_meta.get("scope_id")
+        )
+        source_id = (
+            getattr(request, "source_id", None)
+            or channel_meta.get(
+                "source_id",
+            )
+            or payload_meta.get("source_id")
+        )
+        if scope_id is not None:
+            return resolve_runtime_identity(scope_id)
+        logical_tenant_id, resolved_source_id, resolved_scope_id = (
+            resolve_runtime_identity(runtime_tenant_id)
+        )
+        if resolved_scope_id is not None:
+            return (
+                logical_tenant_id,
+                resolved_source_id,
+                resolved_scope_id,
+            )
+        return resolve_runtime_identity(runtime_tenant_id, source_id)
 
     async def _run_process_loop(
         self,

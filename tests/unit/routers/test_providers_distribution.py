@@ -17,9 +17,14 @@ from swe.app.routers import providers as providers_router
 def _request(
     tenant_id: str = "tenant-source",
     source_id: str | None = None,
+    scope_id: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        state=SimpleNamespace(tenant_id=tenant_id, source_id=source_id),
+        state=SimpleNamespace(
+            tenant_id=tenant_id,
+            source_id=source_id,
+            scope_id=scope_id,
+        ),
     )
 
 
@@ -82,6 +87,13 @@ def test_distribute_providers_success(
             source_id: str | None = None,
         ):
             self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
 
         def has_seeded_bootstrap(self) -> bool:
             return True
@@ -115,6 +127,77 @@ def test_distribute_providers_success(
     assert (target_providers_dir / "active_model.json").exists()
 
 
+def test_distribute_providers_uses_request_scope_for_source_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Source-scoped 请求必须从 runtime scope 目录读取源 providers。"""
+    secret_dir = tmp_path / "secret"
+    scope_id = "scope.v1.dGVuYW50LXNvdXJjZQ.cnVpY2U"
+    canonical_scope_id = "dGVuYW50LXNvdXJjZQ.cnVpY2U"
+    _setup_source_providers(secret_dir, canonical_scope_id)
+    observed: dict[str, str | None] = {}
+
+    monkeypatch.setattr(providers_router, "SECRET_DIR", secret_dir)
+
+    def fake_get_tenant_working_dir_strict(tenant_id: str | None) -> Path:
+        observed["tenant_id"] = tenant_id
+        return tmp_path / str(tenant_id)
+
+    monkeypatch.setattr(
+        providers_router,
+        "get_tenant_working_dir_strict",
+        fake_get_tenant_working_dir_strict,
+    )
+
+    class FakeInitializer:
+        def __init__(
+            self,
+            _base_working_dir: Path,
+            tenant_id: str,
+            source_id: str | None = None,
+        ):
+            self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
+
+        def has_seeded_bootstrap(self) -> bool:
+            return True
+
+        def ensure_seeded_bootstrap(self) -> dict[str, Any]:
+            return {"minimal": True}
+
+    monkeypatch.setattr(providers_router, "TenantInitializer", FakeInitializer)
+
+    result = asyncio.run(
+        providers_router.distribute_providers(
+            _request(
+                tenant_id="tenant-source",
+                source_id="ruice",
+                scope_id=scope_id,
+            ),
+            providers_router.ProvidersDistributionRequest(
+                target_tenant_ids=["tenant-target"],
+                overwrite=True,
+            ),
+        ),
+    )
+
+    assert observed["tenant_id"] == canonical_scope_id
+    assert result.source_tenant_id == canonical_scope_id
+    assert result.results[0].success is True
+    assert (
+        secret_dir
+        / providers_router.resolve_runtime_tenant_id("tenant-target", "ruice")
+        / "providers"
+    ).exists()
+
+
 def test_distribute_providers_multiple_tenants(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -138,6 +221,13 @@ def test_distribute_providers_multiple_tenants(
             source_id: str | None = None,
         ):
             self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
 
         def has_seeded_bootstrap(self) -> bool:
             return True
@@ -339,6 +429,13 @@ def test_distribute_providers_bootstraps_tenant(
             source_id: str | None = None,
         ):
             self.tenant_id = tenant_id
+            self.effective_tenant_id = (
+                providers_router.resolve_runtime_tenant_id(
+                    tenant_id,
+                    source_id,
+                )
+                or tenant_id
+            )
 
         def has_seeded_bootstrap(self) -> bool:
             return False

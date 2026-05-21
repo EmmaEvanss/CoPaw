@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS swe_source_system_config (
+    source_id VARCHAR(64) NOT NULL,
+    config_text LONGTEXT NOT NULL,
+    version BIGINT NOT NULL DEFAULT 1,
+    updated_by VARCHAR(128) DEFAULT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id)
+);

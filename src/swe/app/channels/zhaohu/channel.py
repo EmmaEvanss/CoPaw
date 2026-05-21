@@ -994,6 +994,7 @@ class ZhaohuChannel(BaseChannel):
             "msg_type": msg_type,
             "timestamp": timestamp,
             "is_group": is_group,
+            "source_id": self.channel,
         }
         if user_name:
             meta["user_name"] = user_name
@@ -1343,12 +1344,7 @@ class ZhaohuChannel(BaseChannel):
 
     async def process_callback_message(self, callback_body: Any) -> None:
         """Process callback message: query user, route by message type."""
-        from ....config.context import (
-            set_current_user_id,
-            set_current_tenant_id,
-            reset_current_user_id,
-            reset_current_tenant_id,
-        )
+        from ...tenant_context import bind_tenant_context
 
         # Extract callback fields
         (
@@ -1375,10 +1371,6 @@ class ZhaohuChannel(BaseChannel):
         yst_id = (user_info or {}).get("ystId") or ""
         user_name = (user_info or {}).get("userName") or ""
 
-        # Set user context
-        tenant_token = set_current_tenant_id(sap_id)
-        user_token = set_current_user_id(sap_id)
-
         # Build meta
         meta = self._build_callback_meta(
             yst_id,
@@ -1390,26 +1382,32 @@ class ZhaohuChannel(BaseChannel):
             timestamp,
             user_name,
         )
+        source_id = str(meta.get("source_id") or self.channel)
 
-        try:
-            await self._route_message(
-                msg_id,
-                from_id,
-                sap_id,
-                yst_id,
-                msg_content,
-                meta,
-            )
-        except Exception:
-            logger.exception("zhaohu LLM processing failed: msgId=%s", msg_id)
-            await self.send(
-                yst_id,
-                "抱歉，处理您的消息时发生错误，请稍后重试。",
-                meta,
-            )
-        finally:
-            reset_current_tenant_id(tenant_token)
-            reset_current_user_id(user_token)
+        with bind_tenant_context(
+            tenant_id=sap_id,
+            user_id=sap_id,
+            source_id=source_id,
+        ):
+            try:
+                await self._route_message(
+                    msg_id,
+                    from_id,
+                    sap_id,
+                    yst_id,
+                    msg_content,
+                    meta,
+                )
+            except Exception:
+                logger.exception(
+                    "zhaohu LLM processing failed: msgId=%s",
+                    msg_id,
+                )
+                await self.send(
+                    yst_id,
+                    "抱歉，处理您的消息时发生错误，请稍后重试。",
+                    meta,
+                )
 
     def _extract_callback_fields(self, callback_body: Any) -> tuple:
         """Extract fields from callback body.
@@ -1449,6 +1447,7 @@ class ZhaohuChannel(BaseChannel):
             "msg_type": msg_type,
             "timestamp": timestamp,
             "is_group": group_id is not None,
+            "source_id": self.channel,
         }
         if user_name:
             meta["user_name"] = user_name

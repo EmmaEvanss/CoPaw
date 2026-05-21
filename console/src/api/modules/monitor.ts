@@ -44,6 +44,7 @@ export interface CronJobItem {
   status: string;
   pause_reason: string;
   execution_count: number;
+  today_status: string | null; // 今日最新执行状态: success/error/cancelled/timeout/skipped
   created_at: string | null;
   updated_at: string | null;
   deleted_at: string | null;
@@ -69,6 +70,8 @@ export interface ExecutionItem {
   input_snapshot: string;
   output_preview: string;
   meta: string;
+  is_read: boolean;
+  read_at: string | null;
   created_at: string | null;
 }
 
@@ -77,6 +80,22 @@ export interface PaginatedResponse<T> {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface MarkReadResponse {
+  marked: boolean;
+  count: number;
+}
+
+export interface UnreadCountItem {
+  job_id: string;
+  job_name: string;
+  unread_count: number;
+}
+
+export interface UnreadCountResponse {
+  items: UnreadCountItem[];
+  total_unread: number;
 }
 
 // API functions
@@ -134,7 +153,9 @@ export const monitorApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== null && value !== "") {
+          params.append(key, value);
+        }
       });
     }
     return request(`/monitor/cron/executions?${params.toString()}`);
@@ -212,5 +233,19 @@ export const monitorApi = {
       throw new Error(errorMessage);
     }
     return response.blob();
+  },
+
+  // Mark job as read
+  markJobAsRead: async (jobId: string): Promise<MarkReadResponse> => {
+    return request(`/monitor/cron/jobs/${jobId}/mark-read`, { method: "POST" });
+  },
+
+  // Get unread count
+  getUnreadCount: async (tenantId?: string): Promise<UnreadCountResponse> => {
+    const params = new URLSearchParams();
+    if (tenantId) {
+      params.append("tenant_id", tenantId);
+    }
+    return request(`/monitor/cron/unread-count?${params.toString()}`);
   },
 };

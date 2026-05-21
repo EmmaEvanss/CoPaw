@@ -1711,54 +1711,9 @@ def load_agent_config(
     agent_config_path = workspace_dir / "agent.json"
 
     if not agent_config_path.exists():
-        # Fallback: Try to use root config fields for backward compatibility
-        # This allows downgrade scenarios where agent.json doesn't exist yet
-        fallback_config = AgentProfileConfig(
-            id=agent_id,
-            name=agent_id.title(),
-            description=f"{agent_id} agent",
-            workspace_dir=str(workspace_dir),
-            # Inherit from root config if available (for backward compat)
-            channels=(
-                config.channels
-                if hasattr(config, "channels") and config.channels
-                else None
-            ),
-            mcp=config.mcp if hasattr(config, "mcp") and config.mcp else None,
-            tools=(
-                config.tools
-                if hasattr(config, "tools") and config.tools
-                else None
-            ),
-            security=(
-                config.security
-                if hasattr(config, "security") and config.security
-                else None
-            ),
-            # Use agent-specific configs with proper defaults
-            running=(
-                config.agents.running
-                if hasattr(config.agents, "running") and config.agents.running
-                else AgentsRunningConfig()
-            ),
-            llm_routing=(
-                config.agents.llm_routing
-                if hasattr(config.agents, "llm_routing")
-                and config.agents.llm_routing
-                else AgentsLLMRoutingConfig()
-            ),
-            system_prompt_files=normalize_system_prompt_files(
-                getattr(config.agents, "system_prompt_files", None),
-            ),
+        raise FileNotFoundError(
+            f"Agent config not found: {agent_config_path}",
         )
-        # Save for future use
-        save_agent_config(
-            agent_id,
-            fallback_config,
-            config_path=resolved_config_path,
-            tenant_id=tenant_id,
-        )
-        return fallback_config
 
     with open(agent_config_path, "r", encoding="utf-8") as f:
         data = json.load(f)

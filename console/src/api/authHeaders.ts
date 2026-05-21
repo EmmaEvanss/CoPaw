@@ -62,13 +62,20 @@ export function buildAuthHeaders(): Record<string, string> {
   // 4. 自定义 headers 数组（父窗口通过 auth 字段传递）
   // 注意：排除 X-User-Id，因为已由 getUserId() 处理
   const iframeContext = getIframeContext();
+  if (iframeContext.isSuperManager) {
+    headers["X-User-Role"] = "admin";
+  } else if (iframeContext.manager) {
+    headers["X-User-Role"] = "manager";
+  }
+
   if (iframeContext.authHeaders?.length) {
     for (const item of iframeContext.authHeaders) {
       // 跳过 X-User-Id，避免覆盖上面设置的值
       if (
         item.headerName &&
         item.headerValue !== undefined &&
-        item.headerName !== "X-User-Id"
+        item.headerName !== "X-User-Id" &&
+        item.headerName !== "X-User-Role"
       ) {
         headers["x-header-" + item.headerName] = item.headerValue;
       }
@@ -77,7 +84,7 @@ export function buildAuthHeaders(): Record<string, string> {
   // ==================== userId 统一整改结束 ====================
 
   // 5. Source ID（来自 iframe context，用于数据隔离）
-  // 只有 iframe 模式下有值时才发送 X-Source-Id
+  // 独立访问时也必须携带默认 source，避免后端严格隔离校验直接拒绝请求
   const sourceId = iframeContext.source || DEFAULT_SOURCE_ID;
   if (sourceId) {
     headers["X-Source-Id"] = sourceId;
@@ -94,6 +101,14 @@ export function buildAuthHeaders(): Record<string, string> {
   const userName = iframeContext.userName || DEFAULT_USER_NAME;
   if (userName) {
     headers["X-User-Name"] = encodeURIComponent(userName);
+  }
+
+  // 反馈落库需要保留支行与岗位信息，随请求上下文一起透传给后端。
+  if (iframeContext.orgCode) {
+    headers["X-Org-Code"] = iframeContext.orgCode;
+  }
+  if (iframeContext.positionId) {
+    headers["X-Position-Id"] = iframeContext.positionId;
   }
 
   // 8. Space（来自 iframe context）

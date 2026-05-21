@@ -15,6 +15,7 @@ from .models import CronJobSpec
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
+from ...config.context import canonicalize_scope_id, resolve_scope_id
 from ...tracing import has_trace_manager, get_trace_manager
 from ...tracing.models import TraceStatus
 
@@ -116,8 +117,19 @@ class CronExecutor:
 
         # Extract tenant_id from job spec (added for tenant isolation)
         tenant_id = getattr(job, "tenant_id", None)
+        source_id = getattr(job, "source_id", None)
+        job_scope_id = getattr(job, "scope_id", None)
+        scope_id = (
+            canonicalize_scope_id(job_scope_id)
+            if job_scope_id is not None
+            else resolve_scope_id(tenant_id, source_id)
+        )
         if tenant_id:
             dispatch_meta["tenant_id"] = tenant_id
+        if source_id:
+            dispatch_meta["source_id"] = source_id
+        if scope_id:
+            dispatch_meta["scope_id"] = scope_id
 
         logger.info(
             "cron execute: job_id=%s channel=%s task_type=%s "
@@ -136,6 +148,8 @@ class CronExecutor:
                 tenant_id=tenant_id,
                 user_id=target_user_id,
                 workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
         ):
@@ -145,12 +159,14 @@ class CronExecutor:
                 target_session_id,
                 dispatch_meta,
             )
+        result = result or {}
+        output_preview = str(result.get("output_preview") or "")
 
         return ExecutionResult(
-            trace_id=result["trace_id"],
-            output_preview=result["output_preview"][:100],
+            trace_id=str(result.get("trace_id") or ""),
+            output_preview=output_preview[:100],
             input_snapshot=result.get("input_snapshot"),
-            executor_leader=result.get("executor_leader", ""),
+            executor_leader=str(result.get("executor_leader") or ""),
         )
 
     async def _execute_job(
@@ -192,7 +208,11 @@ class CronExecutor:
         Returns:
             Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
-        tenant_id = dispatch_meta.get("tenant_id") or "default"
+        runtime_tenant_id = (
+            dispatch_meta.get("scope_id")
+            or dispatch_meta.get("tenant_id")
+            or "default"
+        )
         logger.info(
             "cron send_text: job_id=%s channel=%s len=%s",
             job.id,
@@ -200,59 +220,26 @@ class CronExecutor:
             len(job.text or ""),
         )
 
-        # 为 text 类型任务也创建 trace 记录
-        trace_id = None
-        if has_trace_manager():
-            try:
-                trace_mgr = get_trace_manager()
-                if trace_mgr.enabled:
-                    source_id = job.source_id or "default"
-                    trace_id = await trace_mgr.start_trace(
-                        user_id=target_user_id or "cron",
-                        session_id=target_session_id or f"cron:{job.id}",
-                        channel=job.dispatch.channel,
-                        source_id=source_id,
-                        user_message=None,  # text 任务无用户输入
-                        user_name=job.tenant_name,
-                        bbk_id=job.bbk_id,
-                        session_name=job.name,  # 使用任务名称作为会话名称
-                    )
-                    # 写入 model_output 到 ES
-                    if trace_id and job.text:
-                        await _index_model_output_to_monitor(
-                            trace_id,
-                            job.text.strip(),
-                        )
-            except Exception as e:
-                logger.warning("Failed to start trace for text job: %s", e)
+        # 保留抽出的 helper，同时继续传递 scope 级租户标识。
+        trace_id = await self._create_trace_for_text_job(
+            job,
+            target_user_id,
+            target_session_id,
+        )
 
         try:
-            await self._channel_manager.send_text(
-                channel=job.dispatch.channel,
-                user_id=target_user_id,
-                session_id=target_session_id,
-                text=job.text.strip(),
-                meta=dispatch_meta,
+            await self._send_text_to_channel(
+                job,
+                target_user_id,
+                target_session_id,
+                dispatch_meta,
+                runtime_tenant_id,
             )
-            task_chat_id: Optional[str] = (job.meta or {}).get("task_chat_id")
-            if job.dispatch.channel != CONSOLE_CHANNEL and task_chat_id:
-                await self._push_to_console(
-                    task_chat_id,
-                    job.text.strip(),
-                    tenant_id,
-                )
         finally:
-            # 结束 trace
-            if trace_id and has_trace_manager():
-                try:
-                    trace_mgr = get_trace_manager()
-                    await trace_mgr.end_trace(trace_id, TraceStatus.COMPLETED)
-                except Exception as e:
-                    logger.warning("Failed to end trace for text job: %s", e)
+            await self._end_trace_for_text_job(trace_id)
 
         # 返回执行结果
         output_preview = (job.text or "").strip()[:100]
-        # text 类型任务的 input_snapshot 是任务内容
         input_snapshot = (
             {"text": (job.text or "").strip()} if job.text else None
         )
@@ -262,6 +249,99 @@ class CronExecutor:
             "input_snapshot": input_snapshot,
             "executor_leader": "",
         }
+
+    async def _create_trace_for_text_job(
+        self,
+        job: CronJobSpec,
+        target_user_id: str,
+        target_session_id: str,
+    ) -> Optional[str]:
+        """为 text 类型任务创建 trace 记录。
+
+        Args:
+            job: 任务定义
+            target_user_id: 目标用户 ID
+            target_session_id: 目标会话 ID
+
+        Returns:
+            trace_id 或 None
+        """
+        if not has_trace_manager():
+            return None
+
+        try:
+            trace_mgr = get_trace_manager()
+            if not trace_mgr.enabled:
+                return None
+
+            source_id = job.source_id or "default"
+            trace_id = await trace_mgr.start_trace(
+                user_id=target_user_id or "cron",
+                session_id=target_session_id or f"cron:{job.id}",
+                channel=job.dispatch.channel,
+                source_id=source_id,
+                user_message=None,
+                user_name=job.tenant_name,
+                bbk_id=job.bbk_id,
+                session_name=job.name,
+            )
+            # 写入 model_output 到 ES
+            if trace_id and job.text:
+                await _index_model_output_to_monitor(
+                    trace_id,
+                    job.text.strip(),
+                )
+            return trace_id
+        except Exception as e:
+            logger.warning("Failed to start trace for text job: %s", e)
+            return None
+
+    async def _send_text_to_channel(
+        self,
+        job: CronJobSpec,
+        target_user_id: str,
+        target_session_id: str,
+        dispatch_meta: Dict[str, Any],
+        runtime_tenant_id: str,
+    ) -> None:
+        """发送 text 到 channel 并推送到 console。
+
+        Args:
+            job: 任务定义
+            target_user_id: 目标用户 ID
+            target_session_id: 目标会话 ID
+            dispatch_meta: dispatch 元数据
+            runtime_tenant_id: 运行时 scope/tenant 标识
+        """
+        await self._channel_manager.send_text(
+            channel=job.dispatch.channel,
+            user_id=target_user_id,
+            session_id=target_session_id,
+            text=job.text.strip(),
+            meta=dispatch_meta,
+        )
+        task_chat_id: Optional[str] = (job.meta or {}).get("task_chat_id")
+        if job.dispatch.channel != CONSOLE_CHANNEL and task_chat_id:
+            await self._push_to_console(
+                task_chat_id,
+                job.text.strip(),
+                runtime_tenant_id,
+            )
+
+    async def _end_trace_for_text_job(self, trace_id: Optional[str]) -> None:
+        """结束 text 任务的 trace。
+
+        Args:
+            trace_id: trace ID
+        """
+        if not trace_id or not has_trace_manager():
+            return
+
+        try:
+            trace_mgr = get_trace_manager()
+            await trace_mgr.end_trace(trace_id, TraceStatus.COMPLETED)
+        except Exception as e:
+            logger.warning("Failed to end trace for text job: %s", e)
 
     async def _create_trace_for_agent_job(
         self,
@@ -398,7 +478,11 @@ class CronExecutor:
         Returns:
             Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
-        tenant_id = dispatch_meta.get("tenant_id") or "default"
+        runtime_tenant_id = (
+            dispatch_meta.get("scope_id")
+            or dispatch_meta.get("tenant_id")
+            or "default"
+        )
         logger.info(
             "cron agent: job_id=%s channel=%s timeout=%ss",
             job.id,
@@ -421,6 +505,7 @@ class CronExecutor:
         # 用于标记 trace 是否已被结束（防止重复结束）
         trace_ended = False
         console_text_parts: list[str] = []
+        result: Optional[Dict[str, Any]] = None
         try:
             # Wrap the entire agent execution in a timeout
             # asyncio.timeout 是 Python 3.11+ 的特性，低版本使用 wait_for
@@ -456,8 +541,14 @@ class CronExecutor:
                 await self._push_to_console(
                     task_chat_id,
                     "\n".join(console_text_parts),
-                    tenant_id,
+                    runtime_tenant_id,
                 )
+            # 正常完成，构建执行结果
+            result = self._build_agent_execution_result(
+                trace_id,
+                console_text_parts,
+                req,
+            )
         except asyncio.TimeoutError:
             trace_ended = True
             logger.warning(
@@ -465,7 +556,7 @@ class CronExecutor:
                 job.id,
                 job.runtime.timeout_seconds,
             )
-            await self._notify_timeout(job, tenant_id)
+            await self._notify_timeout(job, runtime_tenant_id)
             await self._end_trace_on_exception(
                 trace_id,
                 TraceStatus.ERROR,
@@ -496,11 +587,8 @@ class CronExecutor:
             if trace_id and not trace_ended:
                 await self._end_trace_on_success(trace_id, job.id)
 
-        return self._build_agent_execution_result(
-            trace_id,
-            console_text_parts,
-            req,
-        )
+        # 正常完成时返回结果（异常分支已 raise）
+        return result
 
     def _build_agent_request(
         self,
@@ -518,6 +606,16 @@ class CronExecutor:
         # 传递 source_id 用于 tracing 数据隔离
         if job.source_id:
             req["source_id"] = job.source_id
+        scope_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                job.source_id,
+            )
+        )
+        if scope_id:
+            req["scope_id"] = scope_id
         # 传递 bbk_id 用于 tracing 用户标识
         if job.bbk_id:
             req["bbk_id"] = job.bbk_id
@@ -533,9 +631,17 @@ class CronExecutor:
         req: Dict[str, Any],
     ) -> None:
         """Resolve and apply auth token to request."""
+        runtime_tenant_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                getattr(job, "source_id", None),
+            )
+        )
         try:
             resolved = resolve_auth_token_for_execution(
-                tenant_id=getattr(job, "tenant_id", None),
+                tenant_id=runtime_tenant_id,
                 workspace_dir=dispatch_meta.get("workspace_dir"),
             )
         except ValueError as exc:

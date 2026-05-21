@@ -16,13 +16,17 @@ from starlette.responses import Response, JSONResponse
 from starlette.types import ASGIApp
 
 from swe.config.context import (
+    is_valid_identity_value,
     resolve_runtime_tenant_id,
+    resolve_scope_id,
     set_current_tenant_id,
     set_current_user_id,
     set_current_source_id,
+    set_current_scope_id,
     reset_current_tenant_id,
     reset_current_user_id,
     reset_current_source_id,
+    reset_current_scope_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,7 +53,6 @@ TENANT_EXEMPT_ROUTES = frozenset(
         "/api/auth/register",
         "/api/auth/refresh",
         "/api/auth/logout",
-        "/api/zhaohu/callback",
         # Static assets
         "/assets",
         "/logo.png",
@@ -60,6 +63,43 @@ TENANT_EXEMPT_ROUTES = frozenset(
         "/console",
         "/console/",
     ],
+)
+
+SOURCE_EXEMPT_ROUTES = frozenset(
+    [
+        # Health and docs endpoints never enter tenant-scoped runtime
+        "/health",
+        "/healthz",
+        "/api/health/health",
+        "/ready",
+        "/readyz",
+        "/alive",
+        "/api/version",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        # Auth endpoints remain source-agnostic
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/refresh",
+        "/api/auth/logout",
+        # Static assets
+        "/assets",
+        "/logo.png",
+        "/dark-logo.png",
+        "/swe-symbol.svg",
+        "/swe-dark.png",
+        "/console",
+        "/console/",
+    ],
+)
+
+PUBLIC_ROUTE_EXEMPT_PREFIXES = (
+    "/assets/",
+    "/static/",
+    "/console/",
+    "/api/assets/text/",
+    "/api/internal/",
 )
 
 
@@ -76,14 +116,18 @@ def is_tenant_exempt(path: str) -> bool:
     if path in TENANT_EXEMPT_ROUTES:
         return True
 
-    # Prefix match for certain routes
-    exempt_prefixes = (
-        "/assets/",
-        "/static/",
-        "/console/",
-        "/api/internal/",
-    )
-    if any(path.startswith(prefix) for prefix in exempt_prefixes):
+    if any(path.startswith(prefix) for prefix in PUBLIC_ROUTE_EXEMPT_PREFIXES):
+        return True
+
+    return False
+
+
+def is_source_exempt(path: str) -> bool:
+    """Check if a route is exempt from source identity requirements."""
+    if path in SOURCE_EXEMPT_ROUTES:
+        return True
+
+    if any(path.startswith(prefix) for prefix in PUBLIC_ROUTE_EXEMPT_PREFIXES):
         return True
 
     return False
@@ -128,11 +172,17 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
         str | None,
         str | None,
         str | None,
+        str | None,
         bool,
     ]:
-        """Resolve tenant, user, source, user_name, bbk_id from request headers."""
+        """Resolve request identity and enforce ingress contracts."""
         path = request.url.path
-        is_exempt = request.method == "OPTIONS" or is_tenant_exempt(path)
+        is_tenant_optional = request.method == "OPTIONS" or is_tenant_exempt(
+            path,
+        )
+        is_source_optional = request.method == "OPTIONS" or is_source_exempt(
+            path,
+        )
         tenant_id = request.headers.get("X-Tenant-Id")
         user_id = request.headers.get("X-User-Id")
         source_id = request.headers.get("X-Source-Id")
@@ -143,10 +193,22 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
         if user_name:
             user_name = unquote(user_name)
 
-        if not is_exempt:
+        if not is_tenant_optional:
             tenant_id = self._validate_tenant_id(path, tenant_id)
+        if not is_source_optional:
+            source_id = self._validate_source_id(path, source_id)
 
-        return tenant_id, user_id, source_id, user_name, bbk_id, is_exempt
+        scope_id = resolve_scope_id(tenant_id, source_id)
+
+        return (
+            tenant_id,
+            user_id,
+            source_id,
+            scope_id,
+            user_name,
+            bbk_id,
+            is_tenant_optional and is_source_optional,
+        )
 
     def _validate_tenant_id(
         self,
@@ -173,17 +235,44 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
             )
         return tenant_id
 
+    def _validate_source_id(
+        self,
+        path: str,
+        source_id: str | None,
+    ) -> str:
+        """Validate source ID for scoped routes."""
+        if not source_id:
+            logger.warning(
+                f"Missing X-Source-Id header for {path}",
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="X-Source-Id header is required",
+            )
+
+        if not self._is_valid_source_id(source_id):
+            logger.warning(f"Invalid source ID format: {source_id}")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid X-Source-Id format",
+            )
+        return source_id
+
     def _store_request_state(
         self,
         request: Request,
         tenant_id: str | None,
         user_id: str | None,
         source_id: str | None,
+        scope_id: str | None,
         user_name: str | None,
         bbk_id: str | None,
     ) -> None:
         """Store identity in request state for downstream use."""
-        effective_tenant_id = resolve_runtime_tenant_id(tenant_id, source_id)
+        effective_tenant_id = scope_id or resolve_runtime_tenant_id(
+            tenant_id,
+            source_id,
+        )
         if tenant_id:
             request.state.tenant_id = tenant_id
         if effective_tenant_id:
@@ -192,6 +281,8 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
         if source_id:
             request.state.source_id = source_id
+        if scope_id:
+            request.state.scope_id = scope_id
         if user_name:
             request.state.user_name = user_name
         if bbk_id:
@@ -202,6 +293,7 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
         tenant_id: str | None,
         user_id: str | None,
         source_id: str | None,
+        scope_id: str | None,
     ) -> list[tuple[str, object]]:
         """Bind identity to context variables, return tokens for reset."""
         tokens = []
@@ -211,6 +303,8 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
             tokens.append(("user", set_current_user_id(user_id)))
         if source_id:
             tokens.append(("source", set_current_source_id(source_id)))
+        if scope_id:
+            tokens.append(("scope", set_current_scope_id(scope_id)))
         return tokens
 
     def _reset_context(self, tokens: list[tuple[str, object]]) -> None:
@@ -219,6 +313,7 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
             "tenant": reset_current_tenant_id,
             "user": reset_current_user_id,
             "source": reset_current_source_id,
+            "scope": reset_current_scope_id,
         }
         for name, token in reversed(tokens):
             if name in reset_map:
@@ -248,6 +343,7 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
                 tenant_id,
                 user_id,
                 source_id,
+                scope_id,
                 user_name,
                 bbk_id,
                 is_exempt,
@@ -258,10 +354,16 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
                 tenant_id,
                 user_id,
                 source_id,
+                scope_id,
                 user_name,
                 bbk_id,
             )
-            tokens = self._bind_context(tenant_id, user_id, source_id)
+            tokens = self._bind_context(
+                tenant_id,
+                user_id,
+                source_id,
+                scope_id,
+            )
 
             logger.debug(
                 f"TenantIdentityMiddleware: tenant_id={tenant_id}, "
@@ -273,6 +375,8 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
 
             if tenant_id:
                 response.headers["X-Tenant-Id-Resolved"] = tenant_id
+            if scope_id:
+                response.headers["X-Scope-Id-Resolved"] = scope_id
 
             return response
         except HTTPException as exc:
@@ -284,30 +388,12 @@ class TenantIdentityMiddleware(BaseHTTPMiddleware):
             self._reset_context(tokens)
 
     def _is_valid_tenant_id(self, tenant_id: str) -> bool:
-        """Validate tenant ID format.
+        """Validate tenant ID format."""
+        return is_valid_identity_value(tenant_id)
 
-        Args:
-            tenant_id: The tenant ID to validate.
-
-        Returns:
-            True if valid, False otherwise.
-        """
-        if not tenant_id:
-            return False
-
-        # Basic validation: not empty, reasonable length, no path traversal
-        if len(tenant_id) < 1 or len(tenant_id) > 256:
-            return False
-
-        # Disallow path traversal characters
-        if ".." in tenant_id or "/" in tenant_id or "\\" in tenant_id:
-            return False
-
-        # Disallow control characters
-        if any(ord(c) < 32 for c in tenant_id):
-            return False
-
-        return True
+    def _is_valid_source_id(self, source_id: str) -> bool:
+        """Validate source ID format."""
+        return is_valid_identity_value(source_id)
 
 
 def get_tenant_id_from_request(request: Request) -> str | None:

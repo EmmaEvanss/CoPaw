@@ -87,7 +87,12 @@ def test_console_chat_allows_terminal_response_frame_without_output(
         "channel": "console",
     }
 
-    with client.stream("POST", "/console/chat", json=payload) as response:
+    with client.stream(
+        "POST",
+        "/console/chat",
+        headers={"X-Source-Id": "src-a"},
+        json=payload,
+    ) as response:
         assert response.status_code == 200
         events = [
             line.removeprefix("data: ")

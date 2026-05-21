@@ -47,6 +47,7 @@ heartbeat_module.run_heartbeat_once = _run_heartbeat_once
 sys.modules["swe.app.crons.heartbeat"] = heartbeat_module
 
 config_module = types.ModuleType("swe.config")
+config_module.__path__ = [str(SRC_ROOT / "swe" / "config")]
 config_module.get_heartbeat_config = (
     lambda agent_id=None: types.SimpleNamespace(
         enabled=False,
@@ -74,6 +75,7 @@ push_module.append = _append
 sys.modules["swe.app.console_push_store"] = push_module
 
 channels_schema_module = types.ModuleType("swe.app.channels.schema")
+channels_schema_module.ChannelType = str
 channels_schema_module.DEFAULT_CHANNEL = "console"
 sys.modules["swe.app.channels.schema"] = channels_schema_module
 

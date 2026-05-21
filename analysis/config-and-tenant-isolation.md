@@ -67,6 +67,48 @@
 | `src/swe/providers/provider_manager.py` | 以租户为粒度返回 ProviderManager |
 | `src/swe/cli/app_cmd.py` | 支持 CLI/单用户模式切换 |
 
+## Source 系统配置
+
+Source 系统配置用于按 `source_id` 保存系统级配置，不写入 tenant
+`config.json`，也不参与 `bbk_id`、用户或机构覆盖。它和现有
+tenant/source 运行时目录隔离是两层能力：目录隔离保证数据不串，source
+系统配置让请求进入后可以读取当前接入系统的配置。
+
+### 存储表
+
+建表 SQL 位于 `scripts/sql/source_system_config.sql`：
+
+```sql
+CREATE TABLE IF NOT EXISTS swe_source_system_config (
+    source_id VARCHAR(64) NOT NULL,
+    config_json JSON NOT NULL,
+    version BIGINT NOT NULL DEFAULT 1,
+    updated_by VARCHAR(128) DEFAULT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id)
+);
+```
+
+### 后端入口
+
+| 文件 | 作用 |
+|------|------|
+| `src/swe/app/source_system_config/models.py` | Pydantic 模型、默认空配置和 JSON object 校验 |
+| `src/swe/app/source_system_config/store.py` | MySQL 读写与 JSON/schema 校验 |
+| `src/swe/app/source_system_config/service.py` | 默认值合成、TTL 缓存、last-known-good fallback |
+| `src/swe/app/source_system_config/middleware.py` | 请求级加载并绑定到 `request.state` 与 ContextVar |
+| `src/swe/app/source_system_config/runtime.py` | `get_current_source_system_config()` 和上下文绑定 helper |
+| `src/swe/app/source_system_config/router.py` | effective config API 与 manager CRUD 管理 API |
+
+### 默认行为与失败行为
+
+- 缺少 source 配置记录时返回内置默认空配置；当前默认不改变既有业务行为。
+- source 配置根对象必须是 JSON object；具体 key 和业务含义由后续开发人员在消费点决定。
+- 管理接口支持按 `source_id` 创建、读取、更新、删除和列表查询配置。
+- DB 读取失败且已有 last-known-good 缓存时继续使用缓存，并在返回配置上标记 `stale=true` 与 `last_error`。
+- DB 读取失败且没有缓存时，effective config API 返回错误，不静默返回默认配置。
+
 ## 关联功能域
 
 - 模型与 Provider 运行栈: [model-provider-and-local-runtime.md](model-provider-and-local-runtime.md)

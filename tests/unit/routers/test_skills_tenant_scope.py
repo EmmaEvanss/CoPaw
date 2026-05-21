@@ -10,6 +10,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import cast
+from swe.config.context import encode_scope_id
 
 SRC_ROOT = Path(__file__).parent.parent.parent.parent / "src"
 _ROUTER_FILE = SRC_ROOT / "swe" / "app" / "routers" / "skills.py"
@@ -219,6 +220,25 @@ def test_list_pool_skills_returns_tenant_local_results(
     assert [skill.name for skill in tenant_b] == ["beta"]
 
 
+def test_skills_router_prefers_request_scope_id_over_logical_tenant() -> None:
+    resolved = skills_router._request_effective_tenant_id(
+        _request("tenant-a", "ruice"),
+    )
+    assert resolved != "tenant-a"
+
+    scoped_request = SimpleNamespace(
+        state=SimpleNamespace(
+            tenant_id="tenant-a",
+            source_id="ruice",
+            scope_id="scope.v1.dGVuYW50LWE.cnVpY2U",
+        ),
+    )
+
+    resolved = skills_router._request_effective_tenant_id(scoped_request)
+
+    assert resolved == "dGVuYW50LWE.cnVpY2U"
+
+
 def test_update_pool_skill_config_uses_tenant_manifest_path(
     monkeypatch,
     tmp_path: Path,
@@ -319,8 +339,9 @@ def test_list_broadcast_tenants_returns_discovered_tenant_ids(
     async def fake_list_logical_tenant_ids(
         _source_id=None,
         *,
-        _source_filter=False,
+        source_filter=False,
     ):
+        del source_filter
         return ["default", "tenant-a", "tenant-b"]
 
     monkeypatch.setattr(
@@ -342,8 +363,9 @@ def test_list_broadcast_tenants_uses_source_scoped_logical_ids(
     async def fake_list_logical_tenant_ids(
         source_id: str | None = None,
         *,
-        _source_filter: bool = False,
+        source_filter: bool = False,
     ) -> list[str]:
+        del source_filter
         observed.append(source_id)
         return ["default", "tenant-a"]
 
@@ -365,6 +387,7 @@ def test_list_workspace_skill_sources_uses_effective_tenant_id(
     monkeypatch,
 ) -> None:
     observed: list[str | None] = []
+    scope_id = encode_scope_id("default", "ruice")
 
     def fake_list_workspaces(
         tenant_id: str | None = None,
@@ -374,7 +397,7 @@ def test_list_workspace_skill_sources_uses_effective_tenant_id(
             {
                 "agent_id": "default",
                 "agent_name": "Default",
-                "workspace_dir": "/tmp/default_ruice/workspaces/default",
+                "workspace_dir": f"/tmp/{scope_id}/workspaces/default",
             },
         ]
 
@@ -391,8 +414,8 @@ def test_list_workspace_skill_sources_uses_effective_tenant_id(
         ),
     )
 
-    assert observed == ["default_ruice"]
-    assert result[0].workspace_dir == "/tmp/default_ruice/workspaces/default"
+    assert observed == [scope_id]
+    assert result[0].workspace_dir == f"/tmp/{scope_id}/workspaces/default"
 
 
 def test_upload_workspace_skill_to_pool_uses_effective_tenant_id(
@@ -400,6 +423,7 @@ def test_upload_workspace_skill_to_pool_uses_effective_tenant_id(
     tmp_path: Path,
 ) -> None:
     observed: dict[str, object] = {"workspace_tenant_ids": []}
+    scope_id = encode_scope_id("default", "ruice")
 
     monkeypatch.setattr(
         skills_router,
@@ -415,7 +439,7 @@ def test_upload_workspace_skill_to_pool_uses_effective_tenant_id(
         workspace_tenant_ids = observed["workspace_tenant_ids"]
         assert isinstance(workspace_tenant_ids, list)
         workspace_tenant_ids.append(tenant_id)
-        return tmp_path / "default_ruice" / "workspaces" / agent_id
+        return tmp_path / scope_id / "workspaces" / agent_id
 
     class FakeSkillPoolService:
         def __init__(self, *, working_dir: Path) -> None:
@@ -457,10 +481,10 @@ def test_upload_workspace_skill_to_pool_uses_effective_tenant_id(
         ),
     )
 
-    assert observed["workspace_tenant_ids"] == ["default_ruice"]
-    assert observed["working_dir"] == tmp_path / "default_ruice"
+    assert observed["workspace_tenant_ids"] == [scope_id]
+    assert observed["working_dir"] == tmp_path / scope_id
     assert observed["workspace_dir"] == (
-        tmp_path / "default_ruice" / "workspaces" / "default"
+        tmp_path / scope_id / "workspaces" / "default"
     )
     assert result == {"success": True, "name": "guidance"}
 
@@ -470,6 +494,7 @@ def test_download_pool_skill_to_workspaces_uses_effective_tenant_id(
     tmp_path: Path,
 ) -> None:
     observed: dict[str, object] = {"workspace_tenant_ids": []}
+    scope_id = encode_scope_id("default", "ruice")
 
     monkeypatch.setattr(
         skills_router,
@@ -485,7 +510,7 @@ def test_download_pool_skill_to_workspaces_uses_effective_tenant_id(
         workspace_tenant_ids = observed["workspace_tenant_ids"]
         assert isinstance(workspace_tenant_ids, list)
         workspace_tenant_ids.append((agent_id, tenant_id))
-        return tmp_path / "default_ruice" / "workspaces" / agent_id
+        return tmp_path / scope_id / "workspaces" / agent_id
 
     class FakeSkillPoolService:
         def __init__(self, working_dir: Path) -> None:
@@ -557,10 +582,10 @@ def test_download_pool_skill_to_workspaces_uses_effective_tenant_id(
     )
 
     assert observed["workspace_tenant_ids"] == [
-        ("default", "default_ruice"),
-        ("default", "default_ruice"),
+        ("default", scope_id),
+        ("default", scope_id),
     ]
-    assert observed["working_dir"] == tmp_path / "default_ruice"
+    assert observed["working_dir"] == tmp_path / scope_id
     assert result == {
         "downloaded": [
             {
@@ -673,7 +698,7 @@ def test_broadcast_pool_skills_bootstraps_missing_tenant(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    source_tenant = tmp_path / "tenant-a"
+    source_tenant = tmp_path / encode_scope_id("tenant-a", "ruice")
     target_tenant = tmp_path / "tenant-new"
     _write_skill(
         get_skill_pool_dir(working_dir=source_tenant) / "guidance",
@@ -776,7 +801,7 @@ def test_broadcast_pool_skills_uses_source_scoped_default_as_source(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    source_tenant = tmp_path / "default_ruice"
+    source_tenant = tmp_path / encode_scope_id("default", "ruice")
     target_tenant = tmp_path / "tenant-b"
     target_workspace = target_tenant / "workspaces" / "default"
 

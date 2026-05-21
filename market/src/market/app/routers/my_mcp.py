@@ -55,6 +55,42 @@ SENSITIVE_FIELDS = [
 ]
 
 
+async def _log_my_mcp_operation(
+    request: Request,
+    context,
+    operation: str,
+    item_name: str,
+) -> None:
+    """在数据库可用时记录 MyMCP 操作日志。"""
+    db = getattr(request.app.state.marketplace, "db", None)
+    if db is None or not getattr(db, "is_connected", False):
+        return
+
+    try:
+        await db.execute(
+            """
+            INSERT INTO swe_user_item_operation_logs
+                (source_id, user_id, user_name, operation,
+                 item_type, item_name)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                context.source_id,
+                context.user_id,
+                context.user_name,
+                operation,
+                "mcp",
+                item_name,
+            ),
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to log %s operation: %s",
+            operation,
+            e,
+        )
+
+
 def _is_distributed_from_market(client: MCPClientConfig) -> bool:
     """判断 MCP 是否来自市场分发。"""
     return client.source.startswith("marketplace:")
@@ -372,28 +408,12 @@ async def create_my_mcp(
     agent_config.mcp.clients[body.client_key] = new_client
     save_agent_config_for_request(context, agent_config, request)
 
-    # Log create operation
-    marketplace = request.app.state.marketplace
-    if marketplace.db.is_connected:
-        try:
-            await marketplace.db.execute(
-                """
-                INSERT INTO swe_user_item_operation_logs
-                    (source_id, user_id, user_name, operation,
-                     item_type, item_name)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    context.source_id,
-                    context.user_id,
-                    context.user_name,
-                    "create",
-                    "mcp",
-                    body.name,
-                ),
-            )
-        except Exception as e:
-            logger.warning("Failed to log create operation: %s", e)
+    await _log_my_mcp_operation(
+        request,
+        context,
+        "create",
+        body.name,
+    )
 
     detail = _mask_sensitive_values(new_client)
     detail.client_key = body.client_key
@@ -447,28 +467,12 @@ async def update_my_mcp(
     agent_config.mcp.clients[client_key] = updated_client
     save_agent_config_for_request(context, agent_config, request)
 
-    # Log edit operation
-    marketplace = request.app.state.marketplace
-    if marketplace.db.is_connected:
-        try:
-            await marketplace.db.execute(
-                """
-                INSERT INTO swe_user_item_operation_logs
-                    (source_id, user_id, user_name, operation,
-                     item_type, item_name)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    context.source_id,
-                    context.user_id,
-                    context.user_name,
-                    "edit",
-                    "mcp",
-                    updated_client.name,
-                ),
-            )
-        except Exception as e:
-            logger.warning("Failed to log edit operation: %s", e)
+    await _log_my_mcp_operation(
+        request,
+        context,
+        "edit",
+        updated_client.name,
+    )
 
     detail = _mask_sensitive_values(updated_client)
     detail.client_key = client_key
@@ -497,28 +501,12 @@ async def delete_my_mcp(
     del agent_config.mcp.clients[client_key]
     save_agent_config_for_request(context, agent_config, request)
 
-    # Log delete operation
-    marketplace = request.app.state.marketplace
-    if marketplace.db.is_connected:
-        try:
-            await marketplace.db.execute(
-                """
-                INSERT INTO swe_user_item_operation_logs
-                    (source_id, user_id, user_name, operation,
-                     item_type, item_name)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    context.source_id,
-                    context.user_id,
-                    context.user_name,
-                    "delete",
-                    "mcp",
-                    deleted_name,
-                ),
-            )
-        except Exception as e:
-            logger.warning("Failed to log delete operation: %s", e)
+    await _log_my_mcp_operation(
+        request,
+        context,
+        "delete",
+        deleted_name,
+    )
 
     return {"message": f"MCP client '{client_key}' deleted"}
 
@@ -592,7 +580,7 @@ async def publish_single_my_mcp_to_market(
 
     context, agent_config = load_agent_config_for_request(request)
     mark_request_state(request, context)
-    source_id = context.source_id or "default"
+    source_id = context.source_id
 
     if agent_config.mcp is None:
         raise HTTPException(400, detail=NO_MCP_CLIENTS_CONFIGURED_DETAIL)
@@ -638,7 +626,7 @@ async def publish_my_mcp_to_market(
 
     context, agent_config = load_agent_config_for_request(request)
     mark_request_state(request, context)
-    source_id = context.source_id or "default"
+    source_id = context.source_id
 
     if agent_config.mcp is None:
         raise HTTPException(400, detail=NO_MCP_CLIENTS_CONFIGURED_DETAIL)

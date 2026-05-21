@@ -33,6 +33,8 @@ def bind_tenant_context(
     tenant_id: str | None = None,
     user_id: str | None = None,
     workspace_dir: Path | None = None,
+    source_id: str | None = None,
+    scope_id: str | None = None,
 ) -> Generator[None, None, None]:
     """Bind tenant context for the duration of the context manager.
 
@@ -44,6 +46,9 @@ def bind_tenant_context(
         user_id: The user ID to bind. Optional.
         workspace_dir: The workspace directory to bind. Required for
             file operations.
+        source_id: The source ID to bind for source-scoped runtime state.
+        scope_id: The runtime scope ID to bind. If omitted, it is derived
+            from tenant_id/source_id when both are available.
 
     Yields:
         None
@@ -58,20 +63,35 @@ def bind_tenant_context(
             result = execute_job(job)
     """
     from swe.config.context import (
+        canonicalize_scope_id,
+        resolve_scope_id,
         set_current_tenant_id,
         set_current_user_id,
+        set_current_source_id,
+        set_current_scope_id,
         set_current_workspace_dir,
         reset_current_tenant_id,
         reset_current_user_id,
+        reset_current_source_id,
+        reset_current_scope_id,
         reset_current_workspace_dir,
     )
 
     tokens = []
+    resolved_scope_id = (
+        canonicalize_scope_id(scope_id)
+        if scope_id is not None
+        else resolve_scope_id(tenant_id, source_id)
+    )
     try:
         if tenant_id is not None:
             tokens.append(("tenant", set_current_tenant_id(tenant_id)))
         if user_id is not None:
             tokens.append(("user", set_current_user_id(user_id)))
+        if source_id is not None:
+            tokens.append(("source", set_current_source_id(source_id)))
+        if resolved_scope_id is not None:
+            tokens.append(("scope", set_current_scope_id(resolved_scope_id)))
         if workspace_dir is not None:
             tokens.append(
                 ("workspace", set_current_workspace_dir(workspace_dir)),
@@ -84,6 +104,10 @@ def bind_tenant_context(
                 reset_current_tenant_id(token)
             elif name == "user":
                 reset_current_user_id(token)
+            elif name == "source":
+                reset_current_source_id(token)
+            elif name == "scope":
+                reset_current_scope_id(token)
             elif name == "workspace":
                 reset_current_workspace_dir(token)
 
@@ -92,10 +116,11 @@ def get_tenant_context() -> dict:
     """Get the current tenant context as a dictionary.
 
     Returns:
-        Dictionary containing 'tenant_id', 'user_id', and 'workspace_dir'
-        (or None for each if not set).
+        Dictionary containing tenant/source/user/workspace context values.
     """
     from swe.config.context import (
+        get_current_scope_id,
+        get_current_source_id,
         get_current_tenant_id,
         get_current_user_id,
         get_current_workspace_dir,
@@ -104,6 +129,8 @@ def get_tenant_context() -> dict:
     return {
         "tenant_id": get_current_tenant_id(),
         "user_id": get_current_user_id(),
+        "source_id": get_current_source_id(),
+        "scope_id": get_current_scope_id(),
         "workspace_dir": get_current_workspace_dir(),
     }
 
@@ -172,6 +199,7 @@ def bind_request_context(
     """
     tenant_id = request.headers.get("X-Tenant-Id")
     user_id = request.headers.get("X-User-Id")
+    source_id = request.headers.get("X-Source-Id")
     workspace = getattr(request.state, "workspace", None)
     # Support both workspace_dir (standard) and path (legacy) attributes
     if workspace is not None:
@@ -185,6 +213,8 @@ def bind_request_context(
         tenant_id=tenant_id,
         user_id=user_id,
         workspace_dir=workspace_dir,
+        source_id=source_id,
+        scope_id=getattr(request.state, "scope_id", None),
     ):
         yield
 

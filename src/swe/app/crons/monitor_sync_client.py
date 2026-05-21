@@ -505,6 +505,12 @@ class MonitorSyncClient:
         Returns:
             Dict with execution sync fields
         """
+        # 手动执行且成功的任务默认标记为已读
+        is_read = is_manual and status == "success"
+        read_at = None
+        if is_read and end_time:
+            read_at = self._format_optional_time(end_time)
+
         return {
             "job_id": job.id,
             "job_name": job.name,
@@ -523,6 +529,8 @@ class MonitorSyncClient:
             "input_snapshot": self._format_optional_json(input_snapshot),
             "output_preview": self._truncate_preview(output_preview),
             "meta": "",
+            "is_read": is_read,
+            "read_at": read_at,
         }
 
     def _format_actual_time(self, time: datetime) -> str:
@@ -562,6 +570,38 @@ class MonitorSyncClient:
             logger.warning(
                 "Failed to record execution to monitor: job_id=%s status=%d",
                 exec_data.get("job_id"),
+                response.status_code,
+            )
+
+    async def mark_job_as_read(self, job_id: str) -> None:
+        """标记任务及其历史执行记录为已读。
+
+        调用 Monitor 服务的标记已读接口，将该任务所有成功的未读记录标记为已读。
+
+        Args:
+            job_id: 任务ID
+        """
+        if not self._enabled:
+            return
+
+        # Fire and forget
+        self._sync_fire_and_forget(self._do_mark_job_as_read(job_id))
+
+    async def _do_mark_job_as_read(self, job_id: str) -> None:
+        """实际执行标记已读 HTTP 调用。
+
+        Args:
+            job_id: 任务ID
+        """
+        client = await self._get_client()
+        response = await client.post(f"/monitor/cron/jobs/{job_id}/mark-read")
+
+        if response.status_code == 200:
+            logger.debug("Marked job as read in monitor: job_id=%s", job_id)
+        else:
+            logger.warning(
+                "Failed to mark job as read in monitor: job_id=%s status=%d",
+                job_id,
                 response.status_code,
             )
 

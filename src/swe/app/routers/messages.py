@@ -9,9 +9,23 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...config.context import resolve_scope_preferred_tenant_id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/messages", tags=["messages"])
+
+
+def _request_runtime_tenant_id(request: Request) -> Optional[str]:
+    request_state = getattr(request, "state", None)
+    if request_state is None:
+        return None
+
+    return resolve_scope_preferred_tenant_id(
+        getattr(request_state, "tenant_id", None),
+        getattr(request_state, "source_id", None),
+        getattr(request_state, "scope_id", None),
+    )
 
 
 def _get_multi_agent_manager(request: Request):
@@ -111,10 +125,7 @@ async def send_message(
     # Get agent ID (default to "default" if not provided)
     agent_id = x_agent_id or "default"
 
-    # Get tenant ID from request context
-    from ...config.context import get_current_effective_tenant_id
-
-    tenant_id = get_current_effective_tenant_id()
+    tenant_id = _request_runtime_tenant_id(http_request)
 
     # Get multi-agent manager from app state (via request)
     multi_agent_manager = _get_multi_agent_manager(http_request)

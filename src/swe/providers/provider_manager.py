@@ -94,6 +94,17 @@ class ProviderManager:
     _instances: dict[str, "ProviderManager"] = {}
     _instances_lock = threading.Lock()
 
+    @classmethod
+    def reset_instance_cache(cls) -> None:
+        """清空进程内 ProviderManager 单例缓存。
+
+        source-scoped cutover 期间必须确保旧的 tenant-only 单例不会在同一
+        进程生命周期里继续复用，因此这里提供显式清理入口供启动/测试调用。
+        """
+        with cls._instances_lock:
+            cls._instances.clear()
+            cls._instance = None
+
     def __init__(self, tenant_id: str = "default") -> None:
         """Initialize provider manager for a specific tenant.
 
@@ -130,7 +141,13 @@ class ProviderManager:
         Returns:
             Path to the tenant's provider configuration directory.
         """
-        return SECRET_DIR / tenant_id / "providers"
+        from ..config.utils import migrate_legacy_scope_dir_if_needed
+
+        tenant_root_dir = migrate_legacy_scope_dir_if_needed(
+            SECRET_DIR,
+            tenant_id,
+        )
+        return tenant_root_dir / "providers"
 
     @staticmethod
     def _do_initialize_provider_storage(
@@ -254,6 +271,35 @@ class ProviderManager:
             )
 
     @staticmethod
+    def _resolve_effective_provider_tenant_id(
+        tenant_id: str | None,
+    ) -> str:
+        """解析 provider 存储使用的运行时租户标识。"""
+        from ..config.context import (
+            canonicalize_scope_id,
+            get_current_scope_id,
+            get_current_source_id,
+            resolve_runtime_identity,
+        )
+
+        requested_tenant_id = tenant_id or "default"
+        current_scope_id = get_current_scope_id()
+        source_id = get_current_source_id()
+        if current_scope_id is not None:
+            _, current_source_id, _ = resolve_runtime_identity(
+                current_scope_id,
+            )
+            source_id = source_id or current_source_id
+            if tenant_id is None or requested_tenant_id == current_scope_id:
+                return canonicalize_scope_id(current_scope_id)
+
+        _, _, scope_id = resolve_runtime_identity(
+            requested_tenant_id,
+            source_id,
+        )
+        return scope_id or requested_tenant_id
+
+    @staticmethod
     def ensure_tenant_provider_storage(tenant_id: str | None) -> None:
         """Ensure tenant provider storage exists, initializing if needed.
 
@@ -262,8 +308,9 @@ class ProviderManager:
         when it doesn't exist. If the default tenant has no configuration,
         an empty directory structure is created.
 
-        When tenant_id is "default" and source_id is set in context, the
-        effective storage directory becomes default_{source_id}.
+        当显式传入 tenant_id 且当前上下文带有 source/scope 时，会写入
+        目标租户在当前 source 下的运行时 scope；未传入 tenant_id 时
+        继续沿用当前请求 scope。
 
         Args:
             tenant_id: The tenant ID to ensure storage for. If None, uses "default".
@@ -277,15 +324,12 @@ class ProviderManager:
             (provider APIs, local model APIs, runtime model creation). It is safe
             to call multiple times - subsequent calls are no-ops if storage exists.
         """
-        from ..config.context import (
-            get_current_source_id,
-            resolve_effective_tenant_id,
+        effective_tenant_id = (
+            ProviderManager._resolve_effective_provider_tenant_id(tenant_id)
         )
-
-        tenant_id = tenant_id or "default"
-        source_id = get_current_source_id()
-        effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
-        tenant_providers_dir = SECRET_DIR / effective_tenant_id / "providers"
+        tenant_providers_dir = ProviderManager._get_tenant_root_path(
+            effective_tenant_id,
+        )
 
         # Fast path: already exists
         if tenant_providers_dir.exists():
@@ -401,8 +445,9 @@ class ProviderManager:
         This method implements a multi-instance singleton pattern where
         each tenant has its own isolated ProviderManager instance.
 
-        When tenant_id is "default" and source_id is set in context, the
-        singleton key becomes default_{source_id} for source isolation.
+        当显式传入 tenant_id 且当前上下文带有 source/scope 时，单例 key
+        会解析为目标租户在当前 source 下的运行时 scope；未传入
+        tenant_id 时继续沿用当前请求 scope。
 
         Args:
             tenant_id: The tenant ID. If None, uses "default" tenant.
@@ -410,14 +455,9 @@ class ProviderManager:
         Returns:
             ProviderManager instance for the specified tenant.
         """
-        from ..config.context import (
-            get_current_source_id,
-            resolve_effective_tenant_id,
+        effective_tenant_id = (
+            ProviderManager._resolve_effective_provider_tenant_id(tenant_id)
         )
-
-        tenant_id = tenant_id or "default"
-        source_id = get_current_source_id()
-        effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
 
         # Fast path: check if instance exists without lock
         if effective_tenant_id in ProviderManager._instances:

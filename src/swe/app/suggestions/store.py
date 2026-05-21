@@ -33,7 +33,32 @@ class QAContentEntry:
     user_message_hash: str  # 用户问题的 hash
     assistant_response: str  # 提取后的助手回答
     ts: float  # 存储时间戳
-    tenant_id: str  # 租户 ID
+    scope_id: str  # 运行时隔离范围
+
+
+def _resolve_scope_key(tenant_id: Optional[str] = None) -> str:
+    """解析瞬时建议存储使用的隔离键。"""
+    try:
+        from swe.config.context import (
+            get_current_scope_id,
+            resolve_scope_preferred_tenant_id,
+        )
+
+        scope_key = resolve_scope_preferred_tenant_id(
+            tenant_id,
+            None,
+            get_current_scope_id(),
+        )
+        if scope_key is not None:
+            return scope_key
+    except Exception:
+        pass
+    return tenant_id or "default"
+
+
+def _compose_scope_key(scope_id: str, raw_key: str) -> str:
+    """组合 scope 与业务键，避免不同 scope 下发生碰撞。"""
+    return f"{scope_id}::{raw_key}"
 
 
 async def store_suggestions(
@@ -50,6 +75,8 @@ async def store_suggestions(
     """
     if not session_id or not suggestions:
         return
+    scope_key = _resolve_scope_key(tenant_id)
+    scoped_session_id = _compose_scope_key(scope_key, session_id)
 
     async with _lock:
         # 每次只保留最新的一个 suggestions entry（覆盖而不是累积）
@@ -59,10 +86,10 @@ async def store_suggestions(
             "suggestions": suggestions,
             "ts": time.time(),
             "session_id": session_id,
-            "tenant_id": tenant_id or "default",
+            "tenant_id": scope_key,
         }
 
-        _session_suggestions[session_id] = [suggestion_entry]
+        _session_suggestions[scoped_session_id] = [suggestion_entry]
 
 
 async def take_suggestions(
@@ -80,14 +107,16 @@ async def take_suggestions(
     """
     if not session_id:
         return []
+    scope_key = _resolve_scope_key(tenant_id)
+    scoped_session_id = _compose_scope_key(scope_key, session_id)
 
     async with _lock:
-        suggestions = _session_suggestions.get(session_id, [])
+        suggestions = _session_suggestions.get(scoped_session_id, [])
         _prune_expired(suggestions)
 
         # 移除该 session 的建议
-        if session_id in _session_suggestions:
-            del _session_suggestions[session_id]
+        if scoped_session_id in _session_suggestions:
+            del _session_suggestions[scoped_session_id]
 
         return _strip_ts(suggestions)
 
@@ -107,9 +136,11 @@ async def peek_suggestions(
     """
     if not session_id:
         return []
+    scope_key = _resolve_scope_key(tenant_id)
+    scoped_session_id = _compose_scope_key(scope_key, session_id)
 
     async with _lock:
-        suggestions = _session_suggestions.get(session_id, [])
+        suggestions = _session_suggestions.get(scoped_session_id, [])
         _prune_expired(suggestions)
         return _strip_ts(suggestions)
 
@@ -177,21 +208,22 @@ async def store_qa_content(
     if not chat_id or not user_message or not assistant_response:
         return
 
-    tenant_key = tenant_id or "default"
+    scope_key = _resolve_scope_key(tenant_id)
+    scoped_chat_id = _compose_scope_key(scope_key, chat_id)
     user_message_hash = _hash_user_message(user_message)
     entry = QAContentEntry(
         user_message=user_message,
         user_message_hash=user_message_hash,
         assistant_response=assistant_response,
         ts=time.time(),
-        tenant_id=tenant_key,
+        scope_id=scope_key,
     )
 
     async with _lock:
-        existing = _qa_content_store.get(chat_id, {})
+        existing = _qa_content_store.get(scoped_chat_id, {})
         existing = _prune_expired_qa_content(existing, max_age_seconds)
         existing[user_message_hash] = entry
-        _qa_content_store[chat_id] = existing
+        _qa_content_store[scoped_chat_id] = existing
 
 
 async def get_qa_content(
@@ -204,19 +236,20 @@ async def get_qa_content(
     if not chat_id or not user_message:
         return None
 
-    tenant_key = tenant_id or "default"
+    scope_key = _resolve_scope_key(tenant_id)
+    scoped_chat_id = _compose_scope_key(scope_key, chat_id)
     user_message_hash = _hash_user_message(user_message)
 
     async with _lock:
-        entries = _qa_content_store.get(chat_id, {})
+        entries = _qa_content_store.get(scoped_chat_id, {})
         entries = _prune_expired_qa_content(entries, max_age_seconds)
         if entries:
-            _qa_content_store[chat_id] = entries
-        elif chat_id in _qa_content_store:
-            del _qa_content_store[chat_id]
+            _qa_content_store[scoped_chat_id] = entries
+        elif scoped_chat_id in _qa_content_store:
+            del _qa_content_store[scoped_chat_id]
 
         entry = entries.get(user_message_hash)
-        if entry is None or entry.tenant_id != tenant_key:
+        if entry is None or entry.scope_id != scope_key:
             return None
 
         return {

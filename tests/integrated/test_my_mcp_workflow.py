@@ -9,6 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from swe.config.config import MCPClientConfig, MCPConfig
 
+pytest.importorskip("swe.app.routers.my_mcp")
+
 
 @pytest.fixture
 def test_app():
@@ -128,7 +130,9 @@ class TestMyMCPFullWorkflow:
             detail_data = detail_response.json()
             assert detail_data["client_key"] == "test-tool"
             assert detail_data["command"] == "npx"
-            assert detail_data["env"]["API_KEY"] == "se**********2345"  # 脱敏展示
+            assert (
+                detail_data["env"]["API_KEY"] == "se**********2345"
+            )  # 脱敏展示
 
         # ===== Step 4: 更新 MCP =====
         with patch(
@@ -162,7 +166,9 @@ class TestMyMCPFullWorkflow:
                     toggle_response = client.patch("/my-mcp/test-tool/toggle")
                     assert toggle_response.status_code == 200
                     toggle_data = toggle_response.json()
-                    assert toggle_data["enabled"] is False  # 从 True 变为 False
+                    assert (
+                        toggle_data["enabled"] is False
+                    )  # 从 True 变为 False
 
         # ===== Step 6: 再次启停（恢复启用） =====
         created_client.enabled = False
@@ -175,7 +181,9 @@ class TestMyMCPFullWorkflow:
                     toggle_response2 = client.patch("/my-mcp/test-tool/toggle")
                     assert toggle_response2.status_code == 200
                     toggle_data2 = toggle_response2.json()
-                    assert toggle_data2["enabled"] is True  # 从 False 变为 True
+                    assert (
+                        toggle_data2["enabled"] is True
+                    )  # 从 False 变为 True
 
         # ===== Step 7: 删除 MCP =====
         created_client.enabled = True
@@ -343,13 +351,13 @@ class TestMultipleMCPWorkflow:
                         assert response.status_code == 201
 
                         # 模拟创建后的状态
-                        mcp_config.clients[
-                            client_data["client_key"]
-                        ] = MCPClientConfig(
-                            name=client_data["name"],
-                            command=client_data["command"],
-                            args=client_data["args"],
-                            source="",
+                        mcp_config.clients[client_data["client_key"]] = (
+                            MCPClientConfig(
+                                name=client_data["name"],
+                                command=client_data["command"],
+                                args=client_data["args"],
+                                source="",
+                            )
                         )
 
         # 验证列表包含所有 MCP

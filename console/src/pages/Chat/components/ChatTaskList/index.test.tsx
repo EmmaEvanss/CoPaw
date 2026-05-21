@@ -132,4 +132,45 @@ describe("ChatTaskList actions", () => {
 
     expect(onTaskResume).toHaveBeenCalledWith(task);
   });
+
+  it("shows completed status instead of scheduled result preview", () => {
+    const task = taskJob({
+      task: {
+        visible_in_my_tasks: true,
+        has_scheduled_result: true,
+        latest_scheduled_preview: "这里是返回内容截取",
+        unread_execution_count: 0,
+        is_running: false,
+        is_paused: false,
+        pause_reason: null,
+        last_scheduled_run_at: "2026-05-21T08:00:00Z" as any,
+      },
+    });
+
+    render(<ChatTaskList tasks={[task]} />);
+
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByText("这里是返回内容截取")).toBeNull();
+  });
+
+  it("shows unread badge without hiding task actions", () => {
+    const task = taskJob({
+      task: {
+        visible_in_my_tasks: true,
+        has_scheduled_result: true,
+        latest_scheduled_preview: "",
+        unread_execution_count: 3,
+        is_running: false,
+        is_paused: false,
+        pause_reason: null,
+      },
+    });
+
+    const { container } = render(<ChatTaskList tasks={[task]} />);
+
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(
+      container.querySelector(".chat-task-list-item-action-trigger"),
+    ).toBeInTheDocument();
+  });
 });

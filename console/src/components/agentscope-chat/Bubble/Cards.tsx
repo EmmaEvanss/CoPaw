@@ -22,7 +22,7 @@ const Card = React.memo(function (props: ICardProps) {
     const cardConfigMap = cardConfig;
 
     return cardConfigMap?.[props.code] || (() => `${props.code} not found`);
-  }, []);
+  }, [cardConfig, props.code, props.component]);
 
   if (typeof Component === "function") {
     const { component, ...rest } = props;

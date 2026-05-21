@@ -1,0 +1,101 @@
+.systemConfigPage {
+  min-height: calc(100vh - 128px);
+  padding: 0 0 24px;
+}
+
+.pageBody {
+  display: grid;
+  gap: 16px;
+  padding: 0 20px;
+}
+
+.metaCard,
+.switchCard,
+.stateCard {
+  border-radius: 16px;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.metaLabel {
+  display: block;
+  margin-bottom: 6px;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+}
+
+.metaValue {
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 14px;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.switchList {
+  display: grid;
+  gap: 12px;
+}
+
+.switchRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid rgba(5, 5, 5, 0.06);
+}
+
+.switchRow:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.switchCopy {
+  display: grid;
+  gap: 4px;
+}
+
+.switchTitle {
+  color: rgba(0, 0, 0, 0.88);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.switchDescription {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.actionRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.centerState {
+  display: flex;
+  min-height: 360px;
+  align-items: center;
+  justify-content: center;
+}
+
+:global(.dark-mode) {
+  .metaLabel,
+  .switchDescription {
+    color: rgba(255, 255, 255, 0.45);
+  }
+
+  .metaValue,
+  .switchTitle {
+    color: rgba(255, 255, 255, 0.88);
+  }
+
+  .switchRow {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+}

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 from fastapi import HTTPException, Request
 from starlette.responses import Response
+from swe.config.context import encode_scope_id
 
 from swe.tenant_models.models import (
     TenantModelConfig,
@@ -83,6 +84,29 @@ class TestTenantWorkspaceExemptions:
         for route in exempt_routes:
             assert "login" in route or "register" in route or "auth" in route
 
+    def test_public_text_asset_api_routes_exempt(self):
+        """Public text asset API routes should bypass workspace loading."""
+        from swe.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+        assert middleware._is_workspace_exempt("/api/assets/text/read") is True
+
+    def test_internal_api_routes_exempt(self):
+        """Internal callbacks should bypass workspace loading."""
+        from swe.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+        assert (
+            middleware._is_workspace_exempt("/api/internal/cron/callback")
+            is True
+        )
+
 
 class TestTenantWorkspaceHelpers:
     """Tests for workspace helper functions."""
@@ -125,13 +149,15 @@ class TestTenantWorkspaceHelpers:
             TenantWorkspaceMiddleware,
         )
 
-        effective_root = Path("/tmp/default_RMASSIST")
+        scope_id = encode_scope_id("default", "RMASSIST")
+        effective_root = Path(f"/tmp/{scope_id}")
 
         mock_req = MagicMock(spec=Request)
         mock_req.method = "GET"
         mock_req.state = MagicMock()
         mock_req.state.tenant_id = "default"
-        mock_req.state.effective_tenant_id = "default_RMASSIST"
+        mock_req.state.effective_tenant_id = scope_id
+        mock_req.state.scope_id = scope_id
         mock_req.state.source_id = "RMASSIST"
         mock_req.url = MagicMock()
         mock_req.url.path = "/api/test"
@@ -152,11 +178,14 @@ class TestTenantWorkspaceHelpers:
 
         assert response.status_code == 200
         pool.ensure_bootstrap.assert_awaited_once_with(
-            "default_RMASSIST",
+            "default",
             source_id="RMASSIST",
+            scope_id=scope_id,
+            tenant_name=mock_req.state.user_name,
+            bbk_id=mock_req.state.bbk_id,
         )
         pool.get_tenant_workspace_dir.assert_called_once_with(
-            "default_RMASSIST",
+            scope_id,
         )
 
     @pytest.mark.asyncio
@@ -199,6 +228,9 @@ class TestTenantWorkspaceContextReset:
         raise AssertionError("Test requires full app dependencies")
 
 
+@pytest.mark.skip(
+    reason="TenantModelContext 已移除，租户模型配置现由 ProviderManager 管理",
+)
 class TestTenantModelConfigLoading:
     """Tests for tenant model configuration loading in middleware."""
 
@@ -483,6 +515,9 @@ class TestTenantModelConfigLoading:
             assert response.status_code == 200
 
 
+@pytest.mark.skip(
+    reason="Provider 存储初始化现由 ProviderManager 负责",
+)
 class TestTenantProviderConfigInitialization:
     """Tests for tenant provider config auto-initialization in middleware."""
 

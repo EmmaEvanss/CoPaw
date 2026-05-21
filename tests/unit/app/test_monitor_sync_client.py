@@ -33,10 +33,11 @@ class TestMonitorSyncClient:
         assert client._base_url == "http://test:8080/api"
         assert client._enabled is True
 
-    def test_client_disabled_when_no_url(self):
-        """Test client disabled when no URL."""
+    def test_client_uses_default_url_when_empty_string(self):
+        """Test client falls back to default URL when base_url is empty."""
         client = MonitorSyncClient("")
-        assert client._enabled is False
+        assert client._base_url == "http://localhost:9090/api"
+        assert client._enabled is True
 
     def test_get_monitor_sync_client_singleton(self):
         """Test singleton pattern for sync client."""

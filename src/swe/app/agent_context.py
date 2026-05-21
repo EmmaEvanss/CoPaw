@@ -11,11 +11,13 @@ from fastapi import Request
 
 from ..config.utils import load_config, get_tenant_config_path
 from ..config.context import (
+    canonicalize_scope_id,
+    get_current_scope_id,
     get_current_tenant_id,
     get_current_user_id,
     get_current_source_id,
     TenantContextError,
-    resolve_effective_tenant_id,
+    resolve_runtime_tenant_id,
 )
 from .middleware.tenant_workspace import TenantWorkspaceContext
 
@@ -46,16 +48,28 @@ def _resolve_source_id(request: Request) -> Optional[str]:
     return source_id
 
 
+def _resolve_scope_id(request: Request | None = None) -> Optional[str]:
+    """Resolve runtime scope ID from context or request state."""
+    scope_id = get_current_scope_id()
+    if scope_id is None and request is not None:
+        scope_id = getattr(request.state, "scope_id", None)
+    if scope_id is None:
+        return None
+    return canonicalize_scope_id(scope_id)
+
+
 def _resolve_effective_tenant_id(
     tenant_id: Optional[str],
     source_id: Optional[str] = None,
+    scope_id: Optional[str] = None,
 ) -> Optional[str]:
-    """Resolve source-scoped effective tenant without changing logical ID."""
+    """Resolve the runtime tenant ID for scoped workspace/config access."""
+    resolved_scope_id = scope_id or get_current_scope_id()
+    if resolved_scope_id is not None:
+        return canonicalize_scope_id(resolved_scope_id)
     if tenant_id is None:
         return None
-    if tenant_id != "default" or not source_id:
-        return tenant_id
-    return resolve_effective_tenant_id(tenant_id, source_id)
+    return resolve_runtime_tenant_id(tenant_id, source_id)
 
 
 def _resolve_user_id(request: Request) -> Optional[str]:
@@ -111,6 +125,7 @@ def _get_cached_workspace(
 def _get_tenant_aware_config(
     tenant_id: Optional[str] = None,
     source_id: Optional[str] = None,
+    scope_id: Optional[str] = None,
 ):
     """Get config with tenant awareness.
 
@@ -127,7 +142,13 @@ def _get_tenant_aware_config(
         tenant_id = get_current_tenant_id()
     if source_id is None:
         source_id = get_current_source_id()
-    effective_tenant_id = _resolve_effective_tenant_id(tenant_id, source_id)
+    if scope_id is None:
+        scope_id = get_current_scope_id()
+    effective_tenant_id = _resolve_effective_tenant_id(
+        tenant_id,
+        source_id,
+        scope_id=scope_id,
+    )
     if effective_tenant_id is None:
         return load_config()
     return load_config(get_tenant_config_path(effective_tenant_id))
@@ -159,7 +180,12 @@ async def get_agent_for_request(
     # Resolve contexts and target agent
     tenant_id = _resolve_tenant_id(request)
     source_id = _resolve_source_id(request)
-    effective_tenant_id = _resolve_effective_tenant_id(tenant_id, source_id)
+    scope_id = _resolve_scope_id(request)
+    effective_tenant_id = _resolve_effective_tenant_id(
+        tenant_id,
+        source_id,
+        scope_id=scope_id,
+    )
     user_id = _resolve_user_id(request)
     target_agent_id, explicit_agent_requested = _resolve_target_agent_id(
         request,
@@ -176,7 +202,11 @@ async def get_agent_for_request(
         return workspace
 
     # Load config and determine target agent
-    config = _get_tenant_aware_config(tenant_id, source_id=source_id)
+    config = _get_tenant_aware_config(
+        tenant_id,
+        source_id=source_id,
+        scope_id=scope_id,
+    )
     if not target_agent_id:
         target_agent_id = config.agents.active_agent or "default"
 

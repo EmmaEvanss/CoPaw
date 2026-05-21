@@ -15,6 +15,7 @@ from pathlib import Path
 import time
 from typing import Optional
 
+from ...config.context import resolve_runtime_identity
 from .tenant_initializer import TenantInitializer
 from .workspace import Workspace
 
@@ -120,6 +121,7 @@ class TenantWorkspacePool:
         self,
         tenant_id: str,
         source_id: str | None = None,
+        scope_id: str | None = None,
         tenant_name: str | None = None,
         bbk_id: str | None = None,
     ) -> None:
@@ -131,20 +133,34 @@ class TenantWorkspacePool:
             tenant_id: The tenant identifier.
             source_id: Optional source identifier from X-Source-Id header.
                 Used to select the appropriate default_{source} template.
+            scope_id: Optional explicit runtime scope. When set, bootstrap
+                state is keyed by this scope instead of re-deriving it.
             tenant_name: Optional tenant/user name for database record.
             bbk_id: Optional BBK identifier for database record.
 
         Raises:
             RuntimeError: If bootstrap fails.
         """
+        if scope_id is not None:
+            bootstrap_tenant_id = resolve_runtime_identity(scope_id)[2]
+            if bootstrap_tenant_id is None:
+                raise ValueError(
+                    "scope_id must resolve to a canonical runtime scope",
+                )
+        else:
+            bootstrap_tenant_id = (
+                resolve_runtime_identity(tenant_id, source_id)[2] or tenant_id
+            )
+
         # Fast path: check if already bootstrapped
         async with self._registry_lock:
-            entry = self._workspaces.get(tenant_id)
+            entry = self._workspaces.get(bootstrap_tenant_id)
             if entry is not None:
                 initializer = TenantInitializer(
                     self._base_working_dir,
                     tenant_id,
                     source_id=source_id,
+                    scope_id=scope_id,
                 )
                 if initializer.has_seeded_bootstrap():
                     self._mark_access(entry)
@@ -152,28 +168,35 @@ class TenantWorkspacePool:
                 logger.warning(
                     "Tenant %s cached in pool but scaffold is incomplete. "
                     "Running self-heal bootstrap.",
-                    tenant_id,
+                    bootstrap_tenant_id,
                 )
 
         # Slow path: need to bootstrap or self-heal (with per-tenant lock)
-        bootstrap_lock = await self._get_or_create_bootstrap_lock(tenant_id)
+        bootstrap_lock = await self._get_or_create_bootstrap_lock(
+            bootstrap_tenant_id,
+        )
         async with bootstrap_lock:
             # Double-check after acquiring lock
             async with self._registry_lock:
-                entry = self._workspaces.get(tenant_id)
+                entry = self._workspaces.get(bootstrap_tenant_id)
             initializer = TenantInitializer(
                 self._base_working_dir,
                 tenant_id,
                 source_id=source_id,
+                scope_id=scope_id,
             )
             if entry is not None and initializer.has_seeded_bootstrap():
                 self._mark_access(entry)
                 return
 
             # Perform seeded bootstrap (outside registry lock to avoid blocking)
-            workspace_dir = self._get_tenant_workspace_dir(tenant_id)
+            workspace_dir = self._get_tenant_workspace_dir(
+                bootstrap_tenant_id,
+            )
             logger.info(
-                f"Bootstrapping tenant directory: {tenant_id} at {workspace_dir}",
+                "Bootstrapping tenant directory: %s at %s",
+                bootstrap_tenant_id,
+                workspace_dir,
             )
 
             try:
@@ -200,13 +223,24 @@ class TenantWorkspacePool:
                 # - default user: always "default"
                 # - non-default user with source: "default_{source_id}"
                 # - non-default user without source: "default"
-                if tenant_id == "default":
+                if tenant_id == "default" and scope_id is None:
                     init_source = "default"
                 else:
                     init_source = initializer.template_name
+                (
+                    logical_tenant_id,
+                    resolved_source_id,
+                    _scope_id,
+                ) = (
+                    resolve_runtime_identity(scope_id)
+                    if scope_id is not None
+                    else resolve_runtime_identity(tenant_id, source_id)
+                )
+                # DB 映射服务于运维侧按来源查询，应保存逻辑租户，
+                # 不能把运行时隔离目录使用的 opaque scope 暴露出去。
                 await self._record_init_source_mapping(
-                    tenant_id,
-                    source_id,
+                    logical_tenant_id or tenant_id,
+                    resolved_source_id or source_id,
                     init_source,
                     tenant_name=tenant_name,
                     bbk_id=bbk_id,
@@ -214,24 +248,26 @@ class TenantWorkspacePool:
 
                 # Register in pool (no workspace runtime created)
                 async with self._registry_lock:
-                    if tenant_id not in self._workspaces:
+                    if bootstrap_tenant_id not in self._workspaces:
                         entry = TenantWorkspaceEntry(
-                            tenant_id=tenant_id,
+                            tenant_id=bootstrap_tenant_id,
                             workspace=None,  # Runtime not started
                         )
-                        self._workspaces[tenant_id] = entry
+                        self._workspaces[bootstrap_tenant_id] = entry
                     else:
-                        entry = self._workspaces[tenant_id]
+                        entry = self._workspaces[bootstrap_tenant_id]
                     self._mark_access(entry)
 
-                logger.info(f"Tenant bootstrapped: {tenant_id}")
+                logger.info("Tenant bootstrapped: %s", bootstrap_tenant_id)
 
             except Exception as e:
                 logger.error(
-                    f"Failed to bootstrap tenant {tenant_id}: {e}",
+                    "Failed to bootstrap tenant %s: %s",
+                    bootstrap_tenant_id,
+                    e,
                 )
                 raise RuntimeError(
-                    f"Failed to bootstrap tenant {tenant_id}: {e}",
+                    f"Failed to bootstrap tenant {bootstrap_tenant_id}: {e}",
                 ) from e
 
     async def _record_init_source_mapping(
@@ -315,19 +351,41 @@ class TenantWorkspacePool:
             tenant_id,
         )
 
-        from ..multi_agent_manager import MultiAgentManager
+        async with self._registry_lock:
+            entry = self._workspaces.get(tenant_id)
+            if entry is not None and entry.workspace is not None:
+                self._mark_access(entry)
+                return entry.workspace
 
-        # Ensure tenant is bootstrapped first
         await self.ensure_bootstrap(tenant_id)
 
-        # Delegate workspace creation and startup to MultiAgentManager
-        # Note: This creates a new MultiAgentManager instance each time,
-        # which breaks caching semantics. This is why the method is deprecated.
-        multi_agent_manager = MultiAgentManager()
-        return await multi_agent_manager.get_agent(
-            agent_id,
-            tenant_id=tenant_id,
-        )
+        async with self._registry_lock:
+            entry = self._workspaces.get(tenant_id)
+            if entry is not None and entry.workspace is not None:
+                self._mark_access(entry)
+                return entry.workspace
+
+            workspace = Workspace(
+                agent_id=agent_id,
+                workspace_dir=str(
+                    self._get_tenant_workspace_dir(tenant_id)
+                    / "workspaces"
+                    / agent_id,
+                ),
+                tenant_id=tenant_id,
+            )
+
+            if entry is None:
+                entry = TenantWorkspaceEntry(
+                    tenant_id=tenant_id,
+                    workspace=workspace,
+                )
+                self._workspaces[tenant_id] = entry
+            else:
+                entry.workspace = workspace
+
+            self._mark_access(entry)
+            return workspace
 
     async def get(self, tenant_id: str) -> Optional[Workspace]:
         """Get existing workspace for tenant if it exists.

@@ -1,20 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Runner module with chat manager for coordinating repository."""
+"""Runner 模块导出入口。
+
+这里避免在包导入阶段立刻加载 `runner.py`，否则像
+`react_agent -> tools -> update_task_progress -> app.runner.task_progress`
+这样的轻量子模块引用，也会被动触发 `AgentRunner` 导入并形成循环依赖。
+"""
 
 from __future__ import annotations
-
-from .runner import AgentRunner
-from .api import router
-from .manager import ChatManager
-from .models import (
-    ChatSpec,
-    ChatHistory,
-    ChatsFile,
-)
-from .repo import (
-    BaseChatRepository,
-    JsonChatRepository,
-)
 
 __all__ = [
     # Core classes

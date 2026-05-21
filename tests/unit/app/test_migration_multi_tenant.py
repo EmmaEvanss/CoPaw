@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 import swe.app.migration as migration_module
@@ -16,9 +18,11 @@ from swe.app.migration import (
 )
 from swe.config.config import (
     Config,
+    AgentProfileConfig,
     AgentsConfig,
     AgentProfileRef,
     load_agent_config,
+    save_agent_config,
 )
 from swe.config.utils import save_config
 from swe.constant import BUILTIN_QA_AGENT_ID
@@ -120,7 +124,7 @@ def test_ensure_skill_pool_initialized_uses_tenant_working_dir(
     assert not (global_dir / "skill_pool").exists()
 
 
-def test_load_agent_config_creates_agent_json_under_tenant_config_path(
+def test_load_agent_config_requires_existing_agent_json(
     tmp_path,
 ):
     tenant_dir = tmp_path / "tenant-delta"
@@ -142,11 +146,91 @@ def test_load_agent_config_creates_agent_json_under_tenant_config_path(
         tenant_dir / "config.json",
     )
 
-    agent_config = load_agent_config(
+    with pytest.raises(FileNotFoundError):
+        load_agent_config(
+            "default",
+            config_path=tenant_dir / "config.json",
+        )
+
+    assert not (workspace_dir / "agent.json").exists()
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_legacy_workspace_reference_is_resolved_to_canonical_workspace(
+    tmp_path,
+):
+    tenant_dir = tmp_path / "tenant-echo"
+    canonical_workspace = tenant_dir / "workspaces" / "default"
+    legacy_workspace = (
+        tmp_path / "scope.v1.tenant-echo" / "workspaces" / "default"
+    )
+    canonical_workspace.mkdir(parents=True)
+    (canonical_workspace / "agent.json").write_text(
+        json.dumps(
+            {
+                "id": "default",
+                "name": "Default",
+                "workspace_dir": str(canonical_workspace),
+            },
+        ),
+        encoding="utf-8",
+    )
+    save_config(
+        Config(
+            agents=AgentsConfig(
+                active_agent="default",
+                profiles={
+                    "default": AgentProfileRef(
+                        id="default",
+                        workspace_dir=str(legacy_workspace),
+                    ),
+                },
+            ),
+        ),
+        tenant_dir / "config.json",
+    )
+
+    loaded = load_agent_config(
         "default",
         config_path=tenant_dir / "config.json",
     )
 
-    assert agent_config.workspace_dir == str(workspace_dir)
-    assert (workspace_dir / "agent.json").exists()
-    assert not (tmp_path / "config.json").exists()
+    assert loaded.workspace_dir == str(canonical_workspace)
+    assert not legacy_workspace.exists()
+
+
+def test_save_agent_config_does_not_recreate_legacy_workspace_reference(
+    tmp_path,
+):
+    tenant_dir = tmp_path / "tenant-foxtrot"
+    canonical_workspace = tenant_dir / "workspaces" / "default"
+    legacy_workspace = (
+        tmp_path / "scope.v1.tenant-foxtrot" / "workspaces" / "default"
+    )
+    save_config(
+        Config(
+            agents=AgentsConfig(
+                active_agent="default",
+                profiles={
+                    "default": AgentProfileRef(
+                        id="default",
+                        workspace_dir=str(legacy_workspace),
+                    ),
+                },
+            ),
+        ),
+        tenant_dir / "config.json",
+    )
+
+    save_agent_config(
+        "default",
+        AgentProfileConfig(
+            id="default",
+            name="Default",
+            workspace_dir=str(canonical_workspace),
+        ),
+        config_path=tenant_dir / "config.json",
+    )
+
+    assert (canonical_workspace / "agent.json").exists()
+    assert not legacy_workspace.exists()

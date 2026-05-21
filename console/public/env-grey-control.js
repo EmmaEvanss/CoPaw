@@ -7,5 +7,9 @@
  */
 window.__env__ = {
   baseUrl: "", // nginx将动态替换这里的内容
-  // baseUrl: "http://localhost:8088"
+  serviceUnitId: '',
+  env: '',
+  systemCode: '',
+  systemSecret: '',
+  responseFeedbackUserWhitelist: ["*"], // 回答反馈卡片白名单，"*"表示全员开放
 };

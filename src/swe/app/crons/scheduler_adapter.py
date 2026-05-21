@@ -46,6 +46,7 @@ class SchedulerAdapter(ABC):
         job_name: str,
         cron: str,
         callback_url: str,
+        source_id: str = "",
     ) -> str:
         """向外部调度平台注册一个定时任务。
 
@@ -74,6 +75,7 @@ class SchedulerAdapter(ABC):
         job_name: str,
         cron: str,
         callback_url: str,
+        source_id: str = "",
     ) -> None:
         """更新外部平台上已注册的任务。
 
@@ -132,6 +134,7 @@ class NoopSchedulerAdapter(SchedulerAdapter):
         job_name: str,
         cron: str,
         callback_url: str,
+        source_id: str = "",
     ) -> str:
         logger.debug(
             "NoopAdapter.register_job: tenant=%s agent=%s type=%s name=%s job=%s cron=%s url=%s",
@@ -155,6 +158,7 @@ class NoopSchedulerAdapter(SchedulerAdapter):
         job_name: str,
         cron: str,
         callback_url: str,
+        source_id: str = "",
     ) -> None:
         logger.debug(
             "NoopAdapter.update_job: ext_id=%s tenant=%s agent=%s type=%s name=%s job=%s cron=%s",
@@ -236,6 +240,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
         job_name: str,
         cron: str,
         callback_url: str,
+        source_id: str = "",
     ) -> str:
         payload = self._build_add_payload(
             tenant_id,
@@ -245,13 +250,15 @@ class RealSchedulerAdapter(SchedulerAdapter):
             job_name,
             cron,
             callback_url,
+            source_id=source_id,
         )
         resp_data = await self._post("/job-admin/v2/add-job", payload)
         ext_id = str(resp_data.get("content", ""))
         logger.info(
-            "RealAdapter registered job: ext_id=%s tenant=%s agent=%s type=%s job=%s",
+            "RealAdapter registered job: ext_id=%s tenant=%s source=%s agent=%s type=%s job=%s",
             ext_id,
             tenant_id,
+            source_id,
             agent_id,
             task_type,
             job_id,
@@ -269,6 +276,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
         job_name: str,
         cron: str,
         callback_url: str,
+        source_id: str = "",
     ) -> None:
         payload = self._build_add_payload(
             tenant_id,
@@ -278,13 +286,15 @@ class RealSchedulerAdapter(SchedulerAdapter):
             job_name,
             cron,
             callback_url,
+            source_id=source_id,
         )
         payload["id"] = int(external_id)
         await self._post("/job-admin/v2/update-job", payload)
         logger.info(
-            "RealAdapter updated job: ext_id=%s tenant=%s agent=%s type=%s job=%s",
+            "RealAdapter updated job: ext_id=%s tenant=%s source=%s agent=%s type=%s job=%s",
             external_id,
             tenant_id,
+            source_id,
             agent_id,
             task_type,
             job_id,
@@ -362,6 +372,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
     @staticmethod
     def _build_job_param(
         tenant_id: str,
+        source_id: str,
         agent_id: str,
         task_type: str,
         job_id: str,
@@ -374,6 +385,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
         payload = json.dumps(
             {
                 "tenant_id": tenant_id,
+                "source_id": source_id,
                 "agent_id": agent_id,
                 "task_type": task_type,
                 "job_id": job_id,
@@ -391,10 +403,14 @@ class RealSchedulerAdapter(SchedulerAdapter):
         job_name: str,
         cron: str,
         callback_url: str,
+        source_id: str = "",
     ) -> dict:
         """构建 add-job / update-job 的请求体。"""
+        identity = tenant_id
+        if source_id:
+            identity = f"{tenant_id}/{source_id}"
         job_desc = _truncate(
-            f"[SWE] {tenant_id}/{agent_id}/{task_type} - {job_name}",
+            f"[SWE] {identity}/{agent_id}/{task_type} - {job_name}",
             _MAX_JOBDESC_CHARS,
         )
         glue_remark = _truncate(job_id, _MAX_GLUEREMARK_CHARS)
@@ -412,6 +428,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
             "clientRemark": self._client_remark,
             "jobParam": self._build_job_param(
                 tenant_id,
+                source_id,
                 agent_id,
                 task_type,
                 job_id,

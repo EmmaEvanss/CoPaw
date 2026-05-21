@@ -1,6 +1,7 @@
 # 租户、应用、来源、管理员关系及目录层级深度分析报告
 
 **调查日期**: 2026-05-04
+**最近更新**: 2026-05-17（已按 `scope_id` 统一运行时隔离语义修订）
 **调查方式**: 基于实际代码文件分析（禁止猜测和假设）
 
 ---
@@ -20,15 +21,11 @@ tenant_id = request.headers.get("X-Tenant-Id")
 - 默认租户标识为 `"default"`
 - 每个租户拥有独立的工作目录和数据隔离
 
-**租户类型区分**（来源：`src/swe/config/context.py:359-380`）：
+**运行时 scope 解析**（来源：`src/swe/config/context.py`）：
 
 ```python
 def resolve_effective_tenant_id(tenant_id: str, source_id: str | None) -> str:
-    if tenant_id == "default":
-        if source_id:
-            return f"default_{source_id}"
-        return "default"
-    return tenant_id  # 非默认租户不受 source_id 影响
+    return resolve_runtime_tenant_id(tenant_id, source_id) or tenant_id
 ```
 
 ### 1.2 来源 (Source)
@@ -41,8 +38,9 @@ current_source_id: ContextVar[str | None] = ContextVar("current_source_id", defa
 
 **关键特性**:
 - 通过 HTTP Header `X-Source-Id` 传递
-- **仅对默认租户生效**：当 `tenant_id=default` 时，实际目录变为 `default_{source_id}`
-- 非默认租户不受 `source_id` 影响
+- **对所有租户统一生效**：当 `tenant_id` 与 `source_id` 同时存在时，
+  运行时目录、Provider、本地缓存和临时状态都会进入独立 `scope_id`
+- `default_{source_id}` 仅保留为模板目录命名语义，不再代表运行时 tenant 目录
 
 ### 1.3 来源到租户的转换机制（iframe 嵌入场景）
 
@@ -222,19 +220,20 @@ async def distribute_mcp(item_id, req, request, x_source_id, x_manager, x_user_i
 
 ```text
 ~/.swe/                                     # WORKING_DIR
-├── default/                                # 默认租户
+├── default/                                # 默认逻辑租户 / 模板根
 │   ├── config.json
 │   ├── workspaces/default/
 │   │   ├── agent.json, chats.json, jobs.json
 │   │   ├── sessions/, memory/, skills/
 │   └── skill_pool/
-├── default_ruice/                          # source_id=ruice 时的默认租户
-└── {sapId}/                                # iframe 用户的租户（sapId 直接作为目录名）
+├── default_ruice/                          # source 模板目录（初始化模板，不是 runtime tenant）
+├── <default>.<ruice>/                      # default + ruice 的运行时目录
+└── <sapId>.<ruice>/                        # iframe 用户 + ruice 的运行时目录
 
 ~/.swe.secret/                              # SECRET_DIR
-├── default/providers/                      # Provider 配置
-├── default_ruice/providers/
-└── {sapId}/providers/                      # iframe 用户的 Provider 配置
+├── default/providers/                      # 默认模板 Provider 配置
+├── default_ruice/providers/                # source 模板 Provider 配置
+└── <tenant>.<source>/providers/            # 运行时 Provider 隔离目录
 ```
 
 ### 3.2 租户-来源-目录映射
@@ -242,10 +241,60 @@ async def distribute_mcp(item_id, req, request, x_source_id, x_manager, x_user_i
 | tenant_id | source_id | effective_tenant_id | 工作目录 |
 |-----------|-----------|---------------------|----------|
 | `default` | `None` | `default` | `~/.swe/default/` |
-| `default` | `ruice` | `default_ruice` | `~/.swe/default_ruice/` |
-| `{sapId}` | `ruice` | `{sapId}` | `~/.swe/{sapId}/` |
+| `default` | `ruice` | `<default>.<ruice>` | `~/.swe/<default>.<ruice>/` |
+| `{sapId}` | `ruice` | `<sapId>.<ruice>` | `~/.swe/<sapId>.<ruice>/` |
 
-**关键规则**：非默认租户（包括 iframe 用户 sapId）不受 source_id 影响。
+**关键规则**：只要请求进入 tenant-scoped runtime，`source_id` 就会参与运行时 scope 计算；非默认租户也不再复用裸 `tenant_id` 目录。
+
+### 3.3 历史裸目录迁移
+
+当历史环境仍保留以下旧目录时：
+
+```text
+~/.swe/<tenant-id>/
+~/.swe.secret/<tenant-id>/
+```
+
+且这些目录实际属于某个已知 `source_id`，可使用脚本：
+
+```bash
+python scripts/migrate_tenant_scope_dirs.py \
+  --tenant-id <tenant-id> \
+  --source-id <source-id> \
+  --dry-run
+```
+
+如需按同一 `source_id` 批量迁移多个租户，可使用：
+
+```bash
+python scripts/migrate_tenant_scope_dirs.py \
+  --tenant-ids tenant-a,tenant-b \
+  --source-id <source-id> \
+  --dry-run
+```
+
+批量模式会先对整批租户执行预检查，只要任一目标目录已存在就整批拒绝，
+避免出现部分租户先迁移、后续租户失败的半完成状态。确认输出无误后移除
+`--dry-run` 执行正式迁移。脚本会把目录移动到
+`<encoded-tenant>.<encoded-source>`，并同步修正工作目录内 JSON 配置
+引用的旧绝对路径。`default_<source>` 仍然只是模板目录，不能通过该脚本
+当作运行时租户目录迁移。
+
+如果需要把已有 canonical scope ID 反向解析回逻辑身份，可使用：
+
+```bash
+python scripts/decode_scope_ids.py \
+  --scope-id dGVuYW50LWE.c291cmNlLWE
+```
+
+或批量解析：
+
+```bash
+python scripts/decode_scope_ids.py \
+  --scope-ids dGVuYW50LWE.c291cmNlLWE,ZGVmYXVsdA.cnVpY2U
+```
+
+该脚本只接受当前 canonical 格式，不兼容历史 `scope.v1.*` 输入。
 
 ---
 
@@ -301,11 +350,11 @@ authHeaders.ts 构建 HTTP headers
     ↓
 后端 TenantIdentityMiddleware 提取 headers
     ↓
-resolve_effective_tenant_id(tenant_id, source_id)
-    ├── tenant_id != "default" → 返回 tenant_id (sapId)
-    └── tenant_id == "default" → 返回 default_{source_id}
+resolve_runtime_tenant_id(tenant_id, source_id)
+    ├── tenant_id + source_id → encode_scope_id(...) = scope_id
+    └── source_id 缺失 → 仅保留逻辑 tenant_id（用于非 scoped 场景）
     ↓
-租户工作目录: ~/.swe/{sapId}/
+租户工作目录: ~/.swe/<tenant>.<source>/
 ```
 
 ---
@@ -335,7 +384,7 @@ resolve_effective_tenant_id(tenant_id, source_id)
 | 概念 | 来源 | 转换关系 |
 |------|------|----------|
 | 租户 | `X-Tenant-Id` header | iframe 场景：`sapId` 直接作为租户 |
-| 来源 | `X-Source-Id` header | 仅对 `default` 租户生效，产生 `default_{source_id}` 目录 |
+| 来源 | `X-Source-Id` header | 对所有 tenant-scoped runtime 生效，参与编码 `scope_id` |
 | 用户 | `X-User-Id` header | iframe 场景：与租户相同（`sapId`） |
 | 管理员 | iframe postMessage | 外部系统决定，通过 `X-Manager` header 传递 |
 

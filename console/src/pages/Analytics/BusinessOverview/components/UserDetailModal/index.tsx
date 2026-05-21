@@ -17,6 +17,7 @@ import styles from "./index.module.less";
 export default function UserDetailModal({
   open,
   userId,
+  userName,
   startDate,
   endDate,
   sourceId,
@@ -70,8 +71,6 @@ export default function UserDetailModal({
     try {
       const data = await tracingApi.getSessions(page, sessionsPageSize, {
         user_id: userId,
-        start_date: startDate,
-        end_date: endDate,
         source_id: sourceId,
         bbk_ids: bbkIds,
       });
@@ -83,15 +82,15 @@ export default function UserDetailModal({
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, startDate, endDate, sourceId, sessionsPageSize, bbkIds]);
+  }, [userId, sourceId, sessionsPageSize, bbkIds]);
 
   // 获取会话统计
   const fetchSessionStats = useCallback(async (sessionId: string) => {
     try {
       const data = await tracingApi.getSessionStats(
         sessionId,
-        startDate,
-        endDate,
+        undefined,
+        undefined,
         sourceId,
         bbkIds,
       );
@@ -100,7 +99,7 @@ export default function UserDetailModal({
       console.error("Failed to fetch session stats:", error);
       message.error("获取会话统计失败");
     }
-  }, [startDate, endDate, sourceId, bbkIds]);
+  }, [sourceId, bbkIds]);
 
   // 获取对话列表
   const fetchTraces = useCallback(async (sessionId: string, page: number) => {
@@ -109,8 +108,6 @@ export default function UserDetailModal({
     try {
       const data = await tracingApi.getTraces(page, tracesPageSize, {
         session_id: sessionId,
-        start_date: startDate,
-        end_date: endDate,
         source_id: sourceId,
         bbk_ids: bbkIds,
       });
@@ -122,7 +119,7 @@ export default function UserDetailModal({
     } finally {
       setTracesLoading(false);
     }
-  }, [startDate, endDate, sourceId, tracesPageSize, bbkIds]);
+  }, [sourceId, tracesPageSize, bbkIds]);
 
   // Modal 打开时加载数据
   useEffect(() => {
@@ -223,10 +220,8 @@ export default function UserDetailModal({
             <User size={18} />
           </span>
           <div className={styles.modalTitleText}>
-            <div className={styles.modalTitle}>用户详情</div>
-            <div className={styles.modalSubtitle}>
-              调用排行 · 运营看板 · 只读审计视图
-            </div>
+            <div className={styles.modalTitle}>{userName || userId || '未知用户'}</div>
+            <div className={styles.modalSubtitle}>{userId || "-"}</div>
           </div>
         </div>
       }

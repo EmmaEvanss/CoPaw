@@ -545,6 +545,7 @@ export default function BusinessOverviewPage() {
   const mcpLoadingRef = useRef(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [selectedSkillName, setSelectedSkillName] = useState("");
   const [activeTrendIndex, setActiveTrendIndex] = useState<number | null>(null);
@@ -1329,6 +1330,7 @@ export default function BusinessOverviewPage() {
                     className={styles.rankRow}
                     onClick={() => {
                       setSelectedUserId(item.userId);
+                      setSelectedUserName(item.userName);
                       setModalOpen(true);
                     }}
                   >
@@ -1571,6 +1573,7 @@ export default function BusinessOverviewPage() {
       <UserDetailModal
         open={modalOpen}
         userId={selectedUserId}
+        userName={selectedUserName}
         startDate={startDateText}
         endDate={endDateText}
         sourceId={effectiveSourceId}

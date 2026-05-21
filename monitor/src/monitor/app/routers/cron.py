@@ -119,6 +119,7 @@ async def get_job(
 async def list_executions(
     job_id: str | None = Query(default=None, description="任务ID筛选"),
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
+    source_id: str | None = Query(default=None, description="来源标识筛选"),
     status: str | None = Query(default=None, description="执行状态筛选"),
     start_time: datetime | None = Query(
         default=None,
@@ -137,6 +138,7 @@ async def list_executions(
     Args:
         job_id: Job ID filter
         tenant_id: Tenant ID filter
+        source_id: Source ID filter (来源标识)
         status: Status filter
         start_time: Start time filter
         end_time: End time filter
@@ -150,6 +152,7 @@ async def list_executions(
     params = ExecutionQueryParams(
         job_id=job_id,
         tenant_id=tenant_id,
+        source_id=source_id,
         status=status,
         start_time=start_time,
         end_time=end_time,
@@ -241,6 +244,7 @@ async def export_data(
             executions = await query_service.get_executions_for_export(
                 job_id=job_id,
                 tenant_id=tenant_id,
+                source_id=source_id,
                 status=status,
                 start_time=start_time,
                 end_time=end_time,

@@ -142,11 +142,9 @@ class TenantWorkspacePool:
                 raise ValueError(
                     "scope_id must resolve to a canonical runtime scope",
                 )
-        else:
-            bootstrap_tenant_id = (
-                resolve_runtime_identity(tenant_id, source_id)[2] or tenant_id
-            )
-        return bootstrap_tenant_id
+            return bootstrap_tenant_id
+
+        return resolve_runtime_identity(tenant_id, source_id)[2] or tenant_id
 
     async def _check_existing_bootstrap(
         self,
@@ -313,6 +311,13 @@ class TenantWorkspacePool:
             # Log seeding results
             self._log_seeding_results(tenant_id, bootstrap_result)
 
+            # Record template mapping if template was dynamically created
+            if initializer._template_created_from_default and source_id:
+                await self._record_template_init_source_mapping(
+                    template_name=initializer.template_name,
+                    source_id=source_id,
+                )
+
             # Record init source mapping
             logical_tenant_id, resolved_source_id, init_source = (
                 self._compute_init_source_mapping(
@@ -444,6 +449,45 @@ class TenantWorkspacePool:
             logger.warning(
                 f"Failed to record init source mapping for tenant "
                 f"{tenant_id}: {e}",
+            )
+
+    async def _record_template_init_source_mapping(
+        self,
+        template_name: str,
+        source_id: str,
+    ) -> None:
+        """Record template init source mapping to database.
+
+        当 default_{source_id} 模板从 default 动态创建时，
+        记录映射关系：(default_{source_id}, source_id, default)
+
+        Args:
+            template_name: 模板目录名（如 default_ruice）。
+            source_id: 来源标识。
+        """
+        try:
+            from .tenant_init_source_store import get_tenant_init_source_store
+
+            store = get_tenant_init_source_store()
+            if store is None:
+                return
+            # 模板条目：tenant_id=模板目录名, source_id=来源, init_source="default"
+            await store.get_or_create(
+                tenant_id=template_name,
+                source_id=source_id,
+                init_source="default",
+                tenant_name=None,
+                bbk_id=None,
+            )
+            logger.info(
+                f"Recorded template init_source mapping: "
+                f"template={template_name}, source={source_id}",
+            )
+        except Exception as e:
+            # Non-fatal: log warning but don't fail bootstrap
+            logger.warning(
+                f"Failed to record template init source mapping for "
+                f"template {template_name}: {e}",
             )
 
     async def get_or_create(

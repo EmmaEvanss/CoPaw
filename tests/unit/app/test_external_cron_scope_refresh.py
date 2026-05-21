@@ -120,7 +120,9 @@ async def test_scheduler_payload_uses_logical_tenant_and_source() -> None:
     assert ext_id == "1001"
     add_path, payload = adapter.requests[0]
     assert add_path == "/job-admin/v2/add-job"
-    assert payload["jobDesc"] == "[SWE] tenant-a/source-a/default/job - 每日巡检"
+    assert (
+        payload["jobDesc"] == "[SWE] tenant-a/source-a/default/job - 每日巡检"
+    )
     job_param = _decode_job_param(payload["jobParam"])
     assert job_param == {
         "tenant_id": "tenant-a",
@@ -143,8 +145,14 @@ async def test_callback_resolves_runtime_scope_from_tenant_and_source(
         observed["lookup"] = (tenant_id, agent_id)
 
         class FakeCronManager:
-            async def run_job(self, job_id: str) -> None:
+            async def run_job(
+                self,
+                job_id: str,
+                *,
+                is_manual: bool = True,
+            ) -> None:
                 observed["run_job"] = job_id
+                observed["is_manual"] = is_manual
 
         return FakeCronManager()
 
@@ -162,7 +170,9 @@ async def test_callback_resolves_runtime_scope_from_tenant_and_source(
         "job_id": "job-1",
     }
     request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(multi_agent_manager=object())),
+        app=SimpleNamespace(
+            state=SimpleNamespace(multi_agent_manager=object()),
+        ),
     )
 
     response = await internal_router.internal_cron_callback(
@@ -178,6 +188,7 @@ async def test_callback_resolves_runtime_scope_from_tenant_and_source(
     assert observed == {
         "lookup": (encode_scope_id("tenant-a", "source-a"), "default"),
         "run_job": "job-1",
+        "is_manual": False,
     }
 
 

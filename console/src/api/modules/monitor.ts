@@ -143,6 +143,7 @@ export const monitorApi = {
     filters?: {
       job_id?: string;
       tenant_id?: string;
+      source_id?: string;
       status?: string;
       start_time?: string;
       end_time?: string;
@@ -205,6 +206,7 @@ export const monitorApi = {
     filters?: {
       job_id?: string;
       tenant_id?: string;
+      source_id?: string;
       status?: string;
       start_time?: string;
       end_time?: string;

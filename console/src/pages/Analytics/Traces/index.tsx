@@ -18,7 +18,6 @@ import { FileText, Clock, Zap, Bot, User, ChevronDown } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { tracingApi, TraceDetail } from "../../../api/modules/tracing";
-import { feedbackApi } from "../../../api/modules/feedback";
 import type { FeedbackRecord } from "../../../api/types/feedback";
 import { getBbkDisplayName, BBK_ID_MAP } from "../../../constants/bbk";
 import { useIframeStore } from "../../../stores/iframeStore";
@@ -44,13 +43,6 @@ interface TraceListItem {
   feedback?: FeedbackRecord | null;
   feedback_content?: string | null;
   feedback_updated_at?: string | null;
-}
-
-interface TracesResponse {
-  items: TraceListItem[];
-  total: number;
-  page: number;
-  page_size: number;
 }
 
 function displayText(value?: string | null) {
@@ -99,53 +91,6 @@ export default function TracesPage() {
     setFeedbackExpanded(true);
   }, [selectedTrace?.trace.trace_id]);
 
-  const enrichTraceFeedbacks = async (
-    items: TraceListItem[],
-  ): Promise<TraceListItem[]> => {
-    const missingFeedbackItems = items.filter(
-      (item) =>
-        item.trace_id &&
-        !item.feedback &&
-        item.feedback_content === undefined &&
-        item.feedback_updated_at === undefined,
-    );
-    if (!missingFeedbackItems.length) {
-      return items;
-    }
-
-    const results = await Promise.allSettled(
-      missingFeedbackItems.map((item) =>
-        feedbackApi.getFeedback({ traceId: item.trace_id }),
-      ),
-    );
-    const feedbackByTraceId = new Map<string, FeedbackRecord>();
-
-    results.forEach((result, index) => {
-      if (result.status !== "fulfilled" || !result.value.feedback) {
-        return;
-      }
-      feedbackByTraceId.set(
-        missingFeedbackItems[index].trace_id,
-        result.value.feedback,
-      );
-    });
-
-    if (!feedbackByTraceId.size) {
-      return items;
-    }
-
-    return items.map((item) => {
-      const feedback = feedbackByTraceId.get(item.trace_id);
-      if (!feedback) return item;
-      return {
-        ...item,
-        feedback,
-        feedback_content: feedback.feedback_content,
-        feedback_updated_at: feedback.updated_at || feedback.created_at,
-      };
-    });
-  };
-
   const fetchTraces = async () => {
     setLoading(true);
     try {
@@ -157,8 +102,7 @@ export default function TracesPage() {
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
         source_id: effectiveSourceId,
       });
-      const items = await enrichTraceFeedbacks(data.items || []);
-      setTraces(items);
+      setTraces(data.items || []);
       setTotal(data.total || 0);
     } catch (error) {
       console.error("Failed to fetch traces:", error);

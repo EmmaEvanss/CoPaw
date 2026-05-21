@@ -217,6 +217,14 @@ class MCPServerUsage(BaseModel):
     tools: list[MCPToolUsage] = Field(default_factory=list)
 
 
+class MCPSummary(BaseModel):
+    """MCP 全局调用汇总统计."""
+
+    total_calls: int = 0  # 总调用次数
+    error_count: int = 0  # 报错次数
+    server_count: int = 0  # MCP server 数量
+
+
 class DailyStats(BaseModel):
     """Daily statistics."""
 
@@ -243,12 +251,62 @@ class OverviewStats(BaseModel):
     output_tokens: int = 0
     total_sessions: int = 0
     total_conversations: int = 0
+    total_skill_calls: int = 0  # 技能调用总次数
     avg_duration_ms: int = 0
     top_tools: list[ToolUsage] = Field(default_factory=list)
     top_skills: list[SkillUsage] = Field(default_factory=list)
     top_mcp_tools: list[MCPToolUsage] = Field(default_factory=list)
     mcp_servers: list[MCPServerUsage] = Field(default_factory=list)
     daily_trend: list[DailyStats] = Field(default_factory=list)
+    branch_breakdown: "OverviewBranchBreakdown" = Field(
+        default_factory=lambda: OverviewBranchBreakdown(),
+    )
+
+
+class BranchMetricItem(BaseModel):
+    """Single branch metric item used in dashboard breakdowns."""
+
+    bbk_id: str = ""
+    bbk_name: str = ""
+    value: float = 0
+    percent: float = 0
+
+
+class OverviewBranchBreakdown(BaseModel):
+    """Branch breakdowns for each overview metric card."""
+
+    users: list[BranchMetricItem] = Field(default_factory=list)
+    conversations: list[BranchMetricItem] = Field(default_factory=list)
+    sessions: list[BranchMetricItem] = Field(default_factory=list)
+    tokens: list[BranchMetricItem] = Field(default_factory=list)
+    skills: list[BranchMetricItem] = Field(default_factory=list)
+    cron_tasks: list[BranchMetricItem] = Field(default_factory=list)
+
+
+class TaskStatusBreakdown(BaseModel):
+    """Task execution status summary for dashboard donut chart."""
+
+    success: int = 0
+    failed: int = 0
+    running: int = 0
+
+
+class TaskStatusSummary(BaseModel):
+    """定时任务执行汇总统计."""
+
+    total_tasks: int = 0  # 总执行次数
+    success: int = 0  # 成功次数
+    failed: int = 0  # 失败次数
+    cancelled: int = 0  # 已取消/跳过次数
+
+
+class DepthSummary(BaseModel):
+    """使用深度汇总统计."""
+
+    avg_rounds: float = 0.0  # 单次会话平均轮数
+    multi_round_ratio: float = 0.0  # 多轮会话占比(>3轮)百分比
+    avg_duration_seconds: int = 0  # 平均对话时长（秒）
+    avg_sessions_per_user: float = 0.0  # 人均会话数
 
 
 class UserStats(BaseModel):

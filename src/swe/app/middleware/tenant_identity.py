@@ -94,6 +94,14 @@ SOURCE_EXEMPT_ROUTES = frozenset(
     ],
 )
 
+PUBLIC_ROUTE_EXEMPT_PREFIXES = (
+    "/assets/",
+    "/static/",
+    "/console/",
+    "/api/assets/text/",
+    "/api/internal/",
+)
+
 
 def is_tenant_exempt(path: str) -> bool:
     """Check if a route is exempt from tenant identity requirements.
@@ -108,13 +116,7 @@ def is_tenant_exempt(path: str) -> bool:
     if path in TENANT_EXEMPT_ROUTES:
         return True
 
-    # Prefix match for certain routes
-    exempt_prefixes = (
-        "/assets/",
-        "/static/",
-        "/console/",
-    )
-    if any(path.startswith(prefix) for prefix in exempt_prefixes):
+    if any(path.startswith(prefix) for prefix in PUBLIC_ROUTE_EXEMPT_PREFIXES):
         return True
 
     return False
@@ -125,12 +127,7 @@ def is_source_exempt(path: str) -> bool:
     if path in SOURCE_EXEMPT_ROUTES:
         return True
 
-    exempt_prefixes = (
-        "/assets/",
-        "/static/",
-        "/console/",
-    )
-    if any(path.startswith(prefix) for prefix in exempt_prefixes):
+    if any(path.startswith(prefix) for prefix in PUBLIC_ROUTE_EXEMPT_PREFIXES):
         return True
 
     return False

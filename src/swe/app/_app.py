@@ -19,6 +19,7 @@ from ..constant import (
     LOG_LEVEL_ENV,
     CORS_ORIGINS,
     WORKING_DIR,
+    FILE_LOG_ENABLED,
 )
 from ..__version__ import __version__
 from ..utils.my_logging import setup_logger, add_swe_file_handler
@@ -26,6 +27,7 @@ from .auth import AuthMiddleware
 from .middleware.tenant_identity import TenantIdentityMiddleware
 from .middleware.tenant_workspace import TenantWorkspaceMiddleware
 from .middleware.header_passthrough import HeaderPassthroughMiddleware
+from .source_system_config.middleware import SourceSystemConfigMiddleware
 from .routers import router as api_router, create_agent_scoped_router
 from .routers.agent_scoped import AgentContextMiddleware
 from .routers.voice import voice_router
@@ -204,7 +206,13 @@ async def lifespan(
     app: FastAPI,
 ):  # pylint: disable=too-many-statements,too-many-branches
     startup_start_time = time.time()
-    add_swe_file_handler(WORKING_DIR / "swe.log")
+    if FILE_LOG_ENABLED:
+        add_swe_file_handler(WORKING_DIR / "swe.log")
+    else:
+        logger.info(
+            "File logging disabled via SWE_FILE_LOG_ENABLED=false; "
+            "stdout/stderr logging remains enabled.",
+        )
 
     # Auto-register admin from env vars (for automated deployments)
     from .auth import auto_register_from_env
@@ -348,6 +356,18 @@ async def lifespan(
     # init_instance_module(db_connection)
     logger.info("Instance module initialized")
 
+    # --- 初始化 source 系统配置模块 ---
+    try:
+        from .source_system_config.service import SourceSystemConfigService
+        from .source_system_config.store import SourceSystemConfigStore
+
+        app.state.source_system_config_service = SourceSystemConfigService(
+            SourceSystemConfigStore(db_connection),
+        )
+        logger.info("SourceSystemConfig module initialized")
+    except Exception as e:
+        logger.warning("Failed to initialize source system config: %s", e)
+
     # --- Initialize greeting and featured_case modules ---
     if db_connection is not None:
         try:
@@ -458,6 +478,9 @@ app.add_middleware(AgentContextMiddleware)
 # Add tenant workspace middleware (loads workspace from pool)
 # Must execute after TenantIdentityMiddleware sets tenant_id
 app.add_middleware(TenantWorkspaceMiddleware)
+
+# 在身份解析后绑定 source 系统配置
+app.add_middleware(SourceSystemConfigMiddleware)
 
 # Add tenant identity middleware last so it executes FIRST
 # This must set tenant_id before TenantWorkspaceMiddleware needs it
@@ -595,8 +618,9 @@ async def serve_user_static(
         raise HTTPException(status_code=404, detail="File not found")
 
     # Guess MIME type
-    _, _ = mimetypes.guess_type(str(target))
-    media_type = "application/octet-stream"
+    media_type, _ = mimetypes.guess_type(str(target))
+    if media_type is None:
+        media_type = "application/octet-stream"
     return FileResponse(Path(target), media_type=media_type)
 
 

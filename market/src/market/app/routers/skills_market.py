@@ -608,11 +608,12 @@ def _process_workspace_skills(
 async def init_user_skills(
     request: Request,
     dry_run: bool = True,
+    user_id: str | None = None,
 ):
-    """初始化所有租户的历史技能数据为「我创建的」.
+    """初始化用户的历史技能数据为「我创建的」.
 
     处理逻辑：
-    1. 遍历 SWE_ROOT 下所有用户目录
+    1. 遍历 SWE_ROOT 下用户目录（指定 user_id 则仅处理该用户）
     2. 对于每个用户的技能目录：
        - 无 skill.json：创建文件，设置 source=customized
        - 有 skill.json 但 source 为空或非 marketplace:：设置 source=customized
@@ -620,6 +621,7 @@ async def init_user_skills(
 
     Args:
         dry_run: True 仅预览变更，不实际写入；False 执行写入
+        user_id: 可选，指定要初始化的用户 ID，不传则处理所有用户
     """
     svc = request.app.state.marketplace
     swe_root = svc.swe_root
@@ -636,11 +638,16 @@ async def init_user_skills(
         "details": [],
     }
 
-    # 遍历所有用户目录
+    # 遍历用户目录（支持按 user_id 过滤）
     for user_dir in swe_root.iterdir():
         if not user_dir.is_dir():
             continue
-        user_id = user_dir.name
+        uid = user_dir.name
+
+        # 指定了 user_id 时跳过不匹配的用户
+        if user_id and uid != user_id:
+            continue
+
         results["processed_users"] += 1
 
         workspace_base = user_dir / "workspaces"
@@ -650,6 +657,6 @@ async def init_user_skills(
         for workspace_dir in workspace_base.iterdir():
             if not workspace_dir.is_dir():
                 continue
-            _process_workspace_skills(workspace_dir, user_id, dry_run, results)
+            _process_workspace_skills(workspace_dir, uid, dry_run, results)
 
     return results

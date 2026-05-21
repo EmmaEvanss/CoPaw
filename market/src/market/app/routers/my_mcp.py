@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
 from urllib.parse import unquote
@@ -29,6 +30,8 @@ from ..my_mcp_helpers import (
     save_agent_config_for_request,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/market/my-mcp", tags=["my-mcp"])
 MCP_CLIENT_NOT_FOUND_TEMPLATE = "MCP client '{client_key}' not found"
 NO_MCP_CLIENTS_CONFIGURED_DETAIL = "No MCP clients configured"
@@ -50,6 +53,42 @@ SENSITIVE_FIELDS = [
     "env",
     "cwd",
 ]
+
+
+async def _log_my_mcp_operation(
+    request: Request,
+    context,
+    operation: str,
+    item_name: str,
+) -> None:
+    """在数据库可用时记录 MyMCP 操作日志。"""
+    db = getattr(request.app.state.marketplace, "db", None)
+    if db is None or not getattr(db, "is_connected", False):
+        return
+
+    try:
+        await db.execute(
+            """
+            INSERT INTO swe_user_item_operation_logs
+                (source_id, user_id, user_name, operation,
+                 item_type, item_name)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                context.source_id,
+                context.user_id,
+                context.user_name,
+                operation,
+                "mcp",
+                item_name,
+            ),
+        )
+    except Exception as e:
+        logger.warning(
+            "Failed to log %s operation: %s",
+            operation,
+            e,
+        )
 
 
 def _is_distributed_from_market(client: MCPClientConfig) -> bool:
@@ -369,6 +408,13 @@ async def create_my_mcp(
     agent_config.mcp.clients[body.client_key] = new_client
     save_agent_config_for_request(context, agent_config, request)
 
+    await _log_my_mcp_operation(
+        request,
+        context,
+        "create",
+        body.name,
+    )
+
     detail = _mask_sensitive_values(new_client)
     detail.client_key = body.client_key
     return detail
@@ -421,6 +467,13 @@ async def update_my_mcp(
     agent_config.mcp.clients[client_key] = updated_client
     save_agent_config_for_request(context, agent_config, request)
 
+    await _log_my_mcp_operation(
+        request,
+        context,
+        "edit",
+        updated_client.name,
+    )
+
     detail = _mask_sensitive_values(updated_client)
     detail.client_key = client_key
     return detail
@@ -441,8 +494,20 @@ async def delete_my_mcp(
             detail=_mcp_client_not_found_detail(client_key),
         )
 
+    # Get client name before deletion for logging
+    deleted_client = agent_config.mcp.clients[client_key]
+    deleted_name = deleted_client.name
+
     del agent_config.mcp.clients[client_key]
     save_agent_config_for_request(context, agent_config, request)
+
+    await _log_my_mcp_operation(
+        request,
+        context,
+        "delete",
+        deleted_name,
+    )
+
     return {"message": f"MCP client '{client_key}' deleted"}
 
 

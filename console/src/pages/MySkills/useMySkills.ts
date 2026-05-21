@@ -22,10 +22,31 @@ export function useMySkills() {
     }
   }, []);
 
+  const refreshSkill = useCallback(async (skillName: string): Promise<MySkill | null> => {
+    try {
+      const [created, received] = await Promise.all([
+        mySkillsApi.getCreatedSkills(),
+        mySkillsApi.getReceivedSkills(),
+      ]);
+
+      // 更新列表
+      setCreatedSkills(created);
+      setReceivedSkills(received);
+
+      // 返回刷新后的技能
+      const allSkills = [...created, ...received];
+      return allSkills.find(s => s.skill_name === skillName) || null;
+    } catch (err) {
+      console.error("Failed to refresh skill:", err);
+      return null;
+    }
+  }, []);
+
   return {
     createdSkills,
     receivedSkills,
     loading,
     refresh,
+    refreshSkill,
   };
 }

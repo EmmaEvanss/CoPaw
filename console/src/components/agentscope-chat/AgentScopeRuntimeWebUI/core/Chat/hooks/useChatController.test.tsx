@@ -245,4 +245,44 @@ describe("useChatController", () => {
       await submitPromise;
     });
   });
+
+  it("cancels the active backend request when the user stops a response", async () => {
+    render(<Harness />);
+
+    latestCurrentQARef!.current.response = {
+      id: "response-a",
+      msgStatus: "generating",
+      cards: [
+        {
+          code: "AgentScopeRuntimeResponseCard",
+          data: {
+            id: "response-a",
+            status: "in_progress",
+            created_at: 0,
+            output: [],
+          },
+        },
+      ],
+    };
+    latestCurrentQARef!.current.activeRequestOwner = {
+      requestId: "request-a",
+      kind: "submit",
+      sessionId: "chat-b",
+      logicalSessionId: "logical:chat-b",
+      chatId: "chat:chat-b",
+    };
+
+    await act(async () => {
+      await latestController!.handleCancel();
+    });
+
+    expect(mocks.cancelActiveRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.setLoading).toHaveBeenCalledWith(false);
+    expect(latestCurrentQARef!.current.activeRequestOwner).toBeUndefined();
+    expect(mocks.syncSessionMessagesForSession).toHaveBeenCalledWith(
+      "chat-b",
+      [{ id: "message-1" }],
+      false,
+    );
+  });
 });

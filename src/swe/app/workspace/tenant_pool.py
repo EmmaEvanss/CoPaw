@@ -117,6 +117,73 @@ class TenantWorkspacePool:
                 self._bootstrap_locks[tenant_id] = asyncio.Lock()
             return self._bootstrap_locks[tenant_id]
 
+    def _resolve_bootstrap_tenant_id(
+        self,
+        tenant_id: str,
+        source_id: str | None,
+        scope_id: str | None,
+    ) -> str:
+        """解析用于隔离 bootstrap 状态的运行时租户标识。"""
+        if scope_id is not None:
+            bootstrap_tenant_id = resolve_runtime_identity(scope_id)[2]
+            if bootstrap_tenant_id is None:
+                raise ValueError(
+                    "scope_id must resolve to a canonical runtime scope",
+                )
+            return bootstrap_tenant_id
+
+        return resolve_runtime_identity(tenant_id, source_id)[2] or tenant_id
+
+    async def _record_bootstrap_init_source(
+        self,
+        tenant_id: str,
+        source_id: str | None,
+        scope_id: str | None,
+        initializer: TenantInitializer,
+        tenant_name: str | None,
+        bbk_id: str | None,
+    ) -> None:
+        """记录 bootstrap 模板来源和逻辑租户映射。"""
+        if tenant_id == "default" and scope_id is None:
+            init_source = "default"
+        else:
+            init_source = initializer.template_name
+
+        (
+            logical_tenant_id,
+            resolved_source_id,
+            _scope_id,
+        ) = (
+            resolve_runtime_identity(scope_id)
+            if scope_id is not None
+            else resolve_runtime_identity(tenant_id, source_id)
+        )
+        # DB 映射服务于运维侧按来源查询，应保存逻辑租户，
+        # 不能把运行时隔离目录使用的 opaque scope 暴露出去。
+        await self._record_init_source_mapping(
+            logical_tenant_id or tenant_id,
+            resolved_source_id or source_id,
+            init_source,
+            tenant_name=tenant_name,
+            bbk_id=bbk_id,
+        )
+
+    async def _register_bootstrapped_tenant(
+        self,
+        bootstrap_tenant_id: str,
+    ) -> None:
+        """注册已完成 bootstrap 的租户，并刷新访问统计。"""
+        async with self._registry_lock:
+            if bootstrap_tenant_id not in self._workspaces:
+                entry = TenantWorkspaceEntry(
+                    tenant_id=bootstrap_tenant_id,
+                    workspace=None,
+                )
+                self._workspaces[bootstrap_tenant_id] = entry
+            else:
+                entry = self._workspaces[bootstrap_tenant_id]
+            self._mark_access(entry)
+
     async def ensure_bootstrap(
         self,
         tenant_id: str,
@@ -141,16 +208,11 @@ class TenantWorkspacePool:
         Raises:
             RuntimeError: If bootstrap fails.
         """
-        if scope_id is not None:
-            bootstrap_tenant_id = resolve_runtime_identity(scope_id)[2]
-            if bootstrap_tenant_id is None:
-                raise ValueError(
-                    "scope_id must resolve to a canonical runtime scope",
-                )
-        else:
-            bootstrap_tenant_id = (
-                resolve_runtime_identity(tenant_id, source_id)[2] or tenant_id
-            )
+        bootstrap_tenant_id = self._resolve_bootstrap_tenant_id(
+            tenant_id,
+            source_id,
+            scope_id,
+        )
 
         # Fast path: check if already bootstrapped
         async with self._registry_lock:
@@ -226,45 +288,17 @@ class TenantWorkspacePool:
                         source_id=source_id,
                     )
 
-                # Record init source mapping
-                # init_source records the direct template source:
-                # - default user: always "default"
-                # - non-default user with source: "default_{source_id}"
-                # - non-default user without source: "default"
-                if tenant_id == "default" and scope_id is None:
-                    init_source = "default"
-                else:
-                    init_source = initializer.template_name
-                (
-                    logical_tenant_id,
-                    resolved_source_id,
-                    _scope_id,
-                ) = (
-                    resolve_runtime_identity(scope_id)
-                    if scope_id is not None
-                    else resolve_runtime_identity(tenant_id, source_id)
-                )
-                # DB 映射服务于运维侧按来源查询，应保存逻辑租户，
-                # 不能把运行时隔离目录使用的 opaque scope 暴露出去。
-                await self._record_init_source_mapping(
-                    logical_tenant_id or tenant_id,
-                    resolved_source_id or source_id,
-                    init_source,
+                # Record init source mapping for bootstrap traceability
+                await self._record_bootstrap_init_source(
+                    tenant_id,
+                    source_id,
+                    scope_id,
+                    initializer,
                     tenant_name=tenant_name,
                     bbk_id=bbk_id,
                 )
 
-                # Register in pool (no workspace runtime created)
-                async with self._registry_lock:
-                    if bootstrap_tenant_id not in self._workspaces:
-                        entry = TenantWorkspaceEntry(
-                            tenant_id=bootstrap_tenant_id,
-                            workspace=None,  # Runtime not started
-                        )
-                        self._workspaces[bootstrap_tenant_id] = entry
-                    else:
-                        entry = self._workspaces[bootstrap_tenant_id]
-                    self._mark_access(entry)
+                await self._register_bootstrapped_tenant(bootstrap_tenant_id)
 
                 logger.info("Tenant bootstrapped: %s", bootstrap_tenant_id)
 

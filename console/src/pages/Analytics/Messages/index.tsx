@@ -90,7 +90,7 @@ export default function MessagesPage() {
       const data = await tracingApi.getUserMessages(page, pageSize, {
         user_id: userIdFilter || undefined,
         session_id: sessionIdFilter || undefined,
-        bbk_id: bbkIdFilter,
+        bbk_ids: bbkIdFilter,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
         query: searchQuery || undefined,
@@ -112,7 +112,7 @@ export default function MessagesPage() {
         {
           user_id: userIdFilter || undefined,
           session_id: sessionIdFilter || undefined,
-          bbk_id: bbkIdFilter,
+          bbk_ids: bbkIdFilter,
           start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
           end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
           query: searchQuery || undefined,

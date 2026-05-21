@@ -25,13 +25,21 @@ class MyMCPRequestContext:
     source_id: str
     effective_tenant_id: str
     agent_id: str
+    user_name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.user_name:
+            object.__setattr__(self, "user_name", self.user_id)
 
 
 def resolve_my_mcp_request_context(request: Request) -> MyMCPRequestContext:
     """从请求头解析 MyMCP 所需上下文。"""
+    from urllib.parse import unquote
+
     swe_root = request.app.state.marketplace.swe_root
 
     user_id = request.headers.get("X-User-Id", "").strip()
+    user_name = unquote(request.headers.get("X-User-Name", "") or user_id)
     tenant_id = request.headers.get("X-Tenant-Id", "").strip() or user_id
     source_id = request.headers.get("X-Source-Id", "").strip()
     agent_id = request.headers.get("X-Agent-Id", "").strip()
@@ -65,6 +73,7 @@ def resolve_my_mcp_request_context(request: Request) -> MyMCPRequestContext:
 
     return MyMCPRequestContext(
         user_id=user_id,
+        user_name=user_name,
         tenant_id=tenant_id,
         source_id=source_id,
         effective_tenant_id=effective_tenant_id,

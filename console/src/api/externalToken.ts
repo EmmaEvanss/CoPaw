@@ -27,6 +27,7 @@ interface WindowEnv {
   SYSTEM_CODE?: string;
   SYSTEM_SECRET?: string;
   TOKEN_API_URL?: string;
+  responseFeedbackUserWhitelist?: string[];
 }
 
 declare global {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildToolTitle, getToolDisplayName } from "./ToolTitle";
+import {
+  buildToolTitle,
+  getToolDisplayName,
+  resolveServerLabel,
+  resolveToolName,
+} from "./ToolTitle";
 
 describe("tool call title", () => {
   it("keeps a clean backend summary with the concrete object", () => {
@@ -92,5 +97,37 @@ describe("tool call title", () => {
     });
 
     expect(title).toBe("正在网页操作：weather.com.cn/weather/101270101.shtml");
+  });
+
+  it("resolves MCP tool aliases instead of falling back to generic labels", () => {
+    const data = {
+      tool_name: "fetch_customer_profile",
+      mcp_server: "crm",
+    };
+
+    expect(resolveToolName(data)).toBe("fetch_customer_profile");
+    expect(resolveServerLabel(data)).toBe("crm");
+    expect(
+      getToolDisplayName(resolveToolName(data), resolveServerLabel(data)),
+    ).toBe("[crm] fetch_customer_profile");
+  });
+
+  it("ignores generic summaries and shows the resolved MCP tool name", () => {
+    const data = {
+      tool: {
+        name: "search_customer_cases",
+      },
+    };
+    const toolName = resolveToolName(data);
+    const title = buildToolTitle({
+      loading: true,
+      toolName,
+      defaultTitle: getToolDisplayName(toolName),
+      input: "{}",
+      summary: "正在工具操作",
+    });
+
+    expect(toolName).toBe("search_customer_cases");
+    expect(title).toBe("正在调用：search_customer_cases");
   });
 });

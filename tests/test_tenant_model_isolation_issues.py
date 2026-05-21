@@ -92,6 +92,10 @@ async def reset_singleton():
 class TestModelSelectionFallbackIssue:
     """Verify Issue 1: Model selection falls back to global active_model."""
 
+    @pytest.mark.xfail(
+        reason="历史问题验证：当前实现已移除全局 active_model 回退路径",
+        strict=True,
+    )
     async def test_fallback_to_global_when_tenant_config_missing(
         self,
         temp_swe_root: Path,
@@ -273,6 +277,10 @@ class TestProviderManagerGlobalStorageIssue:
                 actual_path.name == "providers"
             ), f"ProviderManager path should end with 'providers', got: {actual_path.name}"
 
+    @pytest.mark.xfail(
+        reason="历史问题验证：当前实现已使用 tenant/source-scoped providers 目录",
+        strict=True,
+    )
     async def test_active_model_storage_location(
         self,
         temp_swe_root: Path,
@@ -316,6 +324,10 @@ class TestProviderManagerGlobalStorageIssue:
 class TestActiveModelRaceConditionIssue:
     """Verify Issue 3: Potential race condition in active_model access."""
 
+    @pytest.mark.xfail(
+        reason="历史问题验证：当前实现不再让多个 tenant 共享全局 active_model",
+        strict=True,
+    )
     async def test_concurrent_active_model_modification(
         self,
         temp_swe_root: Path,

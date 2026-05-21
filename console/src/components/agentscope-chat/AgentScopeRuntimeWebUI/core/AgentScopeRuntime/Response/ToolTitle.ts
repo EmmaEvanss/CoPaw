@@ -30,6 +30,28 @@ const TOOL_ACTION_NAMES: Record<string, string> = {
   send_file_to_user: "发送文件",
 };
 
+export function resolveToolName(data?: Record<string, any> | null): string {
+  if (!data) return "";
+  const direct = data.name || data.tool_name || data.tool || data.mcp_tool_name;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+  const nestedName =
+    data.function?.name ||
+    data.tool?.name ||
+    data.tool_call?.name ||
+    data.toolCall?.name ||
+    data.mcp_tool?.name ||
+    data.mcpTool?.name;
+  return typeof nestedName === "string" ? nestedName.trim() : "";
+}
+
+export function resolveServerLabel(data?: Record<string, any> | null): string {
+  if (!data) return "";
+  const label =
+    data.server_label || data.mcp_server || data.mcp_name || data.server_name;
+  return typeof label === "string" ? label.trim() : "";
+}
+
 export function getToolDisplayName(toolName?: string, serverLabel?: string) {
   const label = toolName
     ? TOOL_DISPLAY_NAMES[toolName] || toolName
@@ -134,10 +156,18 @@ function isUnsafeSummary(summary?: string): boolean {
   return /[{[\]}]|"[^"]+"\s*:/.test(summary);
 }
 
+function isGenericSummary(summary: string): boolean {
+  return /^(正在)?(调用)?工具操作$/.test(summary.trim());
+}
+
 function isIncompleteSummary(summary: string): boolean {
   const actionWords =
     /读取|写入|编辑|追加|搜索|查找|检索|网页|浏览|打开|访问|点击|输入|调用|获取|查看|发送|执行|操作|查询|设置|截取/;
-  return summary.trim().startsWith("正在") && !actionWords.test(summary);
+  const normalized = summary.trim();
+  return (
+    isGenericSummary(normalized) ||
+    (normalized.startsWith("正在") && !actionWords.test(normalized))
+  );
 }
 
 export function buildToolTitle({

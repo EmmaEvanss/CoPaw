@@ -8,6 +8,7 @@ import logging
 import shutil
 import tempfile
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,7 +22,11 @@ from fastapi import (
     UploadFile,
 )
 
-from ...marketplace.fs import get_user_skills_dir, sanitize_skill_name
+from ...marketplace.fs import (
+    get_user_skills_dir,
+    normalize_skill_name,
+    _validate_skill_name_segment,
+)
 from ...marketplace.schemas import (
     BatchOperationRequest,
     BatchOperationResponse,
@@ -133,7 +138,7 @@ def _validate_zip_paths(zf: zipfile.ZipFile, tmp_dir: Path) -> None:
     """Zip 路径安全检查：拒绝危险字符，允许 Unicode 目录名。
 
     只拒绝 Windows/NTFS 真正保留的字符和控制字符，
-    中文等 Unicode 目录名在后续步骤会通过 sanitize_skill_name 转为拼音。
+    中文等 Unicode 目录名在后续步骤会通过 normalize_skill_name 保留原样。
     """
     import re
 
@@ -296,17 +301,16 @@ def _import_skill_dir(
     """Import a skill directory to the user skills folder.
 
     Args:
-        skill_name: 安全的目录名（sanitize 后）
+        skill_name: 规范的目录名（normalize 后，保留中文等 Unicode 字符）
         original_name: 原始技能名称（用于 skill.json 的 name 字段）
     """
-    # 验证目录名是否合法（Windows 文件系统兼容）
-    import re
-
-    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", skill_name):
+    # 验证目录名是否合法（允许中文等 Unicode 字符）
+    try:
+        _validate_skill_name_segment(skill_name)
+    except ValueError as e:
         raise ValueError(
-            f"技能目录名 '{skill_name}' 包含非法字符，"
-            "仅允许字母、数字、下划线、连字符和点号。",
-        )
+            f"技能目录名 '{skill_name}' 包含非法字符: {e}",
+        ) from e
 
     target_dir = skills_root / skill_name
     if target_dir.exists() and not overwrite:
@@ -391,6 +395,17 @@ def _update_skill_json(
     if category_id is not None:
         skill_data["category_id"] = category_id
 
+    # 时间字段处理：
+    # - 新上传技能：写入 created_at
+    # - 更新现有技能：保留 created_at，写入 updated_at
+    current_time = datetime.now(timezone.utc).isoformat()
+    if not skill_data.get("created_at"):
+        # 新上传的技能，写入创建时间
+        skill_data["created_at"] = current_time
+    else:
+        # 更新现有技能，写入更新时间
+        skill_data["updated_at"] = current_time
+
     skill_json_path.write_text(
         json.dumps(skill_data, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -421,7 +436,7 @@ def _process_single_skill(
         counter = 1
         while True:
             suggested = f"{original_name}_{counter}"
-            safe_suggested = sanitize_skill_name(suggested)
+            safe_suggested = normalize_skill_name(suggested)
             if safe_suggested not in existing_names:
                 break
             counter += 1
@@ -479,8 +494,8 @@ def _import_skill_from_zip(
 
         for skill_dir, original_name in found_skills:
             # original_name 来自 SKILL.md frontmatter 或 zip 文件名
-            # 将原始名称转换为安全的目录名（处理中文、空格、斜杠等）
-            safe_skill_name = sanitize_skill_name(original_name)
+            # 将原始名称规范化为目录名（保留中文等 Unicode 字符）
+            safe_skill_name = normalize_skill_name(original_name)
 
             # 应用 rename_map 映射（用户手动指定的重命名）
             # 需要传递解析：rename_map 可能包含链式映射
@@ -494,9 +509,9 @@ def _import_skill_from_zip(
                         break  # 防止循环引用
                     seen.add(resolved)
                 original_name = resolved
-                safe_skill_name = sanitize_skill_name(original_name)
+                safe_skill_name = normalize_skill_name(original_name)
             elif target_name and len(found_skills) == 1:
-                safe_skill_name = sanitize_skill_name(target_name.strip())
+                safe_skill_name = normalize_skill_name(target_name.strip())
 
             success, conflict = _process_single_skill(
                 skill_dir,
@@ -729,15 +744,15 @@ async def upload_skill_to_workspace(
     )
 
     # Log upload operation
-    if svc.db.is_connected and result.get("imported"):
+    imported_skills = result.get("imported") or []
+    if svc.db.is_connected and imported_skills:
         try:
             await svc.db.execute(
                 """
                 INSERT INTO swe_user_item_operation_logs
-                    (source_id, operator_id, operator_name, operation,
-                     item_type, item_id, item_name,
-                     target_user_id, target_user_name, target_bbk_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     source_id,
@@ -745,11 +760,7 @@ async def upload_skill_to_workspace(
                     user_name,
                     "upload",
                     "skill",
-                    "",
-                    ",".join(result["imported"]),
-                    x_user_id,
-                    user_name,
-                    bbk_id,
+                    ",".join(imported_skills),
                 ),
             )
         except Exception as e:
@@ -867,11 +878,35 @@ async def save_skill_file(
         skill_name,
         file_path,
         content,
-        agent_id,
-        source_id,
+        user_name=x_user_name,
+        agent_id=agent_id,
+        source_id=source_id,
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to save file")
+
+    # Log edit operation
+    if svc.db.is_connected:
+        try:
+            await svc.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source_id,
+                    x_user_id,
+                    x_user_name,
+                    "edit",
+                    "skill",
+                    skill_name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log edit operation: %s", e)
+
     return OperationResponse(success=True)
 
 
@@ -884,6 +919,7 @@ async def delete_my_skill(
     request: Request,
     x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    x_user_name: Optional[str] = Header(default=None, alias="X-User-Name"),
     agent_id: str = "default",
 ):
     """删除技能."""
@@ -901,6 +937,29 @@ async def delete_my_skill(
             status_code=404,
             detail="Skill not found or delete failed",
         )
+
+    # Log delete operation
+    if svc.db.is_connected:
+        try:
+            await svc.db.execute(
+                """
+                INSERT INTO swe_user_item_operation_logs
+                    (source_id, user_id, user_name, operation,
+                     item_type, item_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source_id,
+                    x_user_id,
+                    x_user_name,
+                    "delete",
+                    "skill",
+                    skill_name,
+                ),
+            )
+        except Exception as e:
+            logger.warning("Failed to log delete operation: %s", e)
+
     return OperationResponse(success=True)
 
 

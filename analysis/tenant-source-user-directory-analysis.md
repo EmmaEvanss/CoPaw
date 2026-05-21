@@ -227,13 +227,13 @@ async def distribute_mcp(item_id, req, request, x_source_id, x_manager, x_user_i
 │   │   ├── sessions/, memory/, skills/
 │   └── skill_pool/
 ├── default_ruice/                          # source 模板目录（初始化模板，不是 runtime tenant）
-├── scope.v1.<default>.<ruice>/             # default + ruice 的运行时目录
-└── scope.v1.<sapId>.<ruice>/               # iframe 用户 + ruice 的运行时目录
+├── <default>.<ruice>/                      # default + ruice 的运行时目录
+└── <sapId>.<ruice>/                        # iframe 用户 + ruice 的运行时目录
 
 ~/.swe.secret/                              # SECRET_DIR
 ├── default/providers/                      # 默认模板 Provider 配置
 ├── default_ruice/providers/                # source 模板 Provider 配置
-└── scope.v1.<tenant>.<source>/providers/   # 运行时 Provider 隔离目录
+└── <tenant>.<source>/providers/            # 运行时 Provider 隔离目录
 ```
 
 ### 3.2 租户-来源-目录映射
@@ -241,10 +241,60 @@ async def distribute_mcp(item_id, req, request, x_source_id, x_manager, x_user_i
 | tenant_id | source_id | effective_tenant_id | 工作目录 |
 |-----------|-----------|---------------------|----------|
 | `default` | `None` | `default` | `~/.swe/default/` |
-| `default` | `ruice` | `scope.v1.<default>.<ruice>` | `~/.swe/scope.v1.<default>.<ruice>/` |
-| `{sapId}` | `ruice` | `scope.v1.<sapId>.<ruice>` | `~/.swe/scope.v1.<sapId>.<ruice>/` |
+| `default` | `ruice` | `<default>.<ruice>` | `~/.swe/<default>.<ruice>/` |
+| `{sapId}` | `ruice` | `<sapId>.<ruice>` | `~/.swe/<sapId>.<ruice>/` |
 
 **关键规则**：只要请求进入 tenant-scoped runtime，`source_id` 就会参与运行时 scope 计算；非默认租户也不再复用裸 `tenant_id` 目录。
+
+### 3.3 历史裸目录迁移
+
+当历史环境仍保留以下旧目录时：
+
+```text
+~/.swe/<tenant-id>/
+~/.swe.secret/<tenant-id>/
+```
+
+且这些目录实际属于某个已知 `source_id`，可使用脚本：
+
+```bash
+python scripts/migrate_tenant_scope_dirs.py \
+  --tenant-id <tenant-id> \
+  --source-id <source-id> \
+  --dry-run
+```
+
+如需按同一 `source_id` 批量迁移多个租户，可使用：
+
+```bash
+python scripts/migrate_tenant_scope_dirs.py \
+  --tenant-ids tenant-a,tenant-b \
+  --source-id <source-id> \
+  --dry-run
+```
+
+批量模式会先对整批租户执行预检查，只要任一目标目录已存在就整批拒绝，
+避免出现部分租户先迁移、后续租户失败的半完成状态。确认输出无误后移除
+`--dry-run` 执行正式迁移。脚本会把目录移动到
+`<encoded-tenant>.<encoded-source>`，并同步修正工作目录内 JSON 配置
+引用的旧绝对路径。`default_<source>` 仍然只是模板目录，不能通过该脚本
+当作运行时租户目录迁移。
+
+如果需要把已有 canonical scope ID 反向解析回逻辑身份，可使用：
+
+```bash
+python scripts/decode_scope_ids.py \
+  --scope-id dGVuYW50LWE.c291cmNlLWE
+```
+
+或批量解析：
+
+```bash
+python scripts/decode_scope_ids.py \
+  --scope-ids dGVuYW50LWE.c291cmNlLWE,ZGVmYXVsdA.cnVpY2U
+```
+
+该脚本只接受当前 canonical 格式，不兼容历史 `scope.v1.*` 输入。
 
 ---
 
@@ -304,7 +354,7 @@ resolve_runtime_tenant_id(tenant_id, source_id)
     ├── tenant_id + source_id → encode_scope_id(...) = scope_id
     └── source_id 缺失 → 仅保留逻辑 tenant_id（用于非 scoped 场景）
     ↓
-租户工作目录: ~/.swe/scope.v1.<tenant>.<source>/
+租户工作目录: ~/.swe/<tenant>.<source>/
 ```
 
 ---

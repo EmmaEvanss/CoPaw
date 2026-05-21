@@ -19,6 +19,8 @@ from ..models.cron import (
     ExecutionQueryParams,
     PaginatedResponse,
     ExecutionDetailResponse,
+    MarkReadResponse,
+    UnreadCountResponse,
 )
 from ..services.cron import QueryService, get_query_service
 from ..services.cron.export_service import ExportService, get_export_service
@@ -28,13 +30,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/monitor/cron", tags=["cron"])
 
 
+@router.get("/filter-options")
+async def get_filter_options(
+    service: QueryService = Depends(get_query_service),
+) -> dict:
+    """获取筛选项下拉框选项列表。
+
+    返回用户、分行、渠道、来源、任务名称等筛选项的可选值列表，
+    用于前端下拉框组件。
+
+    Args:
+        service: Query service
+
+    Returns:
+        包含各筛选项列表的字典
+    """
+    return await service.get_filter_options()
+
+
 @router.get("/jobs", response_model=PaginatedResponse[CronJobModel])
 async def list_jobs(
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
     bbk_id: str | None = Query(default=None, description="分行号筛选"),
     source_id: str | None = Query(default=None, description="来源标识筛选"),
     creator_user_id: str | None = Query(
-        default=None, description="创建者ID筛选"
+        default=None,
+        description="创建者ID筛选",
     ),
     status: str | None = Query(default=None, description="状态筛选"),
     enabled: bool | None = Query(default=None, description="是否启用筛选"),
@@ -100,10 +121,12 @@ async def list_executions(
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
     status: str | None = Query(default=None, description="执行状态筛选"),
     start_time: datetime | None = Query(
-        default=None, description="开始时间范围"
+        default=None,
+        description="开始时间范围",
     ),
     end_time: datetime | None = Query(
-        default=None, description="结束时间范围"
+        default=None,
+        description="结束时间范围",
     ),
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=10, ge=1, le=100, description="每页数量"),
@@ -171,10 +194,12 @@ async def export_data(
     enabled: bool | None = Query(default=None, description="是否启用筛选"),
     status: str | None = Query(default=None, description="状态筛选"),
     start_time: datetime | None = Query(
-        default=None, description="开始时间范围"
+        default=None,
+        description="开始时间范围",
     ),
     end_time: datetime | None = Query(
-        default=None, description="结束时间范围"
+        default=None,
+        description="结束时间范围",
     ),
     export_type: str = Query(
         default="executions",
@@ -235,3 +260,47 @@ async def export_data(
     except Exception as e:
         logger.error("Failed to export data: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobs/{job_id}/mark-read", response_model=MarkReadResponse)
+async def mark_job_as_read(
+    job_id: str,
+    service: QueryService = Depends(get_query_service),
+) -> MarkReadResponse:
+    """标记任务为已读。
+
+    将指定任务的所有成功执行的未读记录标记为已读。
+    用户查看任务执行结果后调用此接口。
+
+    Args:
+        job_id: 任务ID
+        service: Query service
+
+    Returns:
+        标记结果，包含更新的记录数
+    """
+    try:
+        count = await service.mark_job_as_read(job_id)
+        return MarkReadResponse(marked=True, count=count)
+    except Exception as e:
+        logger.error("Failed to mark job as read: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/unread-count", response_model=UnreadCountResponse)
+async def get_unread_count(
+    tenant_id: str | None = Query(default=None, description="租户ID筛选"),
+    service: QueryService = Depends(get_query_service),
+) -> UnreadCountResponse:
+    """获取未读任务数量统计。
+
+    返回各任务的未读成功执行记录数量，用于前端展示未读提醒。
+
+    Args:
+        tenant_id: 租户ID筛选（可选）
+        service: Query service
+
+    Returns:
+        未读数量统计
+    """
+    return await service.get_unread_count(tenant_id)

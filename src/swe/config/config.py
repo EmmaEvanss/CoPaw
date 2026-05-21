@@ -523,6 +523,41 @@ class PostTurnValidationConfig(BaseModel):
     )
 
 
+class QueryRetryConfig(BaseModel):
+    """Query 级别重试配置 - 当整轮对话因可重试瞬时错误失败时自动重试。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = Field(
+        default=False,
+        description="是否启用 Query 级别重试",
+    )
+    max_retries: int = Field(
+        default=3,
+        ge=1,
+        description="最大重试次数",
+    )
+    backoff_base: float = Field(
+        default=2.0,
+        ge=0.5,
+        description="指数退避基础延迟（秒）",
+    )
+    backoff_cap: float = Field(
+        default=30.0,
+        ge=1.0,
+        description="退避延迟上限（秒），须大于等于 backoff_base",
+    )
+
+    @model_validator(mode="after")
+    def validate_backoff_cap(self) -> "QueryRetryConfig":
+        """确保 backoff_cap >= backoff_base。"""
+        if self.backoff_cap < self.backoff_base:
+            raise ValueError(
+                "backoff_cap must be greater than or equal to backoff_base",
+            )
+        return self
+
+
 class HookRuntimeRunningConfig(BaseModel):
     """Hook Runtime 自动续跑预算配置。"""
 
@@ -583,6 +618,11 @@ class AgentsRunningConfig(BaseModel):
             "Hook Runtime 相关运行预算配置；配置后优先于 "
             "running 顶层兼容字段"
         ),
+    )
+
+    query_retry: QueryRetryConfig = Field(
+        default_factory=QueryRetryConfig,
+        description="Query 级别重试配置",
     )
 
     llm_retry_enabled: bool = Field(

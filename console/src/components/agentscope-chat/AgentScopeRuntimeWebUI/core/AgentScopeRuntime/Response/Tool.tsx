@@ -7,7 +7,12 @@ import {
 import { ToolCall } from "@/components/agentscope-chat";
 import { useChatAnywhereOptions } from "../../Context/ChatAnywhereOptionsContext";
 import Approval from "./Approval";
-import { buildToolTitle, getToolDisplayName } from "./ToolTitle";
+import {
+  buildToolTitle,
+  getToolDisplayName,
+  resolveServerLabel,
+  resolveToolName,
+} from "./ToolTitle";
 
 const HIDDEN_TOOL_NAMES = new Set(["update_task_progress"]);
 
@@ -31,15 +36,18 @@ const Tool = React.memo(function ({
     output_summary?: string;
   }>[];
   const loading = data.status === AgentScopeRuntimeRunStatus.InProgress;
-  const toolName = content[0].data.name;
+  const inputData = (content[0]?.data || {}) as Record<string, any>;
+  const outputData = (content[1]?.data || {}) as Record<string, any>;
+  const toolName = resolveToolName(inputData) || resolveToolName(outputData);
   if (HIDDEN_TOOL_NAMES.has(toolName)) return null;
 
-  const serverLabel = content[0].data.server_label;
+  const serverLabel =
+    resolveServerLabel(inputData) || resolveServerLabel(outputData);
   const defaultTitle = getToolDisplayName(toolName, serverLabel);
-  const input = content[0]?.data?.arguments;
-  const summary = content[0]?.data?.summary;
-  const output = content[1]?.data?.output;
-  const outputSummary = content[1]?.data?.output_summary;
+  const input = inputData.arguments ?? outputData.arguments;
+  const summary = inputData.summary ?? outputData.summary;
+  const output = outputData.output ?? inputData.output;
+  const outputSummary = outputData.output_summary ?? inputData.output_summary;
   const title = buildToolTitle({
     loading,
     toolName,

@@ -234,7 +234,6 @@ class DailyStats(BaseModel):
     conversation_count: int = 0
     avg_duration_ms: int = 0
 
-
 class OverviewStats(BaseModel):
     """Overview dashboard statistics."""
 

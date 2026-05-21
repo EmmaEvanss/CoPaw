@@ -31,77 +31,77 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_ID = "default"
 
-# Allows alphanumerics, underscores, hyphens, and dots (for version strings like "1.0.0")
-_SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+# 系统标识符 (source_id, item_id, user_id, agent_id)：仅允许 ASCII 安全字符
+_SAFE_SYSTEM_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
+# 技能目录名危险字符：控制字符、空格、Windows 保留字符、路径分隔符
+# 空格也替换为下划线，避免脚本/工具兼容问题
+_UNSAFE_SKILL_NAME_CHARS_RE = re.compile(r'[\x00-\x1f <>:"|?*\\/]')
 
 
-def sanitize_skill_name(name: str) -> str:
-    """将技能名称转换为安全的目录名（参考 CmbCoworkAgent sanitizeSkillId）.
+def normalize_skill_name(name: str) -> str:
+    """将技能名称规范化为安全的目录名，保留中文等 Unicode 字符.
+
+    与 SWE 服务的 _normalize_skill_dir_name() 行为对齐，仅过滤真正危险的
+    文件系统字符，保留中文、日文、韩文等 Unicode 字符。
 
     处理流程：
-    1. 转为小写
-    2. 去除前后空格
-    3. 中文转拼音（如 "数据分析" → "shu-ju-fen-xi"）
-    4. 将非 [a-z0-9-_] 的字符替换为 -
-    5. 合并连续的 -
-    6. 去除开头和结尾的 -
-    7. 截断到 64 个字符
+    1. 去除前后空格
+    2. 检查空值、NUL 字节、路径遍历
+    3. 替换危险字符（控制字符、空格、Windows 保留字符、路径分隔符）为下划线
+    4. 合并连续下划线
+    5. 去除首尾下划线
+    6. 截断到 64 个字符
 
     Args:
-        name: 原始技能名称，如 "Word / DOCX" 或 "数据分析"
+        name: 原始技能名称，如 "数据分析" 或 "Word / DOCX"
 
     Returns:
-        安全的目录名，如 "word-docx" 或 "shu-ju-fen-xi"
+        规范的目录名，如 "数据分析" 或 "Word_DOCX"
 
-    Examples:
-        >>> sanitize_skill_name("Word / DOCX")
-        'word-docx'
-        >>> sanitize_skill_name("数据分析")
-        'shu-ju-fen-xi'
+    Raises:
+        ValueError: 名称为空或仅包含非法字符
     """
-    if not name:
-        return "unnamed-skill"
-
-    # 转为小写并去除前后空格
-    sanitized = name.lower().strip()
-
-    # 中文转拼音（尝试导入 pypinyin，失败时跳过）
-    try:
-        from pypinyin import lazy_pinyin, Style
-
-        # 检测是否包含中文字符
-        if any("一" <= c <= "鿿" for c in sanitized):
-            # 转为拼音，使用Style.NORMAL（不带声调），用 "-" 连接
-            pinyin_parts = lazy_pinyin(sanitized, style=Style.NORMAL)
-            sanitized = "-".join(pinyin_parts)
-    except ImportError:
-        # pypinyin 未安装，继续使用原有逻辑（中文会被替换为 -）
-        pass
-
-    # 将非 [a-z0-9-_] 的字符替换为 -
-    sanitized = re.sub(r"[^a-z0-9\-_]", "-", sanitized)
-
-    # 合并连续的 -
-    sanitized = re.sub(r"-+", "-", sanitized)
-
-    # 去除开头和结尾的 -
-    sanitized = sanitized.strip("-")
-
+    normalized = str(name or "").strip()
+    if not normalized:
+        raise ValueError("Skill name cannot be empty")
+    if "\x00" in normalized:
+        raise ValueError("Skill name cannot contain NUL bytes")
+    if normalized in {".", ".."}:
+        raise ValueError(f"Invalid skill name: {normalized!r}")
+    # 替换危险字符为下划线（保留对含 / 的 frontmatter 名称的兼容）
+    normalized = _UNSAFE_SKILL_NAME_CHARS_RE.sub("_", normalized)
+    # 合并连续下划线
+    normalized = re.sub(r"_+", "_", normalized)
+    # 去除首尾下划线
+    normalized = normalized.strip("_")
     # 截断到 64 个字符
-    sanitized = sanitized[:64]
-
-    # 如果结果为空，使用默认名称
-    if not sanitized:
-        sanitized = "unnamed-skill"
-
-    return sanitized
+    if len(normalized) > 64:
+        normalized = normalized[:64].strip("_")
+    if not normalized:
+        raise ValueError("Skill name contains only invalid characters")
+    return normalized
 
 
 def _validate_path_segment(value: str, name: str = "segment") -> None:
-    """Raise ValueError if value contains path traversal or unsafe characters."""
-    if not _SAFE_SEGMENT_RE.match(value):
+    """校验系统标识符（source_id, item_id, user_id, agent_id）仅包含 ASCII 安全字符."""
+    if not _SAFE_SYSTEM_SEGMENT_RE.match(value):
         raise ValueError(
             f"Invalid {name} {value!r}: only alphanumerics, underscores, hyphens, and dots are allowed",
+        )
+
+
+def _validate_skill_name_segment(value: str) -> None:
+    """校验技能目录名，允许 Unicode 字符但拦截危险文件系统字符."""
+    if not value:
+        raise ValueError("Skill name cannot be empty")
+    if "\x00" in value:
+        raise ValueError("Skill name cannot contain NUL bytes")
+    if value in {".", ".."}:
+        raise ValueError(f"Invalid skill name: {value!r}")
+    if _UNSAFE_SKILL_NAME_CHARS_RE.search(value):
+        raise ValueError(
+            f"Invalid skill name {value!r}: contains unsafe filesystem characters",
         )
 
 
@@ -208,11 +208,11 @@ def copy_skill_to_user(
     """将市场技能复制到用户工作目录，并写入分发元数据.
 
     Args:
-        skill_name: 安全的目录名（sanitize 后）
+        skill_name: 规范的目录名（normalize 后，保留中文等 Unicode 字符）
         original_name: 原始技能名称（用于前端展示）
         description: 技能描述（用于前端展示）
     """
-    _validate_path_segment(skill_name, "skill_name")
+    _validate_skill_name_segment(skill_name)
     src_dir = get_skill_dir(marketplace_root, source_id, item_id)
     dst_dir = (
         get_user_skills_dir(swe_root, user_id, agent_id, source_id)
@@ -236,6 +236,22 @@ def copy_skill_to_user(
                 e,
             )
 
+    # 重复分发时保留目标目录已有的 created_at
+    dst_skill_json = dst_dir / "skill.json"
+    if dst_skill_json.exists():
+        try:
+            existing_data = json.loads(
+                dst_skill_json.read_text(encoding="utf-8"),
+            )
+            if "created_at" in existing_data:
+                skill_data["created_at"] = existing_data["created_at"]
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Failed to read existing skill.json %s: %s",
+                dst_skill_json,
+                e,
+            )
+
     # 确保 name 字段存在（用于前端展示）
     if "name" not in skill_data:
         skill_data["name"] = original_name
@@ -247,6 +263,8 @@ def copy_skill_to_user(
     skill_data["source"] = f"marketplace:{item_id}"
     skill_data["distributed_by"] = distributed_by
     skill_data["received_version"] = version
+    # 保留原有 created_at（重复分发时不覆盖首次创建时间）
+    skill_data.setdefault("created_at", datetime.now(timezone.utc).isoformat())
 
     _atomic_write_json(dst_dir / "skill.json", skill_data)
 

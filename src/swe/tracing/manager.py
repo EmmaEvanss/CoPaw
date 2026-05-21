@@ -39,6 +39,7 @@ class TraceContext:
         user_name: Optional[str] = None,
         bbk_id: Optional[str] = None,
         session_name: Optional[str] = None,
+        attached: bool = False,  # 标记是否是 attach 到已存在的 trace
     ):
         self.trace_id = trace_id
         self.user_id = user_id
@@ -54,6 +55,7 @@ class TraceContext:
         self._active_skills: list[str] = []  # Active skill context stack
         self.skill_detector: Optional[Any] = None  # SkillInvocationDetector
         self.enabled_skills: list[str] = []  # Skills enabled for this trace
+        self.attached = attached  # 如果为 True，表示不应由当前代码结束 trace
 
     def push_span(self, span_id: str) -> None:
         """Push a span ID onto the stack."""
@@ -262,8 +264,9 @@ class TraceManager:
         bbk_id: Optional[str] = None,
         session_name: Optional[str] = None,
         model_output: Optional[str] = None,
+        attach_existing: bool = False,
     ) -> str:
-        """Start a new trace.
+        """Start a new trace or attach to an existing one.
 
         Args:
             user_id: User identifier
@@ -276,6 +279,8 @@ class TraceManager:
             bbk_id: Optional BBK identifier
             session_name: Optional session name (derived from first message)
             model_output: Optional model output (for text-type cron jobs)
+            attach_existing: If True and trace_id exists in DB, only set context
+                without creating new database record
 
         Returns:
             Trace ID
@@ -285,42 +290,34 @@ class TraceManager:
 
         trace_id = trace_id or str(uuid.uuid4())
 
-        # Sanitize user message
-        if self.config.sanitize_output and user_message:
-            user_message = sanitize_string(
-                user_message,
-                self.config.max_output_length,
+        # 如果是 attach_existing 模式，检查 trace 是否已存在
+        if attach_existing:
+            attached = await self._handle_attach_existing(
+                trace_id,
+                user_id,
+                session_id,
+                channel,
+                source_id,
+                user_name,
+                bbk_id,
+                session_name,
             )
+            if attached:
+                return trace_id
 
-        # Sanitize model output
-        if self.config.sanitize_output and model_output:
-            model_output = sanitize_string(
-                model_output,
-                self.config.max_output_length,
-            )
+        # Sanitize inputs
+        user_message, model_output = self._sanitize_inputs(
+            user_message,
+            model_output,
+        )
 
-        # 确定 session_name 的写入逻辑：
-        # 1. 新增会话：写入当前消息作为 session_name
-        # 2. 存量会话：查询第一条消息作为 session_name
-        # 每一条 trace 都需要写入 session_name
-        effective_session_name = None
-        if session_name:
-            # 检查是否为存量会话（跨所有 source_id 查询）
-            has_traces = await self.store.has_session_traces(session_id)
-            if has_traces:
-                # 存量会话：查询第一条消息作为 session_name（跨所有 source_id 查询）
-                first_msg = await self.store.get_session_first_message(
-                    session_id,
-                )
-                if first_msg:
-                    effective_session_name = first_msg[:10]
-                else:
-                    # 如果第一条消息为空，使用当前消息作为会话名称
-                    effective_session_name = session_name
-            else:
-                # 新增会话：写入当前消息作为 session_name
-                effective_session_name = session_name
+        # 确定 effective_session_name
+        effective_session_name = await self._determine_session_name(
+            session_id,
+            session_name,
+        )
 
+        # 创建 trace 并保存
         trace = Trace(
             trace_id=trace_id,
             source_id=source_id,
@@ -354,6 +351,115 @@ class TraceManager:
         set_current_trace(ctx)
 
         return trace_id
+
+    async def _handle_attach_existing(
+        self,
+        trace_id: str,
+        user_id: str,
+        session_id: str,
+        channel: str,
+        source_id: str,
+        user_name: Optional[str],
+        bbk_id: Optional[str],
+        session_name: Optional[str],
+    ) -> bool:
+        """处理 attach_existing 模式，检查并复用已存在的 trace。
+
+        Args:
+            trace_id: Trace ID
+            user_id: User ID
+            session_id: Session ID
+            channel: Channel
+            source_id: Source ID
+            user_name: User name
+            bbk_id: BBK ID
+            session_name: Session name
+
+        Returns:
+            True 如果成功 attach，False 如果不存在需要创建新 trace
+        """
+        existing_trace = self._active_traces.get(
+            trace_id,
+        ) or await self.store.get_trace(trace_id)
+        if not existing_trace:
+            return False
+
+        # 仅设置 context，不创建数据库记录
+        ctx = TraceContext(
+            trace_id,
+            existing_trace.user_id or user_id,
+            existing_trace.session_id or session_id,
+            existing_trace.channel or channel,
+            existing_trace.source_id or source_id,
+            user_name=user_name or existing_trace.user_name,
+            bbk_id=bbk_id or existing_trace.bbk_id,
+            session_name=session_name or existing_trace.session_name,
+            attached=True,  # 标记为 attach，不应由当前代码结束
+        )
+        ctx.trace = existing_trace
+        set_current_trace(ctx)
+        return True
+
+    def _sanitize_inputs(
+        self,
+        user_message: Optional[str],
+        model_output: Optional[str],
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Sanitize user message and model output.
+
+        Args:
+            user_message: User message
+            model_output: Model output
+
+        Returns:
+            Tuple of sanitized (user_message, model_output)
+        """
+        if self.config.sanitize_output and user_message:
+            user_message = sanitize_string(
+                user_message,
+                self.config.max_output_length,
+            )
+        if self.config.sanitize_output and model_output:
+            model_output = sanitize_string(
+                model_output,
+                self.config.max_output_length,
+            )
+        return user_message, model_output
+
+    async def _determine_session_name(
+        self,
+        session_id: str,
+        session_name: Optional[str],
+    ) -> Optional[str]:
+        """确定有效的 session_name。
+
+        逻辑：
+        1. 新增会话：写入当前消息作为 session_name
+        2. 存量会话：查询第一条消息作为 session_name
+
+        Args:
+            session_id: Session ID
+            session_name: 提供的 session name
+
+        Returns:
+            有效的 session_name
+        """
+        if not session_name:
+            return None
+
+        # 检查是否为存量会话（跨所有 source_id 查询）
+        has_traces = await self.store.has_session_traces(session_id)
+        if not has_traces:
+            # 新增会话：写入当前消息作为 session_name
+            return session_name
+
+        # 存量会话：查询第一条消息作为 session_name
+        first_msg = await self.store.get_session_first_message(session_id)
+        if first_msg:
+            return first_msg[:10]
+
+        # 如果第一条消息为空，使用当前消息作为会话名称
+        return session_name
 
     async def setup_skill_detector(
         self,
@@ -565,13 +671,18 @@ class TraceManager:
         self._update_trace_totals(trace_id, span, None)
 
         # Add to pending cache and queue atomically
+        # 在锁内检查是否需要立即 flush，避免锁外检查导致的竞态条件
+        need_flush = False
         async with self._span_queue_lock:
             self._pending_spans[span_id] = span
             self._span_queue.append(span)
-
-            # Check if we need to flush
             if len(self._span_queue) >= self.config.batch_size:
-                asyncio.create_task(self._flush_spans())
+                need_flush = True
+
+        # 在锁外执行 flush，使用 await 确保写入完成
+        # 防止 end_trace 时数据尚未写入数据库
+        if need_flush:
+            await self._flush_spans()
 
         return span_id
 
@@ -962,35 +1073,111 @@ class TraceManager:
                 logger.error("Error in flush loop: %s", e)
 
     async def _flush_spans(self) -> None:
-        """Flush queued spans to storage."""
+        """Flush queued spans to storage.
+
+        Handles race condition with update_span and ensures data integrity:
+        1. Keep spans in _pending_spans during INSERT
+        2. After successful INSERT, check for spans updated during INSERT
+        3. UPDATE those spans that were modified during the race window
+        4. Only clear _pending_spans after successful write
+        5. On failure, re-queue spans for retry (avoid data loss)
+        """
         async with self._span_queue_lock:
             if not self._span_queue:
                 return
             spans = self._span_queue.copy()
             self._span_queue.clear()
-            # Clear pending cache atomically with queue clear
-            for span in spans:
-                self._pending_spans.pop(span.span_id, None)
+            # Record span IDs that were originally in queue (without end_time)
+            # for later detection of updates during INSERT
+            spans_before_insert = {
+                span.span_id: span.end_time for span in spans
+            }
 
-        if spans:
-            try:
-                if self._db is None:
-                    # Log-only mode: output spans directly (only skill-related)
-                    for span in spans:
-                        if span.skill_name:
-                            logger.info(
-                                "[SKILL SPAN] skill='%s', type=%s",
-                                span.skill_name,
-                                (
-                                    span.event_type.value
-                                    if hasattr(span.event_type, "value")
-                                    else span.event_type
-                                ),
-                            )
+        if not spans:
+            return
+
+        flush_success = False
+        try:
+            if self._db is None:
+                self._flush_spans_log_only(spans)
+                flush_success = True
+            else:
+                rowcount = await self.store.batch_create_spans(spans)
+                # 验证写入是否成功（至少写入了一部分数据）
+                if rowcount > 0:
+                    await self._update_spans_modified_during_flush(
+                        spans,
+                        spans_before_insert,
+                    )
+                    flush_success = True
                 else:
-                    await self.store.batch_create_spans(spans)
-            except Exception as e:
-                logger.error("Failed to flush spans: %s", e)
+                    logger.warning(
+                        "batch_create_spans returned 0 rows, treating as failure",
+                    )
+        except Exception as e:
+            logger.error(
+                "Failed to flush spans (will retry later): %s. "
+                "Affected %d spans: %s",
+                e,
+                len(spans),
+                [s.span_id[:8] for s in spans[:5]],  # 只显示前 5 个 span_id
+            )
+
+        # 只有写入成功时才清除 _pending_spans
+        # 写入失败时将 spans 重新放回队列，等待下次 flush 重试
+        async with self._span_queue_lock:
+            if flush_success:
+                for span in spans:
+                    self._pending_spans.pop(span.span_id, None)
+            else:
+                # 将失败的 spans 重新放回队列头部，优先重试
+                # 避免与新 spans 混在一起导致顺序混乱
+                for span in reversed(spans):
+                    self._span_queue.insert(0, span)
+                logger.info(
+                    "Re-queued %d failed spans for retry",
+                    len(spans),
+                )
+
+    def _flush_spans_log_only(self, spans: list["Span"]) -> None:
+        """Log skill-related spans in log-only mode."""
+        for span in spans:
+            if span.skill_name:
+                logger.info(
+                    "[SKILL SPAN] skill='%s', type=%s",
+                    span.skill_name,
+                    (
+                        span.event_type.value
+                        if hasattr(span.event_type, "value")
+                        else span.event_type
+                    ),
+                )
+
+    async def _update_spans_modified_during_flush(
+        self,
+        spans: list["Span"],
+        spans_before_insert: dict[str, Optional["datetime"]],
+    ) -> None:
+        """UPDATE spans that were modified during INSERT race window.
+
+        Args:
+            spans: List of spans that were flushed
+            spans_before_insert: Dict mapping span_id to original end_time
+        """
+        for span in spans:
+            # If span has end_time now but didn't before, it was updated
+            if (
+                span.end_time is not None
+                and spans_before_insert.get(span.span_id) is None
+            ):
+                try:
+                    await self.store.update_span(span)
+                except Exception as update_error:
+                    logger.warning(
+                        "Failed to update span %s after flush: %s",
+                        span.span_id,
+                        update_error,
+                    )
 
     async def _cleanup_loop(self) -> None:
         """Background loop for cleaning up old trace data."""

@@ -60,6 +60,24 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
 
 const DEFAULT_ICON_COLOR = "#8c8c8c";
 
+export function safeDecodeFileName(fileName: string): string {
+  try {
+    return decodeURIComponent(fileName);
+  } catch {
+    return fileName;
+  }
+}
+
+export function extractDecodedFileNameFromUrl(url: string, fallback: string): string {
+  try {
+    const urlObj = new URL(url, window.location.origin);
+    const fileName = urlObj.pathname.split("/").pop();
+    return fileName ? safeDecodeFileName(fileName) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 const IconImage = ({ url, size = 24 }: { url: string; size?: number }) => (
   <img src={url} width={size} height={size} alt="file icon" style={{ objectFit: "contain" }} />
 );

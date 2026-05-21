@@ -1,35 +1,44 @@
 import { useProviderContext } from "@/components/agentscope-chat";
 import DownloadFileCard from "../../../DownloadFileCard";
+import {
+  extractDecodedFileNameFromUrl,
+  safeDecodeFileName,
+} from "../../../FilePreviewModal/fileUtils";
+
 
 // 判断是否为文件链接
-function isFileLink(href: string): boolean {
+function isFileLink(href?: string): boolean {
   if (!href) return false;
+
+  let urlObj: URL;
+  try {
+    urlObj = new URL(href, window.location.origin);
+  } catch {
+    return false;
+  }
+
+  const pathname = urlObj.pathname;
   // 匹配 /files/preview/ 路径
-  if (href.includes("/files/preview/")) return true;
-  // 匹配常见文件扩展名
+  if (pathname.includes("/files/preview/")) return true;
+
+  // 匹配常见文件扩展名，html/htm 默认按普通页面链接处理
   const fileExts = [
     "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg",
     "mp4", "webm", "mp3", "wav", "ogg",
-    "pdf", "html", "htm",
+    "pdf",
     "doc", "docx", "xls", "xlsx", "ppt", "pptx",
     "md", "mdx", "txt", "json", "xml", "csv", "log", "yaml", "yml",
     "zip", "rar", "7z", "tar", "gz",
   ];
-  const extMatch = href.match(/\.([a-zA-Z0-9]+)(?:\?|$|#)/);
+  const fileName = safeDecodeFileName(pathname.split("/").pop() || "");
+  const extMatch = fileName.match(/\.([a-zA-Z0-9]+)$/);
   if (extMatch && fileExts.includes(extMatch[1].toLowerCase())) return true;
   return false;
 }
 
 // 从 URL 提取文件名
 function extractFileName(href: string): string {
-  try {
-    const urlObj = new URL(href, window.location.origin);
-    const pathname = urlObj.pathname;
-    const parts = pathname.split("/");
-    return parts[parts.length - 1] || "文件";
-  } catch {
-    return "文件";
-  }
+  return extractDecodedFileNameFromUrl(href, "文件");
 }
 
 export default function Link(props) {

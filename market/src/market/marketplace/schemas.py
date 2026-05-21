@@ -74,6 +74,8 @@ class MySkillItem(BaseModel):
     enabled: bool = True
     category: Optional[str] = None
     creator_name: Optional[str] = None
+    created_at: Optional[str] = None  # 技能创建/接收时间
+    updated_at: Optional[str] = None  # 技能最后更新时间
 
 
 class BatchOperationRequest(BaseModel):

@@ -424,17 +424,20 @@ class TraceStore:
 
     # Batch operations
 
-    async def batch_create_spans(self, spans: list[Span]) -> None:
+    async def batch_create_spans(self, spans: list[Span]) -> int:
         """Batch create spans.
 
         Args:
             spans: List of spans to create
+
+        Returns:
+            Number of rows actually inserted
         """
         if not spans:
-            return
+            return 0
 
         if self.db is None:
-            return
+            return 0
 
         query = """
             INSERT INTO swe_tracing_spans (
@@ -476,7 +479,16 @@ class TraceStore:
                     span.bbk_id,
                 ),
             )
-        await self.db.execute_many(query, params_list)
+        rowcount = await self.db.execute_many(query, params_list)
+        # 验证写入结果，帮助排查偶现的 spans 写入失败问题
+        if rowcount != len(params_list):
+            logger.warning(
+                "batch_create_spans: expected %d rows, got %d. "
+                "This may indicate database connection issue or partial write failure.",
+                len(params_list),
+                rowcount,
+            )
+        return rowcount
 
     # Query operations
 

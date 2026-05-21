@@ -62,13 +62,20 @@ export function buildAuthHeaders(): Record<string, string> {
   // 4. 自定义 headers 数组（父窗口通过 auth 字段传递）
   // 注意：排除 X-User-Id，因为已由 getUserId() 处理
   const iframeContext = getIframeContext();
+  if (iframeContext.isSuperManager) {
+    headers["X-User-Role"] = "admin";
+  } else if (iframeContext.manager) {
+    headers["X-User-Role"] = "manager";
+  }
+
   if (iframeContext.authHeaders?.length) {
     for (const item of iframeContext.authHeaders) {
       // 跳过 X-User-Id，避免覆盖上面设置的值
       if (
         item.headerName &&
         item.headerValue !== undefined &&
-        item.headerName !== "X-User-Id"
+        item.headerName !== "X-User-Id" &&
+        item.headerName !== "X-User-Role"
       ) {
         headers["x-header-" + item.headerName] = item.headerValue;
       }

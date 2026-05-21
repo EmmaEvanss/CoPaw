@@ -1,8 +1,11 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm } from "antd";
-import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined, RocketOutlined } from "@ant-design/icons";
-import { Power, Trash2, Pencil } from "lucide-react";
+import { Typography, Card, Spin, Button, Space, Input, message, Tag, Empty, Checkbox, Modal, Popconfirm, Tooltip } from "antd";
+import { PlusOutlined, UploadOutlined, ShopOutlined, RightOutlined, DownOutlined, FolderOutlined, FileOutlined, StarOutlined, SearchOutlined } from "@ant-design/icons";
+import { CheckCircle } from "lucide-react";
+import dayjs from "dayjs";
+import relativeTime from "dayjs/plugin/relativeTime";
+dayjs.extend(relativeTime);
 import { useMySkills } from "./useMySkills";
 import { useIframeStore } from "../../stores/iframeStore";
 import { getUserId } from "../../utils/identity";
@@ -11,8 +14,39 @@ import { MySkill, mySkillsApi, FileTreeNode } from "../../api/modules/mySkills";
 import { marketApi } from "../../api/modules/market";
 import { PublishModal } from "../Market/PublishModal";
 import { useConflictRenameModal } from "../Agent/Skills/components";
+import { SkillDetailPanel, splitMarkdownFrontmatter, mergeMarkdownFrontmatter } from "./SkillDetailPanel";
+import styles from "./index.module.less";
 
 const { Title, Text } = Typography;
+
+/**
+ * 文件树排序：SKILL.md 置顶、templates 目录优先、目录优先于文件、其余字母排序
+ */
+function sortFileTreeNodes(nodes: FileTreeNode[], isRoot: boolean): FileTreeNode[] {
+  const sorted = [...nodes].sort((a, b) => {
+    if (isRoot) {
+      // SKILL.md 置顶
+      if (a.type === "file" && a.name.toUpperCase() === "SKILL.MD") return -1;
+      if (b.type === "file" && b.name.toUpperCase() === "SKILL.MD") return 1;
+      // templates 目录次优先
+      if (a.type === "directory" && a.name.toLowerCase() === "templates") return -1;
+      if (b.type === "directory" && b.name.toLowerCase() === "templates") return 1;
+    }
+    // 目录优先于文件
+    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+    // 字母排序
+    return a.name.localeCompare(b.name);
+  });
+
+  // 递归排序子节点
+  for (const node of sorted) {
+    if (node.type === "directory" && node.children && node.children.length > 0) {
+      node.children = sortFileTreeNodes(node.children, false);
+    }
+  }
+
+  return sorted;
+}
 
 export default function MySkillsPage() {
   const navigate = useNavigate();
@@ -20,7 +54,7 @@ export default function MySkillsPage() {
   const manager = useIframeStore((state) => state.manager) || false;
   const userId = getUserId();
   const isManager = manager || userId === "default";
-  const { createdSkills, receivedSkills, loading, refresh } = useMySkills();
+  const { createdSkills, receivedSkills, loading, refresh, refreshSkill } = useMySkills();
   const [searchText, setSearchText] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedSkill, setSelectedSkill] = useState<MySkill | null>(null);
@@ -181,7 +215,9 @@ export default function MySkillsPage() {
 
     // Load skill files if not cached
     try {
-      const files = skillFiles[skillName] || await mySkillsApi.listSkillFiles(skillName);
+      let files = skillFiles[skillName] || await mySkillsApi.listSkillFiles(skillName);
+      // 对文件树排序：SKILL.md 置顶、templates 目录优先
+      files = sortFileTreeNodes(files, true);
       setSkillFiles((prev) => ({ ...prev, [skillName]: files }));
 
       // 自动选择 SKILL.md（如果存在）
@@ -310,16 +346,42 @@ export default function MySkillsPage() {
     if (!selectedSkill || !selectedFile || !isEditing) return;
     setIsSaving(true);
     try {
-      await mySkillsApi.saveSkillFile(selectedSkill.skill_name, selectedFile, draftContent);
-      setFileContent(draftContent);
+      // 对于 Markdown 文件，合并 frontmatter
+      const frontmatter = splitMarkdownFrontmatter(selectedFile, fileContent);
+      const contentToSave = frontmatter.hasFrontmatter
+        ? mergeMarkdownFrontmatter(frontmatter.protectedPrefix, draftContent)
+        : draftContent;
+
+      await mySkillsApi.saveSkillFile(selectedSkill.skill_name, selectedFile, contentToSave);
+      setFileContent(contentToSave);
       setIsEditing(false);
-      message.success("保存成功");
+      message.success("保存成功，可新开会话试一试效果。");
+
+      // 刷新单个技能数据（更新 updated_at 显示）
+      const updatedSkill = await refreshSkill(selectedSkill.skill_name);
+      if (updatedSkill) {
+        setSelectedSkill(updatedSkill);
+      }
     } catch (err) {
       message.error("保存失败");
     } finally {
       setIsSaving(false);
     }
-  }, [selectedSkill, selectedFile, isEditing, draftContent]);
+  }, [selectedSkill, selectedFile, isEditing, draftContent, fileContent, refreshSkill]);
+
+  // 编辑开始：初始化 draftContent
+  const handleEditStart = useCallback(() => {
+    setIsEditing(true);
+    const frontmatter = splitMarkdownFrontmatter(selectedFile, fileContent);
+    setDraftContent(frontmatter.editableContent);
+  }, [selectedFile, fileContent]);
+
+  // 编辑取消：重置 draftContent
+  const handleEditCancel = useCallback(() => {
+    setIsEditing(false);
+    const frontmatter = splitMarkdownFrontmatter(selectedFile, fileContent);
+    setDraftContent(frontmatter.editableContent);
+  }, [selectedFile, fileContent]);
 
   // Navigate to marketplace
   const goToMarketplace = () => {
@@ -534,25 +596,25 @@ export default function MySkillsPage() {
     const headerStyle = (() => {
       if (title.includes("创建")) {
         return {
-          borderColor: "#d6e4ff",
-          backgroundColor: "#e6f4ff",
-          color: "#1d39c4",
-          dotColor: "#1890ff",
+          borderColor: "#d7e2f5",
+          backgroundColor: "#eef4ff",
+          color: "#365d97",
+          dotColor: "#365d97",
         };
       }
       if (title.includes("接收")) {
         return {
-          borderColor: "#b7eb8f",
-          backgroundColor: "#f6ffed",
-          color: "#389e0d",
-          dotColor: "#52c41a",
+          borderColor: "#c4e8d1",
+          backgroundColor: "#edf7f0",
+          color: "#2e7d4f",
+          dotColor: "#2e7d4f",
         };
       }
       return {
-        borderColor: "#d9d9d9",
-        backgroundColor: "#f5f5f5",
-        color: "#595959",
-        dotColor: "#8c8c8c",
+        borderColor: "#e8e6dc",
+        backgroundColor: "#f5f4ed",
+        color: "#5e5d59",
+        dotColor: "#87867f",
       };
     })();
 
@@ -634,213 +696,6 @@ export default function MySkillsPage() {
             )}
           </div>
         )}
-      </div>
-    );
-  };
-
-  // Skill detail panel
-  const SkillDetailPanel = ({ skill }: { skill: MySkill | null }) => {
-    if (!skill) {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, textAlign: "center" }}>
-          <StarOutlined style={{ fontSize: 48, color: "#faad14", marginBottom: 16 }} />
-          <Title level={5} style={{ margin: "0 0 8px 0", color: "#262626" }}>
-            技能详情
-          </Title>
-          <Text type="secondary" style={{ fontSize: 14 }}>
-            选择左侧技能查看详情
-          </Text>
-        </div>
-      );
-    }
-
-    const isDisabled = !skill.enabled;
-    const canEdit = !skill.is_received;
-    const isLoading = selectedFile && fileContent === null;
-
-    return (
-      <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-        {/* Header */}
-        <div
-          style={{
-            padding: 16,
-            borderBottom: "1px solid #f0f0f0",
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            gap: 12,
-          }}
-        >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 16, color: "#262626" }}>
-                {skill.display_name || skill.skill_name}
-              </Text>
-              {skill.source === "customized" && (
-                <Tag color="green" style={{ fontSize: 11, borderRadius: 4 }}>自定义</Tag>
-              )}
-              {skill.is_received && (
-                <Tag color="orange" style={{ fontSize: 11, borderRadius: 4 }}>接收的</Tag>
-              )}
-              {isDisabled && (
-                <Tag color="red" style={{ fontSize: 11, borderRadius: 4 }}>已禁用</Tag>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {skill.category && (
-                <Tag style={{ fontSize: 11, borderRadius: 4, backgroundColor: "#f5f5f5", border: "1px solid #d9d9d9" }}>
-                  {skill.category}
-                </Tag>
-              )}
-              {skill.creator_name && (
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  创建者: {skill.creator_name}
-                </Text>
-              )}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <Popconfirm
-              title="删除技能"
-              description={`确定删除技能「${skill.display_name || skill.skill_name}」？删除后不可恢复。`}
-              onConfirm={() => handleDelete(skill)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button
-                size="small"
-                danger
-                icon={<Trash2 style={{ width: 12, height: 12 }} />}
-                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-              >
-                删除
-              </Button>
-            </Popconfirm>
-            {canEdit && fileContent !== null && !isEditing && (
-              <Button
-                size="small"
-                icon={<Pencil style={{ width: 12, height: 12 }} />}
-                style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-                onClick={() => { setIsEditing(true); setDraftContent(fileContent || ""); }}
-              >
-                编辑
-              </Button>
-            )}
-            <Button
-              size="small"
-              type={skill.enabled ? "primary" : "default"}
-              icon={<Power style={{ width: 12, height: 12 }} />}
-              style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-              onClick={() => handleToggleEnabled(skill)}
-              loading={togglingSkill === skill.skill_name}
-            >
-              {skill.enabled ? "已启用" : "已禁用"}
-            </Button>
-            {isManager && canEdit && (
-              <Button
-                size="small"
-                icon={<RocketOutlined style={{ fontSize: 12 }} />}
-                style={{
-                  height: 28,
-                  fontSize: 12,
-                  borderRadius: 8,
-                  background: "linear-gradient(135deg, #c4956a 0%, #b85a3a 100%)",
-                  border: "none",
-                  color: "#fff",
-                }}
-                onClick={() => handleSyncToMarket(skill)}
-              >
-                同步到市场
-              </Button>
-            )}
-            {isEditing && (
-              <>
-                <Button
-                  size="small"
-                  style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-                  onClick={() => { setIsEditing(false); setDraftContent(fileContent || ""); }}
-                  disabled={isSaving}
-                >
-                  取消
-                </Button>
-                <Button
-                  size="small"
-                  type="primary"
-                  style={{ height: 28, fontSize: 12, borderRadius: 8 }}
-                  onClick={handleSaveContent}
-                  loading={isSaving}
-                >
-                  保存
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Description */}
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0" }}>
-          <Text type="secondary" style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>
-            {skill.description || "暂无描述"}
-          </Text>
-        </div>
-
-        {/* Content */}
-        <div style={{ flex: "1 1 0", padding: 16, overflow: "auto", minHeight: 0 }}>
-          {isLoading ? (
-            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: 100 }}>
-              <Spin />
-            </div>
-          ) : isEditing ? (
-            <textarea
-              value={draftContent}
-              onChange={(e) => setDraftContent(e.target.value)}
-              style={{
-                width: "100%",
-                height: "100%",
-                fontFamily: "monospace",
-                fontSize: 13,
-                padding: 12,
-                borderRadius: 8,
-                border: "1px solid #d9d9d9",
-                resize: "none",
-                boxSizing: "border-box",
-              }}
-            />
-          ) : fileContent === null ? (
-            <div
-              style={{
-                borderRadius: 8,
-                border: "1px solid #f0f0f0",
-                backgroundColor: "#f5f5f5",
-                padding: 16,
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                boxSizing: "border-box",
-              }}
-            >
-              <Text type="secondary">选择文件查看内容</Text>
-            </div>
-          ) : (
-            <pre
-              style={{
-                borderRadius: 8,
-                border: "1px solid #f0f0f0",
-                backgroundColor: "#fafafa",
-                padding: 16,
-                margin: 0,
-                overflow: "auto",
-                fontSize: 12,
-                fontFamily: "monospace",
-                height: "100%",
-                boxSizing: "border-box",
-              }}
-            >
-              {fileContent}
-            </pre>
-          )}
-        </div>
       </div>
     );
   };
@@ -950,7 +805,24 @@ export default function MySkillsPage() {
 
       {/* Right detail panel */}
       <div style={{ flex: 1, backgroundColor: "#fff", overflow: "hidden" }}>
-        <SkillDetailPanel skill={selectedSkill} />
+        <SkillDetailPanel
+          skill={selectedSkill}
+          selectedFile={selectedFile}
+          fileContent={fileContent}
+          fileType={fileType}
+          isEditing={isEditing}
+          draftContent={draftContent}
+          isSaving={isSaving}
+          togglingSkill={togglingSkill}
+          isManager={isManager}
+          onEditStart={handleEditStart}
+          onEditCancel={handleEditCancel}
+          onSave={handleSaveContent}
+          onDraftChange={setDraftContent}
+          onToggleEnabled={handleToggleEnabled}
+          onDelete={handleDelete}
+          onSyncToMarket={handleSyncToMarket}
+        />
       </div>
 
       {/* Hidden file input */}

@@ -486,28 +486,36 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         if self._env_context is not None:
             sys_prompt = sys_prompt + "\n\n" + self._env_context
 
-        # 任务进度要求
-        sys_prompt += (
-            "\n\n[Task Progress Requirement]\n"
-            "You MUST call the update_task_progress tool for every non-trivial "
-            "user request. This is mandatory, not optional.\n\n"
-            "Each item in the items array has these fields:\n"
-            "- label: short Chinese step title (required)\n"
-            '- status: "todo" | "running" | "done" (required)\n'
-            "- id: unique step identifier (optional, auto-generated)\n\n"
-            "CRITICAL RULES:\n"
-            "- Call update_task_progress BEFORE your first tool call or substantive "
-            "action, with 3-6 short Chinese step titles.\n"
-            "- After finishing each step, call update_task_progress again to "
-            "mark it done and advance the next step to running.\n"
-            "- Always keep EXACTLY ONE step in 'running' status.\n"
-            '- When fully done, call with phase_status="completed" and all steps '
-            'marked "done".\n\n'
-            'SKIP ONLY for: pure chitchat ("hello"), simple knowledge questions '
-            '("what is Python"), or single-command requests ("run npm install").\n'
-            "For analysis, coding, debugging, refactoring, optimization, or any "
-            "multi-step request — ALWAYS use the tool. When in doubt, use it."
+        from ..app.source_system_config import (
+            is_chat_task_progress_enabled,
         )
+        from ..app.source_system_config.runtime import (
+            get_current_source_system_config,
+        )
+
+        if is_chat_task_progress_enabled(get_current_source_system_config()):
+            # 这里按 source 开关注入要求，避免关闭后仍提示模型强制调用。
+            sys_prompt += (
+                "\n\n[Task Progress Requirement]\n"
+                "You MUST call the update_task_progress tool for every non-trivial "
+                "user request. This is mandatory, not optional.\n\n"
+                "Each item in the items array has these fields:\n"
+                "- label: short Chinese step title (required)\n"
+                '- status: "todo" | "running" | "done" (required)\n'
+                "- id: unique step identifier (optional, auto-generated)\n\n"
+                "CRITICAL RULES:\n"
+                "- Call update_task_progress BEFORE your first tool call or substantive "
+                "action, with 3-6 short Chinese step titles.\n"
+                "- After finishing each step, call update_task_progress again to "
+                "mark it done and advance the next step to running.\n"
+                "- Always keep EXACTLY ONE step in 'running' status.\n"
+                '- When fully done, call with phase_status="completed" and all steps '
+                'marked "done".\n\n'
+                'SKIP ONLY for: pure chitchat ("hello"), simple knowledge questions '
+                '("what is Python"), or single-command requests ("run npm install").\n'
+                "For analysis, coding, debugging, refactoring, optimization, or any "
+                "multi-step request — ALWAYS use the tool. When in doubt, use it."
+            )
 
         return sys_prompt
 

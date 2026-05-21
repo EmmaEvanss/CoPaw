@@ -109,6 +109,9 @@ async def list_jobs(
         await _ensure_task_binding_for_read(job, request, mgr)
         for job in await mgr.list_jobs()
     ]
+    # 实时刷新每个 job 的 next_run_at（原依赖 APScheduler，现按需计算）
+    for job in jobs:
+        await mgr.refresh_next_run_at(job)
     return [
         CronJobListItem(
             **job.model_dump(mode="json"),
@@ -129,6 +132,7 @@ async def get_job(
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
     job = await _ensure_task_binding_for_read(job, request, mgr)
+    await mgr.refresh_next_run_at(job)
     return CronJobView(
         spec=job,
         state=_serialize_state(mgr.get_state(job_id)),

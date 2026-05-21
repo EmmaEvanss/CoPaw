@@ -26,6 +26,7 @@ from ...security.tenant_path_boundary import (
     TenantPathBoundaryError,
     make_permission_denied_response,
     get_current_tool_base_dir,
+    get_current_tenant_root,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,30 @@ def _resolve_file_path(file_path: str) -> str:
         allow_nonexistent=True,
     )
     return str(resolved)
+
+
+def _resolve_writable_file_path(file_path: str) -> str:
+    base_dir = get_current_tool_base_dir()
+    try:
+        return _resolve_file_path(file_path)
+    except TenantPathBoundaryError:
+        expanded_path = os.path.expanduser(file_path)
+        path_obj = Path(expanded_path)
+        tenant_root = get_current_tenant_root().resolve()
+        candidate = (
+            path_obj if path_obj.is_absolute() else (base_dir / path_obj)
+        ).resolve(strict=False)
+
+        try:
+            candidate.relative_to(tenant_root)
+        except ValueError as exc:
+            raise TenantPathBoundaryError(
+                "Write target escapes the tenant workspace boundary.",
+                resolved_path=candidate,
+            ) from exc
+
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        return str(candidate)
 
 
 def _get_encoding_for_file(file_path: str) -> str:
@@ -171,29 +196,25 @@ def _write_content_with_diagnostics(
     open_seconds = 0.0
     write_seconds = 0.0
     close_seconds = 0.0
-    file = None
-    try:
-        started_at = time.perf_counter()
-        file = open(file_path, mode, encoding=encoding)
+    started_at = time.perf_counter()
+    with open(file_path, mode, encoding=encoding) as file:
         open_seconds = time.perf_counter() - started_at
 
         started_at = time.perf_counter()
         file.write(content)
         write_seconds = time.perf_counter() - started_at
-    finally:
-        if file is not None:
-            started_at = time.perf_counter()
-            file.close()
-            close_seconds = time.perf_counter() - started_at
-        _log_file_write_diagnostics(
-            operation=operation,
-            file_path=diagnostic_path or file_path,
-            content_bytes=_content_byte_length(content, encoding),
-            resolve_seconds=resolve_seconds,
-            open_seconds=open_seconds,
-            write_seconds=write_seconds,
-            close_seconds=close_seconds,
-        )
+
+        started_at = time.perf_counter()
+    close_seconds = time.perf_counter() - started_at
+    _log_file_write_diagnostics(
+        operation=operation,
+        file_path=diagnostic_path or file_path,
+        content_bytes=_content_byte_length(content, encoding),
+        resolve_seconds=resolve_seconds,
+        open_seconds=open_seconds,
+        write_seconds=write_seconds,
+        close_seconds=close_seconds,
+    )
 
 
 def _cleanup_temp_file_after_cancel(
@@ -237,8 +258,7 @@ async def _write_file_atomically_unlocked(
     except Exception:
         _remove_temp_file(temp_path)
         raise
-    else:
-        _remove_temp_file(temp_path)
+    _remove_temp_file(temp_path)
 
 
 async def _write_file_atomically_with_diagnostics(
@@ -466,7 +486,7 @@ async def write_file(
     # Validate path against tenant boundary
     resolve_started_at = time.perf_counter()
     try:
-        file_path = _resolve_file_path(file_path)
+        file_path = _resolve_writable_file_path(file_path)
     except TenantPathBoundaryError:
         return ToolResponse(
             content=[
@@ -633,7 +653,7 @@ async def append_file(
     # Validate path against tenant boundary
     resolve_started_at = time.perf_counter()
     try:
-        file_path = _resolve_file_path(file_path)
+        file_path = _resolve_writable_file_path(file_path)
     except TenantPathBoundaryError:
         return ToolResponse(
             content=[

@@ -158,3 +158,70 @@
 
 - 对用户可见、需要进入历史的 runner 合成消息，先写入 `runtime.agent.memory`，再 `yield`
 - 测试同时断言 stream 输出和 session state 末尾内容，避免只验证前端当次可见
+
+## 当前 Source 系统配置页返回 403 或保存后步骤条行为未变化
+
+### 症状
+
+- 打开 `system-config-page` 直接显示 403，或页面入口在菜单中不可见
+- 页面能打开，但保存 `任务进度步骤条` 开关后，聊天页仍继续展示步骤条
+- 后端 current-source API 返回 `Manager role required`
+
+### 典型原因
+
+- iframe 上下文没有透传 `isSuperManager` / `manager`，导致前端未发送 `X-User-Role`
+- 前端误以为只隐藏 UI 就够了，但没有刷新 effective source config store
+- 后端 raw current-source 配置虽然写入成功，但仍被旧的 effective config 缓存命中，或者下一轮请求前没有重新读取
+
+### 第一落点
+
+- [console/src/api/authHeaders.ts](/Users/shixiangyi/code/Swe/console/src/api/authHeaders.ts)
+- 重点看 `isSuperManager -> admin`、`manager -> manager` 的头映射是否存在
+- [console/src/pages/SystemConfigPage/index.tsx](/Users/shixiangyi/code/Swe/console/src/pages/SystemConfigPage/index.tsx)
+- 重点看保存/删除成功后是否调用 `loadEffectiveConfig(activeSourceId)`
+- [src/swe/app/source_system_config/router.py](/Users/shixiangyi/code/Swe/src/swe/app/source_system_config/router.py)
+- 重点看 `/api/source-system-config/current` 是否只从 `request.state.source_id` 取目标 source，且仍要求 manager/admin
+- [src/swe/agents/react_agent.py](/Users/shixiangyi/code/Swe/src/swe/agents/react_agent.py)
+- [src/swe/agents/tools/update_task_progress.py](/Users/shixiangyi/code/Swe/src/swe/agents/tools/update_task_progress.py)
+- [src/swe/app/runner/runner.py](/Users/shixiangyi/code/Swe/src/swe/app/runner/runner.py)
+- 重点看 prompt、tool、stream 三段是否都走了 `chat_task_progress_enabled` 判定
+
+### 第一阶段处理
+
+- 先确认请求头里已经带上 `X-User-Role: admin|manager`
+- 再确认保存或删除后，前端已经刷新 effective config store，而不是只刷新当前页面表单
+- 如果聊天页行为没变化，抓下一轮请求的 effective config，再核对 prompt、tool、stream 三处是否都已关闭
+
+## Tenant bootstrap 时报 default workspace 缺少 agent.json
+
+### 症状
+
+- 首次访问租户、`ensure_bootstrap()` 自愈，或 `TenantInitializer.initialize()` 期间直接失败
+- 常见异常为：
+  - `FileNotFoundError: Agent config not found: <tenant>/workspaces/default/agent.json`
+- 伴随日志里可能先看到：
+  - `Config file not found, copying from md_files templates...`
+  - `Source file not found: .../src/swe/agents/md_files/config.json`
+
+### 典型原因
+
+- `ensure_default_agent_exists()` 只保证 root `config.json`、`chats.json` 和 `jobs.json`，不会直接生成 default workspace 的 `agent.json`
+- `ensure_default_workspace_scaffold()` 在没有模板 `agent.json` 时，如果先 `load_agent_config()`，就会在 fallback 生成之前触发异常
+- cached tenant 自愈场景下，`config.json` 或 `agent.json` 被删除后再次 bootstrap，也会走到同一条缺口
+
+### 第一落点
+
+- [src/swe/app/workspace/tenant_initializer.py](/Users/shixiangyi/code/Swe/src/swe/app/workspace/tenant_initializer.py)
+- 重点看 `ensure_default_workspace_scaffold()` 是否遵循“优先复制模板，没有模板再按 tenant root config 合成 fallback agent.json”
+- [src/swe/app/migration.py](/Users/shixiangyi/code/Swe/src/swe/app/migration.py)
+- 重点看 `ensure_default_agent_exists()` / `_do_ensure_default_agent()` 只负责最小 bootstrap，不要误以为它会补齐 workspace 级 `agent.json`
+
+### 第一阶段处理
+
+- 先确认 default 模板租户是否存在 `workspaces/default/agent.json`
+- 有模板时，优先检查模板复制路径和 `workspace_dir` 重写是否正确
+- 没模板时，检查 fallback `AgentProfileConfig` 是否从 tenant root `config.json` 正确构造并落盘
+- 回归至少覆盖三类路径：
+  - 首次初始化
+  - 从 default 模板复制 agent 配置
+  - cached tenant 删除 `agent.json` 后再次 `ensure_bootstrap()` 自愈

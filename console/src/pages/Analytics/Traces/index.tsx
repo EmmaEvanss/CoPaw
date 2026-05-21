@@ -67,7 +67,7 @@ export default function TracesPage() {
       const data = await tracingApi.getTraces(page, pageSize, {
         user_id: userIdFilter || undefined,
         status: statusFilter,
-        bbk_id: bbkIdFilter,
+        bbk_ids: bbkIdFilter,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
         source_id: effectiveSourceId,

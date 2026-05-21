@@ -567,9 +567,9 @@ switchIframeContext({
 当前来源隔离规则是：
 
 - `tenant_id = default` 且有 `source_id`
-  - 生效目录：`scope.v1.<default>.<source>`
+  - 生效目录：`<default>.<source>`
 - `tenant_id != default`
-  - 生效目录：`scope.v1.<tenant_id>.<source_id>`
+  - 生效目录：`<tenant_id>.<source_id>`
   - `source_id` 不再被忽略
 
 这意味着：
@@ -635,7 +635,7 @@ switchIframeContext({
 - `X-User-Name = "张三"`
 - `X-Source-Id = "SRC_A"`（参与 runtime scope 计算）
 
-后端生效目录：`~/.swe/scope.v1.<user_a>.<SRC_A>/`
+后端生效目录：`~/.swe/<user_a>.<SRC_A>/`
 
 2. 新建一个 MCP，例如 `user-a-only`
 3. 再切到用户 B，但保持相同来源：
@@ -656,7 +656,7 @@ switchIframeContext({
 - `X-User-Name = "李四"`
 - `X-Source-Id = "SRC_A"`（参与 runtime scope 计算）
 
-后端生效目录：`~/.swe/scope.v1.<user_b>.<SRC_A>/`
+后端生效目录：`~/.swe/<user_b>.<SRC_A>/`
 
 4. 检查 `user-a-only` 是否不可见
 5. 在 `user_b` 下新建一个不同的 MCP
@@ -677,7 +677,7 @@ switchIframeContext({
 **隔离原理**：
 
 - 任意 tenant 只要携带 `source_id`，都会进入独立 runtime scope
-- 生效目录是编码后的 `scope_id`，例如 `scope.v1.<tenant>.<SRC_A>`
+- 生效目录是编码后的 `scope_id`，例如 `<tenant>.<SRC_A>`
 - `default_{source}` 仅是模板目录，不是实际运行时目录
 
 步骤：
@@ -700,7 +700,7 @@ switchIframeContext({
 - `X-User-Name = "默认用户"`
 - `X-Source-Id = "SRC_A"`
 
-后端生效目录：`~/.swe/scope.v1.<default>.<SRC_A>/`
+后端生效目录：`~/.swe/<default>.<SRC_A>/`
 
 2. 新建一个 MCP，例如 `src-a-only`
 3. 切来源 B：
@@ -715,7 +715,7 @@ switchIframeContext({
 })
 ```
 
-后端生效目录：`~/.swe/scope.v1.<default>.<SRC_B>/`
+后端生效目录：`~/.swe/<default>.<SRC_B>/`
 
 4. 检查 `src-a-only` 是否不可见
 5. 在 `SRC_B` 下再新建一个 MCP
@@ -759,7 +759,7 @@ switchIframeContext({
 - `X-Tenant-Id = "user_a"`
 - `X-User-Name = "张三"`
 - `X-Source-Id = "SRC_A"`（参与 runtime scope 计算）
-- 后端生效目录：`~/.swe/scope.v1.<user_a>.<SRC_A>/`
+- 后端生效目录：`~/.swe/<user_a>.<SRC_A>/`
 
 2. 切应用 A：
 

@@ -9,6 +9,11 @@ declare global {
   interface Window {
     __env__?: {
       baseUrl?: string;
+      env?: string;
+      serviceUnitId?: string;
+      systemCode?: string;
+      systemSecret?: string;
+      responseFeedbackUserWhitelist?: string[];
     };
   }
 }

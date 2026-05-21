@@ -12,14 +12,18 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from .models import CronJobSpec
 
 logger = logging.getLogger(__name__)
+
+# 东八区时区（北京时间）
+_BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 # Default Monitor API URL
 DEFAULT_MONITOR_API_URL = "http://localhost:9090/api"
@@ -361,15 +365,24 @@ class MonitorSyncClient:
             )
 
     def _format_optional_time(self, time: Optional[datetime]) -> Optional[str]:
-        """Format optional datetime to ISO string.
+        """Format optional datetime to ISO string in Beijing timezone.
+
+        将 UTC 时间转换为东八区时间后再存储，前端读取后可直接展示。
 
         Args:
-            time: Optional datetime
+            time: Optional datetime (假设为 UTC 时区)
 
         Returns:
-            ISO format string or None
+            ISO format string in Beijing timezone or None
         """
-        return time.isoformat() if time else None
+        if time is None:
+            return None
+        # 如果时间没有时区信息，假设为 UTC
+        if time.tzinfo is None:
+            time = time.replace(tzinfo=timezone.utc)
+        # 转换为东八区时间
+        beijing_time = time.astimezone(_BEIJING_TZ)
+        return beijing_time.isoformat()
 
     def _format_optional_json(self, data: Optional[Dict[str, Any]]) -> str:
         """Format optional dict to JSON string.
@@ -492,12 +505,18 @@ class MonitorSyncClient:
         Returns:
             Dict with execution sync fields
         """
+        # 手动执行且成功的任务默认标记为已读
+        is_read = is_manual and status == "success"
+        read_at = None
+        if is_read and end_time:
+            read_at = self._format_optional_time(end_time)
+
         return {
             "job_id": job.id,
             "job_name": job.name,
             "tenant_id": job.tenant_id or "",
             "scheduled_time": self._format_optional_time(scheduled_time),
-            "actual_time": actual_time.isoformat(),
+            "actual_time": self._format_actual_time(actual_time),
             "end_time": self._format_optional_time(end_time),
             "duration_ms": duration_ms,
             "status": status,
@@ -510,7 +529,27 @@ class MonitorSyncClient:
             "input_snapshot": self._format_optional_json(input_snapshot),
             "output_preview": self._truncate_preview(output_preview),
             "meta": "",
+            "is_read": is_read,
+            "read_at": read_at,
         }
+
+    def _format_actual_time(self, time: datetime) -> str:
+        """Format actual_time datetime to ISO string in Beijing timezone.
+
+        将 UTC 时间转换为东八区时间后再存储，前端读取后可直接展示。
+
+        Args:
+            time: datetime (假设为 UTC 时区)
+
+        Returns:
+            ISO format string in Beijing timezone
+        """
+        # 如果时间没有时区信息，假设为 UTC
+        if time.tzinfo is None:
+            time = time.replace(tzinfo=timezone.utc)
+        # 转换为东八区时间
+        beijing_time = time.astimezone(_BEIJING_TZ)
+        return beijing_time.isoformat()
 
     async def _do_record_execution(self, exec_data: Dict[str, Any]) -> None:
         """Actually perform the record execution HTTP call.
@@ -531,6 +570,38 @@ class MonitorSyncClient:
             logger.warning(
                 "Failed to record execution to monitor: job_id=%s status=%d",
                 exec_data.get("job_id"),
+                response.status_code,
+            )
+
+    async def mark_job_as_read(self, job_id: str) -> None:
+        """标记任务及其历史执行记录为已读。
+
+        调用 Monitor 服务的标记已读接口，将该任务所有成功的未读记录标记为已读。
+
+        Args:
+            job_id: 任务ID
+        """
+        if not self._enabled:
+            return
+
+        # Fire and forget
+        self._sync_fire_and_forget(self._do_mark_job_as_read(job_id))
+
+    async def _do_mark_job_as_read(self, job_id: str) -> None:
+        """实际执行标记已读 HTTP 调用。
+
+        Args:
+            job_id: 任务ID
+        """
+        client = await self._get_client()
+        response = await client.post(f"/monitor/cron/jobs/{job_id}/mark-read")
+
+        if response.status_code == 200:
+            logger.debug("Marked job as read in monitor: job_id=%s", job_id)
+        else:
+            logger.warning(
+                "Failed to mark job as read in monitor: job_id=%s status=%d",
+                job_id,
                 response.status_code,
             )
 

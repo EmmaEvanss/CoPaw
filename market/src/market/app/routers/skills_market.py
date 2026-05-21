@@ -32,7 +32,7 @@ from ...marketplace.schemas import (
     UploadSkillResponse,
 )
 from ...marketplace.service import MarketItem, load_index, save_index
-from ..deps import require_source_id
+from ..deps import decode_user_name, require_source_id
 from .skills_browse import (
     _decode_zip_filename,
     _extract_zip_skills,
@@ -315,7 +315,7 @@ async def publish_skill_upload(
         )
 
     svc = request.app.state.marketplace
-    user_name = x_user_name or x_user_id
+    user_name = decode_user_name(x_user_name) or x_user_id
 
     # 读取并验证 zip 文件
     data = await _read_validated_zip_upload(file)
@@ -449,7 +449,7 @@ async def unpublish_skill(
         source_id,
         item_id,
         operator_id=x_user_id or "",
-        operator_name=x_user_name or "",
+        operator_name=decode_user_name(x_user_name) or "",
     )
     if not ok:
         raise HTTPException(status_code=404, detail="Skill not found")
@@ -477,7 +477,7 @@ async def distribute_skill(
             source_id,
             item_id,
             operator_id=x_user_id or "",
-            operator_name=x_user_name or "",
+            operator_name=decode_user_name(x_user_name) or "",
             req=req,
         )
     except ValueError as e:

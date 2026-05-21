@@ -528,6 +528,13 @@ export default function SessionsPage() {
                           <span style={{ marginLeft: 8, color: "#1890ff" }}>输出: {formatTokens(trace.total_output_tokens)}</span>
                         </span>
                       </div>
+                      {trace.feedback_content ? (
+                        <div className={styles.traceMeta}>
+                          <span title={trace.feedback_content}>
+                            反馈: {trace.feedback_content}
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>

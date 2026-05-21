@@ -837,7 +837,10 @@ class MarketplaceService:
         operator_name: str,
         req: DistributeRequest,
     ) -> DistributeResponse:
-        """分发技能到目标用户工作目录，并写操作日志。"""
+        """分发技能到目标用户工作目录，并写操作日志。
+
+        自建技能（source=customized）不覆盖，返回冲突明细。
+        """
         items = load_index(self.marketplace_root, source_id)
         item = next(
             (
@@ -855,9 +858,11 @@ class MarketplaceService:
 
         target_users = await self._resolve_target_users(source_id, req)
         count = 0
+        conflicts: list[dict] = []
+
         for user in target_users:
             try:
-                copy_skill_to_user(
+                result = copy_skill_to_user(
                     marketplace_root=self.marketplace_root,
                     source_id=source_id,
                     item_id=item_id,
@@ -869,6 +874,17 @@ class MarketplaceService:
                     distributed_by=operator_id,
                     version=item.version,
                 )
+
+                if result.get("status") == "conflict":
+                    conflicts.append(
+                        {
+                            "user_id": user["tenant_id"],
+                            "skill_name": safe_skill_name,
+                            "reason": result.get("reason", "unknown"),
+                        },
+                    )
+                    continue
+
                 # 注册技能到 manifest（使用安全名称）
                 self.register_skill_in_manifest(
                     user["tenant_id"],
@@ -906,7 +922,12 @@ class MarketplaceService:
                 except Exception as e:
                     logger.warning("Failed to log distribute operation: %s", e)
 
-        return DistributeResponse(distributed_count=count, item_id=item_id)
+        return DistributeResponse(
+            distributed_count=count,
+            conflict_count=len(conflicts),
+            conflicts=conflicts,
+            item_id=item_id,
+        )
 
     async def get_my_skills(
         self,

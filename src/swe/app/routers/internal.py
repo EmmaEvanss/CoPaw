@@ -12,7 +12,11 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Body, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ...config.context import is_valid_identity_value, resolve_scope_id
+from ...config.context import (
+    is_valid_identity_value,
+    resolve_runtime_tenant_id,
+    resolve_scope_id,
+)
 from ...config.utils import list_all_tenant_ids
 from ...constant import WORKING_DIR
 
@@ -360,6 +364,78 @@ async def register_missing_cron_jobs(request: Request):
     return summary
 
 
+# ── External cron maintenance endpoints ──
+
+
+@router.post("/cron/refresh-external-jobs")
+async def refresh_external_cron_jobs(request: Request):
+    """按当前代码规则刷新所有外部调度平台任务。"""
+    manager = getattr(request.app.state, "multi_agent_manager", None)
+    if manager is None:
+        logger.warning("MultiAgentManager not initialized")
+        raise HTTPException(status_code=503, detail="Manager not available")
+
+    tenant_ids = list_all_tenant_ids()
+    summary: dict[str, Any] = {
+        "tenant_count": len(tenant_ids),
+        "agent_count": 0,
+        "total": 0,
+        "registered": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "results": [],
+        "errors": [],
+    }
+
+    for tenant_id in tenant_ids:
+        try:
+            agent_ids = _get_configured_agent_ids(tenant_id)
+        except Exception as exc:  # pylint: disable=broad-except
+            summary["failed"] += 1
+            summary["errors"].append(
+                {"tenant_id": tenant_id, "agent_id": "", "error": str(exc)},
+            )
+            continue
+
+        for agent_id in agent_ids:
+            summary["agent_count"] += 1
+            mgr = await _get_cron_manager(manager, tenant_id, agent_id)
+            if mgr is None:
+                summary["failed"] += 1
+                summary["errors"].append(
+                    {
+                        "tenant_id": tenant_id,
+                        "agent_id": agent_id,
+                        "error": "CronManager not found",
+                    },
+                )
+                continue
+
+            try:
+                result = await mgr.refresh_external_jobs()
+            except Exception as exc:  # pylint: disable=broad-except
+                summary["failed"] += 1
+                summary["errors"].append(
+                    {
+                        "tenant_id": tenant_id,
+                        "agent_id": agent_id,
+                        "error": str(exc),
+                    },
+                )
+                continue
+
+            summary["total"] += int(result.get("total", 0))
+            summary["registered"] += int(result.get("registered", 0))
+            summary["updated"] += int(result.get("updated", 0))
+            summary["skipped"] += int(result.get("skipped", 0))
+            summary["failed"] += int(result.get("failed", 0))
+            summary["errors"].extend(result.get("errors", []))
+            summary["results"].append(result)
+
+    return summary
+
+
 # ── Unified callback endpoint (jobParam-based) ──
 
 
@@ -399,6 +475,7 @@ async def internal_cron_callback(
 
     try:
         tenant_id = params["tenant_id"]
+        source_id = params.get("source_id")
         agent_id = params["agent_id"]
         task_type = params["task_type"]
         job_id = params.get("job_id", "")
@@ -413,7 +490,8 @@ async def internal_cron_callback(
         logger.warning("MultiAgentManager not initialized")
         raise HTTPException(status_code=503, detail="Manager not available")
 
-    mgr = await _get_cron_manager(manager, tenant_id, agent_id)
+    runtime_tenant_id = resolve_runtime_tenant_id(tenant_id, source_id)
+    mgr = await _get_cron_manager(manager, runtime_tenant_id, agent_id)
     if mgr is None:
         raise HTTPException(status_code=404, detail="CronManager not found")
 

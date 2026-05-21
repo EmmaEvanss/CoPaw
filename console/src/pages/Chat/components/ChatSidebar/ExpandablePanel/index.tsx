@@ -5,7 +5,11 @@ import type { IAgentScopeRuntimeWebUISession } from "@/components/agentscope-cha
 import { useChatAnywhereSessionsState } from "@/components/agentscope-chat";
 import { TasksIconSmall, HistoryIconSmall } from "../CollapsedToolbar/icons";
 import Style from "./style";
-import { getTaskNextRunText, getTaskSidebarMeta } from "../../../taskJobs";
+import {
+  getTaskNextRunText,
+  getTaskSidebarMeta,
+  TASK_COMPLETED_STATUS_TEXT,
+} from "../../../taskJobs";
 import { formatListTime } from "../../../listTimeFormat";
 import {
   getHistorySessionTargetId,
@@ -152,29 +156,36 @@ function TasksContent({
                   <span className="expandable-panel-task-title">
                     {task.name || task.id}
                   </span>
-                  {sidebarMeta.canPause ||
-                  sidebarMeta.canRun ||
-                  sidebarMeta.canResume ||
-                  sidebarMeta.canDelete ? (
-                    <div className="expandable-panel-task-actions">
-                      <TaskActionMenu
-                        task={task}
-                        sidebarMeta={sidebarMeta}
-                        classNamePrefix="expandable-panel-task"
-                        onTaskPause={onTaskPause}
-                        onTaskRun={onTaskRun}
-                        onTaskResume={onTaskResume}
-                        onTaskDelete={onTaskDelete}
-                      />
+                  {(sidebarMeta.unreadCount > 0 ||
+                    sidebarMeta.canPause ||
+                    sidebarMeta.canRun ||
+                    sidebarMeta.canResume ||
+                    sidebarMeta.canDelete) && (
+                    <div className="expandable-panel-task-trailing">
+                      {sidebarMeta.unreadCount > 0 && (
+                        <span className="expandable-panel-task-badge">
+                          {sidebarMeta.unreadCount > 99
+                            ? "99+"
+                            : sidebarMeta.unreadCount}
+                        </span>
+                      )}
+                      {(sidebarMeta.canPause ||
+                        sidebarMeta.canRun ||
+                        sidebarMeta.canResume ||
+                        sidebarMeta.canDelete) && (
+                        <div className="expandable-panel-task-actions">
+                          <TaskActionMenu
+                            task={task}
+                            sidebarMeta={sidebarMeta}
+                            classNamePrefix="expandable-panel-task"
+                            onTaskPause={onTaskPause}
+                            onTaskRun={onTaskRun}
+                            onTaskResume={onTaskResume}
+                            onTaskDelete={onTaskDelete}
+                          />
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    sidebarMeta.unreadCount > 0 && (
-                      <span className="expandable-panel-task-badge">
-                        {sidebarMeta.unreadCount > 99
-                          ? "99+"
-                          : sidebarMeta.unreadCount}
-                      </span>
-                    )
                   )}
                 </div>
                 {sidebarMeta.state !== "active" &&
@@ -199,7 +210,7 @@ function TasksContent({
                         {formatListTime(task.task.last_scheduled_run_at)}
                       </span>
                     )}
-                    {task.task?.latest_scheduled_preview}
+                    {TASK_COMPLETED_STATUS_TEXT}
                   </div>
                 )}
                 {nextRunText && (

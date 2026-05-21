@@ -11,6 +11,7 @@ export interface TaskSidebarMeta {
 }
 
 const AUTO_PAUSE_REASON = "auto_unread_threshold";
+export const TASK_COMPLETED_STATUS_TEXT = "已完成";
 
 export function isVisibleTask(job: CronJobSpecOutput): boolean {
   return Boolean(job.task?.visible_in_my_tasks);

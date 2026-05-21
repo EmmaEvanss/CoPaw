@@ -84,7 +84,7 @@ class TracingExportService:
             end_date=end_date,
             query_text=query_text,
             export=True,
-            bbk_id=bbk_id,
+            bbk_ids=bbk_id,
         )
 
         output = io.StringIO()
@@ -135,7 +135,7 @@ class TracingExportService:
             end_date=end_date,
             query_text=query_text,
             export=True,
-            bbk_id=bbk_id,
+            bbk_ids=bbk_id,
         )
 
         data = [message.model_dump() for message in messages]
@@ -203,7 +203,7 @@ class TracingExportService:
             end_date=end_date,
             query_text=query_text,
             export=True,
-            bbk_id=bbk_id,
+            bbk_ids=bbk_id,
         )
 
         wb = Workbook()

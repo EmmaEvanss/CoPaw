@@ -42,7 +42,6 @@ def _agent_config(hooks: HookConfig | None = None):
                 enabled=False,
                 mode=SuggestionMode.DISABLED,
             ),
-            post_turn_validation=SimpleNamespace(enabled=False),
         ),
     )
 
@@ -831,7 +830,6 @@ async def test_query_handler_before_stop_budget_exhaustion_finalizes_trace(
         "swe.app.runner.runner._load_tenant_hook_config",
         lambda *args, **kwargs: HookConfig(enabled=True),
     )
-    runner._store_pending_validation_if_needed = AsyncMock()
     runner._generate_backend_suggestions_if_needed = AsyncMock()
     runner._index_model_output_if_needed = AsyncMock()
     runner._end_trace_if_needed = AsyncMock()
@@ -862,7 +860,6 @@ async def test_query_handler_before_stop_budget_exhaustion_finalizes_trace(
     ]
 
     assert "任务未完成" in outputs[-1][0].get_text_content()
-    runner._store_pending_validation_if_needed.assert_not_awaited()
     runner._generate_backend_suggestions_if_needed.assert_not_awaited()
     runner._index_model_output_if_needed.assert_awaited_once()
     runner._end_trace_if_needed.assert_awaited_once()
@@ -939,7 +936,6 @@ async def test_query_handler_before_stop_defers_completion_side_effects(
         "swe.app.runner.runner._load_tenant_hook_config",
         lambda *args, **kwargs: HookConfig(enabled=True),
     )
-    runner._store_pending_validation_if_needed = AsyncMock()
     runner._generate_backend_suggestions_if_needed = AsyncMock()
     runner._index_model_output_if_needed = AsyncMock()
     runner._end_trace_if_needed = AsyncMock()
@@ -950,7 +946,6 @@ async def test_query_handler_before_stop_defers_completion_side_effects(
         if event_name == HookEventName.BEFORE_STOP:
             before_stop_calls += 1
             if before_stop_calls == 1:
-                runner._store_pending_validation_if_needed.assert_not_awaited()
                 runner._generate_backend_suggestions_if_needed.assert_not_awaited()
                 runner._index_model_output_if_needed.assert_not_awaited()
                 runner._end_trace_if_needed.assert_not_awaited()
@@ -982,14 +977,13 @@ async def test_query_handler_before_stop_defers_completion_side_effects(
         "agent reply",
         "agent reply",
     ]
-    runner._store_pending_validation_if_needed.assert_awaited_once()
     runner._generate_backend_suggestions_if_needed.assert_awaited_once()
     runner._index_model_output_if_needed.assert_awaited_once()
     runner._end_trace_if_needed.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_query_handler_aggregate_budget_counts_validation_and_before_stop(
+async def test_query_handler_aggregate_budget_counts_before_stop_only(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -998,13 +992,6 @@ async def test_query_handler_aggregate_budget_counts_validation_and_before_stop(
     setattr(runner, "_chat_manager", None)
     _patch_normal_agent_path(monkeypatch)
     agent_config = _agent_config(HookConfig(enabled=True))
-    agent_config.running.post_turn_validation = SimpleNamespace(
-        enabled=True,
-        max_auto_turns=1,
-        timeout_seconds=5.0,
-        user_message_max_length=300,
-        assistant_response_max_length=1200,
-    )
     agent_config.running.max_before_stop_turns = 2
     agent_config.running.max_automatic_follow_up_turns = 2
     monkeypatch.setattr(
@@ -1014,28 +1001,6 @@ async def test_query_handler_aggregate_budget_counts_validation_and_before_stop(
     monkeypatch.setattr(
         "swe.app.runner.runner._load_tenant_hook_config",
         lambda *args, **kwargs: HookConfig(enabled=True),
-    )
-    monkeypatch.setattr(
-        "swe.app.runner.runner.validate_task_completion",
-        AsyncMock(
-            side_effect=[
-                SimpleNamespace(
-                    completed=False,
-                    reason="validation wants more",
-                    follow_up_prompt="继续完成剩余步骤。",
-                ),
-                SimpleNamespace(
-                    completed=True,
-                    reason="validation ok",
-                    follow_up_prompt="",
-                ),
-                SimpleNamespace(
-                    completed=True,
-                    reason="validation ok",
-                    follow_up_prompt="",
-                ),
-            ],
-        ),
     )
     before_stop_calls = 0
 
@@ -1074,8 +1039,8 @@ async def test_query_handler_aggregate_budget_counts_validation_and_before_stop(
         output_texts[-1],
     ]
     assert "任务未完成" in output_texts[-1]
-    assert "gate-2" in output_texts[-1]
-    assert before_stop_calls == 2
+    assert "gate-3" in output_texts[-1]
+    assert before_stop_calls == 3
 
 
 @pytest.mark.asyncio
@@ -1116,9 +1081,7 @@ async def test_emit_before_stop_hook_respects_active_guard(
     )
     plan = _TurnPlan(
         original_user_message="hello",
-        confirmed_turn_index=0,
         turn_msgs=[],
-        validation_config=None,
     )
     outcome = _QueryTurnOutcome(
         assistant_response="agent reply",

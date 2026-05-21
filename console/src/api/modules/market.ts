@@ -54,8 +54,16 @@ export interface DistributeRequest {
   target_values: string[];
 }
 
+export interface DistributeConflictItem {
+  user_id: string;
+  skill_name: string;
+  reason: string;
+}
+
 export interface DistributeResponse {
   distributed_count: number;
+  conflict_count: number;
+  conflicts: DistributeConflictItem[];
   item_id: string;
 }
 

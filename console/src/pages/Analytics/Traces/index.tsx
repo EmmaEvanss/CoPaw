@@ -5,6 +5,8 @@ import { FileText, Clock, Zap, Bot, User } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { tracingApi, TraceDetail } from "../../../api/modules/tracing";
+import { feedbackApi } from "../../../api/modules/feedback";
+import type { FeedbackRecord } from "../../../api/types/feedback";
 import { getBbkDisplayName, BBK_ID_MAP } from "../../../constants/bbk";
 import { useIframeStore } from "../../../stores/iframeStore";
 import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
@@ -25,6 +27,9 @@ interface TraceListItem {
   model_name: string | null;
   status: string;
   skills_count: number;
+  feedback?: FeedbackRecord | null;
+  feedback_content?: string | null;
+  feedback_updated_at?: string | null;
 }
 
 interface TracesResponse {
@@ -61,6 +66,53 @@ export default function TracesPage() {
     fetchTraces();
   }, [page, pageSize, statusFilter, bbkIdFilter, dateRange]);
 
+  const enrichTraceFeedbacks = async (
+    items: TraceListItem[],
+  ): Promise<TraceListItem[]> => {
+    const missingFeedbackItems = items.filter(
+      (item) =>
+        item.trace_id &&
+        !item.feedback &&
+        item.feedback_content === undefined &&
+        item.feedback_updated_at === undefined,
+    );
+    if (!missingFeedbackItems.length) {
+      return items;
+    }
+
+    const results = await Promise.allSettled(
+      missingFeedbackItems.map((item) =>
+        feedbackApi.getFeedback({ traceId: item.trace_id }),
+      ),
+    );
+    const feedbackByTraceId = new Map<string, FeedbackRecord>();
+
+    results.forEach((result, index) => {
+      if (result.status !== "fulfilled" || !result.value.feedback) {
+        return;
+      }
+      feedbackByTraceId.set(
+        missingFeedbackItems[index].trace_id,
+        result.value.feedback,
+      );
+    });
+
+    if (!feedbackByTraceId.size) {
+      return items;
+    }
+
+    return items.map((item) => {
+      const feedback = feedbackByTraceId.get(item.trace_id);
+      if (!feedback) return item;
+      return {
+        ...item,
+        feedback,
+        feedback_content: feedback.feedback_content,
+        feedback_updated_at: feedback.updated_at || feedback.created_at,
+      };
+    });
+  };
+
   const fetchTraces = async () => {
     setLoading(true);
     try {
@@ -72,7 +124,8 @@ export default function TracesPage() {
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
         source_id: effectiveSourceId,
       });
-      setTraces(data.items || []);
+      const items = await enrichTraceFeedbacks(data.items || []);
+      setTraces(items);
       setTotal(data.total || 0);
     } catch (error) {
       console.error("Failed to fetch traces:", error);
@@ -212,6 +265,32 @@ export default function TracesPage() {
       width: 90,
       render: (v) => <Tag color={getStatusColor(v)}>{v}</Tag>,
     },
+    {
+      title: t("analytics.feedback", "反馈"),
+      dataIndex: "feedback_content",
+      key: "feedback_content",
+      width: 220,
+      render: (value, record) =>
+        value || record.feedback?.feedback_content ? (
+          <div className={styles.feedbackCell}>
+            <div
+              className={styles.feedbackContent}
+              title={value || record.feedback?.feedback_content || ""}
+            >
+              {value || record.feedback?.feedback_content}
+            </div>
+            {record.feedback_updated_at || record.feedback?.updated_at ? (
+              <div className={styles.feedbackTime}>
+                {dayjs(
+                  record.feedback_updated_at || record.feedback?.updated_at,
+                ).format("MM-DD HH:mm")}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          "-"
+        ),
+    },
   ];
 
   return (
@@ -273,6 +352,8 @@ export default function TracesPage() {
           columns={columns}
           rowKey="trace_id"
           loading={loading}
+          scroll={{ x: 1400 }}
+          tableLayout="fixed"
           pagination={{
             current: page,
             pageSize,
@@ -358,6 +439,29 @@ export default function TracesPage() {
                 </Tag>
               </Descriptions.Item>
             </Descriptions>
+
+            {selectedTrace.feedback ? (
+              <div className={styles.feedbackSection}>
+                <h4>{t("analytics.feedback", "反馈")}</h4>
+                <div className={styles.feedbackDetailContent}>
+                  {selectedTrace.feedback.feedback_content}
+                </div>
+                {selectedTrace.feedback.feedback_options?.length ? (
+                  <div className={styles.tagList}>
+                    {selectedTrace.feedback.feedback_options.map((option) => (
+                      <Tag key={option}>{option}</Tag>
+                    ))}
+                  </div>
+                ) : null}
+                {selectedTrace.feedback.updated_at ? (
+                  <div className={styles.feedbackTime}>
+                    {dayjs(selectedTrace.feedback.updated_at).format(
+                      "YYYY-MM-DD HH:mm:ss",
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* 用户输入 */}
             {selectedTrace.trace.user_message && (

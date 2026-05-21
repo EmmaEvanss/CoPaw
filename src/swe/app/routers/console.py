@@ -20,7 +20,6 @@ from fastapi import (
     Query,
     Request,
     UploadFile,
-    Body,
 )
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse

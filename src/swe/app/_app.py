@@ -162,7 +162,7 @@ class DynamicMultiAgentRunner:
         """
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """No-op context manager exit (workspaces manage their own runners)."""
         return None
 

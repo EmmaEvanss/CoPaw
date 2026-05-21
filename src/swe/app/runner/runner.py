@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Collection
@@ -80,7 +80,6 @@ from ...tracing.models import TraceStatus
 from ...config.context import (
     get_current_passthrough_headers,
 )
-from ..suggestions import generate_suggestions, store_suggestions
 from ..source_system_config import is_chat_task_progress_enabled
 from ..source_system_config.runtime import get_current_source_system_config
 
@@ -976,58 +975,6 @@ async def _index_model_output_to_monitor(
         )
 
 
-async def _generate_and_store_suggestions(
-    session_id: str,
-    user_message: str,
-    assistant_response: str,
-    config,  # SuggestionConfig
-    tenant_id: str | None = None,
-) -> None:
-    """异步生成并存储建议（后台任务）."""
-    from ...config.context import resolve_runtime_tenant_id
-
-    runtime_tenant_id = (
-        resolve_runtime_tenant_id(tenant_id, None)
-        if tenant_id is not None
-        else None
-    )
-    logger.info(
-        "Generating suggestions for session %s: user_msg=%s chars, "
-        "assistant_msg=%s chars",
-        session_id,
-        len(user_message),
-        len(assistant_response),
-    )
-    try:
-        suggestions = await generate_suggestions(
-            user_message=user_message,
-            assistant_response=assistant_response,
-            max_suggestions=config.max_suggestions,
-            timeout_seconds=config.timeout_seconds,
-            user_message_max_length=config.user_message_max_length,
-            assistant_response_max_length=config.assistant_response_max_length,
-        )
-        logger.info(
-            "Generated %d suggestions for session %s",
-            len(suggestions),
-            session_id,
-        )
-        if suggestions:
-            await store_suggestions(
-                session_id,
-                suggestions,
-                tenant_id=runtime_tenant_id,
-            )
-            logger.info(
-                "Stored %d suggestions for session %s: %s",
-                len(suggestions),
-                session_id,
-                suggestions,
-            )
-    except Exception as e:
-        logger.warning("Suggestion generation task failed: %s", e)
-
-
 def _with_hook_context(
     env_context: str,
     hook_context: str,
@@ -1714,10 +1661,6 @@ class AgentRunner(Runner):
         session_id = request.session_id
         user_id = request.user_id
         channel = getattr(request, "channel", DEFAULT_CHANNEL)
-        channel_meta = getattr(request, "channel_meta", None) or {}
-        source_id = getattr(request, "source_id", None) or channel_meta.get(
-            "source_id",
-        )
         skip_history = getattr(request, "skip_history", False)
 
         logger.info(

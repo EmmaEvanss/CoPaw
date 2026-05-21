@@ -11,7 +11,7 @@ AgentContextMiddleware.
 
 import logging
 from pathlib import Path
-from typing import Callable, Awaitable, Optional
+from typing import Callable, Awaitable
 
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -20,7 +20,6 @@ from starlette.types import ASGIApp
 
 from swe.config.context import (
     canonicalize_scope_id,
-    resolve_runtime_tenant_id,
     set_current_workspace_dir,
     reset_current_workspace_dir,
 )

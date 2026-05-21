@@ -60,6 +60,27 @@ def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def _event_to_sse_json(event: Any, request: Any) -> str:
+    """序列化 SSE 事件，并为 response 事件补充当前请求的 trace_id。"""
+    if hasattr(event, "model_dump_json"):
+        data = json.loads(event.model_dump_json())
+    elif hasattr(event, "json"):
+        data = json.loads(event.json())
+    else:
+        return json.dumps({"text": str(event)})
+
+    trace_id = getattr(request, "trace_id", None)
+    if (
+        trace_id
+        and isinstance(data, dict)
+        and data.get("object") == "response"
+        and not data.get("trace_id")
+    ):
+        data["trace_id"] = trace_id
+
+    return json.dumps(data, ensure_ascii=False)
+
+
 class ConsoleChannel(BaseChannel):
     """Console Channel: prints agent responses to stdout.
 
@@ -392,12 +413,7 @@ class ConsoleChannel(BaseChannel):
                             if media_message:
                                 event.output.append(media_message)
 
-                if hasattr(event, "model_dump_json"):
-                    data = event.model_dump_json()
-                elif hasattr(event, "json"):
-                    data = event.json()
-                else:
-                    data = json.dumps({"text": str(event)})
+                data = _event_to_sse_json(event, request)
                 yield f"data: {data}\n\n"
 
                 if obj == "message" and status == RunStatus.Completed:

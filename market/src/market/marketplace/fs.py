@@ -204,50 +204,69 @@ def copy_skill_to_user(
     distributed_by: str,
     version: str,
     agent_id: str = DEFAULT_AGENT_ID,
-) -> None:
+) -> dict:
     """将市场技能复制到用户工作目录，并写入分发元数据.
+
+    分发前检查目标目录是否已有同名技能：
+    - 自建技能（source=customized）：跳过，保护用户自建内容
+    - 接收的技能（source=marketplace:...）：覆盖更新
+    - 不存在：正常分发
 
     Args:
         skill_name: 规范的目录名（normalize 后，保留中文等 Unicode 字符）
         original_name: 原始技能名称（用于前端展示）
         description: 技能描述（用于前端展示）
+
+    Returns:
+        {"status": "distributed"} 或 {"status": "conflict", "reason": "customized"}
     """
+    import shutil
+
     _validate_skill_name_segment(skill_name)
     src_dir = get_skill_dir(marketplace_root, source_id, item_id)
     dst_dir = (
         get_user_skills_dir(swe_root, user_id, agent_id, source_id)
         / skill_name
     )
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
-    src_skill_md = src_dir / "SKILL.md"
-    if src_skill_md.exists():
-        (dst_dir / "SKILL.md").write_bytes(src_skill_md.read_bytes())
-
-    src_skill_json = src_dir / "skill.json"
-    skill_data: dict = {}
-    if src_skill_json.exists():
-        try:
-            skill_data = json.loads(src_skill_json.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(
-                "Failed to read source skill.json %s: %s",
-                src_skill_json,
-                e,
-            )
-
-    # 重复分发时保留目标目录已有的 created_at
     dst_skill_json = dst_dir / "skill.json"
-    if dst_skill_json.exists():
+
+    # 检查目标目录是否已有同名技能
+    existing_created_at = None
+    if dst_dir.exists() and dst_skill_json.exists():
         try:
             existing_data = json.loads(
                 dst_skill_json.read_text(encoding="utf-8"),
             )
-            if "created_at" in existing_data:
-                skill_data["created_at"] = existing_data["created_at"]
+            existing_source = existing_data.get("source", "customized")
+            existing_created_at = existing_data.get("created_at")
+
+            # 自建技能：跳过，不覆盖
+            if existing_source == "customized":
+                return {"status": "conflict", "reason": "customized"}
+
+            # 接收的技能：继续覆盖更新
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(
                 "Failed to read existing skill.json %s: %s",
+                dst_skill_json,
+                e,
+            )
+
+    # 先删除旧目录，再整体复制（确保与市场源一致）
+    if dst_dir.exists():
+        shutil.rmtree(dst_dir)
+    shutil.copytree(src_dir, dst_dir)
+
+    # 读取复制后的 skill.json 并注入分发元数据
+    skill_data: dict = {}
+    if dst_skill_json.exists():
+        try:
+            skill_data = json.loads(
+                dst_skill_json.read_text(encoding="utf-8"),
+            )
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Failed to read copied skill.json %s: %s",
                 dst_skill_json,
                 e,
             )
@@ -264,9 +283,16 @@ def copy_skill_to_user(
     skill_data["distributed_by"] = distributed_by
     skill_data["received_version"] = version
     # 保留原有 created_at（重复分发时不覆盖首次创建时间）
-    skill_data.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+    if existing_created_at:
+        skill_data["created_at"] = existing_created_at
+    else:
+        skill_data.setdefault(
+            "created_at",
+            datetime.now(timezone.utc).isoformat(),
+        )
 
     _atomic_write_json(dst_dir / "skill.json", skill_data)
+    return {"status": "distributed"}
 
 
 def get_user_skill_manifest_path(
@@ -471,10 +497,10 @@ def copy_mcp_to_user(
     if mcp_config is None:
         raise ValueError(f"MCP config not found for item {item_id}")
 
-    # 加载用户 agent.json
-    user_config_path = (
-        swe_root / user_id / "workspaces" / agent_id / "agent.json"
-    )
+    # 解析运行时 scope 目录，并处理 legacy 目录迁移
+    effective_user_id = resolve_effective_user_id(user_id, source_id)
+    user_root = migrate_legacy_scope_dir_if_needed(swe_root, effective_user_id)
+    user_config_path = user_root / "workspaces" / agent_id / "agent.json"
     user_config_path.parent.mkdir(parents=True, exist_ok=True)
 
     user_config: dict = {}

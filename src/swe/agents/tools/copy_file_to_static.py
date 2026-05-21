@@ -9,7 +9,11 @@ from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
 
 from ...app.agent_context import get_current_agent_id
-from ...config.context import get_current_user_id, get_current_workspace_dir
+from ...config.context import (
+    get_current_effective_tenant_id,
+    get_current_user_id,
+    get_current_workspace_dir,
+)
 
 
 def _tool_error(msg: str) -> ToolResponse:
@@ -106,12 +110,22 @@ async def copy_file_to_static(file_path: str) -> ToolResponse:
     except Exception as e:
         return _tool_error(f"Failed to copy file: {e!s}")
 
-    # Get user_id for response
-    user_id = get_current_user_id() or "default"
+    # 静态路由按运行时租户目录取文件，source-scoped 请求不能使用逻辑用户 ID。
+    static_scope_id = (
+        get_current_effective_tenant_id() or get_current_user_id() or "default"
+    )
     file_name = os.path.basename(dest_path)
     agent_id = get_current_agent_id()
-    access = os.getenv("FILE_URL", "http://localhost:8088")
-    url = access + "/static/" + user_id + "/" + agent_id + "/" + file_name
+    access = os.getenv("FILE_URL", "http://localhost:8088").rstrip("/")
+    url = (
+        access
+        + "/static/"
+        + static_scope_id
+        + "/"
+        + agent_id
+        + "/"
+        + file_name
+    )
 
     return _tool_ok(
         f"![{file_name}]({url})",

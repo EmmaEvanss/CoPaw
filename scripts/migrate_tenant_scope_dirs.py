@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,12 +63,19 @@ def _validate_identity(name: str, value: str) -> None:
         raise ValueError(f"Invalid {name}: {value!r}")
 
 
-def _assert_target_absent(old_dir: Path, new_dir: Path) -> None:
-    """在迁移前确认目标目录不会覆盖现有状态。"""
-    if old_dir.exists() and new_dir.exists():
-        raise FileExistsError(
-            f"Target already exists, refusing to overwrite: {new_dir}",
-        )
+def _remove_target_if_needed(old_dir: Path, new_dir: Path) -> None:
+    """在源目录存在时清理目标目录，确保迁移可以覆盖旧状态。
+
+    迁移脚本用于把旧目录切到 canonical scope 目录。若目标目录已存在，
+    按覆盖策略先删除目标目录，再把源目录 rename 到目标位置。
+    """
+    if not old_dir.exists() or not new_dir.exists():
+        return
+
+    if new_dir.is_dir():
+        shutil.rmtree(new_dir)
+        return
+    new_dir.unlink()
 
 
 def parse_tenant_ids(raw_value: str) -> tuple[str, ...]:
@@ -139,7 +147,6 @@ def migrate_tenant_scope_dirs(
 
     Raises:
         ValueError: tenant/source 标识非法时抛出。
-        FileExistsError: 目标 scope 目录已存在且源目录也存在时抛出。
     """
     _validate_identity("tenant_id", tenant_id)
     _validate_identity("source_id", source_id)
@@ -152,9 +159,6 @@ def migrate_tenant_scope_dirs(
     new_working_dir = normalized_working_dir / scope_id
     old_secret_dir = normalized_secret_dir / tenant_id
     new_secret_dir = normalized_secret_dir / scope_id
-
-    _assert_target_absent(old_working_dir, new_working_dir)
-    _assert_target_absent(old_secret_dir, new_secret_dir)
 
     moved_working_dir = old_working_dir.exists()
     moved_secret_dir = old_secret_dir.exists()
@@ -172,6 +176,7 @@ def migrate_tenant_scope_dirs(
         )
 
     if moved_working_dir:
+        _remove_target_if_needed(old_working_dir, new_working_dir)
         old_working_dir.rename(new_working_dir)
         logger.info(
             "已迁移工作目录: %s -> %s",
@@ -188,6 +193,7 @@ def migrate_tenant_scope_dirs(
         logger.info("未找到工作目录，跳过: %s", old_working_dir)
 
     if moved_secret_dir:
+        _remove_target_if_needed(old_secret_dir, new_secret_dir)
         old_secret_dir.rename(new_secret_dir)
         logger.info("已迁移密钥目录: %s -> %s", old_secret_dir, new_secret_dir)
     else:

@@ -153,6 +153,14 @@ export default function SessionTracesFlow({
                   )}
                 </div>
 
+                {trace.feedback_content ? (
+                  <div className={styles.traceMeta}>
+                    <span title={trace.feedback_content}>
+                      反馈: {trace.feedback_content}
+                    </span>
+                  </div>
+                ) : null}
+
                 {/* 展开/收起按钮 */}
                 <div
                   className={styles.traceExpandBtn}

@@ -1,5 +1,10 @@
 import { Fragment, useState } from "react";
+import type { FeedbackRecord } from "@/api/types/feedback";
 import type { IAgentScopeRuntimeWebUIMessage } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/types/IMessages";
+import {
+  findFeedbackForResponse,
+  type FeedbackLookupMap,
+} from "../../feedbackLookup";
 import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
@@ -10,9 +15,20 @@ import { formatMessageTime } from "../../messageMeta";
 import ApprovalActionCard from "../ApprovalActionCard";
 import RuntimeRequestCard from "../RuntimeRequestCard";
 import RuntimeResponseCard from "../RuntimeResponseCard";
+import type { ResponseFeedbackTaskMeta } from "../ResponseFeedbackCard";
 
 function NestedTaskRunMessages(props: {
   messages: IAgentScopeRuntimeWebUIMessage[];
+  showFeedback?: boolean;
+  chatId?: string | null;
+  sessionId?: string | null;
+  task?: ResponseFeedbackTaskMeta | null;
+  feedbackLookup?: FeedbackLookupMap;
+  loadingFeedback?: boolean;
+  onFeedbackSaved?: (
+    feedback: FeedbackRecord,
+    response: ChatRuntimeResponseCardData,
+  ) => void;
 }) {
   return (
     <>
@@ -33,10 +49,20 @@ function NestedTaskRunMessages(props: {
                 <RuntimeResponseCard
                   key={key}
                   data={card.data as ChatRuntimeResponseCardData}
+                  chatId={props.chatId}
                   isLast={
                     messageIndex === props.messages.length - 1 &&
                     cardIndex === (message.cards || []).length - 1
                   }
+                  sessionId={props.sessionId}
+                  showFeedback={props.showFeedback}
+                  task={props.task}
+                  loadingFeedback={props.loadingFeedback}
+                  existingFeedback={findFeedbackForResponse(
+                    props.feedbackLookup,
+                    card.data as ChatRuntimeResponseCardData,
+                  )}
+                  onFeedbackSaved={props.onFeedbackSaved}
                 />
               );
             }
@@ -58,6 +84,15 @@ function NestedTaskRunMessages(props: {
 
 export default function TaskRunGroupCard(props: {
   data: ChatTaskRunGroupCardData;
+  chatId?: string | null;
+  sessionId?: string | null;
+  task?: ResponseFeedbackTaskMeta | null;
+  feedbackLookup?: FeedbackLookupMap;
+  loadingFeedback?: boolean;
+  onFeedbackSaved?: (
+    feedback: FeedbackRecord,
+    response: ChatRuntimeResponseCardData,
+  ) => void;
 }) {
   const { data } = props;
   const [resultExpanded, setResultExpanded] = useState(
@@ -125,7 +160,16 @@ export default function TaskRunGroupCard(props: {
         <div style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }} />
       </div>
       {resultExpanded && (
-        <NestedTaskRunMessages messages={data.finalMessages} />
+        <NestedTaskRunMessages
+          chatId={props.chatId}
+          messages={data.finalMessages}
+          sessionId={props.sessionId}
+          showFeedback
+          task={props.task}
+          feedbackLookup={props.feedbackLookup}
+          loadingFeedback={props.loadingFeedback}
+          onFeedbackSaved={props.onFeedbackSaved}
+        />
       )}
       {resultExpanded && hasSteps && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -152,7 +196,13 @@ export default function TaskRunGroupCard(props: {
                 paddingLeft: 16,
               }}
             >
-              <NestedTaskRunMessages messages={data.stepMessages} />
+              <NestedTaskRunMessages
+                messages={data.stepMessages}
+                showFeedback={false}
+                feedbackLookup={props.feedbackLookup}
+                loadingFeedback={props.loadingFeedback}
+                onFeedbackSaved={props.onFeedbackSaved}
+              />
             </div>
           )}
         </div>

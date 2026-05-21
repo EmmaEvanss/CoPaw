@@ -255,7 +255,7 @@ export default function SystemConfigPage() {
       <PageHeader
         parent={t("nav.settings")}
         current={t("nav.currentSourceConfig", {
-          defaultValue: "当前 Source 配置",
+          defaultValue: "系统特性配置",
         })}
         subRow={
           <Space size={8}>

@@ -29,6 +29,7 @@ from ...config import load_config  # pylint: disable=no-name-in-module
 from .models import ChatMessage
 
 logger = logging.getLogger(__name__)
+_MISSING_SOURCE_ID_PLACEHOLDER = "(not provided)"
 
 
 def build_env_context(
@@ -36,6 +37,8 @@ def build_env_context(
     user_id: Optional[str] = None,
     channel: Optional[str] = None,
     working_dir: Optional[str] = None,
+    source_id: Optional[str] = None,
+    user_name: Optional[str] = None,
     add_hint: bool = True,
 ) -> str:
     """
@@ -45,7 +48,10 @@ def build_env_context(
         session_id: Current session ID
         user_id: Current user ID
         channel: Current channel name
+        source_id: Current request source ID
         working_dir: Working directory path
+        source_id: Current source ID (request origin)
+        user_name: Current user name
         add_hint: Whether to add hint context
     Returns:
         Formatted environment context string
@@ -63,8 +69,16 @@ def build_env_context(
         parts.append(f"- Session ID: {session_id}")
     if user_id is not None:
         parts.append(f"- User ID: {user_id}")
+    if user_name is not None:
+        parts.append(f"- User Name: {user_name}")
+    if source_id is not None:
+        parts.append(f"- Source ID: {source_id}")
     if channel is not None:
         parts.append(f"- Channel: {channel}")
+    parts.append(
+        "- Source ID: "
+        + (source_id if source_id else _MISSING_SOURCE_ID_PLACEHOLDER),
+    )
 
     parts.append(
         f"- OS: {platform.system()} {platform.release()} "
@@ -74,7 +88,7 @@ def build_env_context(
     if working_dir is not None:
         parts.append(f"- Working directory: {working_dir}")
     parts.append(
-        f"- Current date: {now.strftime('%Y-%m-%d')} "
+        f"- Current time: {now.strftime('%Y-%m-%d %H:%M:%S')} "
         f"{user_tz} ({now.strftime('%A')})",
     )
 

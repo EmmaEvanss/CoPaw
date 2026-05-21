@@ -483,13 +483,13 @@ class SuggestionConfig(BaseModel):
 
 
 class PostTurnValidationConfig(BaseModel):
-    """回答后校验配置 - 判断任务是否完成并在必要时提示续跑."""
+    """已退役的回答后校验配置，仅为兼容旧配置保留。"""
 
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = Field(
-        default=True,
-        description="是否启用回答后的任务完成校验",
+        default=False,
+        description="已废弃：回答后校验功能已下线，此配置不再生效",
     )
     max_confirmed_turns: Optional[int] = Field(
         default=None,
@@ -850,7 +850,7 @@ class AgentsRunningConfig(BaseModel):
 
     post_turn_validation: PostTurnValidationConfig = Field(
         default_factory=PostTurnValidationConfig,
-        description="回答后的任务完成校验与自动续跑配置",
+        description="已废弃：回答后校验与自动续跑功能已下线",
     )
 
     @property

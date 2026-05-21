@@ -9,8 +9,7 @@ export interface ChatMessageHeaderMeta {
   timestamp?: number;
 }
 
-export interface ChatRuntimeRequestCardData
-  extends IAgentScopeRuntimeRequest {
+export interface ChatRuntimeRequestCardData extends IAgentScopeRuntimeRequest {
   headerMeta?: ChatMessageHeaderMeta;
 }
 
@@ -33,6 +32,7 @@ export interface ChatTaskRunGroupCardData {
   runId: string;
   runIndex: number;
   taskName?: string;
+  collapsedByDefault?: boolean;
   finalMessages: IAgentScopeRuntimeWebUIMessage[];
   stepMessages: IAgentScopeRuntimeWebUIMessage[];
   headerMeta?: ChatMessageHeaderMeta;

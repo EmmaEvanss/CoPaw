@@ -145,6 +145,14 @@ export default createGlobalStyle`
   text-align: center;
 }
 
+.expandable-panel-task-trailing {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .expandable-panel-task-action-trigger {
   flex-shrink: 0;
   display: inline-flex;

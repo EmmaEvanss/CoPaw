@@ -12,6 +12,7 @@ import json
 import logging
 from datetime import datetime
 from inspect import isawaitable
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, TYPE_CHECKING
 
 from .skill_context_manager import (
@@ -28,6 +29,125 @@ if TYPE_CHECKING:
     from ..tracing.manager import TraceManager
 
 logger = logging.getLogger(__name__)
+
+# 技能描述缓存
+_SKILL_DESCRIPTION_CACHE: dict[str, str] = {}
+
+
+def _get_skill_description(skill_name: str) -> str:
+    """从技能目录读取技能描述.
+
+    从内置技能目录或技能池目录的 SKILL.md 文件中读取 description 字段。
+
+    Args:
+        skill_name: 技能名称
+
+    Returns:
+        技能描述字符串，如果未找到则返回空字符串
+    """
+    # 检查缓存
+    if skill_name in _SKILL_DESCRIPTION_CACHE:
+        return _SKILL_DESCRIPTION_CACHE[skill_name]
+
+    description = ""
+
+    # 尝试从内置技能目录读取
+    try:
+        from .skills_manager import get_builtin_skills_dir
+
+        builtin_dir = get_builtin_skills_dir()
+        skill_md_path = builtin_dir / skill_name / "SKILL.md"
+        if skill_md_path.exists():
+            description = _parse_skill_description(skill_md_path)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug(f"Failed to read builtin skill description: {e}")
+
+    # 如果内置目录没有找到，尝试从技能池读取
+    if not description:
+        try:
+            from .skills_manager import (
+                get_skill_pool_dir,
+                read_skill_pool_manifest,
+            )
+
+            pool_dir = get_skill_pool_dir()
+            skill_md_path = pool_dir / skill_name / "SKILL.md"
+            if skill_md_path.exists():
+                description = _parse_skill_description(skill_md_path)
+            # 尝试从 manifest 读取
+            if not description:
+                manifest = read_skill_pool_manifest()
+                skill_entry = manifest.get("skills", {}).get(skill_name, {})
+                description = str(skill_entry.get("description", "") or "")
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f"Failed to read pool skill description: {e}")
+
+    # 缓存结果
+    _SKILL_DESCRIPTION_CACHE[skill_name] = description
+    return description
+
+
+def _parse_skill_description(skill_md_path: Path) -> str:
+    """解析 SKILL.md 文件获取描述字段.
+
+    Args:
+        skill_md_path: SKILL.md 文件路径
+
+    Returns:
+        技能描述字符串
+    """
+    try:
+        content = skill_md_path.read_text(encoding="utf-8")
+        return _extract_description_from_frontmatter(content)
+    except Exception as e:
+        logger.debug(
+            f"Failed to parse skill description from {skill_md_path}: {e}",
+        )
+    return ""
+
+
+def _extract_description_from_frontmatter(content: str) -> str:
+    """从 YAML frontmatter 提取 description 字段.
+
+    Args:
+        content: 文件内容
+
+    Returns:
+        技能描述字符串，未找到则返回空字符串
+    """
+    if not content.startswith("---"):
+        return ""
+
+    end_idx = content.find("---", 3)
+    if end_idx == -1:
+        return ""
+
+    frontmatter = content[3:end_idx].strip()
+    for line in frontmatter.split("\n"):
+        if line.startswith("description:"):
+            desc = line.split(":", 1)[1].strip()
+            return _strip_quotes(desc)
+    return ""
+
+
+def _strip_quotes(text: str) -> str:
+    """移除字符串两端可能的引号.
+
+    Args:
+        text: 原始字符串
+
+    Returns:
+        移除引号后的字符串
+    """
+    if text.startswith('"') and text.endswith('"'):
+        return text[1:-1]
+    if text.startswith("'") and text.endswith("'"):
+        return text[1:-1]
+    return text
 
 
 class SkillInvocationDetector:
@@ -533,6 +653,9 @@ class SkillInvocationDetector:
             trigger_reason: How the skill was detected
             confidence: Attribution confidence
         """
+        # Get skill description
+        skill_description = _get_skill_description(skill_name)
+
         # Emit tracing event first to get span_id
         span_id = None
         if self._trace_manager and self._trace_id:
@@ -551,6 +674,7 @@ class SkillInvocationDetector:
                     },
                     user_name=self._user_name,
                     bbk_id=self._bbk_id,
+                    skill_description=skill_description,
                 )
             except Exception as e:
                 logger.warning("Failed to emit skill start event: %s", e)

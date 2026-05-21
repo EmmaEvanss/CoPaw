@@ -640,6 +640,7 @@ class TraceManager:
         input_tokens: Optional[int] = None,
         tool_name: Optional[str] = None,
         skill_name: Optional[str] = None,
+        skill_description: Optional[str] = None,
         tool_input: Optional[dict[str, Any]] = None,
         start_time: Optional[datetime] = None,
         mcp_server: Optional[str] = None,
@@ -660,6 +661,7 @@ class TraceManager:
             input_tokens: Optional input token count
             tool_name: Optional tool name
             skill_name: Optional skill name
+            skill_description: Optional skill description
             tool_input: Optional tool input (will be sanitized)
             start_time: Optional start time
             mcp_server: Optional MCP server name if this is an MCP tool
@@ -697,6 +699,7 @@ class TraceManager:
             input_tokens=input_tokens,
             tool_name=tool_name,
             skill_name=skill_name,
+            skill_description=skill_description,
             tool_input=tool_input,
             mcp_server=mcp_server,
         )
@@ -1042,6 +1045,7 @@ class TraceManager:
         skill_input: Optional[dict[str, Any]] = None,
         user_name: Optional[str] = None,
         bbk_id: Optional[str] = None,
+        skill_description: Optional[str] = None,
     ) -> str:
         """Emit skill invocation event.
 
@@ -1055,6 +1059,7 @@ class TraceManager:
             skill_input: Optional skill input parameters
             user_name: Optional user name
             bbk_id: Optional BBK identifier
+            skill_description: Optional skill description
 
         Returns:
             Span ID
@@ -1068,6 +1073,7 @@ class TraceManager:
             session_id=session_id,
             channel=channel,
             skill_name=skill_name,
+            skill_description=skill_description,
             tool_input=skill_input,
             user_name=user_name,
             bbk_id=bbk_id,

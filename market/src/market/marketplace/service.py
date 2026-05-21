@@ -9,7 +9,7 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import unquote
 
 import httpx
@@ -365,6 +365,63 @@ def _parse_md_frontmatter(
     return name, description
 
 
+def _extract_version_from_frontmatter(md_content: str) -> str:
+    """从 SKILL.md frontmatter 中提取 version."""
+    try:
+        end_idx = md_content.index("---", 3)
+        fm_text = md_content[3:end_idx].strip()
+    except ValueError:
+        return ""
+
+    for line in fm_text.split("\n"):
+        if ":" in line:
+            key, val = line.split(":", 1)
+            key = key.strip().lower()
+            val = val.strip()
+            if key == "version" and val:
+                return val
+    return ""
+
+
+def _build_skill_metadata_for_manifest(
+    skill_dir: Path,
+    skill_name: str,
+    source: str = "customized",
+) -> dict[str, Any]:
+    """从技能目录构建 manifest 所需的 metadata 字段.
+
+    只从 SKILL.md 读取基本信息，额外字段（creator_id, creator_name, bbk_id 等）
+    由调用方通过 extra_metadata 参数传入。
+    """
+    skill_md_path = skill_dir / "SKILL.md"
+    name = skill_name
+    description = ""
+    version_text = ""
+
+    # 从 SKILL.md 读取基本信息
+    if skill_md_path.exists():
+        try:
+            md_content = skill_md_path.read_text(encoding="utf-8")
+            name, description = _parse_md_frontmatter(md_content, skill_name)
+            version_text = _extract_version_from_frontmatter(md_content)
+        except OSError:
+            pass
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    return {
+        "name": name,
+        "description": description,
+        "version_text": version_text,
+        "commit_text": "",
+        "signature": "",
+        "source": source,
+        "protected": False,
+        "requirements": {"require_bins": [], "require_envs": []},
+        "updated_at": now,
+    }
+
+
 class MarketplaceService:
     def __init__(
         self,
@@ -430,19 +487,77 @@ class MarketplaceService:
         agent_id: str = "default",
         source_id: str | None = None,
         enabled: bool = True,
+        source: str = "customized",
+        extra_metadata: dict | None = None,
     ) -> bool:
-        """注册技能到 manifest（用于上传/分发时记录）。"""
+        """注册技能到 manifest（用于上传/分发时记录）。
+
+        写入完整的字段，与 src/swe 的 reconcile_workspace_manifest 保持一致：
+        - enabled: 启用状态
+        - channels: 通道配置
+        - source: 技能来源
+        - metadata: 元数据（name、description、version、creator_id 等）
+        - requirements: 报备要求
+        - config: 配置（保留已有）
+        - created_at/updated_at: 时间戳
+
+        Args:
+            extra_metadata: 额外的 metadata 字段（如 creator_id、creator_name、bbk_id）
+        """
+
+        # 获取技能目录，用于构建 metadata
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
+        skill_dir = skills_dir / skill_name
 
         def _update(payload: dict) -> bool:
             skills_dict = payload.setdefault("skills", {})
-            entry = skills_dict.setdefault(skill_name, {})
-            # 只更新字段，不覆盖已有数据
-            entry.setdefault(
-                "created_at",
-                datetime.now(timezone.utc).isoformat(),
+            existing = skills_dict.get(skill_name) or {}
+
+            # 构建 metadata（从 SKILL.md 和 skill.json 读取）
+            metadata = _build_skill_metadata_for_manifest(
+                skill_dir,
+                skill_name,
+                source=source,
             )
-            entry["enabled"] = enabled
-            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            # 合并额外的 metadata（上传时传入的 creator_id、name 等）
+            if extra_metadata:
+                for key, value in extra_metadata.items():
+                    # 允许 name 字段覆盖（用户重命名时指定的新名称）
+                    if key == "name" and value:
+                        metadata[key] = value
+                    # 不覆盖其他核心字段
+                    elif key not in ["description", "source"]:
+                        metadata[key] = value
+
+            # 保留已有的 config 和 channels
+            existing_config = existing.get("config")
+            existing_channels = existing.get("channels") or ["all"]
+
+            now = datetime.now(timezone.utc).isoformat()
+
+            entry = {
+                "enabled": enabled,
+                "channels": existing_channels,
+                "source": source,
+                "metadata": metadata,
+                "requirements": metadata["requirements"],
+                "updated_at": now,
+            }
+
+            # 保留已有的 config
+            if existing_config:
+                entry["config"] = existing_config
+
+            # 保留已有的 created_at（首次注册时写入）
+            entry["created_at"] = existing.get("created_at") or now
+
+            skills_dict[skill_name] = entry
             return True
 
         return mutate_user_skill_manifest(
@@ -935,13 +1050,16 @@ class MarketplaceService:
                     )
                     continue
 
-                # 注册技能到 manifest（使用安全名称）
+                # 注册技能到 manifest（使用返回的 metadata）
+                metadata = result.get("metadata") or {}
                 self.register_skill_in_manifest(
                     user["tenant_id"],
                     safe_skill_name,
                     "default",
                     source_id,
                     enabled=True,
+                    source=f"marketplace:{item_id}",
+                    extra_metadata=metadata,
                 )
                 count += 1
             except Exception as e:
@@ -985,7 +1103,13 @@ class MarketplaceService:
         user_id: str,
         agent_id: str = "default",
     ) -> list[MySkillItem]:
-        """获取用户技能列表（我创建的 + 我接收的）。"""
+        """获取用户技能列表（我创建的 + 我接收的）。
+
+        数据来源：
+        - name、description：从 SKILL.md frontmatter 读取
+        - source、distributed_by、received_version 等：从 workspace manifest 读取
+        - 不再依赖技能目录内的 skill.json 文件
+        """
         skills_dir = get_user_skills_dir(
             self.swe_root,
             user_id,
@@ -995,7 +1119,7 @@ class MarketplaceService:
         if not skills_dir.exists():
             return []
 
-        # 读取 manifest 获取启用状态
+        # 读取 workspace manifest 获取技能状态和元数据
         manifest = read_user_skill_manifest(
             self.swe_root,
             user_id,
@@ -1013,42 +1137,59 @@ class MarketplaceService:
         for skill_dir in sorted(skills_dir.iterdir()):
             if not skill_dir.is_dir():
                 continue
-            skill_json_path = skill_dir / "skill.json"
-
-            # 无 skill.json 时视为「我创建的」，从 SKILL.md 尝试提取展示名
-            if not skill_json_path.exists():
-                data = {"source": "customized"}
-                display_name = skill_dir.name
-                description = ""
-                # 尝试从 SKILL.md frontmatter 提取名称
-                skill_md_path = skill_dir / "SKILL.md"
-                if skill_md_path.exists():
-                    try:
-                        md_content = skill_md_path.read_text(encoding="utf-8")
-                        if md_content.startswith("---"):
-                            display_name, description = _parse_md_frontmatter(
-                                md_content,
-                                display_name,
-                            )
-                    except Exception:
-                        pass
-            else:
-                try:
-                    data = json.loads(
-                        skill_json_path.read_text(encoding="utf-8"),
-                    )
-                except (json.JSONDecodeError, OSError):
-                    continue
-                skill_name = skill_dir.name
-                # 从 skill.json 的 name 字段获取展示名称，如果没有则用目录名
-                display_name = data.get("name") or skill_name
-                description = data.get("description", "")
 
             skill_name = skill_dir.name
-            source = data.get("source", "customized")
+
+            # 从 workspace manifest 获取技能元数据（权威数据源）
+            manifest_entry = manifest_skills.get(skill_name, {})
+            manifest_metadata = manifest_entry.get("metadata", {})
+
+            # source 判断：优先从 manifest 获取
+            source = manifest_entry.get("source") or manifest_metadata.get(
+                "source",
+                "customized",
+            )
             is_received = source.startswith("marketplace:")
-            received_version = data.get("received_version")
-            # 用展示名称匹配市场版本（市场技能用 name 字段）
+
+            # 从 SKILL.md 读取 name 和 description
+            display_name = skill_name
+            description = manifest_metadata.get("description", "")
+            skill_md_path = skill_dir / "SKILL.md"
+            if skill_md_path.exists():
+                try:
+                    md_content = skill_md_path.read_text(encoding="utf-8")
+                    if md_content.startswith("---"):
+                        md_name, md_desc = _parse_md_frontmatter(
+                            md_content,
+                            display_name,
+                        )
+                        # manifest 中的 name 可能更准确（用户上传时指定的）
+                        if not manifest_metadata.get("name"):
+                            display_name = md_name
+                        if not description:
+                            description = md_desc
+                except Exception:
+                    pass
+
+            # 优先使用 manifest metadata 中的 name
+            if manifest_metadata.get("name"):
+                display_name = manifest_metadata.get("name")
+
+            # 从 manifest metadata 获取分发相关字段
+            received_version = manifest_metadata.get("received_version")
+            distributed_by = manifest_metadata.get("distributed_by")
+            creator_id = manifest_metadata.get("creator_id")
+            creator_name = manifest_metadata.get("creator_name")
+            bbk_id = manifest_metadata.get("bbk_id")
+            category_id = manifest_metadata.get("category_id")
+            created_at = manifest_entry.get(
+                "created_at",
+            ) or manifest_metadata.get("created_at")
+            updated_at = manifest_entry.get(
+                "updated_at",
+            ) or manifest_metadata.get("updated_at")
+
+            # 用展示名称匹配市场版本
             market_version = market_versions.get(display_name)
             has_update = (
                 is_received
@@ -1058,7 +1199,6 @@ class MarketplaceService:
             )
 
             # 从 manifest 获取启用状态
-            manifest_entry = manifest_skills.get(skill_name, {})
             enabled = manifest_entry.get("enabled", True)
 
             result.append(
@@ -1067,18 +1207,16 @@ class MarketplaceService:
                     display_name=display_name,
                     source=source,
                     description=description,
-                    version=data.get("version"),
+                    version=manifest_metadata.get("version_text"),
                     received_version=received_version,
-                    distributed_by=data.get("distributed_by"),
+                    distributed_by=distributed_by,
                     is_received=is_received,
                     has_update=has_update,
                     enabled=enabled,
-                    category=data.get("category"),
-                    creator_name=_decode_creator_name(
-                        data.get("creator_name", ""),
-                    ),
-                    created_at=data.get("created_at"),
-                    updated_at=data.get("updated_at"),
+                    category=str(category_id) if category_id else None,
+                    creator_name=_decode_creator_name(creator_name or ""),
+                    created_at=created_at,
+                    updated_at=updated_at,
                 ),
             )
         return result
@@ -1327,7 +1465,7 @@ class MarketplaceService:
         agent_id: str = "default",
         source_id: str | None = None,
     ) -> bool:
-        """删除用户技能."""
+        """删除用户技能（同时从 manifest 移除条目）。"""
         import shutil
 
         skills_dir = get_user_skills_dir(
@@ -1343,9 +1481,154 @@ class MarketplaceService:
 
         try:
             shutil.rmtree(skill_dir)
-            return True
         except Exception:
             return False
+
+        # 从 manifest 移除技能条目
+        def _remove(payload: dict) -> bool:
+            payload.get("skills", {}).pop(skill_name, None)
+            return True
+
+        mutate_user_skill_manifest(
+            self.swe_root,
+            user_id,
+            agent_id,
+            _remove,
+            source_id,
+        )
+
+        return True
+
+    def migrate_skill_json_to_manifest(
+        self,
+        user_id: str,
+        agent_id: str = "default",
+        source_id: str | None = None,
+        delete_skill_json: bool = False,
+    ) -> dict[str, Any]:
+        """迁移技能目录内 skill.json 字段到 workspace manifest.
+
+        将以下字段从 skills/<技能名>/skill.json 合并到 workspaces/<agent_id>/skill.json:
+        - creator_id
+        - creator_name
+        - bbk_id
+        - distributed_by
+        - received_version
+        - category_id
+
+        Args:
+            user_id: 用户 ID.
+            agent_id: Agent ID，默认为 "default".
+            source_id: 来源 ID.
+            delete_skill_json: 是否删除技能目录内的 skill.json 文件.
+
+        Returns:
+            迁移结果统计：{"migrated": int, "skipped": int, "errors": list}
+        """
+        skills_dir = get_user_skills_dir(
+            self.swe_root,
+            user_id,
+            agent_id,
+            source_id,
+        )
+
+        if not skills_dir.exists():
+            return {"migrated": 0, "skipped": 0, "errors": []}
+
+        migrated = 0
+        skipped = 0
+        errors: list[str] = []
+
+        # 辅助函数：创建合并函数，避免循环变量闭包问题
+        def _make_merge_func(
+            skill_name_arg: str,
+            extra_fields_arg: dict,
+        ) -> Callable[[dict], bool]:
+            def _merge(payload: dict) -> bool:
+                skills_dict = payload.setdefault("skills", {})
+                existing = skills_dict.get(skill_name_arg) or {}
+
+                # 合并到 metadata 层
+                metadata = existing.get("metadata") or {}
+                for key, value in extra_fields_arg.items():
+                    # 不覆盖已存在的字段
+                    if key not in metadata:
+                        metadata[key] = value
+                existing["metadata"] = metadata
+
+                skills_dict[skill_name_arg] = existing
+                return True
+
+            return _merge
+
+        for skill_dir in skills_dir.iterdir():
+            if not skill_dir.is_dir():
+                continue
+
+            skill_name = skill_dir.name
+            skill_json_path = skill_dir / "skill.json"
+
+            # 没有 skill.json 则跳过
+            if not skill_json_path.exists():
+                skipped += 1
+                continue
+
+            # 读取技能目录内的 skill.json
+            try:
+                skill_data = json.loads(
+                    skill_json_path.read_text(encoding="utf-8"),
+                )
+            except (json.JSONDecodeError, OSError) as e:
+                errors.append(f"{skill_name}: 读取 skill.json 失败 - {e}")
+                continue
+
+            # 提取需要迁移的字段
+            extra_fields = {}
+            for field in [
+                "creator_id",
+                "creator_name",
+                "bbk_id",
+                "distributed_by",
+                "received_version",
+                "category_id",
+            ]:
+                if field in skill_data:
+                    extra_fields[field] = skill_data[field]
+
+            # 没有额外字段则跳过
+            if not extra_fields:
+                skipped += 1
+                continue
+
+            # 使用辅助函数创建 merge 函数
+            _merge = _make_merge_func(skill_name, dict(extra_fields))
+
+            try:
+                mutate_user_skill_manifest(
+                    self.swe_root,
+                    user_id,
+                    agent_id,
+                    _merge,
+                    source_id,
+                )
+            except Exception as e:
+                errors.append(f"{skill_name}: 写入 manifest 失败 - {e}")
+                continue
+
+            # 删除技能目录内的 skill.json（如果请求）
+            if delete_skill_json:
+                try:
+                    skill_json_path.unlink()
+                except OSError as e:
+                    errors.append(f"{skill_name}: 删除 skill.json 失败 - {e}")
+
+            migrated += 1
+
+        return {
+            "migrated": migrated,
+            "skipped": skipped,
+            "errors": errors,
+        }
 
     # ============ MCP 服务方法 ============
 

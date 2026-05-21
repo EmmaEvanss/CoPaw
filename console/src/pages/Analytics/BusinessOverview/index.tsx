@@ -1481,7 +1481,24 @@ export default function BusinessOverviewPage() {
                       setSkillModalOpen(true);
                     }}
                   >
-                    <Tooltip title={skill.skill_name} placement="top">
+                    <Tooltip
+                      placement="top"
+                      overlayInnerStyle={{ maxWidth: 280 }}
+                      title={
+                        skill.skill_description ? (
+                          <div className={styles.skillTooltip}>
+                            <div className={styles.skillTooltipName}>
+                              {skill.skill_name}
+                            </div>
+                            <div className={styles.skillTooltipDesc}>
+                              {skill.skill_description}
+                            </div>
+                          </div>
+                        ) : (
+                          skill.skill_name
+                        )
+                      }
+                    >
                       <span className={styles.skillName}>
                         {truncateName(skill.skill_name, 20)}
                       </span>

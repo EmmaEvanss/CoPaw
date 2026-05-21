@@ -1,5 +1,6 @@
 import { request } from "../request";
 import type {
+  CronBroadcastResponse,
   CronJobSpecInput,
   CronJobSpecOutput,
   CronJobView,
@@ -58,4 +59,16 @@ export const cronJobApi = {
 
   getCronJobState: (jobId: string) =>
     request<unknown>(`/cron/jobs/${encodeURIComponent(jobId)}/state`),
+
+  listCronBroadcastTenants: () =>
+    request<{ tenant_ids: string[] }>("/cron/broadcast/tenants"),
+
+  broadcastCronJob: (jobId: string, targetTenantIds: string[]) =>
+    request<CronBroadcastResponse>(
+      `/cron/jobs/${encodeURIComponent(jobId)}/broadcast`,
+      {
+        method: "POST",
+        body: JSON.stringify({ target_tenant_ids: targetTenantIds }),
+      },
+    ),
 };

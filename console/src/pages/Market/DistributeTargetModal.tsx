@@ -90,25 +90,37 @@ export function DistributeTargetModal({
       .filter((group) => group.users.length > 0);
   }, [targetMode, selectedBbkIds, tenantOptions]);
 
-  // 手动输入的租户 ID
+  // 手动输入的租户 ID 中，存在于用户列表的部分
+  const manualTenantIdsInList = useMemo(() => {
+    const inputIds = manualTenantIdsText
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return inputIds.filter((id) =>
+      tenantOptions.some((t) => t.tenant_id === id),
+    );
+  }, [manualTenantIdsText, tenantOptions]);
+
+  // 手动输入的租户 ID 中，不存在于用户列表的部分（真正的额外用户）
   const manualTenantIds = useMemo(() => {
+    const inputIds = manualTenantIdsText
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
     return Array.from(
       new Set(
-        manualTenantIdsText
-          .split(/[\s,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
+        inputIds.filter((id) => !tenantOptions.some((t) => t.tenant_id === id)),
       ),
     );
-  }, [manualTenantIdsText]);
+  }, [manualTenantIdsText, tenantOptions]);
 
   // 合并选择 + 手动输入（按机构时使用过滤后的用户列表）
   const finalTenantIds = useMemo(() => {
     if (targetMode === "bbk_id") {
       return filteredTenantIds;
     }
-    return Array.from(new Set([...selectedTenantIds, ...manualTenantIds]));
-  }, [targetMode, filteredTenantIds, selectedTenantIds, manualTenantIds]);
+    return Array.from(new Set([...selectedTenantIds, ...manualTenantIdsInList, ...manualTenantIds]));
+  }, [targetMode, filteredTenantIds, selectedTenantIds, manualTenantIdsInList, manualTenantIds]);
 
   // 切换模式时清空选择
   const handleModeChange = (mode: "bbk_id" | "user_id") => {
@@ -366,18 +378,25 @@ export function DistributeTargetModal({
                   const displayName = tenant?.tenant_name
                     ? `${tenant.tenant_name} (${tenantId})`
                     : tenantId;
-                  const selected = selectedTenantIds.includes(tenantId);
+                  // 选中状态：手动输入匹配（即时）或用户点击选中（持久）
+                  const isManualMatch = manualTenantIdsInList.includes(tenantId);
+                  const isClickSelected = selectedTenantIds.includes(tenantId);
+                  const selected = isManualMatch || isClickSelected;
                   return (
                     <button
                       key={tenantId}
                       type="button"
-                      onClick={() =>
-                        setSelectedTenantIds(
-                          selected
-                            ? selectedTenantIds.filter((id) => id !== tenantId)
-                            : [...selectedTenantIds, tenantId],
-                        )
-                      }
+                      onClick={() => {
+                        if (selected) {
+                          // 取消选中：从 selectedTenantIds 移除（如果存在）
+                          setSelectedTenantIds(
+                            selectedTenantIds.filter((id) => id !== tenantId),
+                          );
+                        } else {
+                          // 选中：加入 selectedTenantIds（持久化）
+                          setSelectedTenantIds([...selectedTenantIds, tenantId]);
+                        }
+                      }}
                       style={{
                         cursor: "pointer",
                         borderRadius: 8,

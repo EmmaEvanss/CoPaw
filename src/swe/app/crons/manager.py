@@ -470,6 +470,23 @@ class CronManager:  # pylint: disable=too-many-public-methods
         # 外部调度归属必须跟当前运行时租户一致，避免旧任务里的 tenant_id 污染回调路由。
         return self._tenant_id or spec.tenant_id or ""
 
+    def _get_external_scheduler_business_identity(
+        self,
+        spec: Optional[CronJobSpec] = None,
+    ) -> tuple[str, str]:
+        """解析写入调度平台展示字段和 jobParam 的业务身份。"""
+        if spec is not None:
+            tenant_id = spec.tenant_id or ""
+            source_id = spec.source_id or ""
+            if tenant_id:
+                tenant_id, source_id, _ = resolve_runtime_identity(
+                    tenant_id,
+                    source_id or None,
+                )
+                return tenant_id or spec.tenant_id or "", source_id or ""
+        tenant_id, source_id, _ = resolve_runtime_identity(self._tenant_id)
+        return tenant_id or self._tenant_id or "", source_id or ""
+
     @staticmethod
     def _get_job_runtime_tenant_id(spec: CronJobSpec) -> str | None:
         """解析任务执行时实际使用的租户隔离键。"""
@@ -490,11 +507,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         callback_url = self._build_callback_url("job", spec.id)
         ext_id = self._get_existing_external_job_id(spec, existing)
-        tenant_id = self._get_external_scheduler_tenant_id(spec)
+        tenant_id, source_id = self._get_external_scheduler_business_identity(
+            spec,
+        )
         if ext_id:
             await self._scheduler_adapter.update_job(
                 external_id=ext_id,
                 tenant_id=tenant_id,
+                source_id=source_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -505,6 +525,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         else:
             ext_id = await self._scheduler_adapter.register_job(
                 tenant_id=tenant_id,
+                source_id=source_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -544,21 +565,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
         for job in await self._repo.list_jobs():
             result["total"] += 1
             if self._get_existing_external_job_id(job):
-                if await self._repair_external_scheduler_tenant(job):
-                    result["updated"] += 1
-                    continue
                 result["skipped"] += 1
                 continue
             try:
                 synced = await self._sync_job_to_external_scheduler(job)
                 ext_id = (synced.meta or {}).get("external_job_id", "")
-                runtime_tenant_id = self._get_external_scheduler_tenant_id(
-                    synced,
-                )
                 await self._persist_external_job_binding(
                     job.id,
                     ext_id,
-                    runtime_tenant_id,
                 )
                 st = self._states.get(job.id, CronJobState())
                 st.external_job_id = ext_id
@@ -575,6 +589,55 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 )
                 logger.warning(
                     "Failed to register missing external job %s",
+                    job.id,
+                    exc_info=True,
+                )
+        return result
+
+    async def refresh_external_jobs(self) -> dict[str, Any]:
+        """按当前代码规则刷新当前 Agent 的外部调度平台任务。"""
+        if isinstance(self._scheduler_adapter, NoopSchedulerAdapter):
+            raise RuntimeError("External scheduler is not configured")
+
+        result: dict[str, Any] = {
+            "tenant_id": self._tenant_id,
+            "agent_id": self._agent_id,
+            "total": 0,
+            "registered": 0,
+            "updated": 0,
+            "skipped": 0,
+            "failed": 0,
+            "errors": [],
+        }
+        for job in await self._repo.list_jobs():
+            result["total"] += 1
+            had_external_id = bool(self._get_existing_external_job_id(job))
+            try:
+                synced = await self._sync_job_to_external_scheduler(
+                    job,
+                    existing=job,
+                )
+                ext_id = (synced.meta or {}).get("external_job_id", "")
+                if ext_id:
+                    await self._persist_external_job_binding(job.id, ext_id)
+                    st = self._states.get(job.id, CronJobState())
+                    st.external_job_id = ext_id
+                    self._states[job.id] = st
+                if had_external_id:
+                    result["updated"] += 1
+                else:
+                    result["registered"] += 1
+            except Exception as exc:  # pylint: disable=broad-except
+                result["failed"] += 1
+                result["errors"].append(
+                    {
+                        "job_id": job.id,
+                        "job_name": job.name,
+                        "error": str(exc),
+                    },
+                )
+                logger.warning(
+                    "Failed to refresh external job %s",
                     job.id,
                     exc_info=True,
                 )
@@ -1960,10 +2023,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     if job.schedule and job.schedule.cron
                     else "0 0 1 1 *"
                 )
+                tenant_id, source_id = (
+                    self._get_external_scheduler_business_identity(job)
+                )
                 runtime_tenant_id = self._get_external_scheduler_tenant_id(job)
                 try:
                     ext_id = await self._scheduler_adapter.register_job(
-                        tenant_id=runtime_tenant_id,
+                        tenant_id=tenant_id,
+                        source_id=source_id,
                         agent_id=self._agent_id or "",
                         task_type="job",
                         job_id=job.id,
@@ -2138,11 +2205,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return
 
         callback_url = self._build_callback_url("heartbeat")
+        tenant_id, source_id = self._get_external_scheduler_business_identity()
         try:
             if ext_id:
                 await self._scheduler_adapter.update_job(
                     external_id=ext_id,
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="heartbeat",
                     job_id=job_id,
@@ -2153,7 +2222,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 await self._scheduler_adapter.resume_job(ext_id)
             else:
                 ext_id = await self._scheduler_adapter.register_job(
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="heartbeat",
                     job_id=job_id,
@@ -2193,11 +2263,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return
 
         callback_url = self._build_callback_url("dream")
+        tenant_id, source_id = self._get_external_scheduler_business_identity()
         try:
             if ext_id:
                 await self._scheduler_adapter.update_job(
                     external_id=ext_id,
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="dream",
                     job_id=job_id,
@@ -2208,7 +2280,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 await self._scheduler_adapter.resume_job(ext_id)
             else:
                 ext_id = await self._scheduler_adapter.register_job(
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="dream",
                     job_id=job_id,

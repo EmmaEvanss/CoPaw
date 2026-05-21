@@ -90,25 +90,37 @@ export function DistributeTargetModal({
       .filter((group) => group.users.length > 0);
   }, [targetMode, selectedBbkIds, tenantOptions]);
 
-  // 手动输入的租户 ID
+  // 手动输入的租户 ID 中，存在于用户列表的部分
+  const manualTenantIdsInList = useMemo(() => {
+    const inputIds = manualTenantIdsText
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return inputIds.filter((id) =>
+      tenantOptions.some((t) => t.tenant_id === id),
+    );
+  }, [manualTenantIdsText, tenantOptions]);
+
+  // 手动输入的租户 ID 中，不存在于用户列表的部分（真正的额外用户）
   const manualTenantIds = useMemo(() => {
+    const inputIds = manualTenantIdsText
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
     return Array.from(
       new Set(
-        manualTenantIdsText
-          .split(/[\s,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
+        inputIds.filter((id) => !tenantOptions.some((t) => t.tenant_id === id)),
       ),
     );
-  }, [manualTenantIdsText]);
+  }, [manualTenantIdsText, tenantOptions]);
 
   // 合并选择 + 手动输入（按机构时使用过滤后的用户列表）
   const finalTenantIds = useMemo(() => {
     if (targetMode === "bbk_id") {
       return filteredTenantIds;
     }
-    return Array.from(new Set([...selectedTenantIds, ...manualTenantIds]));
-  }, [targetMode, filteredTenantIds, selectedTenantIds, manualTenantIds]);
+    return Array.from(new Set([...selectedTenantIds, ...manualTenantIdsInList, ...manualTenantIds]));
+  }, [targetMode, filteredTenantIds, selectedTenantIds, manualTenantIdsInList, manualTenantIds]);
 
   // 切换模式时清空选择
   const handleModeChange = (mode: "bbk_id" | "user_id") => {
@@ -137,11 +149,33 @@ export function DistributeTargetModal({
         };
         const result = await marketApi.distributeSkill(sourceId, (item as MarketSkill).item_id, payload);
         const distributedCount = result.distributed_count ?? 0;
+        const conflictCount = result.conflict_count ?? 0;
+        const conflicts = result.conflicts ?? [];
 
-        if (distributedCount === 0) {
+        if (distributedCount === 0 && conflictCount === 0) {
           message.warning("分发未生效，无用户实际收到该技能");
-        } else if (distributedCount < finalTenantIds.length) {
-          message.warning(`部分分发成功，实际分发 ${distributedCount} 个用户（预期 ${finalTenantIds.length} 个）`);
+        } else if (conflictCount > 0) {
+          const conflictLines = conflicts.map(
+            (c) => `• ${c.user_id}（${c.reason === "customized" ? "已有自建技能" : c.reason}）`,
+          );
+          Modal.confirm({
+            title: distributedCount > 0 ? "部分分发成功" : "分发未生效",
+            content: (
+              <div style={{ display: "grid", gap: 8 }}>
+                {distributedCount > 0 && (
+                  <div>成功分发/更新 {distributedCount} 个用户</div>
+                )}
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div>以下 {conflictCount} 个用户跳过（已有自建技能）：</div>
+                  <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                    {conflictLines.join("\n")}
+                  </pre>
+                </div>
+              </div>
+            ),
+            okText: "关闭",
+            cancelButtonProps: { style: { display: "none" } },
+          });
         } else {
           message.success(`分发成功，共 ${distributedCount} 个用户`);
         }
@@ -344,18 +378,25 @@ export function DistributeTargetModal({
                   const displayName = tenant?.tenant_name
                     ? `${tenant.tenant_name} (${tenantId})`
                     : tenantId;
-                  const selected = selectedTenantIds.includes(tenantId);
+                  // 选中状态：手动输入匹配（即时）或用户点击选中（持久）
+                  const isManualMatch = manualTenantIdsInList.includes(tenantId);
+                  const isClickSelected = selectedTenantIds.includes(tenantId);
+                  const selected = isManualMatch || isClickSelected;
                   return (
                     <button
                       key={tenantId}
                       type="button"
-                      onClick={() =>
-                        setSelectedTenantIds(
-                          selected
-                            ? selectedTenantIds.filter((id) => id !== tenantId)
-                            : [...selectedTenantIds, tenantId],
-                        )
-                      }
+                      onClick={() => {
+                        if (selected) {
+                          // 取消选中：从 selectedTenantIds 移除（如果存在）
+                          setSelectedTenantIds(
+                            selectedTenantIds.filter((id) => id !== tenantId),
+                          );
+                        } else {
+                          // 选中：加入 selectedTenantIds（持久化）
+                          setSelectedTenantIds([...selectedTenantIds, tenantId]);
+                        }
+                      }}
                       style={{
                         cursor: "pointer",
                         borderRadius: 8,

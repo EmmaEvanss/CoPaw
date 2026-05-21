@@ -103,6 +103,14 @@ export function buildAuthHeaders(): Record<string, string> {
     headers["X-User-Name"] = encodeURIComponent(userName);
   }
 
+  // 反馈落库需要保留支行与岗位信息，随请求上下文一起透传给后端。
+  if (iframeContext.orgCode) {
+    headers["X-Org-Code"] = iframeContext.orgCode;
+  }
+  if (iframeContext.positionId) {
+    headers["X-Position-Id"] = iframeContext.positionId;
+  }
+
   // 8. Space（来自 iframe context）
   if (iframeContext.space) {
     headers["space"] = iframeContext.space;

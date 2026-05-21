@@ -3,11 +3,38 @@ from __future__ import annotations
 
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
+from ...config.context import resolve_runtime_tenant_id, resolve_scope_id
+from ...config.utils import list_logical_tenant_ids
+from .broadcast import compute_broadcast_offsets, shift_cron_expression
 from .manager import CronManager
 from .models import CronJobListItem, CronJobSpec, CronJobView
 
 router = APIRouter(prefix="/cron", tags=["cron"])
+
+
+class BroadcastTenantListResponse(BaseModel):
+    tenant_ids: list[str] = Field(default_factory=list)
+
+
+class CronBroadcastRequest(BaseModel):
+    target_tenant_ids: list[str] = Field(default_factory=list)
+
+
+class CronBroadcastTenantResult(BaseModel):
+    tenant_id: str
+    success: bool
+    job_id: str = ""
+    cron: str = ""
+    timezone: str = ""
+    offset_minutes: int = 0
+    notification_timezone: str = ""
+    error: str = ""
+
+
+class CronBroadcastResponse(BaseModel):
+    results: list[CronBroadcastTenantResult] = Field(default_factory=list)
 
 
 async def get_cron_manager(
@@ -99,6 +126,104 @@ def _serialize_state(state):
     return state
 
 
+def _request_source_id(request: Request) -> str | None:
+    return getattr(request.state, "source_id", None)
+
+
+def _request_agent_id(request: Request) -> str:
+    return getattr(request.state, "agent_id", None) or "default"
+
+
+def _validate_target_tenant_id(tenant_id: str) -> str:
+    value = str(tenant_id or "").strip()
+    if not value:
+        raise ValueError("tenant_id is required")
+    if len(value) > 256:
+        raise ValueError(f"Invalid tenant ID format: {value}")
+    if ".." in value or "/" in value or "\\" in value:
+        raise ValueError(f"Invalid tenant ID format: {value}")
+    if any(ord(char) < 32 for char in value):
+        raise ValueError(f"Invalid tenant ID format: {value}")
+    return value
+
+
+def _build_broadcast_job(
+    source_job: CronJobSpec,
+    *,
+    job_id: str,
+    target_tenant_id: str,
+    source_id: str | None,
+    cron: str,
+    timezone_name: str,
+    offset_minutes: int,
+) -> CronJobSpec:
+    meta = dict(source_job.meta or {})
+    for key in (
+        "task_chat_id",
+        "task_session_id",
+        "task_has_scheduled_result",
+        "task_last_scheduled_preview",
+        "task_unread_execution_count",
+        "task_last_scheduled_run_at",
+        "pause_reason",
+        "auto_paused_at",
+        "unread_count_at_pause",
+        "external_job_id",
+    ):
+        meta.pop(key, None)
+    meta.update(
+        {
+            "creator_user_id": target_tenant_id,
+            "broadcast_source_job_id": source_job.id,
+            "broadcast_original_cron": source_job.schedule.cron,
+            "broadcast_original_timezone": source_job.schedule.timezone,
+            "broadcast_offset_minutes": offset_minutes,
+            "broadcast_notification_policy": "original_schedule",
+        },
+    )
+
+    request_spec = source_job.request
+    if request_spec is not None:
+        request_spec = request_spec.model_copy(
+            update={
+                "user_id": target_tenant_id,
+                "session_id": f"cron-task:{job_id}",
+            },
+        )
+
+    dispatch = source_job.dispatch.model_copy(
+        update={
+            "target": source_job.dispatch.target.model_copy(
+                update={
+                    "user_id": target_tenant_id,
+                    "session_id": f"cron-task:{job_id}",
+                },
+            ),
+        },
+    )
+
+    return source_job.model_copy(
+        update={
+            "id": job_id,
+            "enabled": True,
+            "tenant_id": target_tenant_id,
+            "bbk_id": None,
+            "source_id": source_id,
+            "tenant_name": None,
+            "scope_id": resolve_scope_id(target_tenant_id, source_id),
+            "schedule": source_job.schedule.model_copy(
+                update={
+                    "cron": cron,
+                    "timezone": timezone_name,
+                },
+            ),
+            "request": request_spec,
+            "dispatch": dispatch,
+            "meta": meta,
+        },
+    )
+
+
 @router.get("/jobs", response_model=list[CronJobListItem])
 async def list_jobs(
     request: Request,
@@ -120,6 +245,137 @@ async def list_jobs(
         )
         for job in jobs
     ]
+
+
+@router.get(
+    "/broadcast/tenants",
+    response_model=BroadcastTenantListResponse,
+)
+async def list_broadcast_tenants(
+    request: Request,
+) -> BroadcastTenantListResponse:
+    """获取可广播定时任务的目标租户。"""
+    return BroadcastTenantListResponse(
+        tenant_ids=await list_logical_tenant_ids(
+            _request_source_id(request),
+            source_filter=True,
+        ),
+    )
+
+
+@router.post(
+    "/jobs/{job_id}/broadcast",
+    response_model=CronBroadcastResponse,
+)
+async def broadcast_job(
+    request: Request,
+    job_id: str,
+    body: CronBroadcastRequest,
+    mgr: CronManager = Depends(get_cron_manager),
+) -> CronBroadcastResponse:
+    """将当前定时任务广播到多个租户。"""
+    source_job = await mgr.get_job(job_id)
+    if not source_job:
+        raise HTTPException(status_code=404, detail="job not found")
+    if not body.target_tenant_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="No target tenant IDs provided",
+        )
+
+    normalized_tenants = []
+    try:
+        for tenant_id in body.target_tenant_ids:
+            normalized = _validate_target_tenant_id(tenant_id)
+            if normalized not in normalized_tenants:
+                normalized_tenants.append(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    offsets = compute_broadcast_offsets(len(normalized_tenants))
+    multi_agent_manager = getattr(request.app.state, "multi_agent_manager", None)
+    if multi_agent_manager is None:
+        raise HTTPException(status_code=500, detail="multi_agent_manager missing")
+    tenant_workspace_pool = getattr(
+        request.app.state,
+        "tenant_workspace_pool",
+        None,
+    )
+
+    results: list[CronBroadcastTenantResult] = []
+    agent_id = _request_agent_id(request)
+    source_id = _request_source_id(request)
+    timezone_name = source_job.schedule.timezone or "UTC"
+    for tenant_id, offset in zip(normalized_tenants, offsets):
+        shifted = shift_cron_expression(
+            source_job.schedule.cron,
+            timezone_name,
+            offset_minutes=offset,
+        )
+        if shifted.error:
+            results.append(
+                CronBroadcastTenantResult(
+                    tenant_id=tenant_id,
+                    success=False,
+                    timezone=shifted.timezone,
+                    offset_minutes=offset,
+                    notification_timezone=timezone_name,
+                    error=shifted.error,
+                ),
+            )
+            continue
+        try:
+            if tenant_workspace_pool is not None:
+                await tenant_workspace_pool.ensure_bootstrap(
+                    tenant_id,
+                    source_id=source_id,
+                )
+            runtime_tenant_id = resolve_runtime_tenant_id(
+                tenant_id,
+                source_id,
+            )
+            workspace = await multi_agent_manager.get_agent(
+                agent_id,
+                tenant_id=runtime_tenant_id,
+            )
+            if workspace.cron_manager is None:
+                raise RuntimeError("CronManager not initialized")
+            target_job_id = str(uuid.uuid4())
+            target_job = _build_broadcast_job(
+                source_job,
+                job_id=target_job_id,
+                target_tenant_id=tenant_id,
+                source_id=source_id,
+                cron=shifted.cron,
+                timezone_name=shifted.timezone,
+                offset_minutes=offset,
+            )
+            await workspace.cron_manager.create_or_replace_job(target_job)
+            saved = await workspace.cron_manager.get_job(target_job_id)
+            results.append(
+                CronBroadcastTenantResult(
+                    tenant_id=tenant_id,
+                    success=True,
+                    job_id=target_job_id,
+                    cron=(saved or target_job).schedule.cron,
+                    timezone=(saved or target_job).schedule.timezone,
+                    offset_minutes=offset,
+                    notification_timezone=timezone_name,
+                ),
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            results.append(
+                CronBroadcastTenantResult(
+                    tenant_id=tenant_id,
+                    success=False,
+                    cron=shifted.cron,
+                    timezone=shifted.timezone,
+                    offset_minutes=offset,
+                    notification_timezone=timezone_name,
+                    error=repr(exc),
+                ),
+            )
+    return CronBroadcastResponse(results=results)
 
 
 @router.get("/jobs/{job_id}", response_model=CronJobView)

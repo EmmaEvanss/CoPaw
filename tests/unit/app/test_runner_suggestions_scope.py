@@ -48,67 +48,6 @@ async def test_generate_and_store_suggestions_passes_scope_tenant(
         tenant_id="dGVuYW50LWE.c291cmNlLWE",
     )
 
-
-@pytest.mark.asyncio
-async def test_store_pending_continuation_passes_scope_tenant(
-    monkeypatch,
-) -> None:
-    store = AsyncMock(return_value={"id": "validation-1"})
-    monkeypatch.setattr(runner_module, "store_pending_continuation", store)
-
-    runner = runner_module.AgentRunner(
-        agent_id="agent-a",
-        tenant_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
-    )
-    runtime = type("Runtime", (), {"session_id": "session-a", "agent": None})()
-    plan = type(
-        "Plan",
-        (),
-        {
-            "original_user_message": "帮我继续",
-            "confirmed_turn_index": 0,
-            "validation_config": type(
-                "ValidationConfig",
-                (),
-                {"max_confirmed_turns": 2},
-            )(),
-        },
-    )()
-    outcome = type(
-        "Outcome",
-        (),
-        {
-            "task_completed": False,
-            "last_validation_result": type(
-                "ValidationResult",
-                (),
-                {
-                    "reason": "still work left",
-                    "follow_up_prompt": "继续处理剩余步骤",
-                },
-            )(),
-            "auto_follow_up_turns": 0,
-            "max_auto_turns": 2,
-        },
-    )()
-
-    await runner._store_pending_validation_if_needed(
-        runtime=runtime,
-        plan=plan,
-        outcome=outcome,
-    )
-
-    store.assert_awaited_once_with(
-        session_id="session-a",
-        user_message="帮我继续",
-        assistant_response="",
-        reason="still work left",
-        follow_up_prompt="继续处理剩余步骤",
-        tenant_id="dGVuYW50LWE.c291cmNlLWE",
-        confirmed_turn_index=0,
-    )
-
-
 @pytest.mark.asyncio
 async def test_store_qa_content_passes_scope_tenant(monkeypatch) -> None:
     store = AsyncMock(return_value=None)

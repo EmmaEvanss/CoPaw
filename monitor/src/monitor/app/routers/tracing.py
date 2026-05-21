@@ -7,10 +7,12 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Query, HTTPException, Request
+import httpx
+from fastapi import APIRouter, Query, HTTPException, Request, Body
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,8 @@ from ..models.tracing import (
     DepthSummary,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
-from ..database import get_es_client
+from ..database import get_es_client, get_db_connection
+from ...config.constant import USER_INFO_API_URL
 
 
 def _get_source_id(
@@ -1138,3 +1141,235 @@ async def index_model_output(
     except Exception as e:
         logger.warning("Failed to write model_output: %s", e)
         return {"status": "failed", "error": str(e)}
+
+
+# ===== 批量更新用户信息 =====
+
+
+class BatchUpdateTracingUserInfoRequest(BaseModel):
+    """批量更新 tracing 用户信息请求。"""
+
+    batch_size: int = Field(default=100, description="每批处理 user_id 数量")
+
+
+class BatchUpdateTracingUserInfoResponse(BaseModel):
+    """批量更新 tracing 用户信息响应。"""
+
+    total: int = Field(..., description="待处理总数")
+    traces_updated: int = Field(..., description="traces 表更新数")
+    spans_updated: int = Field(..., description="spans 表更新数")
+    details: List[dict] = Field(default_factory=list, description="处理详情")
+
+
+def _extract_bbk_id_from_path_name(path_name: str | None) -> str | None:
+    """从 pathName 中提取 BBK ID。
+
+    pathName 格式如: "某企业/总行/生产部/某组"
+    提取第一个和第二个"/"之间的内容，映射为 BBK ID。
+    """
+    if not path_name:
+        return None
+
+    from ...utils.bbk import get_bbk_id_by_name
+
+    parts = path_name.split("/")
+    if len(parts) >= 2 and parts[1]:
+        return get_bbk_id_by_name(parts[1])
+
+    return None
+
+
+async def _fetch_user_info_for_user(
+    user_id: str,
+    headers: dict,
+) -> tuple[str | None, str | None]:
+    """调用外部 API 获取用户信息。
+
+    Returns:
+        (userName, bbk_id) 元组
+    """
+    if not USER_INFO_API_URL:
+        return None, None
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                USER_INFO_API_URL,
+                json={
+                    "keyWord": user_id,
+                    "compareType": "EQ",
+                },
+                headers=headers,
+            )
+
+        if not response.is_success:
+            logger.warning(
+                f"User info API failed for user {user_id}: {response.status_code}",
+            )
+            return None, None
+
+        data = response.json()
+        outer_data = data.get("data")
+
+        if outer_data is None:
+            return None, None
+
+        if isinstance(outer_data, list):
+            result_data = outer_data
+        elif isinstance(outer_data, dict):
+            result_data = outer_data.get("data", [])
+            if not isinstance(result_data, list):
+                result_data = []
+        else:
+            result_data = []
+
+        if not result_data:
+            return None, None
+
+        user_info = result_data[0]
+        if not isinstance(user_info, dict):
+            return None, None
+
+        user_name = user_info.get("userName")
+        path_name = user_info.get("pathName")
+        bbk_id = _extract_bbk_id_from_path_name(path_name)
+
+        return user_name, bbk_id
+
+    except Exception as e:
+        logger.error(f"Error fetching user info for user {user_id}: {e}")
+        return None, None
+
+
+@router.post(
+    "/batch-update-user-info",
+    response_model=BatchUpdateTracingUserInfoResponse,
+    summary="批量更新 tracing 表用户信息",
+    description="按 user_id 去重查询缺少 user_name 的记录，减少 API 调用次数",
+)
+async def batch_update_tracing_user_info(
+    request: Request,
+    body: BatchUpdateTracingUserInfoRequest,
+) -> BatchUpdateTracingUserInfoResponse:
+    """批量更新 tracing 表的用户信息。
+
+    按 user_id 去重查询，对每个唯一 user_id 只调用一次 API，
+    然后批量更新该 user_id 对应的所有 traces 和 spans（不限定 source_id）。
+
+    Args:
+        request: FastAPI 请求对象
+        body: 包含 batch_size 的请求体
+
+    Returns:
+        处理结果统计
+    """
+    try:
+        db = get_db_connection()
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail="Database not available",
+        )
+
+    if not db.is_connected:
+        raise HTTPException(
+            status_code=503,
+            detail="Database not connected",
+        )
+
+    batch_size = body.batch_size
+
+    # 按 user_id 去重查询，减少 API 调用次数（不限定 source_id）
+    query = """
+        SELECT DISTINCT user_id
+        FROM swe_tracing_traces
+        WHERE user_id IS NOT NULL
+          AND user_id != ''
+          AND (user_name IS NULL OR user_name = '')
+        LIMIT %s
+    """
+    unique_users = await db.fetch_all(query, (batch_size,))
+    unique_user_ids = [row["user_id"] for row in unique_users]
+
+    if not unique_user_ids:
+        return BatchUpdateTracingUserInfoResponse(
+            total=0,
+            traces_updated=0,
+            spans_updated=0,
+            details=[],
+        )
+
+    # 查询这些 user_id 对应的 traces 总数（不限定 source_id）
+    placeholders = ",".join(["%s"] * len(unique_user_ids))
+    count_query = f"""
+        SELECT COUNT(*) as cnt
+        FROM swe_tracing_traces
+        WHERE user_id IN ({placeholders})
+          AND (user_name IS NULL OR user_name = '')
+    """
+    count_result = await db.fetch_one(count_query, tuple(unique_user_ids))
+    total = count_result["cnt"] if count_result else 0
+
+    # 构建请求头
+    headers = {"Content-Type": "application/json"}
+    auth_header = request.headers.get("Authorization")
+    if auth_header:
+        headers["Authorization"] = auth_header
+
+    # 对每个唯一 user_id 调用一次 API
+    user_info_map: dict[str, tuple[str | None, str | None]] = {}
+    details: list[dict] = []
+
+    for user_id in unique_user_ids:
+        user_name, bbk_id = await _fetch_user_info_for_user(user_id, headers)
+        if user_name or bbk_id:
+            user_info_map[user_id] = (user_name or "", bbk_id or "")
+            details.append(
+                {
+                    "user_id": user_id,
+                    "user_name": user_name,
+                    "bbk_id": bbk_id,
+                    "api_called": True,
+                },
+            )
+
+    # 按 user_id 批量更新（不限定 source_id）
+    traces_updated = 0
+    spans_updated = 0
+
+    if user_info_map:
+        # 构建 batch update 参数（仅按 user_id）
+        updates_by_user: list[tuple] = []
+        for user_id, (user_name, bbk_id) in user_info_map.items():
+            updates_by_user.append((user_name, bbk_id, user_id))
+
+        # 更新 traces（仅按 user_id）
+        traces_query = """
+            UPDATE swe_tracing_traces
+            SET user_name = %s, bbk_id = %s
+            WHERE user_id = %s
+              AND (user_name IS NULL OR user_name = '')
+        """
+        traces_updated = await db.execute_many(traces_query, updates_by_user)
+
+        # 更新 spans（仅按 user_id）
+        spans_query = """
+            UPDATE swe_tracing_spans
+            SET user_name = %s, bbk_id = %s
+            WHERE user_id = %s
+              AND (user_name IS NULL OR user_name = '')
+        """
+        spans_updated = await db.execute_many(spans_query, updates_by_user)
+
+    logger.info(
+        f"Batch update tracing user info: "
+        f"unique_users={len(unique_user_ids)}, total_traces={total}, "
+        f"traces_updated={traces_updated}, spans_updated={spans_updated}",
+    )
+
+    return BatchUpdateTracingUserInfoResponse(
+        total=total,
+        traces_updated=traces_updated,
+        spans_updated=spans_updated,
+        details=details,
+    )

@@ -117,16 +117,11 @@ export interface IAgentScopeRuntimeResponse {
   status: AgentScopeRuntimeRunStatus;
   created_at: number;
   completed_at?: number;
+  trace_id?: string;
   output: IAgentScopeRuntimeMessage[];
   usage?: Record<string, any>;
   error?: IAgentScopeRuntimeError;
   suggestions?: string[]; // 猜你想问建议列表
-  post_turn_validation?: {
-    id: string;
-    status: "needs_confirmation" | "dismissed" | "consumed";
-    reason?: string;
-    expires_at?: number;
-  };
 }
 
 export interface IAgentScopeRuntimeError {

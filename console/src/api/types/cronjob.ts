@@ -75,6 +75,21 @@ export interface CronJobView {
   task?: CronTaskView | null;
 }
 
+export interface CronBroadcastTenantResult {
+  tenant_id: string;
+  success: boolean;
+  job_id: string;
+  cron: string;
+  timezone: string;
+  offset_minutes: number;
+  notification_timezone: string;
+  error: string;
+}
+
+export interface CronBroadcastResponse {
+  results: CronBroadcastTenantResult[];
+}
+
 export type CronJobSpecInputLegacy = Record<string, unknown>;
 export type CronJobSpecOutputLegacy = Record<string, unknown>;
 export type CronJobViewLegacy = Record<string, unknown>;

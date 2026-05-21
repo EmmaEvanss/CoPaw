@@ -1,5 +1,10 @@
 import { Fragment, useState } from "react";
+import type { FeedbackRecord } from "@/api/types/feedback";
 import type { IAgentScopeRuntimeWebUIMessage } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/types/IMessages";
+import {
+  findFeedbackForResponse,
+  type FeedbackLookupMap,
+} from "../../feedbackLookup";
 import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
@@ -10,9 +15,20 @@ import { formatMessageTime } from "../../messageMeta";
 import ApprovalActionCard from "../ApprovalActionCard";
 import RuntimeRequestCard from "../RuntimeRequestCard";
 import RuntimeResponseCard from "../RuntimeResponseCard";
+import type { ResponseFeedbackTaskMeta } from "../ResponseFeedbackCard";
 
 function NestedTaskRunMessages(props: {
   messages: IAgentScopeRuntimeWebUIMessage[];
+  showFeedback?: boolean;
+  chatId?: string | null;
+  sessionId?: string | null;
+  task?: ResponseFeedbackTaskMeta | null;
+  feedbackLookup?: FeedbackLookupMap;
+  loadingFeedback?: boolean;
+  onFeedbackSaved?: (
+    feedback: FeedbackRecord,
+    response: ChatRuntimeResponseCardData,
+  ) => void;
 }) {
   return (
     <>
@@ -33,10 +49,20 @@ function NestedTaskRunMessages(props: {
                 <RuntimeResponseCard
                   key={key}
                   data={card.data as ChatRuntimeResponseCardData}
+                  chatId={props.chatId}
                   isLast={
-                    messageIndex === props.messages.length - 1
-                    && cardIndex === (message.cards || []).length - 1
+                    messageIndex === props.messages.length - 1 &&
+                    cardIndex === (message.cards || []).length - 1
                   }
+                  sessionId={props.sessionId}
+                  showFeedback={props.showFeedback}
+                  task={props.task}
+                  loadingFeedback={props.loadingFeedback}
+                  existingFeedback={findFeedbackForResponse(
+                    props.feedbackLookup,
+                    card.data as ChatRuntimeResponseCardData,
+                  )}
+                  onFeedbackSaved={props.onFeedbackSaved}
                 />
               );
             }
@@ -58,13 +84,27 @@ function NestedTaskRunMessages(props: {
 
 export default function TaskRunGroupCard(props: {
   data: ChatTaskRunGroupCardData;
+  chatId?: string | null;
+  sessionId?: string | null;
+  task?: ResponseFeedbackTaskMeta | null;
+  feedbackLookup?: FeedbackLookupMap;
+  loadingFeedback?: boolean;
+  onFeedbackSaved?: (
+    feedback: FeedbackRecord,
+    response: ChatRuntimeResponseCardData,
+  ) => void;
 }) {
   const { data } = props;
+  const [resultExpanded, setResultExpanded] = useState(
+    !data.collapsedByDefault,
+  );
   const [expanded, setExpanded] = useState(false);
   const hasSteps = data.stepMessages.length > 0;
   const taskName = data.taskName || `任务 ${data.runIndex + 1}`;
   const headerText = data.headerMeta?.timestamp
-    ? `${taskName}，执行时间：${formatMessageTime(data.headerMeta.timestamp)}，结果如下`
+    ? `${taskName}，执行时间：${formatMessageTime(
+        data.headerMeta.timestamp,
+      )}，结果如下`
     : `${taskName}，结果如下`;
 
   return (
@@ -89,18 +129,49 @@ export default function TaskRunGroupCard(props: {
           boxSizing: "border-box",
         }}
       >
-        <div
-          style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }}
-        />
-        <span style={{ textAlign: "center", whiteSpace: "nowrap", fontWeight: "bold"}}>
+        <div style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }} />
+        <span
+          style={{
+            textAlign: "center",
+            whiteSpace: "nowrap",
+            fontWeight: "bold",
+          }}
+        >
           {headerText}
         </span>
-        <div
-          style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }}
-        />
+        {data.collapsedByDefault && (
+          <button
+            type="button"
+            data-testid="task-run-result-toggle"
+            onClick={() => setResultExpanded((prev) => !prev)}
+            style={{
+              border: "none",
+              background: "transparent",
+              padding: 0,
+              color: "#1677ff",
+              cursor: "pointer",
+              fontSize: 12,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {resultExpanded ? "收起历史" : "展开历史"}
+          </button>
+        )}
+        <div style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }} />
       </div>
-      <NestedTaskRunMessages messages={data.finalMessages} />
-      {hasSteps && (
+      {resultExpanded && (
+        <NestedTaskRunMessages
+          chatId={props.chatId}
+          messages={data.finalMessages}
+          sessionId={props.sessionId}
+          showFeedback
+          task={props.task}
+          feedbackLookup={props.feedbackLookup}
+          loadingFeedback={props.loadingFeedback}
+          onFeedbackSaved={props.onFeedbackSaved}
+        />
+      )}
+      {resultExpanded && hasSteps && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <button
             type="button"
@@ -125,7 +196,13 @@ export default function TaskRunGroupCard(props: {
                 paddingLeft: 16,
               }}
             >
-              <NestedTaskRunMessages messages={data.stepMessages} />
+              <NestedTaskRunMessages
+                messages={data.stepMessages}
+                showFeedback={false}
+                feedbackLookup={props.feedbackLookup}
+                loadingFeedback={props.loadingFeedback}
+                onFeedbackSaved={props.onFeedbackSaved}
+              />
             </div>
           )}
         </div>

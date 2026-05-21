@@ -1782,12 +1782,13 @@ class AgentRunner(Runner):
             session_id=session_id,
             user_id=user_id,
             channel=channel,
-            source_id=source_id,
             working_dir=(
                 str(self.workspace_dir)
                 if self.workspace_dir
                 else str(WORKING_DIR)
             ),
+            source_id=_request_source_id(request),
+            user_name=_request_user_name(request),
         )
         env_context = _with_hook_context(
             env_context,

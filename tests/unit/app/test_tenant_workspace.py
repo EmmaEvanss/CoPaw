@@ -195,13 +195,14 @@ class TestTenantWorkspaceHelpers:
             TenantWorkspaceMiddleware,
         )
 
+        scope_id = encode_scope_id("alice", "portal")
         mock_req = MagicMock(spec=Request)
         mock_req.method = "GET"
         mock_req.state = MagicMock()
         mock_req.state.tenant_id = None
         mock_req.state.effective_tenant_id = None
         mock_req.url = MagicMock()
-        mock_req.url.path = "/static/alice/demo.txt"
+        mock_req.url.path = f"/static/{scope_id}/agent-a/demo.txt"
         mock_req.app = MagicMock()
 
         middleware = TenantWorkspaceMiddleware(app=MagicMock())

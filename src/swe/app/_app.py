@@ -583,33 +583,33 @@ app.include_router(voice_router, tags=["voice"])
 register_custom_channel_routes(app)
 
 
-# User-specific static files: /static/{user_id}/{path}
-# This route dynamically resolves the user directory per-request.
-# The directory is created on-demand if it doesn't exist.
-@app.get("/static/{user_id}/{agent_id}/{file_name:path}")
+# 按运行时静态作用域提供文件：/static/{scope_id}/{agent_id}/{path}
+# 这里的第一段路径是运行时 scope_id，不一定等于逻辑 user_id。
+@app.get("/static/{scope_id}/{agent_id}/{file_name:path}")
 async def serve_user_static(
-    user_id: str,
+    scope_id: str,
     agent_id: str,
     file_name: str,
 ):
-    """Serve static files from user's static directory.
+    """从运行时静态作用域目录返回公开文件。
+
     Args:
-        agent_id: multi agent id
-        user_id: User identifier (used to determine static directory)
-        file_name: Relative path within user's static directory
+        scope_id: 运行时静态作用域标识，用于定位租户或 source-scoped 目录
+        agent_id: Agent 标识
+        file_name: 静态目录下的相对文件路径
+
     Returns:
-        FileResponse if file exists, 404 otherwise
+        文件存在时返回 ``FileResponse``，否则返回 404
     """
     from ..constant import WORKING_DIR
 
-    # Set tenant ID in context
-    logger.info(f"Serving static files from user {user_id}")
+    logger.info(f"Serving static files from scope {scope_id}")
 
     static_dir = (
-        WORKING_DIR / user_id / "workspaces" / agent_id / "static"
+        WORKING_DIR / scope_id / "workspaces" / agent_id / "static"
     ).resolve()
 
-    # Security: ensure resolved path is still within user's static dir
+    # 防止通过 file_name 逃逸出当前 scope 的静态目录。
     try:
         target = (static_dir / file_name).resolve()
     except ValueError as exc:

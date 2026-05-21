@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Table, Card, Input, Select, Button, Tag, Drawer, Descriptions, Timeline, Spin, Empty, DatePicker } from "antd";
-import { FileText, Clock, Zap, Bot, User } from "lucide-react";
+import {
+  Table,
+  Card,
+  Input,
+  Select,
+  Button,
+  Tag,
+  Drawer,
+  Descriptions,
+  Timeline,
+  Spin,
+  Empty,
+  DatePicker,
+} from "antd";
+import { FileText, Clock, Zap, Bot, User, ChevronDown } from "lucide-react";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import { tracingApi, TraceDetail } from "../../../api/modules/tracing";
@@ -13,6 +26,7 @@ import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
+const EMPTY_VALUE = "-";
 
 interface TraceListItem {
   trace_id: string;
@@ -39,6 +53,18 @@ interface TracesResponse {
   page_size: number;
 }
 
+function displayText(value?: string | null) {
+  return value?.trim() || EMPTY_VALUE;
+}
+
+function formatFeedbackOptions(options?: string[] | null) {
+  return options?.length ? options.join(" / ") : EMPTY_VALUE;
+}
+
+function formatFeedbackSkills(skills?: string[] | null) {
+  return skills?.length ? skills.join(" / ") : EMPTY_VALUE;
+}
+
 export default function TracesPage() {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
@@ -55,16 +81,23 @@ export default function TracesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<TraceDetail | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
+  const [feedbackExpanded, setFeedbackExpanded] = useState(true);
 
   // 获取用户权限和来源信息
   const isSuperManager = useIframeStore((state) => state.isSuperManager);
   const userSource = useIframeStore((state) => state.source);
   // 非 iframe 模式下使用默认 source，超级管理员不传 source_id（查询全部）
-  const effectiveSourceId = isSuperManager ? undefined : (userSource || DEFAULT_SOURCE_ID);
+  const effectiveSourceId = isSuperManager
+    ? undefined
+    : userSource || DEFAULT_SOURCE_ID;
 
   useEffect(() => {
     fetchTraces();
   }, [page, pageSize, statusFilter, bbkIdFilter, dateRange]);
+
+  useEffect(() => {
+    setFeedbackExpanded(true);
+  }, [selectedTrace?.trace.trace_id]);
 
   const enrichTraceFeedbacks = async (
     items: TraceListItem[],
@@ -198,7 +231,13 @@ export default function TracesPage() {
       width: 180,
       ellipsis: true,
       render: (v) => (
-        <span style={{ cursor: "pointer", color: "#1890ff", fontFamily: "monospace" }}>
+        <span
+          style={{
+            cursor: "pointer",
+            color: "#1890ff",
+            fontFamily: "monospace",
+          }}
+        >
           {v}
         </span>
       ),
@@ -401,10 +440,7 @@ export default function TracesPage() {
         ) : selectedTrace ? (
           <div className={styles.drawerContent}>
             <Descriptions column={2} bordered size="small">
-              <Descriptions.Item
-                label={t("analytics.traceId")}
-                span={2}
-              >
+              <Descriptions.Item label={t("analytics.traceId")} span={2}>
                 <code>{selectedTrace.trace.trace_id}</code>
               </Descriptions.Item>
               <Descriptions.Item label={t("analytics.userId", "User ID")}>
@@ -442,22 +478,133 @@ export default function TracesPage() {
 
             {selectedTrace.feedback ? (
               <div className={styles.feedbackSection}>
-                <h4>{t("analytics.feedback", "反馈")}</h4>
-                <div className={styles.feedbackDetailContent}>
-                  {selectedTrace.feedback.feedback_content}
-                </div>
-                {selectedTrace.feedback.feedback_options?.length ? (
-                  <div className={styles.tagList}>
-                    {selectedTrace.feedback.feedback_options.map((option) => (
-                      <Tag key={option}>{option}</Tag>
-                    ))}
+                <div className={styles.feedbackHeader}>
+                  <div>
+                    <h4>{t("analytics.feedback", "反馈")}</h4>
+                    <p>
+                      {selectedTrace.feedback.updated_at
+                        ? dayjs(selectedTrace.feedback.updated_at).format(
+                            "YYYY-MM-DD HH:mm:ss",
+                          )
+                        : "当前对话关联的用户反馈信息"}
+                    </p>
                   </div>
-                ) : null}
-                {selectedTrace.feedback.updated_at ? (
-                  <div className={styles.feedbackTime}>
-                    {dayjs(selectedTrace.feedback.updated_at).format(
-                      "YYYY-MM-DD HH:mm:ss",
-                    )}
+                  <div className={styles.feedbackHeaderActions}>
+                    <Tag className={styles.feedbackTypeTag}>
+                      {formatFeedbackOptions(
+                        selectedTrace.feedback.feedback_options,
+                      )}
+                    </Tag>
+                    <Button
+                      type="text"
+                      size="small"
+                      className={styles.feedbackToggle}
+                      aria-label={feedbackExpanded ? "收起反馈" : "展开反馈"}
+                      aria-expanded={feedbackExpanded}
+                      onClick={() =>
+                        setFeedbackExpanded((expanded) => !expanded)
+                      }
+                    >
+                      <ChevronDown
+                        size={16}
+                        className={
+                          feedbackExpanded
+                            ? styles.feedbackToggleIconOpen
+                            : styles.feedbackToggleIcon
+                        }
+                      />
+                    </Button>
+                  </div>
+                </div>
+                {feedbackExpanded ? (
+                  <div className={styles.feedbackBody}>
+                    <div className={styles.feedbackMetaGrid}>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈人姓名</span>
+                        <strong>
+                          {displayText(
+                            selectedTrace.feedback.feedback_user_name,
+                          )}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈人SAP</span>
+                        <strong>
+                          {displayText(
+                            selectedTrace.feedback.feedback_user_sap,
+                          )}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈人分行</span>
+                        <strong>
+                          {selectedTrace.feedback.feedback_branch
+                            ? getBbkDisplayName(
+                                selectedTrace.feedback.feedback_branch,
+                              )
+                            : EMPTY_VALUE}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈人支行</span>
+                        <strong>
+                          {displayText(
+                            selectedTrace.feedback.feedback_sub_branch,
+                          )}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈人岗位</span>
+                        <strong>
+                          {displayText(
+                            selectedTrace.feedback.feedback_position,
+                          )}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈定时任务名称</span>
+                        <strong>
+                          {displayText(selectedTrace.feedback.cron_task_name)}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈定时任务ID</span>
+                        <strong>
+                          {displayText(selectedTrace.feedback.cron_task_id)}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈Skill名称</span>
+                        <strong>
+                          {formatFeedbackSkills(
+                            selectedTrace.trace.skills_used,
+                          )}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈会话ID</span>
+                        <strong>
+                          {displayText(
+                            selectedTrace.feedback.session_id ||
+                              selectedTrace.trace.session_id,
+                          )}
+                        </strong>
+                      </div>
+                      <div className={styles.feedbackMetaItem}>
+                        <span>反馈类型</span>
+                        <strong>
+                          {formatFeedbackOptions(
+                            selectedTrace.feedback.feedback_options,
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                    <div className={styles.feedbackDetailBlock}>
+                      <span>反馈详情</span>
+                      <div className={styles.feedbackDetailContent}>
+                        {displayText(selectedTrace.feedback.feedback_content)}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -499,21 +646,22 @@ export default function TracesPage() {
             )}
 
             {/* 使用技能 - 与 Sessions 页面一致 */}
-            {selectedTrace.trace.skills_used && selectedTrace.trace.skills_used.length > 0 && (
-              <div className={styles.section}>
-                <h4>
-                  <Zap size={14} style={{ marginRight: 8 }} />
-                  {t("analytics.skillsUsed", "Skills Used")}
-                </h4>
-                <div className={styles.tagList}>
-                  {selectedTrace.trace.skills_used.map((skill) => (
-                    <Tag key={skill} color="blue">
-                      {skill}
-                    </Tag>
-                  ))}
+            {selectedTrace.trace.skills_used &&
+              selectedTrace.trace.skills_used.length > 0 && (
+                <div className={styles.section}>
+                  <h4>
+                    <Zap size={14} style={{ marginRight: 8 }} />
+                    {t("analytics.skillsUsed", "Skills Used")}
+                  </h4>
+                  <div className={styles.tagList}>
+                    {selectedTrace.trace.skills_used.map((skill) => (
+                      <Tag key={skill} color="blue">
+                        {skill}
+                      </Tag>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
             <div className={styles.timelineSection}>
               <h4>

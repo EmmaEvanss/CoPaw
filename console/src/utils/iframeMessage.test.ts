@@ -47,6 +47,8 @@ describe("fetchAndSetUserName", () => {
     sessionStorage.clear();
     window.history.pushState({}, "", "/");
     document.cookie = "userid=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    document.cookie =
+      "subBranchId=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
     useIframeStore.getState().clearContext();
     vi.clearAllMocks();
     mockedIsExternalTokenEnabled.mockReturnValue(false);
@@ -170,5 +172,15 @@ describe("fetchAndSetUserName", () => {
 
     expect(useIframeStore.getState().userId).toBe("80000002");
     expect(useIframeStore.getState().userName).toBeNull();
+  });
+
+  it("origin=Y 时从 cookie 读取 subBranchId", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "subBranchId=SUB001; path=/";
+
+    await handleUrlOriginParam();
+
+    expect(useIframeStore.getState().subBranchId).toBe("SUB001");
   });
 });

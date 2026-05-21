@@ -334,6 +334,7 @@ export async function handleUrlOriginParam(): Promise<void> {
   const sysId = getTargetCookie("sysid");
   const vbbk = getTargetCookie("vbbk");
   const vorgcode = getTargetCookie("vorgcode");
+  const subBranchId = getTargetCookie("subBranchId");
   const vorglvl = getTargetCookie("vorglvl");
   const positionId = getTargetCookie("positionID");
 
@@ -350,6 +351,7 @@ export async function handleUrlOriginParam(): Promise<void> {
     sysId: sysId ?? null,
     bbk: vbbk ?? null,
     orgCode: vorgcode ?? null,
+    subBranchId: subBranchId ?? null,
     orgLvl: vorglvl ?? null,
     positionId: positionId ?? null,
     hideMenu: true, // URL origin=Y 时隐藏 MainLayout 侧边栏
@@ -419,6 +421,7 @@ async function fetchAndApplyCustomerInfoFromCookie(
     const sysId = getTargetCookie("sysid") ?? "";
     const vbbk = getTargetCookie("vbbk") ?? "";
     const vorgcode = getTargetCookie("vorgcode") ?? "";
+    const subBranchId = getTargetCookie("subBranchId") ?? "";
     const vorglvl = getTargetCookie("vorglvl") ?? "";
     const positionId = getTargetCookie("positionID") ?? "";
 
@@ -444,6 +447,7 @@ async function fetchAndApplyCustomerInfoFromCookie(
           token: result.token ?? null,
           bbk: result.bbk ?? vbbk,
           orgCode: result.orgCode ?? vorgcode,
+          subBranchId,
           orgLvl: result.orgLvl ?? vorglvl,
           positionId: result.positionId ?? positionId,
           userChange: result.userChange ?? false,

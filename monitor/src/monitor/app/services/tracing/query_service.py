@@ -26,6 +26,7 @@ from ...models.tracing import (
     ToolUsage,
     Trace,
     TraceDetail,
+    TraceFeedback,
     TraceDetailWithTimeline,
     TraceListItem,
     TraceStatus,
@@ -40,6 +41,40 @@ logger = logging.getLogger(__name__)
 
 # 需要从统计中排除的 source_id（测试平台等）
 EXCLUDED_SOURCE_IDS = ["default"]
+
+LATEST_FEEDBACK_JOIN_SQL = """
+    LEFT JOIN (
+        SELECT rf1.*
+        FROM swe_response_feedback rf1
+        INNER JOIN (
+            SELECT trace_id, source_id, MAX(id) AS max_id
+            FROM swe_response_feedback
+            WHERE trace_id IS NOT NULL
+            GROUP BY trace_id, source_id
+        ) latest ON latest.max_id = rf1.id
+    ) rf ON rf.trace_id COLLATE utf8mb4_unicode_ci = t.trace_id COLLATE utf8mb4_unicode_ci
+        AND rf.source_id COLLATE utf8mb4_unicode_ci <=> t.source_id COLLATE utf8mb4_unicode_ci
+"""
+
+FEEDBACK_SELECT_SQL = """
+    rf.id as feedback_id,
+    rf.source_id as feedback_source_id,
+    rf.feedback_user_name as feedback_user_name,
+    rf.feedback_user_sap as feedback_user_sap,
+    rf.feedback_branch as feedback_branch,
+    rf.feedback_sub_branch as feedback_sub_branch,
+    rf.feedback_position as feedback_position,
+    rf.cron_task_name as feedback_cron_task_name,
+    rf.cron_task_id as feedback_cron_task_id,
+    rf.response_id as feedback_response_id,
+    rf.trace_id as feedback_trace_id,
+    rf.chat_id as feedback_chat_id,
+    rf.session_id as feedback_session_id,
+    rf.feedback_options as feedback_options,
+    rf.feedback_content as feedback_content,
+    rf.created_at as feedback_created_at,
+    rf.updated_at as feedback_updated_at
+"""
 
 
 def build_bbk_in_filter(bbk_ids: Optional[str]) -> tuple[str, list[str]]:
@@ -59,6 +94,53 @@ def build_bbk_in_filter(bbk_ids: Optional[str]) -> tuple[str, list[str]]:
         return "", []
     placeholders = ", ".join(["%s"] * len(ids))
     return f" AND bbk_id IN ({placeholders})", ids
+
+
+def _loads_feedback_options(raw: Any) -> list[str]:
+    """解析反馈快捷选项，兼容数据库 JSON 字符串和列表。"""
+    if isinstance(raw, list):
+        return [str(item) for item in raw]
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(value, list):
+            return [str(item) for item in value]
+    return []
+
+
+def _row_to_feedback(row: dict[str, Any]) -> Optional[TraceFeedback]:
+    """把查询结果中的反馈字段转换为 TraceFeedback。"""
+    feedback_id = row.get("feedback_id") or row.get("id")
+    if feedback_id is None:
+        return None
+
+    return TraceFeedback(
+        id=int(feedback_id),
+        source_id=row.get("feedback_source_id") or row.get("source_id"),
+        feedback_user_name=row.get("feedback_user_name"),
+        feedback_user_sap=row.get("feedback_user_sap"),
+        feedback_branch=row.get("feedback_branch"),
+        feedback_sub_branch=row.get("feedback_sub_branch"),
+        feedback_position=row.get("feedback_position"),
+        cron_task_name=row.get("feedback_cron_task_name")
+        or row.get("cron_task_name"),
+        cron_task_id=row.get("feedback_cron_task_id")
+        or row.get("cron_task_id"),
+        response_id=row.get("feedback_response_id") or row.get("response_id"),
+        trace_id=row.get("feedback_trace_id") or row.get("trace_id"),
+        chat_id=row.get("feedback_chat_id") or row.get("chat_id"),
+        session_id=row.get("feedback_session_id") or row.get("session_id"),
+        feedback_options=_loads_feedback_options(
+            row.get("feedback_options"),
+        ),
+        feedback_content=row.get("feedback_content") or "",
+        created_at=row.get("feedback_created_at") or row.get("created_at"),
+        updated_at=row.get("feedback_updated_at") or row.get("updated_at"),
+    )
 
 
 def build_cron_bbk_in_filter(bbk_ids: Optional[str]) -> tuple[str, list[str]]:
@@ -451,6 +533,7 @@ class TracingQueryService:
         - `avgSessionsPerUserGrowth`：人均会话数环比，口径为
           `sessions/users`。
         """
+        # pylint: disable=too-many-statements
         # 环比回溯长度与看板筛选粒度保持一致，确保上一周期和当前周期
         # 在展示层具备可直接比较的业务含义。
         period_days = 1
@@ -695,12 +778,30 @@ class TracingQueryService:
         )
 
         return {
-            "callsGrowth": calc_growth(curr["calls"], prev["calls"]),  # trace 记录数口径
-            "tokensGrowth": calc_growth(curr["tokens"], prev["tokens"]),  # total_tokens 汇总口径
-            "sessionGrowth": calc_growth(curr["sessions"], prev["sessions"]),  # session_id 去重口径
-            "userGrowth": calc_growth(curr["users"], prev["users"]),  # user_id 去重口径
-            "skillGrowth": calc_growth(curr_skill_calls, prev_skill_calls),  # skill_invocation span 数口径
-            "cronGrowth": calc_growth(curr_cron_tasks, prev_cron_tasks),  # cron 执行记录数口径
+            "callsGrowth": calc_growth(
+                curr["calls"],
+                prev["calls"],
+            ),  # trace 记录数口径
+            "tokensGrowth": calc_growth(
+                curr["tokens"],
+                prev["tokens"],
+            ),  # total_tokens 汇总口径
+            "sessionGrowth": calc_growth(
+                curr["sessions"],
+                prev["sessions"],
+            ),  # session_id 去重口径
+            "userGrowth": calc_growth(
+                curr["users"],
+                prev["users"],
+            ),  # user_id 去重口径
+            "skillGrowth": calc_growth(
+                curr_skill_calls,
+                prev_skill_calls,
+            ),  # skill_invocation span 数口径
+            "cronGrowth": calc_growth(
+                curr_cron_tasks,
+                prev_cron_tasks,
+            ),  # cron 执行记录数口径
             "avgRoundsGrowth": avg_rounds_growth,  # 单次会话平均轮数口径
             "multiRoundRatioGrowth": multi_round_ratio_growth,  # >3 轮会话占比口径
             "avgDurationGrowth": avg_duration_growth,  # 平均对话时长（秒）口径
@@ -1914,7 +2015,10 @@ class TracingQueryService:
 
         success = status_map.get("success", 0)
         failed = status_map.get("error", 0) + status_map.get("timeout", 0)
-        cancelled = status_map.get("cancelled", 0) + status_map.get("skipped", 0)
+        cancelled = status_map.get("cancelled", 0) + status_map.get(
+            "skipped",
+            0,
+        )
         total_tasks = success + failed + cancelled
 
         return TaskStatusSummary(
@@ -1974,7 +2078,10 @@ class TracingQueryService:
 
         base_row = await self._db.fetch_one(base_query, base_params)
         total_traces = int((base_row or {}).get("total_traces") or 0)
-        total_sessions = max(int((base_row or {}).get("total_sessions") or 0), 1)
+        total_sessions = max(
+            int((base_row or {}).get("total_sessions") or 0),
+            1,
+        )
         total_users = max(int((base_row or {}).get("total_users") or 0), 1)
 
         # 单次会话平均轮数
@@ -1985,12 +2092,18 @@ class TracingQueryService:
 
         # 多轮会话占比 (>3轮)
         multi_round_ratio = await self._get_multi_round_ratio(
-            source_id, start_date, end_date, bbk_ids
+            source_id,
+            start_date,
+            end_date,
+            bbk_ids,
         )
 
         # 平均对话时长（秒）
         avg_duration_seconds = await self._get_avg_duration_seconds(
-            source_id, start_date, end_date, bbk_ids
+            source_id,
+            start_date,
+            end_date,
+            bbk_ids,
         )
 
         return DepthSummary(
@@ -2928,7 +3041,7 @@ class TracingQueryService:
                 ),
             )
         return await self._db.fetch_one(
-            """
+            f"""
             SELECT
                 user_id,
                 channel,
@@ -2941,9 +3054,9 @@ class TracingQueryService:
                 MAX(start_time) as last_active
             FROM swe_tracing_traces
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
-                  {}
+                  {bbk_filter_sql}
             GROUP BY user_id, channel
-            """.format(bbk_filter_sql),
+            """,
             (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
@@ -2985,7 +3098,7 @@ class TracingQueryService:
                 ),
             )
         return await self._db.fetch_all(
-            """
+            f"""
             SELECT model_name, COUNT(*) as count,
                    SUM(total_input_tokens) as input_tokens,
                    SUM(total_output_tokens) as output_tokens,
@@ -2993,10 +3106,10 @@ class TracingQueryService:
             FROM swe_tracing_traces
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
                   AND model_name IS NOT NULL
-                  {}
+                  {bbk_filter_sql}
             GROUP BY model_name
             ORDER BY count DESC
-            """.format(bbk_filter_sql),
+            """,
             (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
@@ -3039,7 +3152,7 @@ class TracingQueryService:
                 ),
             )
         return await self._db.fetch_all(
-            """
+            f"""
             SELECT tool_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
                    SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
@@ -3048,10 +3161,10 @@ class TracingQueryService:
               AND event_type = 'tool_call_end'
               AND tool_name IS NOT NULL
               AND mcp_server IS NULL
-              {}
+              {bbk_filter_sql}
             GROUP BY tool_name
             ORDER BY count DESC
-            """.format(bbk_filter_sql),
+            """,
             (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
@@ -3092,17 +3205,17 @@ class TracingQueryService:
                 ),
             )
         return await self._db.fetch_all(
-            """
+            f"""
             SELECT skill_name, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration
             FROM swe_tracing_spans
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
               AND event_type = 'skill_invocation'
               AND skill_name IS NOT NULL
-              {}
+              {bbk_filter_sql}
             GROUP BY skill_name
             ORDER BY count DESC
-            """.format(bbk_filter_sql),
+            """,
             (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
@@ -3144,7 +3257,7 @@ class TracingQueryService:
                 ),
             )
         return await self._db.fetch_all(
-            """
+            f"""
             SELECT tool_name, mcp_server, COUNT(*) as count,
                    AVG(duration_ms) as avg_duration,
                    SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) as error_count
@@ -3152,10 +3265,10 @@ class TracingQueryService:
             WHERE source_id = %s AND session_id = %s AND start_time >= %s AND start_time <= %s
               AND event_type = 'tool_call_end'
               AND mcp_server IS NOT NULL
-              {}
+              {bbk_filter_sql}
             GROUP BY tool_name, mcp_server
             ORDER BY count DESC
-            """.format(bbk_filter_sql),
+            """,
             (source_id, session_id, start_date, end_date, *bbk_params),
         )
 
@@ -3257,35 +3370,35 @@ class TracingQueryService:
                 ["%s"] * len(EXCLUDED_SOURCE_IDS),
             )
             where_clauses: list[str] = [
-                f"source_id NOT IN ({exclude_placeholders})",
+                f"t.source_id NOT IN ({exclude_placeholders})",
             ]
             params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
-            where_clauses = ["source_id = %s"]
+            where_clauses = ["t.source_id = %s"]
             params = [source_id]
 
         if user_id:
-            where_clauses.append("user_id = %s")
+            where_clauses.append("t.user_id = %s")
             params.append(user_id)
         if session_id:
-            where_clauses.append("session_id = %s")
+            where_clauses.append("t.session_id = %s")
             params.append(session_id)
         if status:
-            where_clauses.append("status = %s")
+            where_clauses.append("t.status = %s")
             params.append(status)
         if bbk_ids:
-            where_clauses.append("bbk_id IN (%s)")
+            where_clauses.append("t.bbk_id IN (%s)")
             params.append(bbk_ids)
         if start_date:
-            where_clauses.append("start_time >= %s")
+            where_clauses.append("t.start_time >= %s")
             params.append(start_date)
         if end_date:
-            where_clauses.append("start_time <= %s")
+            where_clauses.append("t.start_time <= %s")
             params.append(end_date)
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-        count_query = f"SELECT COUNT(*) as total FROM swe_tracing_traces WHERE {where_sql}"
+        count_query = f"SELECT COUNT(*) as total FROM swe_tracing_traces t WHERE {where_sql}"
         count_row = await self._db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
 
@@ -3297,6 +3410,7 @@ class TracingQueryService:
                        t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
                        t.model_name, t.status,
                        JSON_LENGTH(t.skills_used) as skills_count,
+                       {FEEDBACK_SELECT_SQL},
                        COALESCE(t.user_name, (
                            SELECT t2.user_name FROM swe_tracing_traces t2
                            WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
@@ -3310,6 +3424,7 @@ class TracingQueryService:
                            ORDER BY t3.start_time DESC LIMIT 1
                        )) as bbk_ids
                 FROM swe_tracing_traces t
+                {LATEST_FEEDBACK_JOIN_SQL}
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
                 LIMIT %s OFFSET %s
@@ -3327,6 +3442,7 @@ class TracingQueryService:
                        t.duration_ms, t.total_tokens, t.total_input_tokens, t.total_output_tokens,
                        t.model_name, t.status,
                        JSON_LENGTH(t.skills_used) as skills_count,
+                       {FEEDBACK_SELECT_SQL},
                        COALESCE(t.user_name, (
                            SELECT t2.user_name FROM swe_tracing_traces t2
                            WHERE t2.source_id = %s AND t2.user_id = t.user_id AND t2.user_name IS NOT NULL
@@ -3338,6 +3454,7 @@ class TracingQueryService:
                            ORDER BY t3.start_time DESC LIMIT 1
                        )) as bbk_ids
                 FROM swe_tracing_traces t
+                {LATEST_FEEDBACK_JOIN_SQL}
                 WHERE {where_sql}
                 ORDER BY t.start_time DESC
                 LIMIT %s OFFSET %s
@@ -3361,6 +3478,7 @@ class TracingQueryService:
                 model_name=row["model_name"],
                 status=row["status"],
                 skills_count=row["skills_count"] or 0,
+                feedback=_row_to_feedback(row),
             )
             for row in rows
         ]
@@ -3388,6 +3506,42 @@ class TracingQueryService:
         rows = await self._db.fetch_all(query, (trace_id,))
         return [self._row_to_span(row) for row in rows]
 
+    async def get_trace_feedback(
+        self,
+        trace_id: str,
+        source_id: Optional[str],
+    ) -> Optional[TraceFeedback]:
+        """获取对话关联的最新反馈。"""
+        query = """
+            SELECT
+                id as feedback_id,
+                source_id as feedback_source_id,
+                feedback_user_name,
+                feedback_user_sap,
+                feedback_branch,
+                feedback_sub_branch,
+                feedback_position,
+                cron_task_name as feedback_cron_task_name,
+                cron_task_id as feedback_cron_task_id,
+                response_id as feedback_response_id,
+                trace_id as feedback_trace_id,
+                chat_id as feedback_chat_id,
+                session_id as feedback_session_id,
+                feedback_options,
+                feedback_content,
+                created_at as feedback_created_at,
+                updated_at as feedback_updated_at
+            FROM swe_response_feedback
+            WHERE trace_id COLLATE utf8mb4_unicode_ci = CAST(%s AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+              AND source_id COLLATE utf8mb4_unicode_ci <=> CAST(%s AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+            ORDER BY id DESC
+            LIMIT 1
+        """
+        row = await self._db.fetch_one(query, (trace_id, source_id))
+        if not row:
+            return None
+        return _row_to_feedback(row)
+
     async def get_trace_detail(
         self,
         trace_id: str,
@@ -3406,6 +3560,8 @@ class TracingQueryService:
         es_client = get_es_client()
         if es_client and es_client.is_connected:
             trace.model_output = await es_client.get_message(trace_id)
+
+        feedback = await self.get_trace_feedback(trace_id, trace.source_id)
 
         llm_duration = sum(
             s.duration_ms or 0
@@ -3440,6 +3596,7 @@ class TracingQueryService:
             llm_duration_ms=llm_duration,
             tool_duration_ms=tool_duration,
             tools_called=tools_called,
+            feedback=feedback,
         )
 
     async def get_trace_detail_with_timeline(
@@ -3461,6 +3618,7 @@ class TracingQueryService:
         if es_client and es_client.is_connected:
             trace.model_output = await es_client.get_message(trace_id)
 
+        feedback = await self.get_trace_feedback(trace_id, trace.source_id)
         timeline = self._build_timeline(spans)
         skill_invocations = self._build_skill_invocations(spans)
 
@@ -3479,6 +3637,7 @@ class TracingQueryService:
 
         return TraceDetailWithTimeline(
             trace=trace,
+            feedback=feedback,
             spans=spans,
             timeline=timeline,
             skill_invocations=skill_invocations,

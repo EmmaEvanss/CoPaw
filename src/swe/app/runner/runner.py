@@ -1722,6 +1722,10 @@ class AgentRunner(Runner):
         session_id = request.session_id
         user_id = request.user_id
         channel = getattr(request, "channel", DEFAULT_CHANNEL)
+        channel_meta = getattr(request, "channel_meta", None) or {}
+        source_id = getattr(request, "source_id", None) or channel_meta.get(
+            "source_id",
+        )
         skip_history = getattr(request, "skip_history", False)
 
         logger.info(
@@ -1743,6 +1747,7 @@ class AgentRunner(Runner):
             session_id=session_id,
             user_id=user_id,
             channel=channel,
+            source_id=source_id,
             working_dir=(
                 str(self.workspace_dir)
                 if self.workspace_dir

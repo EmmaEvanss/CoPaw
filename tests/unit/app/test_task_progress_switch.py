@@ -105,6 +105,37 @@ class TestReactAgentTaskProgressPrompt:
         assert "Task Progress Requirement" in prompt
         assert "update_task_progress" in prompt
 
+    def test_build_sys_prompt_appends_env_context_after_base_and_hint(
+        self,
+        monkeypatch,
+    ):
+        """运行时上下文仍应按既有顺序拼接在末尾。"""
+        monkeypatch.setattr(
+            react_agent_module,
+            "build_system_prompt_from_working_dir",
+            lambda **_: "base prompt",
+        )
+        monkeypatch.setattr(
+            react_agent_module,
+            "build_multimodal_hint",
+            lambda: "multimodal hint",
+        )
+        agent = self._build_agent()
+        agent._env_context = (
+            "====================\n"
+            "- Source ID: portal\n"
+            "- Current time: 2026-05-21 12:34:56 Asia/Shanghai (Thursday)\n"
+            "===================="
+        )
+
+        with bind_source_system_config(_build_effective_config(False)):
+            prompt = SWEAgent._build_sys_prompt(agent)
+
+        base_index = prompt.index("base prompt")
+        hint_index = prompt.index("multimodal hint")
+        env_index = prompt.index("- Source ID: portal")
+        assert base_index < hint_index < env_index
+
 
 class TestUpdateTaskProgressSwitch:
     """验证工具与 stream 附加都受 source 开关控制。"""

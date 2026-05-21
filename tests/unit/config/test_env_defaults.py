@@ -22,6 +22,7 @@ def clean_env(monkeypatch):
         "SWE_ENV",
         "SWE_LOG_LEVEL",
         "SWE_OPENAPI_DOCS",
+        "SWE_FILE_LOG_ENABLED",
         "SWE_CORS_ORIGINS",
         "SWE_LLM_MAX_CONCURRENT",
         "SWE_LLM_MAX_QPM",
@@ -62,6 +63,7 @@ class TestEnvDefaultsLoader:
         assert "SWE_LOG_LEVEL" in result
         assert os.environ.get("SWE_LOG_LEVEL") == "debug"
         assert os.environ.get("SWE_OPENAPI_DOCS") == "true"
+        assert os.environ.get("SWE_FILE_LOG_ENABLED") == "false"
         assert os.environ.get("SWE_AUTH_ENABLED") == "false"
 
     def test_load_prd_defaults(self, monkeypatch):
@@ -71,6 +73,7 @@ class TestEnvDefaultsLoader:
         assert "SWE_LOG_LEVEL" in result
         assert os.environ.get("SWE_LOG_LEVEL") == "info"
         assert os.environ.get("SWE_OPENAPI_DOCS") == "false"
+        assert os.environ.get("SWE_FILE_LOG_ENABLED") == "false"
 
     def test_does_not_override_existing_env(self, monkeypatch):
         """load_env_defaults should not override existing env vars."""
@@ -95,6 +98,7 @@ class TestEnvDefaultsLoader:
         # Set all dev vars
         monkeypatch.setenv("SWE_LOG_LEVEL", "test")
         monkeypatch.setenv("SWE_OPENAPI_DOCS", "test")
+        monkeypatch.setenv("SWE_FILE_LOG_ENABLED", "test")
         monkeypatch.setenv("SWE_CORS_ORIGINS", "test")
         monkeypatch.setenv("SWE_LLM_MAX_CONCURRENT", "test")
         monkeypatch.setenv("SWE_LLM_MAX_QPM", "test")

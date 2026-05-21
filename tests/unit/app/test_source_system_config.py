@@ -17,6 +17,7 @@ from swe.app.source_system_config.middleware import (
 )
 from swe.app.source_system_config.models import (
     DEFAULT_SOURCE_SYSTEM_CONFIG,
+    CurrentSourceSystemConfigResponse,
     EffectiveSourceSystemConfig,
     SourceSystemConfig,
     SourceSystemConfigRecord,
@@ -41,8 +42,12 @@ class TestSourceSystemConfigModels:
     """验证 source 系统配置模型。"""
 
     def test_default_config_is_empty_object(self):
-        """默认配置应为空对象，不提前决定具体业务开关。"""
-        assert DEFAULT_SOURCE_SYSTEM_CONFIG.as_dict() == {}
+        """默认配置应包含代码注册的 task progress 开关默认值。"""
+        assert DEFAULT_SOURCE_SYSTEM_CONFIG.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": True,
+            },
+        }
 
     def test_arbitrary_object_config_is_allowed(self):
         """任意 JSON object key 都应允许由业务方自行解释。"""
@@ -62,6 +67,51 @@ class TestSourceSystemConfigModels:
         """数组或标量不能作为 source 系统配置根对象。"""
         with pytest.raises(ValueError, match="JSON object"):
             SourceSystemConfig.model_validate(["not", "object"])
+
+    def test_nested_switch_override_keeps_default_merge_semantics(self):
+        """显式关闭 task progress 时，effective 合并结果应保留其他默认结构。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "feature_switches": {
+                    "chat_task_progress_enabled": False,
+                },
+                "provider_policy": {"default_model": "qwen-max"},
+            },
+        )
+
+        assert config.merged_with_defaults().as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": False,
+            },
+            "provider_policy": {"default_model": "qwen-max"},
+        }
+
+    def test_registered_boolean_switch_normalizes_common_string_values(self):
+        """历史脏值中的常见布尔字符串应被收敛为真实布尔值。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "feature_switches": {
+                    "chat_task_progress_enabled": "false",
+                },
+            },
+        )
+
+        assert config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": False,
+            },
+        }
+
+    def test_registered_boolean_switch_rejects_unknown_string_values(self):
+        """无法识别的布尔脏值不能静默写入配置。"""
+        with pytest.raises(ValueError, match="chat_task_progress_enabled"):
+            SourceSystemConfig.model_validate(
+                {
+                    "feature_switches": {
+                        "chat_task_progress_enabled": "disabled",
+                    },
+                },
+            )
 
 
 class TestSourceSystemConfigStore:
@@ -412,7 +462,102 @@ class TestSourceSystemConfigService:
 
         assert result.is_default is True
         assert result.version == 0
+        assert result.config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": True,
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_default_raw_config_response_is_empty_object(self):
+        """current-source 原始配置在无记录时应返回默认态空对象。"""
+        service = SourceSystemConfigService(
+            _FakeManagementStore(),
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.resolve_raw_config("portal")
+
+        assert result == CurrentSourceSystemConfigResponse(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate({}),
+            version=0,
+            is_default=True,
+            updated_by=None,
+            updated_at=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_upsert_current_source_config_prunes_default_switch(
+        self,
+    ):
+        """保存等于默认值的已注册开关后应裁剪显式覆盖并删除空记录。"""
+        store = _FakeManagementStore()
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.upsert_current_source_config(
+            "portal",
+            SourceSystemConfig.model_validate(
+                {
+                    "feature_switches": {
+                        "chat_task_progress_enabled": True,
+                    },
+                },
+            ),
+            updated_by="alice",
+        )
+
+        assert result.is_default is True
         assert result.config.as_dict() == {}
+        assert store.records == {}
+        assert store.deleted == ["portal"]
+
+    @pytest.mark.asyncio
+    async def test_upsert_current_source_config_preserves_unknown_keys(
+        self,
+    ):
+        """保存 current-source 配置时应保留未知键，仅裁剪已注册默认值。"""
+        store = _FakeManagementStore()
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.upsert_current_source_config(
+            "portal",
+            SourceSystemConfig.model_validate(
+                {
+                    "feature_switches": {
+                        "chat_task_progress_enabled": False,
+                    },
+                    "provider_policy": {"default_model": "qwen-max"},
+                    "custom_flags": {"new_homepage": True},
+                },
+            ),
+            updated_by="alice",
+        )
+
+        assert result.is_default is False
+        assert result.config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": False,
+            },
+            "provider_policy": {"default_model": "qwen-max"},
+            "custom_flags": {"new_homepage": True},
+        }
+        assert store.records["portal"].config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": False,
+            },
+            "provider_policy": {"default_model": "qwen-max"},
+            "custom_flags": {"new_homepage": True},
+        }
 
     @pytest.mark.asyncio
     async def test_cache_refreshes_after_probe_interval(self):
@@ -455,7 +600,12 @@ class TestSourceSystemConfigService:
         assert still_cached.version == 1
         assert unchanged.version == 1
         assert refreshed.version == 2
-        assert refreshed.config.as_dict() == {"source_name": "Portal 2"}
+        assert refreshed.config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": True,
+            },
+            "source_name": "Portal 2",
+        }
         assert store.get_calls == ["portal", "portal"]
         assert store.version_calls == ["portal", "portal"]
 
@@ -519,7 +669,12 @@ class TestSourceSystemConfigService:
 
         assert first.version == 1
         assert refreshed.version == 2
-        assert refreshed.config.as_dict() == {"source_name": "Portal V2"}
+        assert refreshed.config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": True,
+            },
+            "source_name": "Portal V2",
+        }
         assert store.get_calls == ["portal", "portal"]
         assert store.version_calls == []
 
@@ -604,7 +759,12 @@ class TestSourceSystemConfigService:
         assert before_b.version == 0
         assert within_window.version == 0
         assert after_probe.version == 1
-        assert after_probe.config.as_dict() == {"source_name": "Portal V2"}
+        assert after_probe.config.as_dict() == {
+            "feature_switches": {
+                "chat_task_progress_enabled": True,
+            },
+            "source_name": "Portal V2",
+        }
 
     @pytest.mark.asyncio
     async def test_storage_failure_without_cache_fails(self):
@@ -709,7 +869,12 @@ class TestSourceSystemConfigMiddleware:
         assert response.json() == {
             "state_version": 5,
             "context_version": 5,
-            "config": {"source_name": "Portal"},
+            "config": {
+                "feature_switches": {
+                    "chat_task_progress_enabled": True,
+                },
+                "source_name": "Portal",
+            },
         }
 
     def test_middleware_returns_500_when_config_data_is_invalid(self):
@@ -798,7 +963,126 @@ class TestSourceSystemConfigApi:
         assert body["source_id"] == "portal"
         assert body["is_default"] is True
         assert body["version"] == 0
-        assert body["config"] == {}
+        assert body["config"] == {
+            "feature_switches": {
+                "chat_task_progress_enabled": True,
+            },
+        }
+
+    def test_manager_reads_current_source_default_state(self):
+        """manager 读取 current-source 原始配置时，无记录应返回默认态对象。"""
+        client = self._build_client(_FakeManagementStore())
+
+        response = client.get(
+            "/api/source-system-config/current",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+                "X-User-Id": "alice",
+                "X-User-Role": "manager",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "source_id": "portal",
+            "config": {},
+            "version": 0,
+            "is_default": True,
+            "updated_by": None,
+            "updated_at": None,
+        }
+
+    def test_manager_updates_current_source_config(self):
+        """current-source 写入必须始终落到请求上下文 source 上。"""
+        store = _FakeManagementStore()
+        client = self._build_client(store)
+
+        response = client.put(
+            "/api/source-system-config/current",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+                "X-User-Id": "alice",
+                "X-User-Role": "manager",
+            },
+            json={
+                "config": {
+                    "feature_switches": {
+                        "chat_task_progress_enabled": False,
+                    },
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["source_id"] == "portal"
+        assert response.json()["config"] == {
+            "feature_switches": {
+                "chat_task_progress_enabled": False,
+            },
+        }
+        assert list(store.records) == ["portal"]
+
+    def test_current_source_update_rejects_body_source_override(self):
+        """current-source 接口不允许请求体携带 source_id 覆盖目标 source。"""
+        client = self._build_client(_FakeManagementStore())
+
+        response = client.put(
+            "/api/source-system-config/current",
+            headers={
+                "X-Tenant-Id": "tenant-a",
+                "X-Source-Id": "portal",
+                "X-User-Role": "manager",
+            },
+            json={
+                "source_id": "other-source",
+                "config": {
+                    "feature_switches": {
+                        "chat_task_progress_enabled": False,
+                    },
+                },
+            },
+        )
+
+        assert response.status_code == 422
+
+    def test_manager_deletes_current_source_config(self):
+        """删除 current-source 配置后，再次读取应回到默认态。"""
+        store = _FakeManagementStore()
+        store.records["portal"] = SourceSystemConfigRecord(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                {
+                    "feature_switches": {
+                        "chat_task_progress_enabled": False,
+                    },
+                },
+            ),
+            version=2,
+            updated_by="alice",
+        )
+        client = self._build_client(store)
+        headers = {
+            "X-Tenant-Id": "tenant-a",
+            "X-Source-Id": "portal",
+            "X-User-Role": "manager",
+        }
+
+        delete_response = client.delete(
+            "/api/source-system-config/current",
+            headers=headers,
+        )
+        read_response = client.get(
+            "/api/source-system-config/current",
+            headers=headers,
+        )
+
+        assert delete_response.status_code == 200
+        assert delete_response.json() == {"deleted": True}
+        assert read_response.status_code == 200
+        assert read_response.json()["config"] == {}
+        assert read_response.json()["is_default"] is True
 
     def test_effective_config_returns_500_when_persisted_data_is_invalid(
         self,
@@ -839,6 +1123,33 @@ class TestSourceSystemConfigApi:
         )
 
         assert response.status_code == 403
+
+    def test_non_manager_cannot_access_current_source_config(self):
+        """非 manager 角色不能读取或写入 current-source 配置。"""
+        client = self._build_client(_FakeManagementStore())
+        headers = {
+            "X-Tenant-Id": "tenant-a",
+            "X-Source-Id": "portal",
+            "X-User-Id": "alice",
+        }
+
+        read_response = client.get(
+            "/api/source-system-config/current",
+            headers=headers,
+        )
+        write_response = client.put(
+            "/api/source-system-config/current",
+            headers=headers,
+            json={"config": {}},
+        )
+        delete_response = client.delete(
+            "/api/source-system-config/current",
+            headers=headers,
+        )
+
+        assert read_response.status_code == 403
+        assert write_response.status_code == 403
+        assert delete_response.status_code == 403
 
     def test_manager_updates_source_config_with_audit_metadata(self):
         """manager 更新配置时应校验、持久化并写入审计人。"""
@@ -944,7 +1255,11 @@ class TestSourceSystemConfigApi:
         assert store.deleted == ["portal"]
         assert effective_response.status_code == 200
         assert effective_response.json()["is_default"] is True
-        assert effective_response.json()["config"] == {}
+        assert effective_response.json()["config"] == {
+            "feature_switches": {
+                "chat_task_progress_enabled": True,
+            },
+        }
 
     def test_management_crud_returns_503_when_storage_unavailable(self):
         """DB 不可用时管理端 CRUD 应返回 503，不能返回伪成功。"""

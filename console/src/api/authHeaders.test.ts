@@ -36,4 +36,16 @@ describe("buildAuthHeaders", () => {
 
     expect(buildAuthHeaders()["X-Source-Id"]).toBe("rmassist");
   });
+
+  it("super manager 会发送 admin 角色头", () => {
+    useIframeStore.getState().setContext({ isSuperManager: true });
+
+    expect(buildAuthHeaders()["X-User-Role"]).toBe("admin");
+  });
+
+  it("manager 会发送 manager 角色头", () => {
+    useIframeStore.getState().setContext({ manager: true });
+
+    expect(buildAuthHeaders()["X-User-Role"]).toBe("manager");
+  });
 });

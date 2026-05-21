@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Internal reload API source-scope regression tests."""
 
+import base64
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -64,3 +66,38 @@ def test_internal_reload_rejects_invalid_source_id() -> None:
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid source_id"
     manager.reload_agent.assert_not_called()
+
+
+def test_internal_cron_callback_dispatches_job_param_tenant() -> None:
+    cron_manager = SimpleNamespace(run_job=AsyncMock())
+    manager = SimpleNamespace(
+        get_agent=AsyncMock(
+            return_value=SimpleNamespace(cron_manager=cron_manager),
+        ),
+    )
+    client = _build_client(manager)
+    payload = {
+        "tenant_id": "runtime-scope",
+        "agent_id": "default",
+        "task_type": "job",
+        "job_id": "job-1",
+    }
+    job_param = base64.urlsafe_b64encode(
+        json.dumps(payload).encode(),
+    ).decode()
+
+    response = client.post(
+        "/internal/cron/callback",
+        json={"jobParam": job_param},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "task_type": "job"}
+    manager.get_agent.assert_awaited_once_with(
+        "default",
+        tenant_id="runtime-scope",
+    )
+    cron_manager.run_job.assert_awaited_once_with(
+        "job-1",
+        is_manual=False,
+    )

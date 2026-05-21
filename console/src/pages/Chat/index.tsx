@@ -40,6 +40,7 @@ import type {
 import ModelSelector from "./ModelSelector";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAgentStore } from "../../stores/agentStore";
+import { useSourceSystemConfigStore } from "../../stores/sourceSystemConfigStore";
 // ==================== 组件引入方式变更 (Kun He) ====================
 import { useChatAnywhereInput } from "@/components/agentscope-chat";
 import DragUploadOverlay from "@/components/agentscope-chat/DragUploadOverlay";
@@ -106,6 +107,7 @@ import {
   CHAT_TASK_PROGRESS_UPDATE_EVENT,
   type ChatTaskProgressData,
 } from "./taskProgressEvents";
+import { isChatTaskProgressEnabled } from "./taskProgressConfig";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
 const TASK_RUNNING_POLL_MS = 30_000;
@@ -426,6 +428,10 @@ export default function ChatPage() {
   const runtimeLoadingBridgeRef = useRef<RuntimeLoadingBridgeApi | null>(null);
   const { message } = useAppMessage();
   const { setSessionLoading, setSessions } = useChatAnywhereSessionsState();
+  const sourceSystemConfig = useSourceSystemConfigStore(
+    (state) => state.config,
+  );
+  const taskProgressEnabled = isChatTaskProgressEnabled(sourceSystemConfig);
 
   // useTransition for non-urgent state updates (badge clearing)
   const [, startTransition] = useTransition();
@@ -448,6 +454,10 @@ export default function ChatPage() {
 
   useEffect(() => {
     const handler = (event: Event) => {
+      if (!taskProgressEnabled) {
+        setTaskProgress(null);
+        return;
+      }
       const detail = (event as CustomEvent<ChatTaskProgressData | null>).detail;
       if (!detail) {
         setTaskProgress(null);
@@ -468,7 +478,13 @@ export default function ChatPage() {
     document.addEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
     return () =>
       document.removeEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
-  }, []);
+  }, [taskProgressEnabled]);
+
+  useEffect(() => {
+    if (!taskProgressEnabled) {
+      setTaskProgress(null);
+    }
+  }, [taskProgressEnabled]);
 
   const isChatActive = useCallback(() => isChatActiveRef.current, []);
 
@@ -1279,7 +1295,9 @@ export default function ChatPage() {
       sender: {
         ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
-        beforeUI: <TaskProgressFloatingCard progress={taskProgress} />,
+        beforeUI: taskProgressEnabled ? (
+          <TaskProgressFloatingCard progress={taskProgress} />
+        ) : null,
         allowSpeech: false,
         attachments: {
           trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {

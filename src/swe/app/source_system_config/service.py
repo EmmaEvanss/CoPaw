@@ -7,10 +7,14 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .models import (
+    CurrentSourceSystemConfigResponse,
     DEFAULT_SOURCE_SYSTEM_CONFIG,
     EffectiveSourceSystemConfig,
+    SourceSystemConfig,
     SourceSystemConfigRecord,
+    SourceSystemConfigUpsert,
 )
+from .registry import prune_registered_default_overrides
 from .store import SourceSystemConfigStore, SourceSystemConfigStoreUnavailable
 
 logger = logging.getLogger(__name__)
@@ -115,6 +119,56 @@ class SourceSystemConfigService:
                 f"source system config unavailable for {source_id}: {exc}",
             ) from exc
 
+    async def resolve_raw_config(
+        self,
+        source_id: str,
+    ) -> CurrentSourceSystemConfigResponse:
+        """读取当前 source 的原始配置，不合成默认值。"""
+        try:
+            record = await self.store.get_config(source_id)
+        except SourceSystemConfigStoreUnavailable:
+            raise
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise SourceSystemConfigUnavailable(
+                f"source system config unavailable for {source_id}: {exc}",
+            ) from exc
+
+        return self._build_raw_response(source_id, record)
+
+    async def upsert_current_source_config(
+        self,
+        source_id: str,
+        config: SourceSystemConfig,
+        *,
+        updated_by: str | None,
+    ) -> CurrentSourceSystemConfigResponse:
+        """保存 current-source 原始配置，并按注册默认值裁剪。"""
+        pruned_config = SourceSystemConfig.model_validate(
+            prune_registered_default_overrides(config.as_dict()),
+        )
+        if not pruned_config.as_dict():
+            await self.store.delete_config(source_id)
+            self.invalidate(source_id)
+            return self._build_raw_response(source_id, None)
+
+        record = await self.store.upsert_config(
+            source_id,
+            SourceSystemConfigUpsert(
+                config=pruned_config,
+                updated_by=updated_by,
+            ),
+        )
+        self.invalidate(source_id)
+        return self._build_raw_response(source_id, record)
+
+    async def delete_current_source_config(self, source_id: str) -> bool:
+        """删除 current-source 原始配置。"""
+        deleted = await self.store.delete_config(source_id)
+        self.invalidate(source_id)
+        return deleted
+
     def _is_cache_within_ttl(
         self,
         cached: _CacheEntry,
@@ -191,6 +245,31 @@ class SourceSystemConfigService:
             source_id=source_id,
             config=record.config.merged_with_defaults(),
             version=record.version,
+            updated_by=record.updated_by,
+            updated_at=record.updated_at,
+        )
+
+    def _build_raw_response(
+        self,
+        source_id: str,
+        record: SourceSystemConfigRecord | None,
+    ) -> CurrentSourceSystemConfigResponse:
+        """构造 current-source 原始配置响应。"""
+        if record is None:
+            return CurrentSourceSystemConfigResponse(
+                source_id=source_id,
+                config=SourceSystemConfig.model_validate({}),
+                version=0,
+                is_default=True,
+                updated_by=None,
+                updated_at=None,
+            )
+
+        return CurrentSourceSystemConfigResponse(
+            source_id=record.source_id,
+            config=record.config,
+            version=record.version,
+            is_default=False,
             updated_by=record.updated_by,
             updated_at=record.updated_at,
         )

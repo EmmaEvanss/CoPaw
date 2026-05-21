@@ -506,7 +506,8 @@ async def internal_cron_callback(
                     status_code=400,
                     detail="job_id required for task_type=job",
                 )
-            await mgr.run_job(job_id)
+            # 调度回调触发的执行是自动执行，不是手动执行
+            await mgr.run_job(job_id, is_manual=False)
 
         logger.info(
             "Callback dispatched: type=%s tenant=%s agent=%s job=%s",

@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UIEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowUpRight,
   CalendarDays,
@@ -470,6 +471,7 @@ export function buildTrendSvgData(trendData: TrendDatum[]) {
 }
 
 export default function BusinessOverviewPage() {
+  const navigate = useNavigate();
   const isSuperManager = useIframeStore((state) => state.isSuperManager);
   const userSource = useIframeStore((state) => state.source);
   const userBbk = useIframeStore((state) => state.bbk);
@@ -1397,13 +1399,14 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelLarge}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>任务执行概览</h3>
-            {/* TODO: 后续补充点击查看功能 */}
-            {false && (
-              <button type="button" className={styles.detailLink}>
-                查看详情
-                <ChevronRight size={14} />
-              </button>
-            )}
+            <button
+              type="button"
+              className={styles.detailLink}
+              onClick={() => navigate("/monitor/cron-overview")}
+            >
+              查看详情
+              <ChevronRight size={14} />
+            </button>
           </div>
           <div className={styles.donutLayout}>
             <div className={styles.donutWrap}>

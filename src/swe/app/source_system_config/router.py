@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """Source 系统配置 HTTP API。"""
 
+from typing import NoReturn
+
 from fastapi import APIRouter, HTTPException, Request
 
 from swe.config.context import is_valid_identity_value
 
 from .models import (
+    CurrentSourceSystemConfigResponse,
+    CurrentSourceSystemConfigUpdateRequest,
     EffectiveSourceSystemConfig,
     SourceSystemConfigRecord,
     SourceSystemConfigUpsert,
@@ -57,7 +61,15 @@ def _validate_source_id(source_id: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid source_id format")
 
 
-def _raise_storage_unavailable(exc: Exception) -> None:
+def _get_request_source_id(request: Request) -> str:
+    """从请求上下文读取当前 source_id。"""
+    source_id = getattr(request.state, "source_id", None)
+    if source_id is None:
+        raise HTTPException(status_code=400, detail="Source context missing")
+    return source_id
+
+
+def _raise_storage_unavailable(exc: Exception) -> NoReturn:
     """将存储不可用错误转换为标准 HTTP 503。"""
     raise HTTPException(
         status_code=503,
@@ -65,7 +77,7 @@ def _raise_storage_unavailable(exc: Exception) -> None:
     ) from exc
 
 
-def _raise_invalid_storage_data(exc: Exception) -> None:
+def _raise_invalid_storage_data(exc: Exception) -> NoReturn:
     """将脏数据错误转换为标准 HTTP 500。"""
     raise HTTPException(
         status_code=500,
@@ -82,13 +94,64 @@ async def get_effective_source_system_config(
     if bound_config is not None:
         return bound_config
 
-    source_id = getattr(request.state, "source_id", None)
-    if source_id is None:
-        raise HTTPException(status_code=400, detail="Source context missing")
+    source_id = _get_request_source_id(request)
     try:
         return await _get_service(request).resolve_config(source_id)
     except SourceSystemConfigDataInvalid as exc:
         _raise_invalid_storage_data(exc)
+
+
+@router.get("/current", response_model=CurrentSourceSystemConfigResponse)
+async def get_current_source_system_config(
+    request: Request,
+) -> CurrentSourceSystemConfigResponse:
+    """读取当前请求 source_id 的原始配置。"""
+    _require_manager(request)
+    source_id = _get_request_source_id(request)
+    try:
+        return await _get_service(request).resolve_raw_config(source_id)
+    except SourceSystemConfigStoreUnavailable as exc:
+        _raise_storage_unavailable(exc)
+    except ValueError as exc:
+        _raise_invalid_storage_data(exc)
+
+
+@router.put("/current", response_model=CurrentSourceSystemConfigResponse)
+async def upsert_current_source_system_config(
+    payload: CurrentSourceSystemConfigUpdateRequest,
+    request: Request,
+) -> CurrentSourceSystemConfigResponse:
+    """写入当前请求 source_id 的原始配置。"""
+    updated_by = _require_manager(request)
+    source_id = _get_request_source_id(request)
+    service = _get_service(request)
+    try:
+        return await service.upsert_current_source_config(
+            source_id,
+            payload.config,
+            updated_by=updated_by,
+        )
+    except SourceSystemConfigStoreUnavailable as exc:
+        _raise_storage_unavailable(exc)
+    except ValueError as exc:
+        _raise_invalid_storage_data(exc)
+
+
+@router.delete("/current")
+async def delete_current_source_system_config(
+    request: Request,
+) -> dict[str, bool]:
+    """删除当前请求 source_id 的原始配置。"""
+    _require_manager(request)
+    source_id = _get_request_source_id(request)
+    service = _get_service(request)
+    try:
+        deleted = await service.delete_current_source_config(source_id)
+    except SourceSystemConfigStoreUnavailable as exc:
+        _raise_storage_unavailable(exc)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Source config not found")
+    return {"deleted": True}
 
 
 @router.get("/sources")

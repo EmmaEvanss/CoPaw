@@ -648,7 +648,12 @@ class TenantInitializer:
     def ensure_default_workspace_scaffold(self) -> dict[str, Any]:
         """Ensure runtime-required workspace files exist for default agent."""
         from ...agents.utils.setup_utils import copy_md_files
-        from ...config.config import AgentProfileConfig, load_agent_config
+        from ...config.config import (
+            AgentProfileConfig,
+            load_agent_config,
+            save_agent_config,
+        )
+        from ...config.utils import load_config
 
         default_workspace = self.tenant_dir / "workspaces" / "default"
         default_workspace.mkdir(parents=True, exist_ok=True)
@@ -681,6 +686,33 @@ class TenantInitializer:
                     indent=2,
                 ),
                 encoding="utf-8",
+            )
+        elif not target_agent_config_path.exists():
+            tenant_config = load_config(tenant_config_path)
+            save_agent_config(
+                "default",
+                AgentProfileConfig(
+                    id="default",
+                    name="Default Agent",
+                    description="Default SWE agent",
+                    workspace_dir=str(default_workspace),
+                    channels=tenant_config.channels,
+                    mcp=tenant_config.mcp,
+                    heartbeat=(
+                        tenant_config.agents.defaults.heartbeat
+                        if tenant_config.agents.defaults
+                        else None
+                    ),
+                    running=tenant_config.agents.running,
+                    llm_routing=tenant_config.agents.llm_routing,
+                    language=tenant_config.agents.language or "zh",
+                    system_prompt_files=(
+                        tenant_config.agents.system_prompt_files
+                    ),
+                    tools=tenant_config.tools,
+                    security=tenant_config.security,
+                ),
+                config_path=tenant_config_path,
             )
 
         agent_config = load_agent_config(

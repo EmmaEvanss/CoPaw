@@ -99,8 +99,10 @@ def normalize_task_progress_payload(
 def attach_task_progress(
     event: Any,
     task_progress: TaskProgressPayload | None,
+    *,
+    enabled: bool = True,
 ) -> Any:
-    if task_progress is None:
+    if not enabled or task_progress is None:
         return event
 
     payload = task_progress.model_dump(mode="json")

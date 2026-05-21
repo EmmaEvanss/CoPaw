@@ -40,7 +40,7 @@ def _tee_stream(stream, buffer: list[str]) -> None:
 
 
 def _subprocess_env() -> dict[str, str]:
-    """Force subprocesses to import the current worktree sources."""
+    """强制子进程从当前 worktree 导入源码。"""
     root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     pythonpath_parts = [str(root / "src")]
@@ -48,16 +48,20 @@ def _subprocess_env() -> dict[str, str]:
     if existing_pythonpath:
         pythonpath_parts.append(existing_pythonpath)
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    console_static_dir = _resolve_console_static_dir(root)
+    if console_static_dir is None:
+        pytest.skip("Console static build not available for startup test")
+    env["SWE_CONSOLE_STATIC_DIR"] = str(console_static_dir)
     return env
 
 
-def test_app_startup_and_console() -> None:
-    """Test that swe app starts correctly with backend and console."""
-    host = "127.0.0.1"
-    port = _find_free_port(host)
-    log_lines: list[str] = []
-
-    process = subprocess.Popen(
+def _start_app_process(
+    host: str,
+    port: int,
+    env: dict[str, str],
+) -> subprocess.Popen[str]:
+    """启动待测 app 子进程。"""
+    return subprocess.Popen(
         [
             sys.executable,
             "-m",
@@ -75,8 +79,105 @@ def test_app_startup_and_console() -> None:
         text=True,
         bufsize=1,
         cwd=str(Path(__file__).resolve().parents[2]),
-        env=_subprocess_env(),
+        env=env,
     )
+
+
+def _wait_for_backend_ready(
+    process: subprocess.Popen[str],
+    host: str,
+    port: int,
+    log_lines: list[str],
+) -> None:
+    """等待后端启动完成并校验版本接口。"""
+    max_wait = 60
+    start_time = time.time()
+    last_error = None
+
+    with httpx.Client(timeout=5.0, trust_env=False) as client:
+        while time.time() - start_time < max_wait:
+            if process.poll() is not None:
+                logs = "".join(log_lines)[-4000:]
+                if "ImportError" in logs or "ModuleNotFoundError" in logs:
+                    raise AssertionError(
+                        "Failed due to dependency issue:\n" f"{logs}",
+                    )
+                raise AssertionError(
+                    f"Process exited early with code"
+                    f" {process.returncode}.\nLogs:\n{logs}",
+                )
+
+            try:
+                response = client.get(f"http://{host}:{port}/api/version")
+                if response.status_code == 200:
+                    version_data = response.json()
+                    assert "version" in version_data
+                    assert isinstance(version_data["version"], str)
+                    return
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_error = str(e)
+                time.sleep(1.0)
+
+    logs = "".join(log_lines)[-4000:]
+    raise AssertionError(
+        "Backend did not start within timeout period. "
+        f"Last error: {last_error}\n"
+        f"Logs:\n{logs}",
+    )
+
+
+def _stop_app_process(
+    process: subprocess.Popen[str],
+    log_thread: threading.Thread,
+) -> None:
+    """停止待测 app 子进程并回收日志线程。"""
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+
+    log_thread.join(timeout=2)
+
+
+def _resolve_console_static_dir(root: Path) -> Path | None:
+    """解析可用于启动测试的 console 静态目录。"""
+    candidates = [root / "console" / "dist"]
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=root,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        result = None
+
+    if result is not None:
+        common_dir = Path(result.stdout.strip())
+        if not common_dir.is_absolute():
+            common_dir = (root / common_dir).resolve()
+        shared_root = common_dir.parent
+        candidates.append(shared_root / "console" / "dist")
+
+    for candidate in candidates:
+        index_path = candidate / "index.html"
+        if candidate.is_dir() and index_path.is_file():
+            return candidate
+    return None
+
+
+def test_app_startup_and_console() -> None:
+    """Test that swe app starts correctly with backend and console."""
+    host = "127.0.0.1"
+    port = _find_free_port(host)
+    log_lines: list[str] = []
+
+    process = _start_app_process(host, port, _subprocess_env())
 
     assert process.stdout is not None
 
@@ -88,44 +189,9 @@ def test_app_startup_and_console() -> None:
     log_thread.start()
 
     try:
-        max_wait = 60
-        start_time = time.time()
-        backend_ready = False
-        last_error = None
+        _wait_for_backend_ready(process, host, port, log_lines)
 
         with httpx.Client(timeout=5.0, trust_env=False) as client:
-            while time.time() - start_time < max_wait:
-                if process.poll() is not None:
-                    logs = "".join(log_lines)[-4000:]
-                    if "ImportError" in logs or "ModuleNotFoundError" in logs:
-                        raise AssertionError(
-                            "Failed due to dependency issue:\n" f"{logs}",
-                        )
-                    raise AssertionError(
-                        f"Process exited early with code"
-                        f" {process.returncode}.\nLogs:\n{logs}",
-                    )
-
-                try:
-                    response = client.get(f"http://{host}:{port}/api/version")
-                    if response.status_code == 200:
-                        backend_ready = True
-                        version_data = response.json()
-                        assert "version" in version_data
-                        assert isinstance(version_data["version"], str)
-                        break
-                except (httpx.ConnectError, httpx.TimeoutException) as e:
-                    last_error = str(e)
-                    time.sleep(1.0)
-
-            if not backend_ready:
-                logs = "".join(log_lines)[-4000:]
-                raise AssertionError(
-                    "Backend did not start within timeout period. "
-                    f"Last error: {last_error}\n"
-                    f"Logs:\n{logs}",
-                )
-
             console_response = client.get(f"http://{host}:{port}/console/")
             assert (
                 console_response.status_code == 200
@@ -144,12 +210,31 @@ def test_app_startup_and_console() -> None:
             ), "Console should return valid HTML"
 
     finally:
-        if process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+        _stop_app_process(process, log_thread)
 
-        log_thread.join(timeout=2)
+
+def test_app_startup_without_swe_log_file(tmp_path: Path) -> None:
+    """关闭文件日志时应用仍应启动且不创建 swe.log。"""
+    host = "127.0.0.1"
+    port = _find_free_port(host)
+    log_lines: list[str] = []
+    working_dir = tmp_path / "working"
+    env = _subprocess_env()
+    env["SWE_FILE_LOG_ENABLED"] = "false"
+    env["SWE_WORKING_DIR"] = str(working_dir)
+    process = _start_app_process(host, port, env)
+
+    assert process.stdout is not None
+
+    log_thread = threading.Thread(
+        target=_tee_stream,
+        args=(process.stdout, log_lines),
+        daemon=True,
+    )
+    log_thread.start()
+
+    try:
+        _wait_for_backend_ready(process, host, port, log_lines)
+        assert not (working_dir / "swe.log").exists()
+    finally:
+        _stop_app_process(process, log_thread)

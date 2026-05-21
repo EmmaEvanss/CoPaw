@@ -123,6 +123,10 @@ class CronJobModel(BaseModel):
 
     # 统计字段（不在数据库中，运行时计算）
     execution_count: int = Field(default=0, description="已执行次数")
+    today_status: Optional[str] = Field(
+        default=None,
+        description="今日最新执行状态: success/error/cancelled/timeout/skipped",
+    )
 
     def get_meta_dict(self) -> Dict[str, Any]:
         """Parse meta string to dict."""
@@ -153,9 +157,9 @@ class ExecutionModel(BaseModel):
     job_id: str = Field(..., description="任务ID")
     job_name: str = Field(default="", description="任务名称 (冗余存储)")
     tenant_id: str = Field(..., description="租户ID (分行号)")
-    tenant_name: str = Field(
-        default="",
-        description="租户姓名 (从任务表JOIN获取)",
+    tenant_name: Optional[str] = Field(
+        default=None,
+        description="租户姓名 (从任务表JOIN获取，可能为空)",
     )
 
     # 执行时间
@@ -192,6 +196,13 @@ class ExecutionModel(BaseModel):
 
     # 执行元数据
     meta: str = Field(default="", description="执行元数据 (JSON字符串)")
+
+    # 已读状态
+    is_read: bool = Field(default=False, description="是否已读")
+    read_at: Optional[datetime] = Field(
+        default=None,
+        description="已读时间",
+    )
 
     # 时间戳
     created_at: Optional[datetime] = Field(
@@ -321,6 +332,13 @@ class ExecutionSyncRequest(BaseModel):
     # 执行元数据
     meta: str = Field(default="", description="执行元数据 (JSON字符串)")
 
+    # 已读状态（手动执行且成功的任务默认已读）
+    is_read: bool = Field(default=False, description="是否已读")
+    read_at: Optional[datetime] = Field(
+        default=None,
+        description="已读时间",
+    )
+
 
 # ============================================================
 # Query Models (供前端查询)
@@ -417,6 +435,31 @@ class ExecutionDetailResponse(ExecutionModel):
 
     # 可以添加额外信息，如关联的 job 信息
     job_name: str = Field(default="", description="任务名称")
+
+
+class MarkReadResponse(BaseModel):
+    """Response for mark job as read API."""
+
+    marked: bool = Field(default=True, description="是否标记成功")
+    count: int = Field(default=0, description="标记已读的记录数")
+
+
+class UnreadCountItem(BaseModel):
+    """Single unread count item."""
+
+    job_id: str = Field(..., description="任务ID")
+    job_name: str = Field(..., description="任务名称")
+    unread_count: int = Field(default=0, description="未读数量")
+
+
+class UnreadCountResponse(BaseModel):
+    """Response for unread count API."""
+
+    items: List[UnreadCountItem] = Field(
+        default_factory=list,
+        description="各任务未读数量列表",
+    )
+    total_unread: int = Field(default=0, description="总未读数量")
 
 
 # ============================================================

@@ -19,6 +19,7 @@ from swe.app.crons.models import (
     DispatchSpec,
     DispatchTarget,
     JobRuntimeSpec,
+    JobsFile,
     ScheduleSpec,
 )
 from swe.config import config as config_module
@@ -352,6 +353,81 @@ async def test_cron_manager_prefetch_targets_use_runtime_scope() -> None:
             scope_id,
         ),
     }
+
+
+@pytest.mark.asyncio
+async def test_cron_manager_register_missing_external_jobs_persists_runtime_scope(
+    tmp_path: Path,
+) -> None:
+    """补注册外部调度任务时必须把回调租户绑定到 runtime scope。"""
+    scope_id = encode_scope_id("tenant-a", "source-a")
+    observed: dict[str, Any] = {}
+    job = CronJobSpec(
+        id="job-1",
+        name="Job One",
+        enabled=True,
+        tenant_id="tenant-a",
+        source_id="source-a",
+        schedule=ScheduleSpec(
+            type="cron",
+            cron="0 0 * * *",
+            timezone="UTC",
+        ),
+        task_type="agent",
+        request=CronJobRequest(input=[{"content": [{"text": "ping"}]}]),
+        dispatch=DispatchSpec(
+            type="channel",
+            channel="console",
+            target=DispatchTarget(
+                user_id="user-a",
+                session_id="session-a",
+            ),
+        ),
+        runtime=JobRuntimeSpec(timeout_seconds=30),
+    )
+    jobs_file = JobsFile(jobs=[job])
+
+    class FakeRepo:
+        _path = tmp_path / "jobs.json"
+
+        async def list_jobs(self):
+            return list(jobs_file.jobs)
+
+        async def load(self):
+            return jobs_file
+
+        async def save(self, updated: JobsFile):
+            observed["saved_jobs"] = updated.jobs
+
+    class FakeSchedulerAdapter:
+        async def register_job(self, **kwargs):
+            observed["register_job"] = kwargs
+            return "ext-job-1"
+
+        async def resume_job(self, external_id: str):
+            observed["resume_job"] = external_id
+
+        async def pause_job(self, external_id: str):
+            observed["pause_job"] = external_id
+
+    manager = CronManager(
+        repo=FakeRepo(),
+        runner=SimpleNamespace(workspace_dir=None, _workspace=None),
+        channel_manager=object(),
+        agent_id="default",
+        tenant_id=scope_id,
+        scheduler_adapter=FakeSchedulerAdapter(),
+    )
+
+    result = await manager.register_missing_external_jobs()
+
+    assert result["registered"] == 1
+    assert observed["register_job"]["tenant_id"] == scope_id
+    assert observed["register_job"]["job_id"] == "job-1"
+    assert observed["resume_job"] == "ext-job-1"
+    saved_job = observed["saved_jobs"][0]
+    assert saved_job.tenant_id == scope_id
+    assert saved_job.meta["external_job_id"] == "ext-job-1"
 
 
 @pytest.mark.asyncio

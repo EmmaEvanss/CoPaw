@@ -2,8 +2,9 @@
 """Daemon command execution layer and DaemonCommandHandlerMixin.
 
 Shared by in-chat /daemon <sub> and CLI `swe daemon <sub>`.
-Logs: tail WORKING_DIR / "swe.log". Restart: in-process reload of channels,
-cron and MCP (no process exit); works on Mac/Windows without a process manager.
+Logs: read file-backed WORKING_DIR / "swe.log" when file logging is enabled.
+Restart: in-process reload of channels, cron and MCP (no process exit);
+works on Mac/Windows without a process manager.
 """
 
 # pylint: disable=too-many-return-statements,no-name-in-module
@@ -16,7 +17,7 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from agentscope.message import Msg, TextBlock
 
-from ...constant import WORKING_DIR
+from ...constant import FILE_LOG_ENABLED, WORKING_DIR
 from ...config import load_config
 
 if TYPE_CHECKING:
@@ -96,6 +97,21 @@ def _get_last_lines(
         return f"(Error reading log: {e})"
 
 
+def _get_log_path(working_dir: Path) -> Path:
+    """返回 daemon 文件日志路径。"""
+    return Path(working_dir) / "swe.log"
+
+
+def _has_file_log(working_dir: Path) -> bool:
+    """按日志文件实际存在性判断文件日志是否可读取。"""
+    return _get_log_path(working_dir).is_file()
+
+
+def _should_use_file_log(working_dir: Path) -> bool:
+    """优先使用实际存在的日志文件，并兼容当前进程显式开启的场景。"""
+    return _has_file_log(working_dir) or FILE_LOG_ENABLED
+
+
 def run_daemon_status(context: DaemonContext) -> str:
     """Return status text (health, config, memory_manager)."""
     parts = ["**Daemon Status**", ""]
@@ -172,19 +188,35 @@ def run_daemon_version(context: DaemonContext) -> str:
         from ...__version__ import __version__ as ver
     except ImportError:
         ver = "unknown"
+    if _should_use_file_log(context.working_dir):
+        log_file = str(_get_log_path(context.working_dir))
+    else:
+        log_file = "disabled (SWE_FILE_LOG_ENABLED=false)"
     return (
         f"**Daemon version**\n\n"
         f"- Version: {ver}\n"
         f"- Working dir: {context.working_dir}\n"
-        f"- Log file: {WORKING_DIR / 'swe.log'}"
+        f"- Log file: {log_file}"
     )
 
 
-def run_daemon_logs(lines: int = 100) -> str:
+def run_daemon_logs(
+    lines: int = 100,
+    context: DaemonContext | None = None,
+) -> str:
     """Tail last N lines from WORKING_DIR / swe.log."""
-    log_path = WORKING_DIR / "swe.log"
+    daemon_context = context or DaemonContext()
+    if not _should_use_file_log(daemon_context.working_dir):
+        return (
+            "**File log unavailable**\n\n"
+            "- This command reads the file-backed swe.log only.\n"
+            "- File logging is disabled "
+            "(SWE_FILE_LOG_ENABLED=false).\n"
+            "- Check the app process stdout/stderr output instead."
+        )
+    log_path = _get_log_path(daemon_context.working_dir)
     content = _get_last_lines(log_path, lines=lines)
-    return f"**Console log (last {lines} lines)**\n\n```\n{content}\n```"
+    return f"**File log (last {lines} lines)**\n\n```\n{content}\n```"
 
 
 async def run_daemon_approve(
@@ -293,7 +325,7 @@ class DaemonCommandHandlerMixin:
                 if a.isdigit():
                     n = max(1, min(int(a), 2000))
                     break
-            text = run_daemon_logs(lines=n)
+            text = run_daemon_logs(lines=n, context=context)
         elif sub == "approve":
             session_id = getattr(context, "session_id", "") or ""
             text = await run_daemon_approve(context, session_id=session_id)

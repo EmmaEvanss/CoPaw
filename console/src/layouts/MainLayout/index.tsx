@@ -26,6 +26,7 @@ import FeaturedCasesPage from "../../pages/Control/FeaturedCases";
 import GreetingPage from "../../pages/Control/Greeting";
 import HeartbeatPage from "../../pages/Control/Heartbeat";
 import AgentConfigPage from "../../pages/Agent/Config";
+import SystemConfigPage from "../../pages/SystemConfigPage";
 import SkillsPage from "../../pages/Agent/Skills";
 import SkillPoolPage from "../../pages/Agent/SkillPool";
 import ToolsPage from "../../pages/Agent/Tools";
@@ -68,6 +69,7 @@ const pathToKey: Record<string, string> = {
   "/models": "models",
   "/environments": "environments",
   "/agent-config": "agent-config",
+  "/system-config-page": "system-config-page",
   "/security": "security",
   "/token-usage": "token-usage",
   "/voice-transcription": "voice-transcription",
@@ -76,7 +78,6 @@ const pathToKey: Record<string, string> = {
   "/analytics/messages": "analytics-messages",
   "/analytics/traces": "analytics-traces",
   "/analytics/business-overview": "analytics-business-overview",
-  "/monitor/cron-overview": "monitor-cron-overview",
   "/instance/overview": "instance-overview",
   "/instance/instances": "instance-instances",
   "/instance/allocations": "instance-allocations",
@@ -147,6 +148,7 @@ export default function MainLayout() {
               <Route path="/models" element={<ModelsPage />} />
               <Route path="/environments" element={<EnvironmentsPage />} />
               <Route path="/agent-config" element={<AgentConfigPage />} />
+              <Route path="/system-config-page" element={<SystemConfigPage />} />
               <Route path="/security" element={<SecurityPage />} />
               <Route path="/token-usage" element={<TokenUsagePage />} />
               <Route

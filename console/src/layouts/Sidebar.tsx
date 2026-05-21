@@ -49,6 +49,7 @@ import {
 import { Store, Wrench, Puzzle } from "lucide-react";
 import { clearAuthToken } from "../api/config";
 import { authApi } from "../api/modules/auth";
+import { useIframeStore } from "../stores/iframeStore";
 import styles from "./index.module.less";
 import { useTheme } from "../contexts/ThemeContext";
 import { KEY_TO_PATH, DEFAULT_OPEN_KEYS } from "./constants";
@@ -70,11 +71,14 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   const { t } = useTranslation();
   const { message } = useAppMessage();
   const { isDark } = useTheme();
+  const isSuperManager = useIframeStore((state) => state.isSuperManager);
+  const manager = useIframeStore((state) => state.manager);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountForm] = Form.useForm();
   const [collapsed, setCollapsed] = useState(false);
+  const canManageCurrentSourceConfig = isSuperManager || manager;
 
   // ── Effects ──────────────────────────────────────────────────────────────
 
@@ -221,6 +225,18 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       path: "/agent-config",
       label: t("nav.agentConfig"),
     },
+    ...(canManageCurrentSourceConfig
+      ? [
+          {
+            key: "system-config-page",
+            icon: <SparkModifyLine size={18} />,
+            path: "/system-config-page",
+            label: t("nav.currentSourceConfig", {
+              defaultValue: "当前 Source 配置",
+            }),
+          },
+        ]
+      : []),
     {
       key: "agents",
       icon: <SparkAgentLine size={18} />,
@@ -286,12 +302,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       icon: <SparkBarChartLine size={18} />,
       path: "/analytics/business-overview",
       label: t("nav.analyticsBusinessOverview", "运营看板"),
-    },
-    {
-      key: "monitor-cron-overview",
-      icon: <SparkAdvancedMonitoringLine size={18} />,
-      path: "/monitor/cron-overview",
-      label: t("nav.monitorCronOverview", "定时任务概览"),
     },
     {
       key: "instance-overview",
@@ -416,6 +426,19 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           label: collapsed ? null : t("nav.agentConfig"),
           icon: <SparkModifyLine size={16} />,
         },
+        ...(canManageCurrentSourceConfig
+          ? [
+              {
+                key: "system-config-page",
+                label: collapsed
+                  ? null
+                  : t("nav.currentSourceConfig", {
+                      defaultValue: "当前 Source 配置",
+                    }),
+                icon: <SparkModifyLine size={16} />,
+              },
+            ]
+          : []),
       ],
     },
     {
@@ -489,11 +512,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           key: "analytics-traces",
           label: collapsed ? null : t("nav.analyticsTraces", "Traces"),
           icon: <SparkFileTxtLine size={16} />,
-        },
-        {
-          key: "monitor-cron-overview",
-          label: collapsed ? null : t("nav.monitorCronOverview", "定时任务概览"),
-          icon: <SparkAdvancedMonitoringLine size={16} />,
         },
       ],
     },

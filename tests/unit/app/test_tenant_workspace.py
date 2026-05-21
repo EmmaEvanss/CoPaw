@@ -94,6 +94,19 @@ class TestTenantWorkspaceExemptions:
 
         assert middleware._is_workspace_exempt("/api/assets/text/read") is True
 
+    def test_internal_api_routes_exempt(self):
+        """Internal callbacks should bypass workspace loading."""
+        from swe.app.middleware.tenant_workspace import (
+            TenantWorkspaceMiddleware,
+        )
+
+        middleware = TenantWorkspaceMiddleware(app=MagicMock())
+
+        assert (
+            middleware._is_workspace_exempt("/api/internal/cron/callback")
+            is True
+        )
+
 
 class TestTenantWorkspaceHelpers:
     """Tests for workspace helper functions."""

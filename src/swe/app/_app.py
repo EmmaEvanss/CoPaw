@@ -19,6 +19,7 @@ from ..constant import (
     LOG_LEVEL_ENV,
     CORS_ORIGINS,
     WORKING_DIR,
+    FILE_LOG_ENABLED,
 )
 from ..__version__ import __version__
 from ..utils.my_logging import setup_logger, add_swe_file_handler
@@ -205,7 +206,13 @@ async def lifespan(
     app: FastAPI,
 ):  # pylint: disable=too-many-statements,too-many-branches
     startup_start_time = time.time()
-    add_swe_file_handler(WORKING_DIR / "swe.log")
+    if FILE_LOG_ENABLED:
+        add_swe_file_handler(WORKING_DIR / "swe.log")
+    else:
+        logger.info(
+            "File logging disabled via SWE_FILE_LOG_ENABLED=false; "
+            "stdout/stderr logging remains enabled.",
+        )
 
     # Auto-register admin from env vars (for automated deployments)
     from .auth import auto_register_from_env

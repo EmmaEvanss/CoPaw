@@ -17,6 +17,7 @@ def test_import_swe_loads_dev_defaults_before_constant(tmp_path):
     env["SWE_SECRET_DIR"] = str(tmp_path / ".swe.secret")
     env.pop("SWE_OPENAPI_DOCS", None)
     env.pop("SWE_LOG_LEVEL", None)
+    env.pop("SWE_FILE_LOG_ENABLED", None)
 
     script = """
 import json
@@ -26,8 +27,10 @@ import swe.constant as constant
 
 print(json.dumps({
     "env_docs": os.environ.get("SWE_OPENAPI_DOCS"),
+    "env_file_log_enabled": os.environ.get("SWE_FILE_LOG_ENABLED"),
     "env_log_level": os.environ.get("SWE_LOG_LEVEL"),
     "docs_enabled": constant.DOCS_ENABLED,
+    "file_log_enabled": constant.FILE_LOG_ENABLED,
 }))
 """
 
@@ -43,6 +46,8 @@ print(json.dumps({
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload == {
         "env_docs": "true",
+        "env_file_log_enabled": "false",
         "env_log_level": "debug",
         "docs_enabled": True,
+        "file_log_enabled": False,
     }

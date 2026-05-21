@@ -253,6 +253,102 @@ function getTaskRunMetadata(message: Message): TaskRunMetadata | null {
   };
 }
 
+function getMessageOrderScore(message: Message, index: number): number {
+  return (
+    resolveMessageTimestamp({
+      timestamp: message.timestamp,
+    }) ?? index
+  );
+}
+
+function isNewerTaskRunCandidate(
+  candidate: {
+    latestScore: number;
+    runIndex: number;
+    latestOrder: number;
+  },
+  current: {
+    latestScore: number;
+    runIndex: number;
+    latestOrder: number;
+  } | null,
+): boolean {
+  if (!current) return true;
+  if (candidate.latestScore !== current.latestScore) {
+    return candidate.latestScore > current.latestScore;
+  }
+  if (candidate.runIndex !== current.runIndex) {
+    return candidate.runIndex > current.runIndex;
+  }
+  return candidate.latestOrder > current.latestOrder;
+}
+
+function getLatestTaskSessionResultKey(messages: Message[]): string | null {
+  let latestResultKey: string | null = null;
+  let latestResult: {
+    latestScore: number;
+    runIndex: number;
+    latestOrder: number;
+  } | null = null;
+  const taskRuns = new Map<
+    string,
+    { latestScore: number; runIndex: number; latestOrder: number }
+  >();
+
+  messages.forEach((message, index) => {
+    const score = getMessageOrderScore(message, index);
+    const runMetadata = getTaskRunMetadata(message);
+    if (runMetadata) {
+      const current = taskRuns.get(runMetadata.runId);
+      const candidate = {
+        latestScore: Math.max(current?.latestScore ?? score, score),
+        runIndex: Math.max(
+          current?.runIndex ?? runMetadata.runIndex,
+          runMetadata.runIndex,
+        ),
+        latestOrder: Math.max(current?.latestOrder ?? index, index),
+      };
+      taskRuns.set(runMetadata.runId, candidate);
+      return;
+    }
+
+    if (isStandaloneOutputMessage(message)) {
+      const candidate = {
+        latestScore: score,
+        runIndex: index,
+        latestOrder: index,
+      };
+      if (isNewerTaskRunCandidate(candidate, latestResult)) {
+        latestResultKey = `cron:${index}`;
+        latestResult = candidate;
+      }
+    }
+  });
+
+  taskRuns.forEach((candidate, runId) => {
+    if (isNewerTaskRunCandidate(candidate, latestResult)) {
+      latestResultKey = `run:${runId}`;
+      latestResult = candidate;
+    }
+  });
+
+  return latestResultKey;
+}
+
+function hasTaskSessionResultMessages(messages: Message[]): boolean {
+  return messages.some(
+    (message) =>
+      getTaskRunMetadata(message) !== null ||
+      isStandaloneOutputMessage(message),
+  );
+}
+
+function isTaskSessionResultMessage(message: Message): boolean {
+  return (
+    getTaskRunMetadata(message) !== null || isStandaloneOutputMessage(message)
+  );
+}
+
 /** Build a user card (AgentScopeRuntimeRequestCard) from a user message. */
 function buildUserCard(msg: Message): IAgentScopeRuntimeWebUIMessage {
   const contentParts = contentToRequestParts(msg.content);
@@ -388,6 +484,7 @@ function buildTaskRunCard(
   runIndex: number,
   runMessages: Message[],
   taskName?: string,
+  collapsedByDefault = false,
 ): IAgentScopeRuntimeWebUIMessage[] {
   const finalMessages = runMessages.filter((message) => {
     const metadata = getTaskRunMetadata(message);
@@ -414,6 +511,7 @@ function buildTaskRunCard(
             runId,
             runIndex,
             taskName,
+            collapsedByDefault,
             finalMessages: convertMessages(finalMessages),
             stepMessages: convertMessages(stepMessages),
             headerMeta: {
@@ -430,16 +528,56 @@ function buildTaskRunCard(
   ];
 }
 
+function buildStandaloneTaskRunCard(
+  message: Message,
+  messageIndex: number,
+  taskName: string | undefined,
+  collapsedByDefault: boolean,
+): IAgentScopeRuntimeWebUIMessage[] {
+  const runId = `cron-${message.id || messageIndex}`;
+  return [
+    {
+      id: `task-run-${runId}-${messageIndex}`,
+      role: ROLE_ASSISTANT,
+      msgStatus: "finished",
+      cards: [
+        {
+          code: CARD_TASK_RUN,
+          data: {
+            runId,
+            runIndex: messageIndex,
+            taskName,
+            collapsedByDefault,
+            finalMessages: convertMessages([message]),
+            stepMessages: [],
+            headerMeta: {
+              timestamp: resolveMessageTimestamp({
+                timestamp: message.timestamp,
+              }),
+            },
+          } as ChatTaskRunGroupCardData,
+        },
+      ],
+    },
+  ];
+}
+
 function convertMessagesForSession(
   messages: Message[],
   sessionMeta?: Record<string, unknown>,
   sessionName?: string,
 ): IAgentScopeRuntimeWebUIMessage[] {
-  if (sessionMeta?.session_kind !== TASK_SESSION_KIND) {
+  const shouldFilterTaskResults =
+    sessionMeta?.session_kind === TASK_SESSION_KIND ||
+    hasTaskSessionResultMessages(messages);
+
+  if (!shouldFilterTaskResults) {
     return convertMessages(messages);
   }
 
-  if (!messages.some((message) => getTaskRunMetadata(message) !== null)) {
+  const latestResultKey = getLatestTaskSessionResultKey(messages);
+
+  if (!latestResultKey) {
     return convertMessages(messages);
   }
 
@@ -447,12 +585,25 @@ function convertMessagesForSession(
   let index = 0;
 
   while (index < messages.length) {
+    if (isStandaloneOutputMessage(messages[index])) {
+      result.push(
+        ...buildStandaloneTaskRunCard(
+          messages[index],
+          index,
+          sessionName,
+          `cron:${index}` !== latestResultKey,
+        ),
+      );
+      index += 1;
+      continue;
+    }
+
     const metadata = getTaskRunMetadata(messages[index]);
     if (!metadata) {
       const gap: Message[] = [];
       while (
-        index < messages.length
-        && getTaskRunMetadata(messages[index]) === null
+        index < messages.length &&
+        !isTaskSessionResultMessage(messages[index])
       ) {
         gap.push(messages[index]);
         index += 1;
@@ -476,6 +627,7 @@ function convertMessagesForSession(
         metadata.runIndex,
         runMessages,
         sessionName,
+        `run:${metadata.runId}` !== latestResultKey,
       ),
     );
   }

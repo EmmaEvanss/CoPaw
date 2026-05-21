@@ -34,8 +34,8 @@ function NestedTaskRunMessages(props: {
                   key={key}
                   data={card.data as ChatRuntimeResponseCardData}
                   isLast={
-                    messageIndex === props.messages.length - 1
-                    && cardIndex === (message.cards || []).length - 1
+                    messageIndex === props.messages.length - 1 &&
+                    cardIndex === (message.cards || []).length - 1
                   }
                 />
               );
@@ -60,11 +60,16 @@ export default function TaskRunGroupCard(props: {
   data: ChatTaskRunGroupCardData;
 }) {
   const { data } = props;
+  const [resultExpanded, setResultExpanded] = useState(
+    !data.collapsedByDefault,
+  );
   const [expanded, setExpanded] = useState(false);
   const hasSteps = data.stepMessages.length > 0;
   const taskName = data.taskName || `任务 ${data.runIndex + 1}`;
   const headerText = data.headerMeta?.timestamp
-    ? `${taskName}，执行时间：${formatMessageTime(data.headerMeta.timestamp)}，结果如下`
+    ? `${taskName}，执行时间：${formatMessageTime(
+        data.headerMeta.timestamp,
+      )}，结果如下`
     : `${taskName}，结果如下`;
 
   return (
@@ -89,18 +94,40 @@ export default function TaskRunGroupCard(props: {
           boxSizing: "border-box",
         }}
       >
-        <div
-          style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }}
-        />
-        <span style={{ textAlign: "center", whiteSpace: "nowrap", fontWeight: "bold"}}>
+        <div style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }} />
+        <span
+          style={{
+            textAlign: "center",
+            whiteSpace: "nowrap",
+            fontWeight: "bold",
+          }}
+        >
           {headerText}
         </span>
-        <div
-          style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }}
-        />
+        {data.collapsedByDefault && (
+          <button
+            type="button"
+            data-testid="task-run-result-toggle"
+            onClick={() => setResultExpanded((prev) => !prev)}
+            style={{
+              border: "none",
+              background: "transparent",
+              padding: 0,
+              color: "#1677ff",
+              cursor: "pointer",
+              fontSize: 12,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {resultExpanded ? "收起历史" : "展开历史"}
+          </button>
+        )}
+        <div style={{ flex: 1, borderTop: "1px solid rgba(0, 0, 0, 0.12)" }} />
       </div>
-      <NestedTaskRunMessages messages={data.finalMessages} />
-      {hasSteps && (
+      {resultExpanded && (
+        <NestedTaskRunMessages messages={data.finalMessages} />
+      )}
+      {resultExpanded && hasSteps && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <button
             type="button"

@@ -5,8 +5,8 @@ import UserDetailModal from "./index";
 const tracingApiMock = vi.hoisted(() => ({
   getUserStats: vi.fn(),
   getSessions: vi.fn(),
+  getUserChats: vi.fn(),
   getSessionStats: vi.fn(),
-  getTraces: vi.fn(),
 }));
 
 vi.mock("../../../../../api/modules/tracing", () => ({
@@ -43,11 +43,18 @@ describe("UserDetailModal", () => {
       ],
       total: 1,
     });
+    tracingApiMock.getUserChats.mockResolvedValue([
+      {
+        id: "chat-001",
+        session_id: "session-older",
+        user_id: "user-001",
+        channel: "web",
+      },
+    ]);
     tracingApiMock.getSessionStats.mockResolvedValue({});
-    tracingApiMock.getTraces.mockResolvedValue({ items: [], total: 0 });
   });
 
-  it("loads all sessions and traces for the selected user regardless of dashboard date", async () => {
+  it("loads sessions and chat mappings for the selected user", async () => {
     render(
       <UserDetailModal
         open
@@ -76,9 +83,10 @@ describe("UserDetailModal", () => {
       source_id: "CMSJY",
       bbk_ids: "100",
     });
+    expect(tracingApiMock.getUserChats).toHaveBeenCalledWith("user-001");
 
     await waitFor(() => {
-      expect(tracingApiMock.getTraces).toHaveBeenCalled();
+      expect(tracingApiMock.getSessionStats).toHaveBeenCalled();
     });
 
     expect(tracingApiMock.getSessionStats).toHaveBeenCalledWith(
@@ -88,10 +96,5 @@ describe("UserDetailModal", () => {
       "CMSJY",
       "100",
     );
-    expect(tracingApiMock.getTraces).toHaveBeenCalledWith(1, 10, {
-      session_id: "session-older",
-      source_id: "CMSJY",
-      bbk_ids: "100",
-    });
   });
 });

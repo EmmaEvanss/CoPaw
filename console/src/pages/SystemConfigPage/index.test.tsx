@@ -48,6 +48,14 @@ describe("SystemConfigPage", () => {
     return { promise, resolve, reject };
   }
 
+  function getTaskProgressSwitch() {
+    return screen.getAllByRole("switch")[0];
+  }
+
+  function getToolResultCompactSwitch() {
+    return screen.getAllByRole("switch")[1];
+  }
+
   afterEach(() => {
     cleanup();
   });
@@ -112,7 +120,7 @@ describe("SystemConfigPage", () => {
       expect(screen.queryAllByText("继承默认值").length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(getTaskProgressSwitch());
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => {
@@ -126,6 +134,80 @@ describe("SystemConfigPage", () => {
     });
     expect(loadEffectiveConfig).toHaveBeenCalledWith("portal");
     expect(mocks.messageApi.success).toHaveBeenCalled();
+  });
+
+  it("saves tool result compact values while preserving unknown raw keys", async () => {
+    mocks.sourceSystemConfigApi.getCurrent.mockResolvedValueOnce({
+      source_id: "portal",
+      config: {
+        provider_policy: { default_model: "qwen-max" },
+        tool_result_compact: {
+          recent_max_bytes: 12000,
+          unknown_retained: "yes",
+        },
+      },
+      version: 1,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-20 22:00:00",
+    });
+    mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
+      source_id: "portal",
+      config: {
+        provider_policy: { default_model: "qwen-max" },
+        tool_result_compact: {
+          enabled: false,
+          recent_max_bytes: 16000,
+          unknown_retained: "yes",
+        },
+      },
+      version: 2,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 10:00:00",
+    });
+
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("工具结果压缩配置")).toBeTruthy();
+
+    fireEvent.click(getToolResultCompactSwitch());
+    fireEvent.change(screen.getByDisplayValue("12000"), {
+      target: { value: "16000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
+        config: {
+          provider_policy: { default_model: "qwen-max" },
+          tool_result_compact: {
+            enabled: false,
+            recent_max_bytes: 16000,
+            unknown_retained: "yes",
+          },
+        },
+      });
+    });
+    expect(loadEffectiveConfig).toHaveBeenCalledWith("portal");
+  });
+
+  it("blocks invalid tool result compact thresholds before saving", async () => {
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("工具结果压缩配置")).toBeTruthy();
+
+    fireEvent.change(screen.getByDisplayValue("50000"), {
+      target: { value: "1000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.messageApi.error).toHaveBeenCalledWith(
+        "近期结果预览字节数不能小于旧结果预览字节数",
+      );
+    });
+    expect(mocks.sourceSystemConfigApi.updateCurrent).not.toHaveBeenCalled();
   });
 
   it("deletes explicit config and refreshes effective config", async () => {
@@ -161,7 +243,9 @@ describe("SystemConfigPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
 
     await waitFor(() => {
-      expect(mocks.sourceSystemConfigApi.deleteCurrent).toHaveBeenCalledTimes(1);
+      expect(mocks.sourceSystemConfigApi.deleteCurrent).toHaveBeenCalledTimes(
+        1,
+      );
     });
     expect(loadEffectiveConfig).toHaveBeenCalledWith("portal");
     expect(await screen.findByText("继承默认值")).toBeTruthy();
@@ -186,10 +270,7 @@ describe("SystemConfigPage", () => {
     render(<SystemConfigPage />);
 
     await waitFor(() => {
-      expect(screen.getByRole("switch")).toHaveAttribute(
-        "aria-checked",
-        "false",
-      );
+      expect(getTaskProgressSwitch()).toHaveAttribute("aria-checked", "false");
     });
 
     act(() => {
@@ -199,13 +280,8 @@ describe("SystemConfigPage", () => {
     });
 
     expect(await screen.findByText("当前 Source 配置加载失败")).toBeTruthy();
-    expect(screen.getByRole("switch")).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(
-      screen.getByRole("button", { name: "common.save" }),
-    ).toBeDisabled();
+    expect(getTaskProgressSwitch()).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("button", { name: "common.save" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "common.delete" }),
     ).toBeDisabled();
@@ -251,10 +327,7 @@ describe("SystemConfigPage", () => {
     render(<SystemConfigPage />);
 
     await waitFor(() => {
-      expect(screen.getByRole("switch")).toHaveAttribute(
-        "aria-checked",
-        "false",
-      );
+      expect(getTaskProgressSwitch()).toHaveAttribute("aria-checked", "false");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
@@ -267,10 +340,7 @@ describe("SystemConfigPage", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("retail").length).toBeGreaterThan(0);
-      expect(screen.getByRole("switch")).toHaveAttribute(
-        "aria-checked",
-        "true",
-      );
+      expect(getTaskProgressSwitch()).toHaveAttribute("aria-checked", "true");
     });
 
     await act(async () => {
@@ -291,10 +361,7 @@ describe("SystemConfigPage", () => {
 
     await waitFor(() => {
       expect(screen.getAllByText("retail").length).toBeGreaterThan(0);
-      expect(screen.getByRole("switch")).toHaveAttribute(
-        "aria-checked",
-        "true",
-      );
+      expect(getTaskProgressSwitch()).toHaveAttribute("aria-checked", "true");
     });
     expect(loadEffectiveConfig).not.toHaveBeenCalledWith("portal");
   });

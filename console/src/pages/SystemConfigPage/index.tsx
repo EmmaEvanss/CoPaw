@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Card, Result, Space, Spin, Switch, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  InputNumber,
+  Result,
+  Space,
+  Spin,
+  Switch,
+  Tag,
+} from "antd";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/PageHeader";
@@ -15,8 +25,12 @@ import { DEFAULT_SOURCE_ID } from "@/constants/identity";
 
 import {
   CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES,
+  TOOL_RESULT_COMPACT_NUMBER_FIELDS,
   readRegisteredSwitchValue,
+  readToolResultCompactConfig,
+  validateToolResultCompactConfig,
   writeRegisteredSwitchValue,
+  writeToolResultCompactValue,
 } from "./registry";
 import styles from "./index.module.less";
 
@@ -71,8 +85,7 @@ export default function SystemConfigPage() {
 
   const isLoadedSourceCurrent =
     record !== null && record.source_id === activeSourceId;
-  const formDisabled =
-    loading || saving || !!error || !isLoadedSourceCurrent;
+  const formDisabled = loading || saving || !!error || !isLoadedSourceCurrent;
 
   useEffect(() => {
     if (!canManage) {
@@ -158,8 +171,37 @@ export default function SystemConfigPage() {
     );
   };
 
+  const handleToolResultEnabledChange = (checked: boolean) => {
+    if (formDisabled) {
+      return;
+    }
+    setDraftConfig((previous) =>
+      writeToolResultCompactValue(previous, "enabled", checked),
+    );
+  };
+
+  const handleToolResultNumberChange = (
+    key: (typeof TOOL_RESULT_COMPACT_NUMBER_FIELDS)[number]["key"],
+    value: number | null,
+  ) => {
+    if (formDisabled || typeof value !== "number") {
+      return;
+    }
+    setDraftConfig((previous) =>
+      writeToolResultCompactValue(previous, key, value),
+    );
+  };
+
   const handleSave = async () => {
     if (formDisabled) {
+      return;
+    }
+    const validationError = validateToolResultCompactConfig(
+      readToolResultCompactConfig(draftConfig),
+    );
+    if (validationError) {
+      setError(validationError);
+      message.error(validationError);
       return;
     }
     const request = beginRequest(activeSourceId);
@@ -202,6 +244,8 @@ export default function SystemConfigPage() {
       }
     }
   };
+
+  const toolResultCompactConfig = readToolResultCompactConfig(draftConfig);
 
   const handleDelete = async () => {
     if (formDisabled) {
@@ -343,10 +387,7 @@ export default function SystemConfigPage() {
             >
               <div className={styles.switchList}>
                 {CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES.map((definition) => (
-                  <div
-                    key={definition.key}
-                    className={styles.switchRow}
-                  >
+                  <div key={definition.key} className={styles.switchRow}>
                     <div className={styles.switchCopy}>
                       <span className={styles.switchTitle}>
                         {definition.title}
@@ -366,6 +407,59 @@ export default function SystemConfigPage() {
                       }
                     />
                   </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card
+              className={styles.switchCard}
+              title={t("sourceSystemConfigPage.toolResultCompactTitle", {
+                defaultValue: "工具结果压缩配置",
+              })}
+            >
+              <div className={styles.toolResultIntro}>
+                {t("sourceSystemConfigPage.toolResultCompactIntro", {
+                  defaultValue:
+                    "未保存 source 覆盖时继承 Agent 配置；保存后当前 source 下请求使用这些阈值。",
+                })}
+              </div>
+              <div className={styles.switchRow}>
+                <div className={styles.switchCopy}>
+                  <span className={styles.switchTitle}>
+                    {t("sourceSystemConfigPage.toolResultEnabled", {
+                      defaultValue: "启用工具结果压缩",
+                    })}
+                  </span>
+                  <span className={styles.switchDescription}>
+                    {t("sourceSystemConfigPage.toolResultEnabledDescription", {
+                      defaultValue:
+                        "关闭后当前 source 的历史工具结果不再压缩为 toolresult 文件。",
+                    })}
+                  </span>
+                </div>
+                <Switch
+                  checked={toolResultCompactConfig.enabled}
+                  disabled={formDisabled}
+                  onChange={handleToolResultEnabledChange}
+                />
+              </div>
+              <div className={styles.numberGrid}>
+                {TOOL_RESULT_COMPACT_NUMBER_FIELDS.map((definition) => (
+                  <label key={definition.key} className={styles.numberField}>
+                    <span className={styles.numberLabel}>
+                      {definition.title}
+                    </span>
+                    <InputNumber
+                      min={definition.min}
+                      max={definition.max}
+                      step={definition.step}
+                      value={toolResultCompactConfig[definition.key]}
+                      disabled={formDisabled}
+                      onChange={(value) =>
+                        handleToolResultNumberChange(definition.key, value)
+                      }
+                    />
+                  </label>
                 ))}
               </div>
             </Card>

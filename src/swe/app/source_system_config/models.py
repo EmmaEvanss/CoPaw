@@ -4,12 +4,18 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    model_validator,
+)
 
 from .registry import (
     build_default_source_system_config_payload,
     merge_source_system_config_with_defaults,
-    normalize_registered_switch_values,
+    normalize_registered_setting_values,
 )
 
 
@@ -20,11 +26,18 @@ class SourceSystemConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _validate_object(cls, data: Any) -> Any:
+    def _validate_object(cls, data: Any, info: ValidationInfo) -> Any:
         """只接受 JSON object，避免数组或标量让调用方语义不明确。"""
         if not isinstance(data, dict):
             raise ValueError("source system config must be a JSON object")
-        return normalize_registered_switch_values(data)
+        validate_cross_ranges = not (
+            info.context
+            and info.context.get("skip_tool_result_cross_validation")
+        )
+        return normalize_registered_setting_values(
+            data,
+            validate_cross_ranges=validate_cross_ranges,
+        )
 
     def as_dict(self) -> dict[str, Any]:
         """返回普通 dict，供合并默认配置和序列化使用。"""
@@ -34,6 +47,7 @@ class SourceSystemConfig(BaseModel):
         """将 source 覆盖合并到内置默认配置。"""
         return SourceSystemConfig.model_validate(
             merge_source_system_config_with_defaults(self.as_dict()),
+            context={"skip_tool_result_cross_validation": True},
         )
 
 
@@ -57,6 +71,7 @@ class EffectiveSourceSystemConfig(BaseModel):
 
     source_id: str = Field(..., min_length=1, max_length=64)
     config: SourceSystemConfig
+    raw_config: SourceSystemConfig | None = Field(default=None, exclude=True)
     version: int = Field(default=0, ge=0)
     is_default: bool = False
     stale: bool = False

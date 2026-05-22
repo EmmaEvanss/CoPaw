@@ -1358,11 +1358,15 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             set_current_workspace_dir,
             set_current_recent_max_bytes,
         )
+        from ..app.source_system_config import (
+            resolve_tool_result_compact_config,
+        )
 
         set_current_workspace_dir(self._workspace_dir)
-        set_current_recent_max_bytes(
-            self._agent_config.running.tool_result_compact.recent_max_bytes,
+        tool_result_compact = resolve_tool_result_compact_config(
+            self._agent_config.running.tool_result_compact,
         )
+        set_current_recent_max_bytes(tool_result_compact.recent_max_bytes)
         set_current_task_progress_tracker(self._task_tracker)
         set_current_task_progress_chat_id(
             self._request_context.get("chat_id"),

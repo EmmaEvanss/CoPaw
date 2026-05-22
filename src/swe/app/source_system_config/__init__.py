@@ -11,6 +11,7 @@ from .models import (
     SourceSystemConfigUpsert,
 )
 from .registry import is_chat_task_progress_enabled
+from .runtime import resolve_tool_result_compact_config
 from .store import SourceSystemConfigStore
 from .router import router
 
@@ -24,5 +25,6 @@ __all__ = [
     "SourceSystemConfigStore",
     "SourceSystemConfigUpsert",
     "is_chat_task_progress_enabled",
+    "resolve_tool_result_compact_config",
     "router",
 ]

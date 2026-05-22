@@ -54,7 +54,8 @@ export default function SystemConfigPage() {
   const canManage = isSuperManager || manager;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [record, setRecord] =
     useState<CurrentSourceSystemConfigResponse | null>(null);
   const [draftConfig, setDraftConfig] = useState<SourceSystemConfig>({});
@@ -85,14 +86,15 @@ export default function SystemConfigPage() {
 
   const isLoadedSourceCurrent =
     record !== null && record.source_id === activeSourceId;
-  const formDisabled = loading || saving || !!error || !isLoadedSourceCurrent;
+  const formDisabled = loading || saving || !isLoadedSourceCurrent;
 
   useEffect(() => {
     if (!canManage) {
       requestSeqRef.current += 1;
       setLoading(false);
       setSaving(false);
-      setError(null);
+      setRequestError(null);
+      setValidationError(null);
       setRecord(null);
       setDraftConfig({});
       return;
@@ -101,7 +103,8 @@ export default function SystemConfigPage() {
     const request = beginRequest(activeSourceId);
     setLoading(true);
     setSaving(false);
-    setError(null);
+    setRequestError(null);
+    setValidationError(null);
     setRecord(null);
     setDraftConfig({});
 
@@ -121,7 +124,7 @@ export default function SystemConfigPage() {
         if (!isCurrentRequest(request)) {
           return;
         }
-        setError(
+        setRequestError(
           requestError instanceof Error
             ? requestError.message
             : String(requestError),
@@ -166,6 +169,7 @@ export default function SystemConfigPage() {
     if (!definition) {
       return;
     }
+    setValidationError(null);
     setDraftConfig((previous) =>
       writeRegisteredSwitchValue(previous, definition, checked),
     );
@@ -175,6 +179,7 @@ export default function SystemConfigPage() {
     if (formDisabled) {
       return;
     }
+    setValidationError(null);
     setDraftConfig((previous) =>
       writeToolResultCompactValue(previous, "enabled", checked),
     );
@@ -187,6 +192,7 @@ export default function SystemConfigPage() {
     if (formDisabled || typeof value !== "number") {
       return;
     }
+    setValidationError(null);
     setDraftConfig((previous) =>
       writeToolResultCompactValue(previous, key, value),
     );
@@ -200,13 +206,14 @@ export default function SystemConfigPage() {
       readToolResultCompactConfig(draftConfig),
     );
     if (validationError) {
-      setError(validationError);
+      setValidationError(validationError);
       message.error(validationError);
       return;
     }
     const request = beginRequest(activeSourceId);
     setSaving(true);
-    setError(null);
+    setRequestError(null);
+    setValidationError(null);
     try {
       const nextRecord = await sourceSystemConfigApi.updateCurrent({
         config: draftConfig,
@@ -236,7 +243,7 @@ export default function SystemConfigPage() {
       if (!isCurrentRequest(request)) {
         return;
       }
-      setError(nextError);
+      setRequestError(nextError);
       message.error(nextError);
     } finally {
       if (isCurrentRequest(request)) {
@@ -253,7 +260,8 @@ export default function SystemConfigPage() {
     }
     const request = beginRequest(activeSourceId);
     setSaving(true);
-    setError(null);
+    setRequestError(null);
+    setValidationError(null);
     try {
       await sourceSystemConfigApi.deleteCurrent();
       if (!isCurrentRequest(request)) {
@@ -285,7 +293,7 @@ export default function SystemConfigPage() {
       if (!isCurrentRequest(request)) {
         return;
       }
-      setError(nextError);
+      setRequestError(nextError);
       message.error(nextError);
     } finally {
       if (isCurrentRequest(request)) {
@@ -319,14 +327,25 @@ export default function SystemConfigPage() {
         }
       />
       <div className={styles.pageBody}>
-        {error ? (
+        {requestError ? (
           <Alert
             type="error"
             showIcon
-            message={t("sourceSystemConfigPage.loadFailed", {
-              defaultValue: "当前 Source 配置加载失败",
+            message={t("sourceSystemConfigPage.requestFailed", {
+              defaultValue: "当前 Source 配置请求失败",
             })}
-            description={error}
+            description={requestError}
+          />
+        ) : null}
+
+        {validationError ? (
+          <Alert
+            type="error"
+            showIcon
+            message={t("sourceSystemConfigPage.validationFailed", {
+              defaultValue: "当前 Source 配置校验失败",
+            })}
+            description={validationError}
           />
         ) : null}
 

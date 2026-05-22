@@ -1022,24 +1022,42 @@ class TestSourceSystemConfigRuntime:
             retention_days=2,
         )
 
-    def test_tool_result_config_rejects_resolved_invalid_thresholds(self):
-        """局部覆盖与 Agent 配置合成后仍需满足近期阈值不小于旧阈值。"""
+    def test_tool_result_config_recovers_resolved_invalid_thresholds(
+        self,
+        monkeypatch,
+    ):
+        """局部覆盖与 Agent 配置冲突时应修正阈值，避免请求入口失败。"""
+        from swe.app.source_system_config import runtime
+
+        warning = MagicMock()
+        monkeypatch.setattr(runtime.logger, "warning", warning)
         base = ToolResultCompactConfig(
             old_max_bytes=5000,
             recent_max_bytes=10000,
         )
-
-        with pytest.raises(ValueError, match="recent_max_bytes"):
-            resolve_tool_result_compact_config(
-                base,
-                SourceSystemConfig.model_validate(
-                    {
-                        "tool_result_compact": {
-                            "recent_max_bytes": 3000,
-                        },
+        effective = EffectiveSourceSystemConfig(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                DEFAULT_EXPECTED_SOURCE_CONFIG,
+            ),
+            raw_config=SourceSystemConfig.model_validate(
+                {
+                    "tool_result_compact": {
+                        "recent_max_bytes": 3000,
                     },
-                ),
-            )
+                },
+            ),
+            version=3,
+        )
+
+        result = resolve_tool_result_compact_config(base, effective)
+
+        assert result == ToolResultCompactConfig(
+            old_max_bytes=5000,
+            recent_max_bytes=5000,
+        )
+        warning.assert_called_once()
+        assert warning.call_args.args[1] == "portal"
 
 
 class TestSourceSystemConfigMiddleware:

@@ -193,6 +193,19 @@ describe("SystemConfigPage", () => {
   });
 
   it("blocks invalid tool result compact thresholds before saving", async () => {
+    mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
+      source_id: "portal",
+      config: {
+        tool_result_compact: {
+          recent_max_bytes: 4000,
+        },
+      },
+      version: 1,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 10:00:00",
+    });
+
     render(<SystemConfigPage />);
 
     expect(await screen.findByText("工具结果压缩配置")).toBeTruthy();
@@ -208,6 +221,22 @@ describe("SystemConfigPage", () => {
       );
     });
     expect(mocks.sourceSystemConfigApi.updateCurrent).not.toHaveBeenCalled();
+
+    expect(screen.getByRole("button", { name: "common.save" })).toBeEnabled();
+    fireEvent.change(screen.getByDisplayValue("1000"), {
+      target: { value: "4000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
+        config: {
+          tool_result_compact: {
+            recent_max_bytes: 4000,
+          },
+        },
+      });
+    });
   });
 
   it("deletes explicit config and refreshes effective config", async () => {
@@ -279,7 +308,7 @@ describe("SystemConfigPage", () => {
       });
     });
 
-    expect(await screen.findByText("当前 Source 配置加载失败")).toBeTruthy();
+    expect(await screen.findByText("当前 Source 配置请求失败")).toBeTruthy();
     expect(getTaskProgressSwitch()).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("button", { name: "common.save" })).toBeDisabled();
     expect(

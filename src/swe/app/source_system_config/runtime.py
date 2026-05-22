@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Source 系统配置请求上下文。"""
 
+import logging
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Any, Generator
@@ -13,6 +14,7 @@ from .models import EffectiveSourceSystemConfig
 _current_source_system_config: ContextVar[
     EffectiveSourceSystemConfig | None
 ] = ContextVar("current_source_system_config", default=None)
+logger = logging.getLogger(__name__)
 
 
 @contextmanager
@@ -58,11 +60,29 @@ def resolve_tool_result_compact_config(
     payload = base_config.model_dump(mode="python")
     payload.update(source_payload)
     if payload["recent_max_bytes"] < payload["old_max_bytes"]:
-        raise ValueError(
-            "tool_result_compact.recent_max_bytes must be greater than "
-            "or equal to tool_result_compact.old_max_bytes",
+        logger.warning(
+            "Invalid source tool_result_compact thresholds resolved for "
+            "source %s: recent_max_bytes=%s, old_max_bytes=%s; adjusted "
+            "recent_max_bytes to old_max_bytes",
+            _get_source_config_id(source_config),
+            payload["recent_max_bytes"],
+            payload["old_max_bytes"],
         )
+        payload["recent_max_bytes"] = payload["old_max_bytes"]
     return ToolResultCompactConfig.model_validate(payload)
+
+
+def _get_source_config_id(source_config: Any | None) -> str:
+    """尽量提取 source 标识，日志缺少上下文时回退为 unknown。"""
+    config = (
+        get_current_source_system_config()
+        if source_config is None
+        else source_config
+    )
+    source_id = getattr(config, "source_id", None)
+    if isinstance(source_id, str) and source_id:
+        return source_id
+    return "unknown"
 
 
 def _extract_tool_result_compact_override(

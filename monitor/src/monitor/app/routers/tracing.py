@@ -26,8 +26,11 @@ from ..models.tracing import (
     MCPSummary,
     TaskStatusSummary,
     DepthSummary,
+    ExtractCustomerNamesRequest,
+    ExtractCustomerNamesResponse,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
+from ..services.tracing.extract_service import ExtractCustomerNamesService
 from ..database import get_es_client, get_db_connection
 from ...config.constant import USER_INFO_API_URL
 
@@ -1373,3 +1376,78 @@ async def batch_update_tracing_user_info(
         spans_updated=spans_updated,
         details=details,
     )
+
+
+# ===== 提取客户姓名 =====
+
+
+@router.post(
+    "/extract-customer-names",
+    response_model=ExtractCustomerNamesResponse,
+    summary="提取客户姓名",
+    description="从指定技能的对话记录中提取客户姓名",
+)
+async def extract_customer_names(
+    body: ExtractCustomerNamesRequest,
+) -> ExtractCustomerNamesResponse:
+    """提取客户姓名.
+
+    从 swe_tracing_traces 的 user_message 和 ES 的 model_output 中提取客户姓名，
+    结果保存到 swe_extracted_customer_names 表。
+
+    Args:
+        body: 提取请求参数
+
+    Returns:
+        提取统计结果
+
+    Raises:
+        HTTPException: skill_names 为空时返回 400 错误
+    """
+    if not body.skill_names:
+        raise HTTPException(
+            status_code=400,
+            detail="skill_names is required",
+        )
+
+    service = ExtractCustomerNamesService.get_instance()
+
+    # 解析日期（BETWEEN 两边界均包含，end_date 设为当天结束时间）
+    start_date = None
+    end_date = None
+    if body.start_date:
+        try:
+            start_date = datetime.strptime(body.start_date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid start_date format",
+            ) from exc
+    if body.end_date:
+        try:
+            end_date = datetime.strptime(body.end_date, "%Y-%m-%d").replace(
+                hour=23,
+                minute=59,
+                second=59,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid end_date format",
+            ) from exc
+
+    try:
+        result = await service.extract_names(
+            skill_names=body.skill_names,
+            user_ids=body.user_ids,
+            bbk_id=body.bbk_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return ExtractCustomerNamesResponse(**result)
+    except Exception as e:
+        logger.error("Failed to extract customer names: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to extract customer names: {e}",
+        ) from e

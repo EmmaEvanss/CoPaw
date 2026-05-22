@@ -9,6 +9,7 @@ import logging
 import uuid
 from contextvars import ContextVar
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Optional
 
 from .config import TracingConfig
@@ -465,6 +466,7 @@ class TraceManager:
         self,
         trace_id: str,
         enabled_skills: list[str],
+        workspace_dir: Optional[Path] = None,
     ) -> None:
         """Set up skill invocation detector for a trace.
 
@@ -475,6 +477,7 @@ class TraceManager:
         Args:
             trace_id: Trace identifier
             enabled_skills: List of skill names enabled for this trace
+            workspace_dir: Optional workspace directory for reading skill manifest
         """
         if not self.enabled:
             return
@@ -504,6 +507,7 @@ class TraceManager:
                 source_id=ctx.source_id,
                 user_name=ctx.user_name,
                 bbk_id=ctx.bbk_id,
+                workspace_dir=workspace_dir,
             )
             detector.set_enabled_skills(enabled_skills)
 
@@ -950,6 +954,7 @@ class TraceManager:
         # Determine skill attribution using detector
         ctx = get_current_trace()
         primary_skill: Optional[str] = None
+        skill_description: Optional[str] = None
 
         if ctx and ctx.trace_id == trace_id:
             try:
@@ -961,6 +966,14 @@ class TraceManager:
                         tool_input=tool_input or {},
                         mcp_server=mcp_server,
                     )
+                    # Get skill description from detector cache
+                    if primary_skill and hasattr(
+                        detector,
+                        "get_skill_description",
+                    ):
+                        skill_description = detector.get_skill_description(
+                            primary_skill,
+                        )
                 else:
                     # Fallback to registry-based attribution
                     from ..agents.skill_tool_registry import (
@@ -990,6 +1003,7 @@ class TraceManager:
             tool_input=tool_input,
             mcp_server=mcp_server,
             skill_name=primary_skill,
+            skill_description=skill_description,
             user_name=user_name,
             bbk_id=bbk_id,
         )

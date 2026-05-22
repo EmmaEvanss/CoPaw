@@ -35,9 +35,10 @@ _SKILL_DESCRIPTION_CACHE: dict[str, str] = {}
 
 
 def _get_skill_description(skill_name: str) -> str:
-    """从技能目录读取技能描述.
+    """从技能目录读取技能描述（fallback 方式）.
 
-    从内置技能目录或技能池目录的 SKILL.md 文件中读取 description 字段。
+    从内置技能目录的 SKILL.md 文件中读取 description 字段。
+    主要用于内置技能的描述获取。
 
     Args:
         skill_name: 技能名称
@@ -63,28 +64,6 @@ def _get_skill_description(skill_name: str) -> str:
         pass
     except Exception as e:
         logger.debug(f"Failed to read builtin skill description: {e}")
-
-    # 如果内置目录没有找到，尝试从技能池读取
-    if not description:
-        try:
-            from .skills_manager import (
-                get_skill_pool_dir,
-                read_skill_pool_manifest,
-            )
-
-            pool_dir = get_skill_pool_dir()
-            skill_md_path = pool_dir / skill_name / "SKILL.md"
-            if skill_md_path.exists():
-                description = _parse_skill_description(skill_md_path)
-            # 尝试从 manifest 读取
-            if not description:
-                manifest = read_skill_pool_manifest()
-                skill_entry = manifest.get("skills", {}).get(skill_name, {})
-                description = str(skill_entry.get("description", "") or "")
-        except ImportError:
-            pass
-        except Exception as e:
-            logger.debug(f"Failed to read pool skill description: {e}")
 
     # 缓存结果
     _SKILL_DESCRIPTION_CACHE[skill_name] = description
@@ -194,6 +173,7 @@ class SkillInvocationDetector:
         idle_threshold: int = 3,
         user_name: Optional[str] = None,
         bbk_id: Optional[str] = None,
+        workspace_dir: Optional[Path] = None,
         skill_hook_loader: (
             Callable[[str], Awaitable[None] | None] | None
         ) = None,
@@ -213,6 +193,7 @@ class SkillInvocationDetector:
             idle_threshold: Number of non-skill tool calls before ending skill
             user_name: Optional user name
             bbk_id: Optional BBK identifier
+            workspace_dir: Workspace directory for reading skill manifest
             skill_hook_loader: Optional session-scoped hook loader callback
         """
         self._registry = registry or get_skill_tool_registry()
@@ -226,6 +207,7 @@ class SkillInvocationDetector:
         self._source_id = source_id
         self._user_name = user_name
         self._bbk_id = bbk_id
+        self._workspace_dir = workspace_dir
         self._skill_hook_loader = skill_hook_loader
 
         # Configuration
@@ -233,6 +215,9 @@ class SkillInvocationDetector:
 
         # State tracking
         self._enabled_skills: set[str] = set()
+        self._skill_descriptions: dict[str, str] = (
+            {}
+        )  # skill_name -> description
         self._skill_activation_time: dict[str, datetime] = {}
         self._skill_call_history: dict[str, int] = {}
         self._idle_counters: dict[str, int] = {}
@@ -243,12 +228,42 @@ class SkillInvocationDetector:
         self._message_detected_confidence: float = 0.0
 
     def set_enabled_skills(self, skills: list[str]) -> None:
-        """Set the list of enabled skills.
+        """Set the list of enabled skills and cache their descriptions.
+
+        Reads skill descriptions from workspace skill.json manifest at
+        setup time, so they're ready when start_skill is called.
 
         Args:
             skills: List of skill names that are currently enabled
         """
         self._enabled_skills = set(skills)
+
+        # Pre-cache descriptions from workspace manifest
+        if self._workspace_dir:
+            skill_json_path = self._workspace_dir / "skill.json"
+
+            if skill_json_path.exists():
+                try:
+                    with open(skill_json_path, "r", encoding="utf-8") as f:
+                        manifest = json.load(f)
+
+                    for skill_name in skills:
+                        skill_entry = manifest.get("skills", {}).get(
+                            skill_name,
+                            {},
+                        )
+                        metadata = skill_entry.get("metadata", {})
+                        description = metadata.get("description", "") or ""
+                        if description:
+                            self._skill_descriptions[skill_name] = str(
+                                description,
+                            )
+                            logger.debug(
+                                "Cached description for skill '%s'",
+                                skill_name,
+                            )
+                except Exception as e:
+                    logger.warning("Failed to read skill manifest: %s", e)
 
     def detect_from_user_message(
         self,
@@ -638,6 +653,26 @@ class SkillInvocationDetector:
         if skill in self._idle_counters:
             self._idle_counters[skill] = 0
 
+    def get_skill_description(self, skill_name: str) -> str:
+        """获取技能描述.
+
+        从缓存的 _skill_descriptions 中获取，如果缓存中没有则尝试从
+        内置技能目录的 SKILL.md 文件中获取。
+
+        Args:
+            skill_name: 技能名称
+
+        Returns:
+            技能描述字符串，如果未找到则返回空字符串
+        """
+        # 优先从缓存获取
+        description = self._skill_descriptions.get(skill_name, "")
+        if description:
+            return description
+
+        # Fallback 到内置技能目录
+        return _get_skill_description(skill_name)
+
     async def start_skill(
         self,
         skill_name: str,
@@ -653,8 +688,8 @@ class SkillInvocationDetector:
             trigger_reason: How the skill was detected
             confidence: Attribution confidence
         """
-        # Get skill description
-        skill_description = _get_skill_description(skill_name)
+        # Get skill description - prefer cached manifest, fallback to SKILL.md
+        skill_description = self.get_skill_description(skill_name)
 
         # Emit tracing event first to get span_id
         span_id = None

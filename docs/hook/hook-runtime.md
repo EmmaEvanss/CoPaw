@@ -36,6 +36,22 @@ Hook Runtime 用于在 Agent 的关键运行节点挂接自定义策略。你可
 - 在回复结束前要求先完成测试、构建或 lint
 - 在回合结束时记录收尾信息，供下一轮对话继续使用
 
+## 新人推荐阅读顺序
+
+如果你是第一次配置 hook，建议按下面顺序阅读和落配置：
+
+1. 先看“事件与真实生效时机”，确定你要拦的是哪一个阶段。
+2. 再看“配置写在哪里”和“最小配置”，先把文件位置和 JSON 外形搭起来。
+3. 然后看“`command` / `http` / `prompt`”三类 handler，选一种最适合你的执行方式。
+4. 最后再看 “HookContext 里有哪些字段” 和 “handler 能返回什么”，决定脚本里读哪些入参、返回哪些结果。
+
+如果只想尽快做出第一个可验证的 hook，最稳妥的起点通常是：
+
+- `PreToolUse + command`
+- 或 `UserPromptSubmit + http`
+
+因为这两类最容易观察是否命中，也最容易验证返回效果。
+
 ## 事件与真实生效时机
 
 下表是最重要的部分。配置 hook 时，先确认你要拦的是哪个阶段。
@@ -177,7 +193,7 @@ Skill 级 `hooks/hooks.json` 示例：
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `enabled` | 否 | 是否启用当前 hook 配置。默认 `false`。 |
-| `events` | 是 | 事件配置，key 是事件名，value 是该事件下的匹配分组列表。 |
+| `events` | 否 | 事件配置，key 是事件名，value 是该事件下的匹配分组列表。省略时等同于没有可执行 hook。 |
 
 ### 分组字段
 
@@ -185,7 +201,7 @@ Skill 级 `hooks/hooks.json` 示例：
 | --- | --- | --- |
 | `events.<event>[].id` | 否 | 分组 ID。建议填写，便于排查和去重。 |
 | `events.<event>[].matcher` | 否 | 匹配条件。当前最常用的是 `matcher.tools`。 |
-| `events.<event>[].hooks` | 是 | 该分组下的 handler 列表。 |
+| `events.<event>[].hooks` | 否 | 该分组下的 handler 列表。省略或为空时该分组不会执行任何 handler。 |
 
 ### `matcher.tools`
 
@@ -205,13 +221,13 @@ Skill 级 `hooks/hooks.json` 示例：
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `id` | 是 | handler 唯一 ID。建议稳定且可读。 |
+| `id` | 是 | handler ID。应在同一配置来源内保持唯一且稳定；普通租户级 / Agent 级配置当前不会强制校验全局唯一，重复 ID 会让 `once`、覆盖和排查变得含糊。 |
 | `type` | 是 | handler 类型，支持 `command`、`http`、`prompt`。 |
 | `if` | 否 | 条件表达式；结果为假时跳过该 handler。 |
 | `timeout` | 否 | 单个 handler 超时时间，单位秒，默认 `10`。 |
 | `statusMessage` | 否 | 阻断或审批时显示给用户的提示文案。 |
 | `once` | 否 | `true` 表示同一会话内、同一事件上只执行一次。 |
-| `failPolicy` | 否 | handler 自身执行失败时的处理策略，支持 `allow` 或 `block`。 |
+| `failPolicy` | 否 | handler 自身执行失败时的处理策略，支持 `allow` 或 `block`。`command` / `http` 默认 `allow`，`prompt` 默认 `block`。 |
 
 ### `once: true` 的实际含义
 
@@ -298,8 +314,9 @@ Skill 级 `hooks/hooks.json` 示例：
 
 这意味着：
 
-- 你可以调用系统里的 `python`、`bash` 等命令
+- 你可以通过 `python`、`bash` 这类命令名调用系统 PATH 里的程序
 - 但不应该把 hook 脚本或目标文件放到当前 workspace 外面
+- 不要把 `/usr/bin/python` 这类绝对路径写进 `argv`；绝对路径参数同样会按 workspace 边界检查
 
 ### 2. `http` handler
 
@@ -338,7 +355,7 @@ Skill 级 `hooks/hooks.json` 示例：
 
 - `headers`：直接写死的普通 Header
 - `headerSecretRefs`：从当前生效租户的环境配置中取值，再填到 Header
-- `allowedEnvVars`：把运行进程自己的环境变量值写入 Header
+- `allowedEnvVars`：按变量名从租户运行时环境读取，缺失时再从当前进程环境读取，并用同名 Header 发送
 
 `headerSecretRefs` 更适合放认证信息，避免把密钥直接写进配置文件。
 
@@ -401,9 +418,11 @@ Skill 级 `hooks/hooks.json` 示例：
 - 默认 `failPolicy` 是 `block`
 - 发给模型的 HookContext 会先做敏感字段脱敏
 
-## HookContext 里有哪些常用字段
+## HookContext 里有哪些字段
 
-handler 收到的是一个 JSON 对象。最常用的字段如下：
+handler 收到的是一个 JSON 对象。为了避免把“模型层支持”和“当前运行时一定会传”混为一谈，下面分两层说明。
+
+### 最常用字段
 
 | 字段 | 说明 |
 | --- | --- |
@@ -423,6 +442,95 @@ handler 收到的是一个 JSON 对象。最常用的字段如下：
 | `tool_use_id` | 工具调用 ID |
 | `tool_response` | 工具成功输出；主要见于 `PostToolUse` |
 | `error` | 工具失败信息；主要见于 `PostToolUseFailure` |
+
+### 当前实现支持的完整字段
+
+下表按当前 `HookContext` 模型和实际构造逻辑整理。
+
+| 字段 | 当前运行时是否会注入 | 主要出现位置 / 说明 |
+| --- | --- | --- |
+| `session_id` | 是 | runner 事件、tool 事件都会传 |
+| `transcript_path` | 是 | runner 事件、tool 事件都会传 |
+| `cwd` | 是 | 当前 workspace 根路径 |
+| `hook_event_name` | 是 | 全部事件都会传 |
+| `tenant_id` | 是 | 全部事件都会传 |
+| `effective_tenant_id` | 是 | 全部事件都会传 |
+| `user_id` | 是 | 全部事件都会传 |
+| `agent_id` | 是 | 全部事件都会传 |
+| `channel` | 是 | 全部事件都会传 |
+| `permission_mode` | 否 | 当前模型层支持，但当前 hook 构造逻辑未注入 |
+| `effort` | 否 | 当前模型层支持，但当前 hook 构造逻辑未注入 |
+| `agent_type` | 否 | 当前模型层支持，但当前 hook 构造逻辑未注入 |
+| `source_id` | 部分 | runner 侧事件会传；tool 侧事件当前不传 |
+| `workspace_dir` | 是 | 全部事件都会传，通常与 `cwd` 相同 |
+| `chat_id` | 部分 | 请求上下文里有 chat 时会传 |
+| `turn_id` | 部分 | 请求上下文里有 turn 时会传 |
+| `source` | 部分 | `SessionStart` 这类 runner 事件会传；当前主流程常见值是 `startup` / `resume` |
+| `model` | 部分 | 当前主流程只在 `SessionStart` 传当前激活模型标签 |
+| `prompt` | 部分 | `UserPromptSubmit`、`BeforeStop`、`Stop` 常见；tool 事件当前不传 |
+| `tool_name` | 部分 | `PreToolUse` / `PostToolUse` / `PostToolUseFailure` 传 |
+| `tool_input` | 部分 | `PreToolUse` / `PostToolUse` / `PostToolUseFailure` 传 |
+| `tool_use_id` | 部分 | `PreToolUse` / `PostToolUse` / `PostToolUseFailure` 传 |
+| `tool_response` | 部分 | 主要见于 `PostToolUse` |
+| `assistant_response` | 部分 | 主要见于 `BeforeStop` 和 `Stop` |
+| `error` | 部分 | 主要见于 `PostToolUseFailure` |
+
+这张表的关键结论是：
+
+- 如果你写的是 runner 侧 hook，例如 `SessionStart`、`UserPromptSubmit`、`BeforeStop`、`Stop`，重点看 `prompt`、`assistant_response`、`source`、`model`。
+- 如果你写的是 tool 侧 hook，例如 `PreToolUse`、`PostToolUse`、`PostToolUseFailure`，重点看 `tool_name`、`tool_input`、`tool_use_id`、`tool_response`、`error`。
+- `permission_mode`、`effort`、`agent_type` 虽然在模型里有字段，但当前实现还没有把它们接进真实 hook payload，不要把它们当成当前可依赖入参。
+
+### 两类典型 payload 样子
+
+#### 1. `SessionStart` 常见 payload
+
+```json
+{
+  "session_id": "session-1",
+  "transcript_path": "/path/to/session-1.json",
+  "cwd": "/workspace/project",
+  "hook_event_name": "SessionStart",
+  "tenant_id": "default",
+  "effective_tenant_id": "default",
+  "user_id": "user-1",
+  "agent_id": "demo-agent",
+  "channel": "console",
+  "source_id": "console",
+  "workspace_dir": "/workspace/project",
+  "chat_id": "chat-1",
+  "turn_id": "turn-1",
+  "source": "startup",
+  "model": "openai/gpt-5.4"
+}
+```
+
+#### 2. `PostToolUse` 常见 payload
+
+```json
+{
+  "session_id": "session-1",
+  "transcript_path": "/path/to/session-1.json",
+  "cwd": "/workspace/project",
+  "hook_event_name": "PostToolUse",
+  "tenant_id": "default",
+  "effective_tenant_id": "default",
+  "user_id": "user-1",
+  "agent_id": "demo-agent",
+  "channel": "console",
+  "workspace_dir": "/workspace/project",
+  "chat_id": "chat-1",
+  "turn_id": "turn-1",
+  "tool_name": "execute_shell_command",
+  "tool_input": {
+    "command": "echo hello"
+  },
+  "tool_use_id": "toolu_123",
+  "tool_response": {
+    "content": "hello"
+  }
+}
+```
 
 例如 `execute_shell_command` 的工具输入字段是：
 
@@ -616,6 +724,24 @@ handler 收到的是一个 JSON 对象。最常用的字段如下：
 
 如果多个 handler 都返回了标题，系统只取第一个非空标题。
 
+### 8. `systemMessage` 和 `suppressOutput`
+
+这两个字段当前模型层会解析、结果合并层也会保留：
+
+```json
+{
+  "systemMessage": "internal note",
+  "suppressOutput": true
+}
+```
+
+但要特别注意：
+
+- 当前运行时还没有把它们接到用户可见流程里
+- 也就是说，写了不代表当前前端或 Agent 主流程就会出现稳定可见效果
+
+因此，在当前版本里应把它们视为“内部保留字段”，不要把业务能力建立在它们上面。
+
 ## 多个 hook 同时命中时，系统怎么处理
 
 ### 执行顺序
@@ -690,6 +816,19 @@ Skill 自带 `http` handler：
 
 当前实现里，Skill 自带 HTTP hook 默认允许加载；旧版文档里提到的“先配置 URL 白名单再允许 Skill HTTP hook”已经不是当前默认行为。
 
+这也是当前实现里最需要谨慎处理的边界：
+
+- HTTP handler 收到的是完整 HookContext 请求体，当前不会像 `prompt` handler 一样先做敏感字段脱敏。
+- 如果 Skill 来源不可完全信任，Skill 自带 HTTP hook 可以把用户输入、工具输入、工具输出、候选回复和租户 / workspace 元数据发送到远端。
+- `headerSecretRefs` 会从当前生效租户读取密钥并写入请求 Header，等同于允许该 hook 使用对应凭据访问远端服务。
+
+修复或加固建议：
+
+- 生产环境优先恢复 URL 白名单校验，至少对 Skill 自带 HTTP hook 执行域名 allowlist。
+- 对 HTTP handler 的请求体增加与 `prompt` handler 一致的敏感字段脱敏，或提供显式 `redactPayload: true` / `sendFields` 白名单。
+- 对 Skill `headerSecretRefs` 增加可引用密钥白名单，避免任意 Skill 读取租户级敏感 Header。
+- 对外发 HTTP hook 增加审计日志，记录 handler ID、目标 URL、事件名和脱敏后的字段摘要。
+
 ## `BeforeStop` 完成门禁
 
 如果你只准备做一个高级 hook，通常就是它。
@@ -713,6 +852,8 @@ Skill 自带 `http` handler：
 如果持续返回 `block`，系统会用预算保护当前请求，避免无限循环。
 
 ### 预算配置
+
+预算配置属于 Agent 运行配置，通常写在当前 workspace 的 `agent.json` 里。
 
 配置位置：
 
@@ -749,7 +890,73 @@ Skill 自带 `http` handler：
 
 ## 常见配置示例
 
-### 示例 1：工具执行前检查 Shell 命令
+下面的示例按运行生命周期排序。新人如果想建立完整心智模型，直接从上往下读最顺手。
+
+### 示例 1：会话开始时注入启动约束
+
+```json
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "SessionStart": [
+        {
+          "id": "session-start-bootstrap",
+          "hooks": [
+            {
+              "id": "bootstrap-context",
+              "type": "http",
+              "url": "https://policy.example.com/hooks/session-start",
+              "timeout": 5,
+              "failPolicy": "allow"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+适合做：
+
+- 注入本轮组织约束
+- 追加 workspace 说明
+- 对启动来源做额外审计
+
+### 示例 2：用户输入进入前注入项目约束
+
+```json
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "UserPromptSubmit": [
+        {
+          "id": "prompt-context",
+          "hooks": [
+            {
+              "id": "append-project-rules",
+              "type": "http",
+              "url": "https://policy.example.com/hooks/prompt",
+              "timeout": 5,
+              "failPolicy": "allow"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+适合做：
+
+- 补充组织规则
+- 自动命名会话
+- 对用户输入做预检查
+
+### 示例 3：工具执行前检查 Shell 命令
 
 ```json
 {
@@ -785,21 +992,24 @@ Skill 自带 `http` handler：
 - 人工审批
 - 参数标准化
 
-### 示例 2：用户输入进入前注入项目约束
+### 示例 4：工具成功后写入审计摘要
 
 ```json
 {
   "hooks": {
     "enabled": true,
     "events": {
-      "UserPromptSubmit": [
+      "PostToolUse": [
         {
-          "id": "prompt-context",
+          "id": "tool-audit-summary",
+          "matcher": {
+            "tools": ["execute_shell_command"]
+          },
           "hooks": [
             {
-              "id": "append-project-rules",
+              "id": "collect-success-summary",
               "type": "http",
-              "url": "https://policy.example.com/hooks/prompt",
+              "url": "https://policy.example.com/hooks/post-tool",
               "timeout": 5,
               "failPolicy": "allow"
             }
@@ -813,37 +1023,11 @@ Skill 自带 `http` handler：
 
 适合做：
 
-- 补充组织规则
-- 自动命名会话
-- 对用户输入做预检查
+- 记录工具执行结果摘要
+- 把长输出压缩成后续推理可读的补充上下文
+- 追加成功后的审计说明
 
-### 示例 3：停止前要求先完成测试
-
-```json
-{
-  "hooks": {
-    "enabled": true,
-    "events": {
-      "BeforeStop": [
-        {
-          "id": "completion-gate",
-          "hooks": [
-            {
-              "id": "task-completion-check",
-              "type": "prompt",
-              "prompt": "如果候选回复没有说明已完成必要测试，返回 block，并明确指出还缺什么；如果检查已完成，返回 allow。",
-              "timeout": 8,
-              "failPolicy": "block"
-            }
-          ]
-        }
-      ]
-    }
-  }
-}
-```
-
-### 示例 4：工具失败后补充诊断信息
+### 示例 5：工具失败后补充诊断信息
 
 ```json
 {
@@ -874,6 +1058,64 @@ Skill 自带 `http` handler：
 - 日志在哪
 - 常见原因是什么
 - 下一步该查什么
+
+### 示例 6：停止前要求先完成测试
+
+```json
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "BeforeStop": [
+        {
+          "id": "completion-gate",
+          "hooks": [
+            {
+              "id": "task-completion-check",
+              "type": "prompt",
+              "prompt": "如果候选回复没有说明已完成必要测试，返回 block，并明确指出还缺什么；如果检查已完成，返回 allow。",
+              "timeout": 8,
+              "failPolicy": "block"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+### 示例 7：真正结束前追加收尾信息
+
+```json
+{
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "Stop": [
+        {
+          "id": "final-stop-summary",
+          "hooks": [
+            {
+              "id": "append-final-summary",
+              "type": "command",
+              "argv": ["python", "hooks/final_stop_summary.py"],
+              "timeout": 5,
+              "failPolicy": "allow"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+适合做：
+
+- 当前轮真正结束前写入收尾上下文
+- 记录最终审计说明
+- 在需要时用 `continue: false` 明确停止当前轮
 
 ## 验证方式
 

@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
-from ...envs.runtime import resolve_tenant_env_references_mapping
+from ..mcp.http_headers import resolve_mcp_http_headers
 from ..mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
 from .command_dispatch import (
     _get_last_user_text,
@@ -693,8 +693,7 @@ async def _create_mcp_client_with_headers(
     # HTTP transport (streamable_http or sse)
     headers = client_config.headers
     if headers:
-        headers = resolve_tenant_env_references_mapping(headers)
-        headers = {k: os.path.expandvars(v) for k, v in headers.items()}
+        headers = resolve_mcp_http_headers(headers)
 
     # Merge passthrough headers for HTTP transport
     merged_headers = dict(headers or {})

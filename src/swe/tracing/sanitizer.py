@@ -79,8 +79,8 @@ def sanitize_dict(
                     sanitize_dict(item, max_length)
                     if isinstance(item, dict)
                     else (
-                        item[:max_length] + "..."
-                        if isinstance(item, str) and len(item) > max_length
+                        sanitize_string(item, max_length)
+                        if isinstance(item, str)
                         else item
                     )
                 )

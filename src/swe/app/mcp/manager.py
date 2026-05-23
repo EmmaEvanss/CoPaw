@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any, Dict, List, TYPE_CHECKING
 
-from swe.envs.runtime import resolve_tenant_env_references_mapping
-
+from .http_headers import resolve_mcp_http_headers
 from .stdio_launcher import build_tenant_aware_stdio_launch_config
 from .stateful_client import HttpStatefulClient, StdIOStatefulClient
 
@@ -272,8 +270,7 @@ class MCPClientManager:
 
         headers = client_config.headers
         if headers:
-            headers = resolve_tenant_env_references_mapping(headers)
-            headers = {k: os.path.expandvars(v) for k, v in headers.items()}
+            headers = resolve_mcp_http_headers(headers)
 
         client = HttpStatefulClient(
             name=client_config.name,

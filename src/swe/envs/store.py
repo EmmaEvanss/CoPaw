@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -193,9 +194,30 @@ def save_envs(
             f"envs.json path exists but is not a regular file: {path}",
         )
     _prepare_secret_parent(path)
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(envs, fh, indent=2, ensure_ascii=False)
-    _chmod_best_effort(path, 0o600)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            tmp_path = Path(fh.name)
+            json.dump(envs, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _chmod_best_effort(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+        _chmod_best_effort(path, 0o600)
+    except Exception:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
     if sync_process_env:
         _sync_environ(old, envs)

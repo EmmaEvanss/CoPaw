@@ -12,6 +12,9 @@ import logging
 import os
 from typing import Any, Dict, List, TYPE_CHECKING
 
+from swe.envs.runtime import resolve_tenant_env_references_mapping
+
+from .stdio_launcher import build_tenant_aware_stdio_launch_config
 from .stateful_client import HttpStatefulClient, StdIOStatefulClient
 
 if TYPE_CHECKING:
@@ -242,18 +245,34 @@ class MCPClientManager:
         }
 
         if client_config.transport == "stdio":
+            launch_config = build_tenant_aware_stdio_launch_config(
+                client_config.command,
+                client_config.args,
+                client_config.env,
+                client_config.cwd or None,
+            )
             client = StdIOStatefulClient(
                 name=client_config.name,
-                command=client_config.command,
-                args=client_config.args,
-                env=client_config.env,
-                cwd=client_config.cwd or None,
+                command=launch_config.launch_command,
+                args=launch_config.launch_args,
+                env=launch_config.env,
+                cwd=launch_config.cwd,
             )
-            setattr(client, "_qwenpaw_rebuild_info", rebuild_info)
+            setattr(
+                client,
+                "_qwenpaw_rebuild_info",
+                {
+                    **rebuild_info,
+                    "launch_command": launch_config.launch_command,
+                    "launch_args": launch_config.launch_args,
+                    "launch_diagnostic": launch_config.diagnostic,
+                },
+            )
             return client
 
         headers = client_config.headers
         if headers:
+            headers = resolve_tenant_env_references_mapping(headers)
             headers = {k: os.path.expandvars(v) for k, v in headers.items()}
 
         client = HttpStatefulClient(

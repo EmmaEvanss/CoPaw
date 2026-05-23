@@ -2,11 +2,25 @@
 # pylint: disable=protected-access
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from swe.config.config import MCPClientConfig
+from swe.config.context import encode_scope_id, tenant_context
+from swe.envs.store import save_envs
+
+
+def _write_scope_env(
+    root: Path,
+    tenant_id: str,
+    source_id: str,
+    envs: dict[str, str],
+) -> None:
+    scope_id = encode_scope_id(tenant_id, source_id)
+    save_envs(envs, root / scope_id / ".secret" / "envs.json")
 
 
 @pytest.mark.asyncio
@@ -136,3 +150,117 @@ async def test_create_sse_mcp_client_passes_explicit_read_timeout(
     }
     assert client.client == "sse-context"
     assert getattr(client, "_swe_rebuild_info")["_http_client"] is None
+
+
+@pytest.mark.asyncio
+async def test_http_mcp_headers_resolve_explicit_tenant_env_references(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from swe.app.runner import runner as runner_module
+
+    monkeypatch.setattr("swe.config.utils.WORKING_DIR", tmp_path)
+    monkeypatch.delenv("MCP_TOKEN", raising=False)
+    _write_scope_env(
+        tmp_path,
+        "tenant-a",
+        "source-a",
+        {"MCP_TOKEN": "tenant-secret"},
+    )
+    captured: dict[str, Any] = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs):
+            captured["http_client_kwargs"] = kwargs
+
+    class _FakeHttpStatefulClient:
+        def __init__(self, **kwargs):
+            captured["stateful_client_kwargs"] = kwargs
+
+    monkeypatch.setattr(runner_module.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        runner_module,
+        "HttpStatefulClient",
+        _FakeHttpStatefulClient,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "streamable_http_client",
+        lambda **kwargs: "streamable-http-context",
+    )
+
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        await runner_module._create_mcp_client_with_headers(
+            MCPClientConfig(
+                name="demo",
+                transport="streamable_http",
+                url="https://mcp.example.test/stream",
+                headers={
+                    "Authorization": "Bearer ${ENV:MCP_TOKEN}",
+                    "X-Literal": "${MCP_TOKEN}",
+                },
+            ),
+        )
+
+    assert captured["http_client_kwargs"]["headers"] == {
+        "Authorization": "Bearer tenant-secret",
+        "X-Literal": "${MCP_TOKEN}",
+    }
+    assert "MCP_TOKEN" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_http_mcp_env_reference_resolution_is_source_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from swe.app.runner import runner as runner_module
+
+    monkeypatch.setattr("swe.config.utils.WORKING_DIR", tmp_path)
+    _write_scope_env(
+        tmp_path,
+        "tenant-a",
+        "source-a",
+        {"MCP_TOKEN": "source-a"},
+    )
+    _write_scope_env(
+        tmp_path,
+        "tenant-a",
+        "source-b",
+        {"MCP_TOKEN": "source-b"},
+    )
+    captured: dict[str, Any] = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs):
+            captured["http_client_kwargs"] = kwargs
+
+    class _FakeHttpStatefulClient:
+        def __init__(self, **kwargs):
+            captured["stateful_client_kwargs"] = kwargs
+
+    monkeypatch.setattr(runner_module.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(
+        runner_module,
+        "HttpStatefulClient",
+        _FakeHttpStatefulClient,
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "streamable_http_client",
+        lambda **kwargs: "streamable-http-context",
+    )
+
+    with tenant_context(tenant_id="tenant-a", source_id="source-b"):
+        await runner_module._create_mcp_client_with_headers(
+            MCPClientConfig(
+                name="demo",
+                transport="streamable_http",
+                url="https://mcp.example.test/stream",
+                headers={"Authorization": "Bearer ${ENV:MCP_TOKEN}"},
+            ),
+        )
+
+    assert captured["http_client_kwargs"]["headers"] == {
+        "Authorization": "Bearer source-b",
+    }

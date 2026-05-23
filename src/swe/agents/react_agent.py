@@ -23,6 +23,7 @@ from agentscope.tool import Toolkit
 from anyio import ClosedResourceError
 from pydantic import BaseModel
 
+from ..envs.runtime import resolve_tenant_env_references_mapping
 from ..app.mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
 from .command_handler import CommandHandler
 from ..app.mcp import HttpStatefulClient, StdIOStatefulClient
@@ -822,7 +823,13 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
 
             raw_headers = rebuild_info.get("headers") or {}
             headers = (
-                {k: os.path.expandvars(v) for k, v in raw_headers.items()}
+                {
+                    k: os.path.expandvars(v)
+                    for k, v in (
+                        resolve_tenant_env_references_mapping(raw_headers)
+                        or {}
+                    ).items()
+                }
                 if raw_headers
                 else None
             )

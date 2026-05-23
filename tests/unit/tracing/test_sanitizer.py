@@ -3,6 +3,7 @@
 
 from swe.tracing.sanitizer import (
     SENSITIVE_KEYS,
+    register_sensitive_values,
     sanitize_dict,
     sanitize_string,
     sanitize_user_message,
@@ -179,6 +180,14 @@ class TestSanitizeString:
 
         assert len(result) == 103  # 100 + "..."
         assert result.endswith("...")
+
+    def test_redacts_registered_runtime_secret_value(self):
+        """运行时注入的 secret 值应按值脱敏。"""
+        register_sensitive_values(["tenant-secret"])
+
+        result = sanitize_string("token=tenant-secret", max_length=500)
+
+        assert result == "token=[REDACTED]"
 
 
 class TestSanitizeUserMessage:

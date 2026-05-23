@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "events": {
+    "SessionStart": [
+      {
+        "id": "session-start-entry-gate",
+        "hooks": [
+          {
+            "id": "session-start-prompt-judge",
+            "type": "prompt",
+            "timeout": 8,
+            "failPolicy": "block",
+            "prompt": "请基于 HookContext JSON 判断这次会话启动是否满足最小入口条件。若 channel 为空、cwd 或 workspace_dir 缺失，或 source 明显不是 startup / resume / clear / compact 之一，则返回 block，并指出缺失字段；其余情况返回 allow。"
+          }
+        ]
+      }
+    ]
+  }
+}

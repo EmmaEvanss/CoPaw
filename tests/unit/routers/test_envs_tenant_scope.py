@@ -179,33 +179,37 @@ def test_patch_envs_preserves_existing_secret_without_placeholder(
     assert "new-secret" not in response.text
 
 
-def test_current_scope_env_api_ignores_target_tenant_fields(
+@pytest.mark.parametrize(
+    "reserved_key",
+    [
+        "tenant_id",
+        "source_id",
+        "target_tenant_id",
+        "target_source_id",
+    ],
+)
+def test_current_scope_env_api_rejects_reserved_scope_fields(
     client: TestClient,
     _use_tmp_env_paths: Path,
+    reserved_key: str,
 ):
-    """普通 env API 不能通过请求体字段改写其他 tenant/source。"""
+    """普通 env API 遇到保留 scope 字段时必须显式失败。"""
+    current_path = (
+        _use_tmp_env_paths / "tenant-a.source-a" / ".secret" / "envs.json"
+    )
+    save_envs({"EXISTING_TOKEN": "keep-me"}, current_path)
+
     response = client.put(
         "/api/envs",
         headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
         json={
-            "API_TOKEN": "tenant-secret",
-            "target_tenant_id": "tenant-b",
-            "target_source_id": "source-b",
+            reserved_key: "scope-value",
         },
     )
 
-    current_path = (
-        _use_tmp_env_paths / "tenant-a.source-a" / ".secret" / "envs.json"
-    )
-    target_path = (
-        _use_tmp_env_paths
-        / encode_scope_id("tenant-b", "source-b")
-        / ".secret"
-        / "envs.json"
-    )
-    assert response.status_code == 200
-    assert load_envs(current_path) == {"API_TOKEN": "tenant-secret"}
-    assert not target_path.exists()
+    assert response.status_code == 400
+    assert reserved_key in response.text
+    assert load_envs(current_path) == {"EXISTING_TOKEN": "keep-me"}
 
 
 def test_same_logical_tenant_different_sources_use_separate_api_env_files(

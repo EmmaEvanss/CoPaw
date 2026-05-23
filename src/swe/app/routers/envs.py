@@ -31,6 +31,9 @@ TARGET_FIELD_NAMES = frozenset(
         "target_source_id",
     },
 )
+RESERVED_SCOPE_FIELD_ERROR = (
+    "Reserved scope field is not allowed in PUT /envs body: "
+)
 
 
 def _get_tenant_envs_path(request: Request) -> Path:
@@ -114,12 +117,8 @@ async def batch_save_envs(
     body: Dict[str, str],
 ) -> List[EnvVar]:
     """Batch save – full replacement of all env vars for the tenant."""
-    raw_envs = {
-        key: value
-        for key, value in body.items()
-        if key not in TARGET_FIELD_NAMES
-    }
-    cleaned = _validate_envs_or_400(raw_envs)
+    _reject_reserved_scope_fields_or_400(body)
+    cleaned = _validate_envs_or_400(body)
     save_envs(cleaned, _get_tenant_envs_path(request))
     return _masked_env_list(cleaned)
 
@@ -219,6 +218,16 @@ def _validate_envs_or_400(envs: Dict[str, str]) -> dict[str, str]:
         return validate_env_mapping(envs)
     except ValueError as exc:
         raise HTTPException(400, detail=str(exc)) from exc
+
+
+def _reject_reserved_scope_fields_or_400(envs: Dict[str, str]) -> None:
+    """拒绝普通 PUT /envs 请求体中的保留 scope 字段。"""
+    reserved_keys = sorted(set(envs) & TARGET_FIELD_NAMES)
+    if reserved_keys:
+        raise HTTPException(
+            status_code=400,
+            detail=RESERVED_SCOPE_FIELD_ERROR + ", ".join(reserved_keys),
+        )
 
 
 def _require_manager(request: Request) -> str:

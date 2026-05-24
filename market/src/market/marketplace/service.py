@@ -18,6 +18,7 @@ from ..config.constant import SWE_INTERNAL_URL, SWE_INTERNAL_TOKEN
 from ..database.connection import DatabaseConnection
 from ..security import SkillScanError, scan_skill_directory
 from .fs import (
+    _atomic_write_json,
     _mask_env_value,
     copy_mcp_to_user,
     copy_skill_to_user,
@@ -38,6 +39,7 @@ from .models import MarketItem
 from .schemas import (
     DistributeRequest,
     DistributeResponse,
+    DistributionRecord,
     MCPDistributionRequest,
     MCPDistributionResponse,
     MCPDistributionTenantResult,
@@ -50,6 +52,9 @@ from .schemas import (
     MySkillItem,
     PublishMCPRequest,
     PublishSkillRequest,
+    RecallRequest,
+    RecallResponse,
+    RecallResultItem,
     SkillUserStat,
 )
 
@@ -131,6 +136,19 @@ _QUERY_USERS_BY_BBK_SQL = """
     SELECT tenant_id, tenant_name, bbk_id
     FROM swe_tenant_init_source
     WHERE source_id = %s AND bbk_id IN ({placeholders})
+"""
+
+_QUERY_USERS_BY_TENANT_IDS_SQL = """
+    SELECT tenant_id, tenant_name, bbk_id
+    FROM swe_tenant_init_source
+    WHERE source_id = %s AND tenant_id IN ({placeholders})
+"""
+
+_QUERY_DISTRIBUTIONS_SQL = """
+    SELECT target_user_id, target_user_name, target_bbk_id, created_at
+    FROM swe_marketplace_operation_logs
+    WHERE source_id = %s AND item_id = %s AND item_type = %s AND operation = 'distribute'
+    ORDER BY created_at DESC
 """
 
 
@@ -437,6 +455,7 @@ class MarketplaceService:
         self,
         user_id: str,
         agent_id: str = "default",
+        source_id: str | None = None,
     ) -> None:
         """通过 HTTP 回调触发 src/swe 的 Agent 重载."""
         url = f"{SWE_INTERNAL_URL}/api/internal/agents/{agent_id}/reload"
@@ -444,16 +463,20 @@ class MarketplaceService:
         if SWE_INTERNAL_TOKEN:
             headers["X-Internal-Token"] = f"Bearer {SWE_INTERNAL_TOKEN}"
 
+        params = {"tenant_id": user_id}
+        if source_id:
+            params["source_id"] = source_id
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
                     url,
-                    params={"tenant_id": user_id},
+                    params=params,
                     headers=headers,
                 )
                 if response.status_code == 200:
                     logger.info(
-                        f"Agent reload triggered for '{agent_id}' (tenant={user_id})",
+                        f"Agent reload triggered for '{agent_id}' (tenant={user_id}, source={source_id})",
                     )
                 else:
                     logger.warning(
@@ -612,7 +635,7 @@ class MarketplaceService:
         )
 
         if updated:
-            await self._trigger_agent_reload(user_id, agent_id)
+            await self._trigger_agent_reload(user_id, agent_id, source_id)
 
         return {"success": updated}
 
@@ -642,7 +665,7 @@ class MarketplaceService:
         )
 
         if updated:
-            await self._trigger_agent_reload(user_id, agent_id)
+            await self._trigger_agent_reload(user_id, agent_id, source_id)
 
         return {"success": updated}
 
@@ -1275,6 +1298,12 @@ class MarketplaceService:
         req: DistributeRequest,
     ) -> list[dict]:
         if not self.db.is_connected:
+            # 数据库未连接时返回空信息
+            if req.target_type == "user_id" and req.target_values:
+                return [
+                    {"tenant_id": uid, "tenant_name": "", "bbk_id": ""}
+                    for uid in req.target_values
+                ]
             return []
         try:
             if req.target_type == "all":
@@ -1290,8 +1319,22 @@ class MarketplaceService:
                     (source_id, *req.target_values),
                 )
             if req.target_type == "user_id" and req.target_values:
+                # 手动输入用户 ID 时，也从数据库查询用户信息
+                placeholders = ",".join(["%s"] * len(req.target_values))
+                sql = _QUERY_USERS_BY_TENANT_IDS_SQL.format(
+                    placeholders=placeholders,
+                )
+                rows = await self.db.fetch_all(
+                    sql,
+                    (source_id, *req.target_values),
+                )
+                # 创建映射，查询不到的用户保留空信息
+                user_map = {row["tenant_id"]: row for row in rows}
                 return [
-                    {"tenant_id": uid, "tenant_name": "", "bbk_id": ""}
+                    user_map.get(
+                        uid,
+                        {"tenant_id": uid, "tenant_name": "", "bbk_id": ""},
+                    )
                     for uid in req.target_values
                 ]
         except Exception as e:
@@ -1903,6 +1946,29 @@ class MarketplaceService:
                 f"MCP item {item_id} not found in source {source_id}",
             )
 
+        # 批量查询用户信息（tenant_name, bbk_id）
+        user_info_map: dict[str, dict] = {}
+        if self.db.is_connected and req.target_tenant_ids:
+            try:
+                placeholders = ",".join(["%s"] * len(req.target_tenant_ids))
+                sql = _QUERY_USERS_BY_TENANT_IDS_SQL.format(
+                    placeholders=placeholders,
+                )
+                rows = await self.db.fetch_all(
+                    sql,
+                    (source_id, *req.target_tenant_ids),
+                )
+                for row in rows:
+                    user_info_map[row["tenant_id"]] = {
+                        "tenant_name": row.get("tenant_name", ""),
+                        "bbk_id": row.get("bbk_id", ""),
+                    }
+            except Exception as e:
+                logger.warning(
+                    "Failed to query user info for MCP distribute: %s",
+                    e,
+                )
+
         results: list[MCPDistributionTenantResult] = []
 
         for tenant_id in req.target_tenant_ids:
@@ -1929,6 +1995,11 @@ class MarketplaceService:
                     distributed_by=operator_id,
                 )
 
+                # 获取用户信息（如果查询不到则为空）
+                user_info = user_info_map.get(tenant_id, {})
+                tenant_name = user_info.get("tenant_name", "")
+                bbk_id = user_info.get("bbk_id", "")
+
                 # 记录分发日志
                 if self.db.is_connected:
                     try:
@@ -1943,8 +2014,8 @@ class MarketplaceService:
                                 item_id,
                                 item.name,
                                 tenant_id,
-                                "",
-                                "",
+                                tenant_name,
+                                bbk_id,
                             ),
                         )
                     except Exception as e:
@@ -2137,3 +2208,815 @@ class MarketplaceService:
                 e,
             )
         return []
+
+    # ============ 撤回服务方法 ============
+
+    async def get_distributions(
+        self,
+        source_id: str,
+        item_id: str,
+        item_type: str,
+    ) -> list[DistributionRecord]:
+        """查询分发记录.
+
+        Args:
+            source_id: 来源 ID.
+            item_id: 条目 ID.
+            item_type: 条目类型（skill 或 mcp）.
+
+        Returns:
+            分发记录列表.
+        """
+        if not self.db.is_connected:
+            return []
+        try:
+            rows = await self.db.fetch_all(
+                _QUERY_DISTRIBUTIONS_SQL,
+                (source_id, item_id, item_type),
+            )
+            return [
+                DistributionRecord(
+                    target_user_id=r["target_user_id"],
+                    target_user_name=r.get("target_user_name") or "",
+                    target_bbk_id=r.get("target_bbk_id") or "",
+                    distributed_at=(
+                        r.get("created_at").isoformat()
+                        if r.get("created_at")
+                        else None
+                    ),
+                )
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning(
+                "Failed to get distributions for %s: %s",
+                item_id,
+                e,
+            )
+        return []
+
+    async def recall_skill(
+        self,
+        source_id: str,
+        item_id: str | None,
+        operator_id: str,
+        operator_name: str,
+        req: RecallRequest,
+    ) -> RecallResponse:
+        """撤回已分发的技能.
+
+        Args:
+            source_id: 来源 ID.
+            item_id: 条目 ID（可选，按名称撤回时不需要）.
+            operator_id: 操作者 ID.
+            operator_name: 操作者名称.
+            req: 撤回请求体.
+
+        Returns:
+            撤回结果.
+        """
+        # 按名称撤回模式
+        if req.skill_name:
+            if not req.target_user_ids:
+                return RecallResponse(
+                    recalled_count=0,
+                    failed_count=0,
+                    results=[],
+                    item_id="",
+                )
+
+            # 批量查询用户信息（tenant_name, bbk_id）
+            user_info_map: dict[str, dict] = {}
+            if self.db.is_connected and req.target_user_ids:
+                try:
+                    placeholders = ",".join(["%s"] * len(req.target_user_ids))
+                    sql = _QUERY_USERS_BY_TENANT_IDS_SQL.format(
+                        placeholders=placeholders,
+                    )
+                    rows = await self.db.fetch_all(
+                        sql,
+                        (source_id, *req.target_user_ids),
+                    )
+                    for row in rows:
+                        user_info_map[row["tenant_id"]] = {
+                            "tenant_name": row.get("tenant_name", ""),
+                            "bbk_id": row.get("bbk_id", ""),
+                        }
+                except Exception as e:
+                    logger.warning(
+                        "Failed to query user info for skill recall: %s",
+                        e,
+                    )
+
+            safe_skill_name = normalize_skill_name(req.skill_name)
+            results: list[RecallResultItem] = []
+            recalled_count = 0
+
+            for user_id in req.target_user_ids:
+                try:
+                    # 获取技能目录
+                    skills_dir = get_user_skills_dir(
+                        self.swe_root,
+                        user_id,
+                        "default",
+                        source_id,
+                    )
+                    skill_dir = skills_dir / safe_skill_name
+
+                    if not skill_dir.exists():
+                        results.append(
+                            RecallResultItem(
+                                user_id=user_id,
+                                success=False,
+                                reason="skill_not_found",
+                            ),
+                        )
+                        continue
+
+                    # 禁用技能
+                    await self.disable_skill(
+                        user_id,
+                        safe_skill_name,
+                        "default",
+                        source_id,
+                    )
+
+                    # 删除技能目录
+                    shutil.rmtree(skill_dir)
+
+                    # 从 manifest 移除
+                    def _remove(
+                        payload: dict,
+                        _name: str = safe_skill_name,
+                    ) -> bool:
+                        payload.get("skills", {}).pop(_name, None)
+                        return True
+
+                    mutate_user_skill_manifest(
+                        self.swe_root,
+                        user_id,
+                        "default",
+                        _remove,
+                        source_id,
+                    )
+
+                    # 触发 agent reload
+                    await self._trigger_agent_reload(
+                        user_id,
+                        "default",
+                        source_id,
+                    )
+
+                    # 记录撤回日志
+                    if self.db.is_connected:
+                        user_info = user_info_map.get(user_id, {})
+                        tenant_name = user_info.get("tenant_name", "")
+                        bbk_id = user_info.get("bbk_id", "")
+                        try:
+                            await self.db.execute(
+                                _LOG_MARKET_OP_SQL,
+                                (
+                                    source_id,
+                                    operator_id,
+                                    operator_name,
+                                    "recall",
+                                    "skill",
+                                    "",
+                                    req.skill_name,
+                                    user_id,
+                                    tenant_name,
+                                    bbk_id,
+                                ),
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to log recall operation: %s",
+                                e,
+                            )
+
+                    results.append(
+                        RecallResultItem(user_id=user_id, success=True),
+                    )
+                    recalled_count += 1
+
+                except Exception as e:
+                    logger.warning(
+                        "Failed to recall skill from user %s: %s",
+                        user_id,
+                        e,
+                    )
+                    results.append(
+                        RecallResultItem(
+                            user_id=user_id,
+                            success=False,
+                            reason=str(e),
+                        ),
+                    )
+
+            return RecallResponse(
+                recalled_count=recalled_count,
+                failed_count=len(results) - recalled_count,
+                results=results,
+                item_id="",
+            )
+
+        # 按 item_id 撤回模式（原有逻辑）
+        elif not item_id:
+            raise ValueError("item_id or skill_name is required")
+
+        # 获取市场条目信息
+        items = load_index(self.marketplace_root, source_id)
+        item = next(
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "skill"
+            ),
+            None,
+        )
+        if item is None:
+            raise ValueError(f"Skill item {item_id} not found")
+
+        # 查询分发记录（用于获取用户名称和机构信息）
+        distributions = await self.get_distributions(
+            source_id,
+            item_id,
+            "skill",
+        )
+        dist_map = {d.target_user_id: d for d in distributions}
+
+        # 确定目标用户列表
+        target_user_ids = req.target_user_ids
+        if target_user_ids:
+            # 手动指定用户列表，直接使用
+            users_to_recall = target_user_ids
+        else:
+            # 未指定用户，使用分发记录中的全部用户
+            users_to_recall = list(dist_map.keys())
+
+        if not users_to_recall:
+            return RecallResponse(
+                recalled_count=0,
+                failed_count=0,
+                results=[],
+                item_id=item_id,
+            )
+
+        # 批量查询用户信息补充（如果分发记录为空或缺少信息）
+        user_info_map = {}
+        if self.db.is_connected and users_to_recall:
+            try:
+                placeholders = ",".join(["%s"] * len(users_to_recall))
+                sql = _QUERY_USERS_BY_TENANT_IDS_SQL.format(
+                    placeholders=placeholders,
+                )
+                rows = await self.db.fetch_all(
+                    sql,
+                    (source_id, *users_to_recall),
+                )
+                for row in rows:
+                    user_info_map[row["tenant_id"]] = {
+                        "tenant_name": row.get("tenant_name", ""),
+                        "bbk_id": row.get("bbk_id", ""),
+                    }
+            except Exception as e:
+                logger.warning(
+                    "Failed to query user info for skill recall: %s",
+                    e,
+                )
+
+        # 技能名称规范化为目录名
+        safe_skill_name = normalize_skill_name(item.name)
+
+        results = []
+        recalled_count = 0
+
+        for user_id in users_to_recall:
+            # 优先使用分发记录信息，如果为空则从数据库查询补充
+            dist = dist_map.get(user_id)
+            target_user_name = (
+                dist.target_user_name if dist and dist.target_user_name else ""
+            )
+            target_bbk_id = (
+                dist.target_bbk_id if dist and dist.target_bbk_id else ""
+            )
+
+            # 如果分发记录为空，从数据库查询补充
+            if not target_user_name and not target_bbk_id:
+                user_info = user_info_map.get(user_id, {})
+                target_user_name = user_info.get("tenant_name", "")
+                target_bbk_id = user_info.get("bbk_id", "")
+
+            try:
+                # 获取技能目录
+                skills_dir = get_user_skills_dir(
+                    self.swe_root,
+                    user_id,
+                    "default",
+                    source_id,
+                )
+                skill_dir = skills_dir / safe_skill_name
+                print(f"Skill dir: {skill_dir}")
+
+                # 检查技能是否存在且为市场分发
+                if not skill_dir.exists():
+                    results.append(
+                        RecallResultItem(
+                            user_id=user_id,
+                            success=False,
+                            reason="skill_not_found",
+                        ),
+                    )
+                    continue
+
+                # 验证技能来源（强制模式跳过验证）
+                if not req.force:
+                    manifest = read_user_skill_manifest(
+                        self.swe_root,
+                        user_id,
+                        "default",
+                        source_id,
+                    )
+                    skill_entry = manifest.get("skills", {}).get(
+                        safe_skill_name,
+                        {},
+                    )
+                    source = skill_entry.get("source", "") or skill_entry.get(
+                        "metadata",
+                        {},
+                    ).get("source", "")
+
+                    if not source.startswith(f"marketplace:{item_id}"):
+                        results.append(
+                            RecallResultItem(
+                                user_id=user_id,
+                                success=False,
+                                reason="not_from_this_marketplace",
+                            ),
+                        )
+                        continue
+
+                # 禁用技能
+                await self.disable_skill(
+                    user_id,
+                    safe_skill_name,
+                    "default",
+                    source_id,
+                )
+
+                # 删除技能目录
+                shutil.rmtree(skill_dir)
+
+                # 从 manifest 移除
+                def _remove(
+                    payload: dict,
+                    _name: str = safe_skill_name,
+                ) -> bool:
+                    payload.get("skills", {}).pop(_name, None)
+                    return True
+
+                mutate_user_skill_manifest(
+                    self.swe_root,
+                    user_id,
+                    "default",
+                    _remove,
+                    source_id,
+                )
+
+                # 触发 agent reload
+                await self._trigger_agent_reload(user_id, "default")
+
+                # 记录撤回日志
+                if self.db.is_connected:
+                    try:
+                        await self.db.execute(
+                            _LOG_MARKET_OP_SQL,
+                            (
+                                source_id,
+                                operator_id,
+                                operator_name,
+                                "recall",
+                                "skill",
+                                item_id,
+                                item.name,
+                                user_id,
+                                target_user_name,
+                                target_bbk_id,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to log recall operation: %s", e)
+
+                results.append(
+                    RecallResultItem(user_id=user_id, success=True),
+                )
+                recalled_count += 1
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to recall skill from user %s: %s",
+                    user_id,
+                    e,
+                )
+                results.append(
+                    RecallResultItem(
+                        user_id=user_id,
+                        success=False,
+                        reason=str(e),
+                    ),
+                )
+
+        return RecallResponse(
+            recalled_count=recalled_count,
+            failed_count=len(results) - recalled_count,
+            results=results,
+            item_id=item_id,
+        )
+
+    async def recall_mcp(
+        self,
+        source_id: str,
+        item_id: str | None,
+        operator_id: str,
+        operator_name: str,
+        req: RecallRequest,
+    ) -> RecallResponse:
+        """撤回已分发的 MCP.
+
+        Args:
+            source_id: 来源 ID.
+            item_id: 条目 ID（可选，按名称撤回时不需要）.
+            operator_id: 操作者 ID.
+            operator_name: 操作者名称.
+            req: 撤回请求体.
+
+        Returns:
+            撤回结果.
+        """
+        # 按名称撤回模式
+        if req.mcp_name:
+            if not req.target_user_ids:
+                return RecallResponse(
+                    recalled_count=0,
+                    failed_count=0,
+                    results=[],
+                    item_id="",
+                )
+
+            # 批量查询用户信息（tenant_name, bbk_id）
+            user_info_map: dict[str, dict] = {}
+            if self.db.is_connected and req.target_user_ids:
+                try:
+                    placeholders = ",".join(["%s"] * len(req.target_user_ids))
+                    sql = _QUERY_USERS_BY_TENANT_IDS_SQL.format(
+                        placeholders=placeholders,
+                    )
+                    rows = await self.db.fetch_all(
+                        sql,
+                        (source_id, *req.target_user_ids),
+                    )
+                    for row in rows:
+                        user_info_map[row["tenant_id"]] = {
+                            "tenant_name": row.get("tenant_name", ""),
+                            "bbk_id": row.get("bbk_id", ""),
+                        }
+                except Exception as e:
+                    logger.warning(
+                        "Failed to query user info for MCP recall: %s",
+                        e,
+                    )
+
+            client_key = req.mcp_name
+            results: list[RecallResultItem] = []
+            recalled_count = 0
+
+            for user_id in req.target_user_ids:
+                try:
+                    # 解析用户配置路径
+                    effective_user_id = resolve_effective_user_id(
+                        user_id,
+                        source_id,
+                    )
+                    user_root = migrate_legacy_scope_dir_if_needed(
+                        self.swe_root,
+                        effective_user_id,
+                    )
+                    user_config_path = (
+                        user_root / "workspaces" / "default" / "agent.json"
+                    )
+
+                    if not user_config_path.exists():
+                        results.append(
+                            RecallResultItem(
+                                user_id=user_id,
+                                success=False,
+                                reason="agent_config_not_found",
+                            ),
+                        )
+                        continue
+
+                    # 读取用户配置
+                    try:
+                        user_config = json.loads(
+                            user_config_path.read_text(encoding="utf-8"),
+                        )
+                    except json.JSONDecodeError:
+                        results.append(
+                            RecallResultItem(
+                                user_id=user_id,
+                                success=False,
+                                reason="invalid_agent_config",
+                            ),
+                        )
+                        continue
+
+                    # 检查 MCP 配置
+                    mcp_clients = user_config.get("mcp", {}).get("clients", {})
+
+                    if client_key not in mcp_clients:
+                        results.append(
+                            RecallResultItem(
+                                user_id=user_id,
+                                success=False,
+                                reason="mcp_not_found",
+                            ),
+                        )
+                        continue
+
+                    # 移除 MCP 配置
+                    mcp_clients.pop(client_key, None)
+                    user_config["mcp"]["clients"] = mcp_clients
+                    user_config["updated_at"] = datetime.now(
+                        timezone.utc,
+                    ).isoformat()
+
+                    # 写回配置
+                    _atomic_write_json(user_config_path, user_config)
+
+                    # 触发 agent reload
+                    await self._trigger_agent_reload(
+                        user_id,
+                        "default",
+                        source_id,
+                    )
+
+                    # 记录撤回日志
+                    if self.db.is_connected:
+                        user_info = user_info_map.get(user_id, {})
+                        tenant_name = user_info.get("tenant_name", "")
+                        bbk_id = user_info.get("bbk_id", "")
+                        try:
+                            await self.db.execute(
+                                _LOG_MARKET_OP_SQL,
+                                (
+                                    source_id,
+                                    operator_id,
+                                    operator_name,
+                                    "recall",
+                                    "mcp",
+                                    "",
+                                    req.mcp_name,
+                                    user_id,
+                                    tenant_name,
+                                    bbk_id,
+                                ),
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to log recall operation: %s",
+                                e,
+                            )
+
+                    results.append(
+                        RecallResultItem(user_id=user_id, success=True),
+                    )
+                    recalled_count += 1
+
+                except Exception as e:
+                    logger.warning(
+                        "Failed to recall MCP from user %s: %s",
+                        user_id,
+                        e,
+                    )
+                    results.append(
+                        RecallResultItem(
+                            user_id=user_id,
+                            success=False,
+                            reason=str(e),
+                        ),
+                    )
+
+            return RecallResponse(
+                recalled_count=recalled_count,
+                failed_count=len(results) - recalled_count,
+                results=results,
+                item_id="",
+            )
+
+        # 按 item_id 撤回模式（原有逻辑）
+        elif not item_id:
+            raise ValueError("item_id or mcp_name is required")
+
+        # 获取市场条目信息
+        items = load_index(self.marketplace_root, source_id)
+        item = next(
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "mcp"
+            ),
+            None,
+        )
+        if item is None:
+            raise ValueError(f"MCP item {item_id} not found")
+
+        # 查询分发记录（用于获取用户名称和机构信息）
+        distributions = await self.get_distributions(source_id, item_id, "mcp")
+        dist_map = {d.target_user_id: d for d in distributions}
+
+        # 确定目标用户列表
+        target_user_ids = req.target_user_ids
+        if target_user_ids:
+            # 手动指定用户列表，直接使用
+            users_to_recall = target_user_ids
+        else:
+            # 未指定用户，使用分发记录中的全部用户
+            users_to_recall = list(dist_map.keys())
+
+        if not users_to_recall:
+            return RecallResponse(
+                recalled_count=0,
+                failed_count=0,
+                results=[],
+                item_id=item_id,
+            )
+
+        # 批量查询用户信息补充（如果分发记录为空或缺少信息）
+        user_info_map = {}
+        if self.db.is_connected and users_to_recall:
+            try:
+                placeholders = ",".join(["%s"] * len(users_to_recall))
+                sql = _QUERY_USERS_BY_TENANT_IDS_SQL.format(
+                    placeholders=placeholders,
+                )
+                rows = await self.db.fetch_all(
+                    sql,
+                    (source_id, *users_to_recall),
+                )
+                for row in rows:
+                    user_info_map[row["tenant_id"]] = {
+                        "tenant_name": row.get("tenant_name", ""),
+                        "bbk_id": row.get("bbk_id", ""),
+                    }
+            except Exception as e:
+                logger.warning(
+                    "Failed to query user info for MCP recall: %s",
+                    e,
+                )
+
+        results = []
+        recalled_count = 0
+
+        for user_id in users_to_recall:
+            # 优先使用分发记录信息，如果为空则从数据库查询补充
+            dist = dist_map.get(user_id)
+            target_user_name = (
+                dist.target_user_name if dist and dist.target_user_name else ""
+            )
+            target_bbk_id = (
+                dist.target_bbk_id if dist and dist.target_bbk_id else ""
+            )
+
+            # 如果分发记录为空，从数据库查询补充
+            if not target_user_name and not target_bbk_id:
+                user_info = user_info_map.get(user_id, {})
+                target_user_name = user_info.get("tenant_name", "")
+                target_bbk_id = user_info.get("bbk_id", "")
+
+            try:
+                # 解析用户配置路径
+                effective_user_id = resolve_effective_user_id(
+                    user_id,
+                    source_id,
+                )
+                user_root = migrate_legacy_scope_dir_if_needed(
+                    self.swe_root,
+                    effective_user_id,
+                )
+                user_config_path = (
+                    user_root / "workspaces" / "default" / "agent.json"
+                )
+
+                if not user_config_path.exists():
+                    results.append(
+                        RecallResultItem(
+                            user_id=user_id,
+                            success=False,
+                            reason="agent_config_not_found",
+                        ),
+                    )
+                    continue
+
+                # 读取用户配置
+                try:
+                    user_config = json.loads(
+                        user_config_path.read_text(encoding="utf-8"),
+                    )
+                except json.JSONDecodeError:
+                    results.append(
+                        RecallResultItem(
+                            user_id=user_id,
+                            success=False,
+                            reason="invalid_agent_config",
+                        ),
+                    )
+                    continue
+
+                # 检查 MCP 配置
+                mcp_clients = user_config.get("mcp", {}).get("clients", {})
+                client_key = item.client_key
+
+                if client_key not in mcp_clients:
+                    results.append(
+                        RecallResultItem(
+                            user_id=user_id,
+                            success=False,
+                            reason="mcp_not_found",
+                        ),
+                    )
+                    continue
+
+                # 验证 MCP 来源（强制模式跳过验证）
+                if not req.force:
+                    mcp_config = mcp_clients.get(client_key, {})
+                    source = mcp_config.get("source", "")
+
+                    if not source.startswith(f"marketplace:{item_id}"):
+                        results.append(
+                            RecallResultItem(
+                                user_id=user_id,
+                                success=False,
+                                reason="not_from_this_marketplace",
+                            ),
+                        )
+                        continue
+
+                # 移除 MCP 配置
+                mcp_clients.pop(client_key, None)
+                user_config["mcp"]["clients"] = mcp_clients
+                user_config["updated_at"] = datetime.now(
+                    timezone.utc,
+                ).isoformat()
+
+                # 写回配置
+                _atomic_write_json(user_config_path, user_config)
+
+                # 触发 agent reload
+                await self._trigger_agent_reload(user_id, "default")
+
+                # 记录撤回日志
+                if self.db.is_connected:
+                    try:
+                        await self.db.execute(
+                            _LOG_MARKET_OP_SQL,
+                            (
+                                source_id,
+                                operator_id,
+                                operator_name,
+                                "recall",
+                                "mcp",
+                                item_id,
+                                item.name,
+                                user_id,
+                                target_user_name,
+                                target_bbk_id,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to log recall operation: %s", e)
+
+                results.append(
+                    RecallResultItem(user_id=user_id, success=True),
+                )
+                recalled_count += 1
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to recall MCP from user %s: %s",
+                    user_id,
+                    e,
+                )
+                results.append(
+                    RecallResultItem(
+                        user_id=user_id,
+                        success=False,
+                        reason=str(e),
+                    ),
+                )
+
+        return RecallResponse(
+            recalled_count=recalled_count,
+            failed_count=len(results) - recalled_count,
+            results=results,
+            item_id=item_id,
+        )

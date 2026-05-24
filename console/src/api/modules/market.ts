@@ -5,6 +5,7 @@ import type {
   FileContentResponse,
   FileTreeNode,
 } from "./mySkills";
+import type { DistributionRecord, RecallResultItem, RecallResponse } from "../types";
 
 export interface MarketSkill {
   item_id: string;
@@ -306,5 +307,41 @@ export const marketApi = {
         suggested_name: string;
       }>;
     }>;
+  },
+
+  // 查询技能分发记录
+  getSkillDistributions: async (
+    sourceId: string,
+    itemId: string
+  ): Promise<DistributionRecord[]> => {
+    const opts = mergeHeaders({
+      "X-Source-Id": sourceId,
+      "X-Manager": "true",
+    });
+    return request<DistributionRecord[]>(
+      `/market/skills/${itemId}/distributions`,
+      opts
+    );
+  },
+
+  // 撤回已分发的技能
+  recallSkill: async (
+    sourceId: string,
+    itemId: string,
+    targetUserIds?: string[]
+  ): Promise<RecallResponse> => {
+    const opts: RequestInit = {
+      method: "POST",
+      ...(mergeHeaders({
+        "Content-Type": "application/json",
+        "X-Source-Id": sourceId,
+        "X-Manager": "true",
+      })),
+      body: JSON.stringify({ target_user_ids: targetUserIds }),
+    };
+    return request<RecallResponse>(
+      `/market/skills/${itemId}/recall`,
+      opts
+    );
   },
 };

@@ -85,8 +85,8 @@ export default function MySkillsPage() {
   } | null>(null);
 
   // Conflict rename modal for upload
-  // 冲突处理：显示覆盖选项（我的技能支持覆盖现有技能）
-  const { showConflictRenameModal, conflictRenameModal } = useConflictRenameModal({ showOverwriteOption: true });
+  // 冲突处理：强制使用覆盖模式（不允许重命名为新名称）
+  const { showConflictRenameModal, conflictRenameModal } = useConflictRenameModal({ forceOverwrite: true });
 
   // Debounce search
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

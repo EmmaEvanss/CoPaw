@@ -303,7 +303,8 @@ export function MCPDetailDrawer({
                     分发
                   </Button>
                 )}
-                {isManager && onRecall && (
+                {/* 撤回功能临时隐藏，后续启用时移除 false 条件 */}
+                {isManager && onRecall && false && (
                   <Button
                     size="small"
                     danger

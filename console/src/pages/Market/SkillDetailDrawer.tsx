@@ -514,7 +514,8 @@ export function SkillDetailDrawer({
                     分发技能
                   </Button>
                 )}
-                {onRecall && (
+                {/* 撤回功能临时隐藏，后续启用时移除 false 条件 */}
+                {onRecall && false && (
                   <Button
                     danger
                     aria-label="撤回技能"

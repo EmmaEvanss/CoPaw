@@ -1471,6 +1471,9 @@ export default function BusinessOverviewPage() {
               skills.slice(0, 5).map((skill, index) => {
                 const percent = (safeNumber(skill.count) / skillsTotal) * 100;
                 const barColor = SKILL_BAR_COLORS[index] || SKILL_BAR_COLORS[0];
+                // 根据描述字数动态计算tooltip宽度
+                const descLen = skill.skill_description?.length || 0;
+                const tooltipWidth = descLen <= 30 ? 240 : descLen <= 60 ? 320 : descLen <= 100 ? 400 : 520;
                 return (
                   <button
                     key={skill.skill_name}
@@ -1483,7 +1486,7 @@ export default function BusinessOverviewPage() {
                   >
                     <Tooltip
                       placement="top"
-                      overlayInnerStyle={{ maxWidth: 280 }}
+                      overlayInnerStyle={{ width: tooltipWidth, maxWidth: tooltipWidth }}
                       title={
                         skill.skill_description ? (
                           <div className={styles.skillTooltip}>

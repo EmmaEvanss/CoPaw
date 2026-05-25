@@ -125,16 +125,14 @@ function buildIframeAuthHeaders(
 /**
  * 调用用户初始化接口并保存到 localStorage
  */
-function initializeUser(
-  userId: string,
-  store: ReturnType<typeof useIframeStore.getState>,
-): void {
+function initializeUser(userId: string): void {
   if (pendingUserInitUserIds.has(userId)) {
     return;
   }
 
   pendingUserInitUserIds.add(userId);
 
+  const store = useIframeStore.getState();
   const params = {
     filename: "PROFILE.md",
     text: `\n### 用户身份信息\n分行号：${store.bbk}\n网点机构编号：${store.orgCode}\n岗位编号：${store.positionId}\n客户经理ID：${userId}`,
@@ -367,7 +365,7 @@ export async function handleUrlOriginParam(): Promise<void> {
   }
 
   // 异步调用客户信息接口和用户初始化
-  await initFromUrlParams(userId, store);
+  await initFromUrlParams(userId);
 }
 
 
@@ -375,23 +373,21 @@ export async function handleUrlOriginParam(): Promise<void> {
  * 从 URL 参数初始化时的异步处理
  * 调用客户信息接口和用户初始化
  */
-async function initFromUrlParams(
-  userId: string,
-  store: ReturnType<typeof useIframeStore.getState>,
-): Promise<void> {
+async function initFromUrlParams(userId: string): Promise<void> {
   // 首次进入时客户信息接口可能较慢或被嵌入环境阻塞，用户初始化不能依赖它完成。
-  initializeUser(userId, store);
+  initializeUser(userId);
 
   // 调用客户信息接口（使用 cookie 中的参数）
-  await fetchAndApplyCustomerInfoFromCookie(userId, store);
+  await fetchAndApplyCustomerInfoFromCookie(userId);
 
   // 客户信息接口可能修正 userId，修正后的用户仍需要初始化。
-  const currentUserId = store.userId;
-  if (currentUserId) {
-    initializeUser(currentUserId, store);
+  const latestStore = useIframeStore.getState();
+  const currentUserId = latestStore.userId;
+  if (currentUserId && currentUserId !== userId) {
+    initializeUser(currentUserId);
   }
 
-  store.markInitialized();
+  latestStore.markInitialized();
 
   const headers = buildAuthHeaders();
   const cookieValue = headers["x-header-cookie"] || document.cookie;
@@ -419,10 +415,7 @@ async function initFromUrlParams(
 /**
  * 从 cookie 参数调用客户信息接口
  */
-async function fetchAndApplyCustomerInfoFromCookie(
-  userId: string,
-  store: ReturnType<typeof useIframeStore.getState>,
-): Promise<void> {
+async function fetchAndApplyCustomerInfoFromCookie(userId: string): Promise<void> {
   try {
     const sysId = getTargetCookie("sysid") ?? "";
     const vbbk = getTargetCookie("vbbk") ?? "";
@@ -443,6 +436,7 @@ async function fetchAndApplyCustomerInfoFromCookie(
     };
 
     const response = await fetchCustomerInfo(targetUserData);
+    const store = useIframeStore.getState();
 
     if (response?.returnCode === "SUC0000") {
       const result = response.body.output.result;
@@ -458,6 +452,15 @@ async function fetchAndApplyCustomerInfoFromCookie(
           positionId: result.positionId ?? positionId,
           userChange: result.userChange ?? false,
         });
+      } else {
+        // 接口可能通过 Set-Cookie 刷新 token，未切换用户时只同步 token，避免重复覆盖身份字段。
+        const token = getTargetCookie("token");
+        if (token) {
+          store.setContext({
+            token,
+            userChange: false,
+          });
+        }
       }
     }
   } catch (error) {

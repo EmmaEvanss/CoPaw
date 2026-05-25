@@ -21,7 +21,6 @@ from ...constant import FILE_LOG_ENABLED, WORKING_DIR
 from ...config import load_config
 
 if TYPE_CHECKING:
-    from ...config.config import AgentProfileConfig
     from ..multi_agent_manager import MultiAgentManager
 
 logger = logging.getLogger(__name__)

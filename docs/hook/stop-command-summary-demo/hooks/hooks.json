@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "events": {
+    "Stop": [
+      {
+        "id": "stop-finalizer",
+        "hooks": [
+          {
+            "id": "finalize-stop-summary",
+            "type": "command",
+            "argv": [
+              "python",
+              "scripts/finalize_stop_summary.py"
+            ],
+            "timeout": 5,
+            "failPolicy": "allow"
+          }
+        ]
+      }
+    ]
+  }
+}

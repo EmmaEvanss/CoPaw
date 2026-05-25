@@ -9,6 +9,9 @@ export interface Row {
   key: string;
   value: string;
   isNew?: boolean;
+  originalKey?: string;
+  originalValue?: string;
+  valueEdited?: boolean;
 }
 
 interface EnvRowProps {

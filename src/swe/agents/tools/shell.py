@@ -18,6 +18,7 @@ from typing import Optional
 from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
 
+from ...envs.runtime import build_runtime_env
 from ...security.tenant_path_boundary import (
     is_path_within_tenant_with_base,
     get_current_tenant_root,
@@ -711,8 +712,8 @@ def _tool_text_response(text: str) -> ToolResponse:
 
 
 def _prepare_subprocess_env() -> dict[str, str]:
-    """Prepare subprocess environment with the active Python on PATH."""
-    env = os.environ.copy()
+    """Prepare subprocess environment with tenant env and active Python PATH."""
+    env = build_runtime_env()
     python_bin_dir = str(Path(sys.executable).parent)
     existing_path = env.get("PATH", "")
     env["PATH"] = (

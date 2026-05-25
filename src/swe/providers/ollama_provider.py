@@ -33,7 +33,7 @@ class OllamaProvider(OpenAIProvider):
             + "/v1"
         )
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, _context: Any) -> None:
         if not self.base_url:  # type: ignore
             self.base_url = (
                 os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"

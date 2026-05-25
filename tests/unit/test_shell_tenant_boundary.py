@@ -12,6 +12,7 @@ Tests cover:
 from __future__ import annotations
 
 import shlex
+import os
 import sys
 from pathlib import Path
 from typing import Generator
@@ -22,7 +23,9 @@ import pytest
 from swe.config.context import encode_scope_id, tenant_context
 from swe.config.config import Config
 from swe.config.utils import save_config
+from swe.envs.store import save_envs
 from swe.agents.tools.shell import (
+    execute_shell_command,
     _extract_path_tokens,
     _validate_shell_paths,
     _resolve_cwd,
@@ -106,6 +109,16 @@ def _write_process_limit_config(
         ),
         tenant_dir / "config.json",
     )
+
+
+def _write_scope_env(
+    base_dir: Path,
+    tenant_id: str,
+    source_id: str,
+    envs: dict[str, str],
+) -> None:
+    scope_id = encode_scope_id(tenant_id, source_id)
+    save_envs(envs, base_dir / scope_id / ".secret" / "envs.json")
 
 
 # =============================================================================
@@ -1028,3 +1041,41 @@ class TestExecuteShellCommand:
                 result = await execute_shell_command("echo hello")
 
         assert "hello" in result.content[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_shell_command_receives_source_scoped_tenant_env(
+        self,
+        mock_working_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """shell 子进程应接收当前 source scope 的持久化 env。"""
+        monkeypatch.delenv("API_TOKEN", raising=False)
+        _write_scope_env(
+            mock_working_dir,
+            "test_tenant",
+            "source-a",
+            {"API_TOKEN": "tenant-secret"},
+        )
+
+        with tenant_context(tenant_id="test_tenant", source_id="source-a"):
+            result = await execute_shell_command(
+                "python -c \"import os; print(os.environ.get('API_TOKEN', ''))\"",
+            )
+
+        assert "tenant-secret" in result.content[0]["text"]
+        assert "API_TOKEN" not in os.environ
+
+    @pytest.mark.asyncio
+    async def test_shell_rejects_boundary_escape_before_runtime_env_build(
+        self,
+        mock_working_dir: Path,
+    ):
+        """路径边界拒绝时，不应提前加载或注入 tenant env。"""
+        with patch(
+            "swe.agents.tools.shell.build_runtime_env",
+            side_effect=AssertionError("runtime env should not be built"),
+        ):
+            with tenant_context(tenant_id="test_tenant", source_id="source-a"):
+                result = await execute_shell_command("cat /etc/passwd")
+
+        assert "outside the allowed workspace" in result.content[0]["text"]

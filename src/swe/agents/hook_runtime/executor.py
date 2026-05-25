@@ -24,6 +24,10 @@ from .models import (
 )
 from .output import normalize_hook_output, normalize_prompt_judgment_output
 from .redaction import redact_hook_payload
+from swe.envs.runtime import (
+    build_runtime_env,
+    get_tenant_runtime_env_value,
+)
 from swe.agents.model_factory import create_model_and_formatter
 from swe.config.context import tenant_context
 
@@ -66,8 +70,6 @@ async def _execute_command_handler(
     workspace_dir: Path,
 ) -> HookHandlerResult:
     cwd = _resolve_hook_cwd(handler.cwd, workspace_dir)
-    env = os.environ.copy()
-    env.update(handler.env)
     payload = json.dumps(
         context.to_handler_payload(),
         ensure_ascii=False,
@@ -75,6 +77,7 @@ async def _execute_command_handler(
 
     if handler.argv:
         _validate_argv_boundaries(handler.argv, workspace_dir)
+        env = _build_command_handler_env(handler, context)
         proc = await asyncio.create_subprocess_exec(
             *handler.argv,
             stdin=asyncio.subprocess.PIPE,
@@ -85,6 +88,7 @@ async def _execute_command_handler(
         )
     else:
         _validate_shell_command_boundaries(handler.command, cwd)
+        env = _build_command_handler_env(handler, context)
         shell_executable = _resolve_shell_executable(handler.shell)
         if shell_executable:
             proc = await asyncio.create_subprocess_shell(
@@ -442,6 +446,18 @@ def _resolve_shell_executable(shell: str | None) -> str | None:
     return shutil.which(command) or command
 
 
+def _build_command_handler_env(
+    handler: CommandHookHandlerConfig,
+    context: HookContext,
+) -> dict[str, str]:
+    """按当前 hook 上下文构造 command handler 子进程 env。"""
+    return build_runtime_env(
+        call_env=handler.env,
+        tenant_id=context.effective_tenant_id,
+        source_id=context.source_id,
+    )
+
+
 def _build_http_headers(
     handler: HttpHookHandlerConfig,
     tenant_id: str | None,
@@ -454,12 +470,20 @@ def _build_http_headers(
             get_tenant_env = None
         if get_tenant_env is not None:
             for header_name, secret_name in handler.header_secret_refs.items():
-                value = get_tenant_env(secret_name, tenant_id=tenant_id)
+                value = get_tenant_runtime_env_value(
+                    secret_name,
+                    tenant_id=tenant_id,
+                )
+                if value is None:
+                    value = get_tenant_env(secret_name, tenant_id=tenant_id)
                 if value is not None:
                     headers[header_name] = value
     for env_name in handler.allowed_env_vars:
-        if env_name in os.environ:
-            headers[env_name] = os.environ[env_name]
+        value = get_tenant_runtime_env_value(env_name, tenant_id=tenant_id)
+        if value is None and env_name in os.environ:
+            value = os.environ[env_name]
+        if value is not None:
+            headers[env_name] = value
     return headers
 
 

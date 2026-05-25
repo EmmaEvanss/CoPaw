@@ -5,26 +5,81 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
-class SourceSystemConfigSwitch:
-    """描述一个受代码注册管理的 source 系统开关。"""
+class SourceSystemConfigSetting:
+    """描述一个受代码注册管理的 source 系统配置项。"""
 
     key: str
     path: tuple[str, ...]
     default_value: Any
+    value_type: Literal["bool", "int"]
+    ge: int | None = None
+    le: int | None = None
+
+
+SourceSystemConfigSwitch = SourceSystemConfigSetting
 
 
 CHAT_TASK_PROGRESS_ENABLED_SWITCH = SourceSystemConfigSwitch(
     key="feature_switches.chat_task_progress_enabled",
     path=("feature_switches", "chat_task_progress_enabled"),
     default_value=True,
+    value_type="bool",
+)
+
+TOOL_RESULT_COMPACT_ENABLED_SETTING = SourceSystemConfigSetting(
+    key="tool_result_compact.enabled",
+    path=("tool_result_compact", "enabled"),
+    default_value=True,
+    value_type="bool",
+)
+TOOL_RESULT_COMPACT_RECENT_N_SETTING = SourceSystemConfigSetting(
+    key="tool_result_compact.recent_n",
+    path=("tool_result_compact", "recent_n"),
+    default_value=2,
+    value_type="int",
+    ge=1,
+    le=10,
+)
+TOOL_RESULT_COMPACT_OLD_MAX_BYTES_SETTING = SourceSystemConfigSetting(
+    key="tool_result_compact.old_max_bytes",
+    path=("tool_result_compact", "old_max_bytes"),
+    default_value=3000,
+    value_type="int",
+    ge=100,
+)
+TOOL_RESULT_COMPACT_RECENT_MAX_BYTES_SETTING = SourceSystemConfigSetting(
+    key="tool_result_compact.recent_max_bytes",
+    path=("tool_result_compact", "recent_max_bytes"),
+    default_value=50000,
+    value_type="int",
+    ge=1000,
+)
+TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING = SourceSystemConfigSetting(
+    key="tool_result_compact.retention_days",
+    path=("tool_result_compact", "retention_days"),
+    default_value=5,
+    value_type="int",
+    ge=1,
+    le=10,
 )
 
 CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES: tuple[SourceSystemConfigSwitch, ...] = (
     CHAT_TASK_PROGRESS_ENABLED_SWITCH,
+)
+CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS: tuple[
+    SourceSystemConfigSetting,
+    ...,
+] = (
+    CHAT_TASK_PROGRESS_ENABLED_SWITCH,
+    TOOL_RESULT_COMPACT_ENABLED_SETTING,
+    TOOL_RESULT_COMPACT_RECENT_N_SETTING,
+    TOOL_RESULT_COMPACT_OLD_MAX_BYTES_SETTING,
+    TOOL_RESULT_COMPACT_RECENT_MAX_BYTES_SETTING,
+    TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING,
 )
 
 _MISSING = object()
@@ -35,10 +90,10 @@ _FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
 def build_default_source_system_config_payload() -> dict[str, Any]:
     """根据注册表生成默认 source 系统配置。"""
     payload: dict[str, Any] = {}
-    for switch in CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES:
+    for setting in CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS:
         payload = _deep_merge_dicts(
             payload,
-            _build_nested_payload(switch.path, switch.default_value),
+            _build_nested_payload(setting.path, setting.default_value),
         )
     return payload
 
@@ -58,12 +113,12 @@ def prune_registered_default_overrides(
 ) -> dict[str, Any]:
     """删除与注册默认值相同的显式覆盖，并清理空父节点。"""
     pruned = deepcopy(raw_config)
-    for switch in CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES:
-        value = _get_nested_value(pruned, switch.path)
+    for setting in CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS:
+        value = _get_nested_value(pruned, setting.path)
         if value is _MISSING:
             continue
-        if value == switch.default_value:
-            _delete_nested_path(pruned, switch.path)
+        if value == setting.default_value:
+            _delete_nested_path(pruned, setting.path)
     return pruned
 
 
@@ -85,24 +140,39 @@ def is_chat_task_progress_enabled(config: Any | None) -> bool:
     )
 
 
+def normalize_registered_setting_values(
+    raw_config: dict[str, Any],
+    *,
+    validate_cross_ranges: bool = True,
+) -> dict[str, Any]:
+    """规范化已注册配置项的值，避免脏值进入持久化配置。"""
+    normalized = deepcopy(raw_config)
+    for setting in CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS:
+        value = _get_nested_value(normalized, setting.path)
+        if value is _MISSING:
+            continue
+        if setting.value_type == "bool":
+            coerced = _coerce_registered_boolean_value(
+                setting.key,
+                value,
+                default=bool(setting.default_value),
+                strict=True,
+            )
+            _set_nested_value(normalized, setting.path, coerced)
+            continue
+        if setting.value_type == "int":
+            coerced = _coerce_registered_int_value(setting, value)
+            _set_nested_value(normalized, setting.path, coerced)
+    if validate_cross_ranges:
+        _validate_explicit_tool_result_compact_ranges(raw_config, normalized)
+    return normalized
+
+
 def normalize_registered_switch_values(
     raw_config: dict[str, Any],
 ) -> dict[str, Any]:
-    """规范化已注册开关的值，兼容常见布尔脏值。"""
-    normalized = deepcopy(raw_config)
-    for switch in CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES:
-        value = _get_nested_value(normalized, switch.path)
-        if value is _MISSING:
-            continue
-        if isinstance(switch.default_value, bool):
-            coerced = _coerce_registered_boolean_value(
-                switch.key,
-                value,
-                default=bool(switch.default_value),
-                strict=True,
-            )
-            _set_nested_value(normalized, switch.path, coerced)
-    return normalized
+    """兼容旧命名，统一委托到 typed setting 规范化逻辑。"""
+    return normalize_registered_setting_values(raw_config)
 
 
 def _normalize_config_payload(config: Any | None) -> dict[str, Any]:
@@ -223,13 +293,67 @@ def _coerce_registered_boolean_value(
     return default
 
 
+def _coerce_registered_int_value(
+    setting: SourceSystemConfigSetting,
+    value: Any,
+) -> int:
+    """将注册整数配置收敛并校验取值范围。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{setting.key} must be an integer, got {value!r}")
+    if setting.ge is not None and value < setting.ge:
+        raise ValueError(
+            f"{setting.key} must be greater than or equal to {setting.ge}",
+        )
+    if setting.le is not None and value > setting.le:
+        raise ValueError(
+            f"{setting.key} must be less than or equal to {setting.le}",
+        )
+    return value
+
+
+def _validate_explicit_tool_result_compact_ranges(
+    raw_config: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    """只校验 source 原始输入中同时显式出现的阈值关系。"""
+    raw_tool_result_compact = raw_config.get("tool_result_compact")
+    if not isinstance(raw_tool_result_compact, dict):
+        return
+    if (
+        "old_max_bytes" not in raw_tool_result_compact
+        or "recent_max_bytes" not in raw_tool_result_compact
+    ):
+        return
+    old_max_bytes = _get_nested_value(
+        payload,
+        TOOL_RESULT_COMPACT_OLD_MAX_BYTES_SETTING.path,
+    )
+    recent_max_bytes = _get_nested_value(
+        payload,
+        TOOL_RESULT_COMPACT_RECENT_MAX_BYTES_SETTING.path,
+    )
+    if recent_max_bytes < old_max_bytes:
+        raise ValueError(
+            "tool_result_compact.recent_max_bytes must be greater than "
+            "or equal to tool_result_compact.old_max_bytes",
+        )
+
+
 __all__ = [
     "CHAT_TASK_PROGRESS_ENABLED_SWITCH",
+    "CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES",
     "SourceSystemConfigSwitch",
+    "SourceSystemConfigSetting",
+    "TOOL_RESULT_COMPACT_ENABLED_SETTING",
+    "TOOL_RESULT_COMPACT_OLD_MAX_BYTES_SETTING",
+    "TOOL_RESULT_COMPACT_RECENT_MAX_BYTES_SETTING",
+    "TOOL_RESULT_COMPACT_RECENT_N_SETTING",
+    "TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING",
     "build_default_source_system_config_payload",
     "is_chat_task_progress_enabled",
     "merge_source_system_config_with_defaults",
+    "normalize_registered_setting_values",
     "normalize_registered_switch_values",
     "prune_registered_default_overrides",
 ]

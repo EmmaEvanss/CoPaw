@@ -37,6 +37,8 @@
 - `src/swe/app/routers/workspace.py`
 - `src/swe/app/routers/zhaohu.py`
 
+补充约定：`PUT /envs` 采用当前请求 scope 的全量替换语义，请求体只能包含实际 env 键值对；`tenant_id`、`source_id`、`target_tenant_id`、`target_source_id` 属于保留 scope 字段，普通 API 遇到这些字段必须返回 `400`，不能静默忽略后继续保存。
+
 ## 前端目录
 
 | 目录 | 说明 |

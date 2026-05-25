@@ -48,35 +48,6 @@ if fcntl is None and msvcrt is None:  # pragma: no cover
     )
 
 
-def _try_lock_file(file_obj) -> None:
-    """Acquire a non-blocking exclusive lock for the lock file."""
-    if fcntl is not None:
-        fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return
-
-    if msvcrt is None:  # pragma: no cover
-        raise RuntimeError("No supported file locking backend available")
-
-    file_obj.seek(0)
-    file_obj.write("0")
-    file_obj.flush()
-    file_obj.seek(0)
-    msvcrt.locking(file_obj.fileno(), msvcrt.LK_NBLCK, 1)
-
-
-def _unlock_file(file_obj) -> None:
-    """Release the lock acquired by _try_lock_file."""
-    if fcntl is not None:
-        fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
-        return
-
-    if msvcrt is None:  # pragma: no cover
-        raise RuntimeError("No supported file locking backend available")
-
-    file_obj.seek(0)
-    msvcrt.locking(file_obj.fileno(), msvcrt.LK_UNLCK, 1)
-
-
 # -------------------------------------------------------
 # Built-in provider definitions and their default models.
 # -------------------------------------------------------

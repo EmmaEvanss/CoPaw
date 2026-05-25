@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,8 +13,9 @@ from unittest.mock import patch
 import pytest
 
 from swe.config.config import Config, MCPClientConfig
-from swe.config.context import tenant_context
+from swe.config.context import encode_scope_id, tenant_context
 from swe.config.utils import save_config
+from swe.envs.store import save_envs
 
 _REACT_AGENT_TOOL_EXPORTS = (
     "browser_use",
@@ -61,6 +63,16 @@ def _write_process_limit_config(
         ),
         tenant_dir / "config.json",
     )
+
+
+def _write_scope_env(
+    base_dir: Path,
+    tenant_id: str,
+    source_id: str,
+    envs: dict[str, str],
+) -> None:
+    scope_id = encode_scope_id(tenant_id, source_id)
+    save_envs(envs, base_dir / scope_id / ".secret" / "envs.json")
 
 
 @pytest.fixture
@@ -125,10 +137,16 @@ async def test_runner_wraps_stdio_client_launch_with_tenant_launcher(
 
         _write_process_limit_config(
             tenant_config_root,
-            "tenant-a",
+            encode_scope_id("tenant-a", "source-a"),
             enabled=True,
             cpu_time_limit_seconds=2,
             memory_max_mb=128,
+        )
+        _write_scope_env(
+            tenant_config_root,
+            "tenant-a",
+            "source-a",
+            {"MCP_TOKEN": "tenant-secret", "TENANT_ONLY": "yes"},
         )
 
         captured = {}
@@ -142,7 +160,7 @@ async def test_runner_wraps_stdio_client_launch_with_tenant_launcher(
             transport="stdio",
             command="node",
             args=["server.js"],
-            env={"DEMO": "1"},
+            env={"MCP_TOKEN": "client-secret"},
             cwd="/tmp/demo",
         )
 
@@ -150,12 +168,14 @@ async def test_runner_wraps_stdio_client_launch_with_tenant_launcher(
             "swe.app.runner.runner.StdIOStatefulClient",
             _FakeStdIOClient,
         ):
-            with tenant_context(tenant_id="tenant-a"):
+            with tenant_context(tenant_id="tenant-a", source_id="source-a"):
                 client = await _create_mcp_client_with_headers(client_config)
 
     assert captured["command"] == sys.executable
     assert captured["args"][:2] == ["-m", "swe.app.mcp.stdio_launcher"]
     assert captured["args"][-3:] == ["--", "node", "server.js"]
+    assert captured["env"]["MCP_TOKEN"] == "client-secret"
+    assert captured["env"]["TENANT_ONLY"] == "yes"
     rebuild_info = getattr(client, "_swe_rebuild_info")
     assert rebuild_info["command"] == "node"
     assert rebuild_info["args"] == ["server.js"]
@@ -209,9 +229,15 @@ def test_rebuild_mcp_client_reapplies_tenant_launcher(
 
         _write_process_limit_config(
             tenant_config_root,
-            "tenant-a",
+            encode_scope_id("tenant-a", "source-a"),
             enabled=True,
             cpu_time_limit_seconds=2,
+        )
+        _write_scope_env(
+            tenant_config_root,
+            "tenant-a",
+            "source-a",
+            {"MCP_TOKEN": "tenant-secret", "TENANT_ONLY": "yes"},
         )
 
         captured = {}
@@ -226,7 +252,7 @@ def test_rebuild_mcp_client_reapplies_tenant_launcher(
                 "transport": "stdio",
                 "command": "node",
                 "args": ["server.js"],
-                "env": {"DEMO": "1"},
+                "env": {"MCP_TOKEN": "client-secret"},
                 "cwd": "/tmp/demo",
             },
         )
@@ -235,10 +261,83 @@ def test_rebuild_mcp_client_reapplies_tenant_launcher(
             "swe.agents.react_agent.StdIOStatefulClient",
             _FakeStdIOClient,
         ):
-            with tenant_context(tenant_id="tenant-a"):
+            with tenant_context(tenant_id="tenant-a", source_id="source-a"):
                 rebuilt = SWEAgent._rebuild_mcp_client(original_client)
 
     assert captured["command"] == sys.executable
     assert captured["args"][:2] == ["-m", "swe.app.mcp.stdio_launcher"]
     assert captured["args"][-3:] == ["--", "node", "server.js"]
+    assert captured["env"]["MCP_TOKEN"] == "client-secret"
+    assert captured["env"]["TENANT_ONLY"] == "yes"
     assert getattr(rebuilt, "_swe_rebuild_info")["command"] == "node"
+
+
+def test_stdio_launch_config_merges_tenant_env_with_client_override(
+    tenant_config_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from swe.app.mcp.stdio_launcher import (
+        build_tenant_aware_stdio_launch_config,
+    )
+
+    monkeypatch.delenv("MCP_TOKEN", raising=False)
+    _write_scope_env(
+        tenant_config_root,
+        "tenant-a",
+        "source-a",
+        {"MCP_TOKEN": "tenant-secret", "TENANT_ONLY": "yes"},
+    )
+
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        launch_config = build_tenant_aware_stdio_launch_config(
+            "node",
+            ["server.js"],
+            {"MCP_TOKEN": "client-secret", "CLIENT_ONLY": "yes"},
+        )
+
+    assert launch_config.env["MCP_TOKEN"] == "client-secret"
+    assert launch_config.env["TENANT_ONLY"] == "yes"
+    assert launch_config.env["CLIENT_ONLY"] == "yes"
+    assert "MCP_TOKEN" not in os.environ
+
+
+def test_stdio_launch_config_filters_protected_client_env(
+    tenant_config_root: Path,
+) -> None:
+    from swe.app.mcp.stdio_launcher import (
+        build_tenant_aware_stdio_launch_config,
+    )
+
+    _write_scope_env(
+        tenant_config_root,
+        "tenant-a",
+        "source-a",
+        {"PATH": "/tenant/bin", "MCP_TOKEN": "tenant-secret"},
+    )
+
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        launch_config = build_tenant_aware_stdio_launch_config(
+            "node",
+            env={"PATH": "/client/bin", "PYTHONPATH": "/client/python"},
+        )
+
+    assert launch_config.env["MCP_TOKEN"] == "tenant-secret"
+    assert launch_config.env.get("PATH") != "/client/bin"
+    assert launch_config.env.get("PYTHONPATH") != "/client/python"
+
+
+def test_stdio_launch_config_missing_context_uses_process_env_only(
+    tenant_config_root: Path,
+) -> None:
+    from swe.app.mcp.stdio_launcher import (
+        build_tenant_aware_stdio_launch_config,
+    )
+
+    save_envs(
+        {"MCP_TOKEN": "default-secret"},
+        tenant_config_root / "default" / ".secret" / "envs.json",
+    )
+
+    launch_config = build_tenant_aware_stdio_launch_config("node")
+
+    assert "MCP_TOKEN" not in launch_config.env

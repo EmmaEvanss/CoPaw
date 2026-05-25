@@ -13,7 +13,7 @@ All existing single-agent components are reused without modification.
 import logging
 import os
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from .service_manager import ServiceDescriptor, ServiceManager
 from .service_factories import (
@@ -33,10 +33,6 @@ from ...config.config import load_agent_config
 from ...agents.memory.reme_light_memory_manager import (
     ReMeLightMemoryManager,
 )
-from ...utils.tools import decrypt_string
-
-if TYPE_CHECKING:
-    from ..channels.base import BaseChannel
 
 logger = logging.getLogger(__name__)
 

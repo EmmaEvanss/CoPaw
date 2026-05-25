@@ -21,7 +21,7 @@ interface SessionCardListProps {
   selectedSessionId: string | null;
   collapsed?: boolean;
   onSelect: (sessionId: string) => void;
-  onPageChange: (page: number) => void;
+  onPageChange: (page: number, pageSize: number) => void;
   onToggleCollapsed?: () => void;
 }
 
@@ -209,6 +209,8 @@ export default function SessionCardList({
                 simple
                 current={page}
                 pageSize={pageSize}
+                showSizeChanger
+                pageSizeOptions={["10", "20", "50", "100"]}
                 total={total}
                 onChange={onPageChange}
               />

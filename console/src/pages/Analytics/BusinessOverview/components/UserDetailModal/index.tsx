@@ -14,6 +14,8 @@ import SessionCardList from "./SessionCardList";
 import ReadOnlySessionChat from "./ReadOnlySessionChat";
 import styles from "./index.module.less";
 
+const DEFAULT_SESSIONS_PAGE_SIZE = 10;
+
 export default function UserDetailModal({
   open,
   userId,
@@ -35,7 +37,9 @@ export default function UserDetailModal({
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [sessionsTotal, setSessionsTotal] = useState(0);
   const [sessionsPage, setSessionsPage] = useState(1);
-  const [sessionsPageSize] = useState(10);
+  const [sessionsPageSize, setSessionsPageSize] = useState(
+    DEFAULT_SESSIONS_PAGE_SIZE,
+  );
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const [hasAutoSelectedSession, setHasAutoSelectedSession] = useState(false);
@@ -68,11 +72,11 @@ export default function UserDetailModal({
   }, [userId, startDate, endDate, bbkIds]);
 
   // 获取会话列表
-  const fetchSessions = useCallback(async (page: number) => {
+  const fetchSessions = useCallback(async (page: number, pageSize: number) => {
     if (!userId) return;
     setSessionsLoading(true);
     try {
-      const data = await tracingApi.getSessions(page, sessionsPageSize, {
+      const data = await tracingApi.getSessions(page, pageSize, {
         user_id: userId,
         bbk_ids: bbkIds,
       });
@@ -84,7 +88,7 @@ export default function UserDetailModal({
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, sessionsPageSize, bbkIds]);
+  }, [userId, bbkIds]);
 
   // 获取聊天映射
   const fetchUserChats = useCallback(async () => {
@@ -118,12 +122,18 @@ export default function UserDetailModal({
   useEffect(() => {
     if (open && userId) {
       fetchUserStats();
-      fetchSessions(1);
+      fetchSessions(1, DEFAULT_SESSIONS_PAGE_SIZE);
       fetchUserChats();
       setSessionsPage(1);
       setHasAutoSelectedSession(false);
     }
-  }, [open, userId, fetchUserStats, fetchSessions, fetchUserChats]);
+  }, [
+    open,
+    userId,
+    fetchUserStats,
+    fetchSessions,
+    fetchUserChats,
+  ]);
 
   // 首次打开详情弹窗时自动选中第一条会话，便于直接查看聊天内容
   useEffect(() => {
@@ -157,6 +167,7 @@ export default function UserDetailModal({
     setSessionsTotal(0);
     setChatSpecs([]);
     setSessionsPage(1);
+    setSessionsPageSize(DEFAULT_SESSIONS_PAGE_SIZE);
     setSessionsCollapsed(false);
     setHasAutoSelectedSession(false);
     setSelectedSessionId(null);
@@ -164,9 +175,10 @@ export default function UserDetailModal({
   };
 
   // 会话分页变化
-  const handleSessionsPageChange = (page: number) => {
+  const handleSessionsPageChange = (page: number, pageSize: number) => {
     setSessionsPage(page);
-    fetchSessions(page);
+    setSessionsPageSize(pageSize);
+    fetchSessions(page, pageSize);
   };
 
   // 会话选中变化 - 点击已选中的会话则取消选中

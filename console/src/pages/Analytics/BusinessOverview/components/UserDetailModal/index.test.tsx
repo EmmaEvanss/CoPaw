@@ -1,6 +1,8 @@
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import UserDetailModal from "./index";
+
+const sessionCardListMock = vi.hoisted(() => vi.fn());
 
 const tracingApiMock = vi.hoisted(() => ({
   getUserStats: vi.fn(),
@@ -18,7 +20,10 @@ vi.mock("./UserStatsHeader", () => ({
 }));
 
 vi.mock("./SessionCardList", () => ({
-  default: () => <div data-testid="session-card-list" />,
+  default: (props: unknown) => {
+    sessionCardListMock(props);
+    return <div data-testid="session-card-list" />;
+  },
 }));
 
 vi.mock("./ReadOnlySessionChat", () => ({
@@ -28,6 +33,7 @@ vi.mock("./ReadOnlySessionChat", () => ({
 describe("UserDetailModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionCardListMock.mockClear();
     tracingApiMock.getUserStats.mockResolvedValue({});
     tracingApiMock.getSessions.mockResolvedValue({
       items: [
@@ -74,12 +80,10 @@ describe("UserDetailModal", () => {
       "user-001",
       "2026-05-20",
       "2026-05-20",
-      "CMSJY",
       "100",
     );
     expect(tracingApiMock.getSessions).toHaveBeenCalledWith(1, 10, {
       user_id: "user-001",
-      source_id: "CMSJY",
       bbk_ids: "100",
     });
     expect(tracingApiMock.getUserChats).toHaveBeenCalledWith("user-001");
@@ -92,8 +96,42 @@ describe("UserDetailModal", () => {
       "session-older",
       undefined,
       undefined,
-      "CMSJY",
       "100",
     );
+  });
+
+  it("uses the changed page size when loading another sessions page", async () => {
+    render(
+      <UserDetailModal
+        open
+        userId="user-001"
+        startDate="2026-05-20"
+        endDate="2026-05-20"
+        bbkIds="100"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(sessionCardListMock).toHaveBeenCalled();
+    });
+
+    const latestProps =
+      sessionCardListMock.mock.calls[
+        sessionCardListMock.mock.calls.length - 1
+      ][0] as {
+        onPageChange: (page: number, pageSize: number) => void;
+      };
+
+    await act(async () => {
+      latestProps.onPageChange(2, 20);
+    });
+
+    await waitFor(() => {
+      expect(tracingApiMock.getSessions).toHaveBeenCalledWith(2, 20, {
+        user_id: "user-001",
+        bbk_ids: "100",
+      });
+    });
   });
 });

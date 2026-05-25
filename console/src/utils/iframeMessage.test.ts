@@ -10,6 +10,10 @@ import {
   ensureValidToken,
   isExternalTokenEnabled,
 } from "../api/externalToken";
+import {
+  fetchCustomerInfo,
+  fetchUserInit,
+} from "../api/modules/customerInfo";
 
 vi.mock("../api/modules/userInfo", async (importOriginal) => {
   const actual =
@@ -28,8 +32,6 @@ vi.mock("../api/externalToken", () => ({
 vi.mock("../api/modules/customerInfo", () => ({
   fetchCustomerInfo: vi.fn().mockResolvedValue(null),
   fetchUserInit: vi.fn().mockResolvedValue(null),
-  isUserInitialized: vi.fn().mockReturnValue(false),
-  setUserInitialized: vi.fn(),
 }));
 
 vi.mock("../api/modules/auth", () => ({
@@ -41,6 +43,8 @@ vi.mock("../api/modules/auth", () => ({
 const mockedFetchUserInfo = vi.mocked(fetchUserInfo);
 const mockedEnsureValidToken = vi.mocked(ensureValidToken);
 const mockedIsExternalTokenEnabled = vi.mocked(isExternalTokenEnabled);
+const mockedFetchCustomerInfo = vi.mocked(fetchCustomerInfo);
+const mockedFetchUserInit = vi.mocked(fetchUserInit);
 
 describe("fetchAndSetUserName", () => {
   beforeEach(() => {
@@ -182,5 +186,35 @@ describe("fetchAndSetUserName", () => {
     await handleUrlOriginParam();
 
     expect(useIframeStore.getState().subBranchId).toBe("SUB001");
+  });
+
+  it("origin=Y 首次进入时不被客户信息接口阻塞用户初始化", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "vbbk=100; path=/";
+    document.cookie = "vorgcode=ORG001; path=/";
+    document.cookie = "positionID=POS001; path=/";
+    mockedFetchCustomerInfo.mockReturnValueOnce(new Promise<null>(() => {}));
+
+    void handleUrlOriginParam();
+    await Promise.resolve();
+
+    expect(mockedFetchUserInit).toHaveBeenCalledWith({
+      filename: "PROFILE.md",
+      text: expect.stringContaining("客户经理ID：80000002"),
+    });
+  });
+
+  it("origin=Y 进入时不使用本地初始化标记跳过接口", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    localStorage.setItem("swe-80000002", "exist");
+
+    await handleUrlOriginParam();
+
+    expect(mockedFetchUserInit).toHaveBeenCalledWith({
+      filename: "PROFILE.md",
+      text: expect.stringContaining("客户经理ID：80000002"),
+    });
   });
 });

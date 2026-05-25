@@ -20,8 +20,6 @@ import dayjs from "dayjs";
 import { tracingApi, TraceDetail } from "../../../api/modules/tracing";
 import type { FeedbackRecord } from "../../../api/types/feedback";
 import { getBbkDisplayName, BBK_ID_MAP } from "../../../constants/bbk";
-import { useIframeStore } from "../../../stores/iframeStore";
-import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 import styles from "./index.module.less";
 
 const { RangePicker } = DatePicker;
@@ -75,14 +73,6 @@ export default function TracesPage() {
   const [traceLoading, setTraceLoading] = useState(false);
   const [feedbackExpanded, setFeedbackExpanded] = useState(true);
 
-  // 获取用户权限和来源信息
-  const isSuperManager = useIframeStore((state) => state.isSuperManager);
-  const userSource = useIframeStore((state) => state.source);
-  // 非 iframe 模式下使用默认 source，超级管理员不传 source_id（查询全部）
-  const effectiveSourceId = isSuperManager
-    ? undefined
-    : userSource || DEFAULT_SOURCE_ID;
-
   useEffect(() => {
     fetchTraces();
   }, [page, pageSize, statusFilter, bbkIdFilter, dateRange]);
@@ -100,7 +90,6 @@ export default function TracesPage() {
         bbk_ids: bbkIdFilter,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
-        source_id: effectiveSourceId,
       });
       setTraces(data.items || []);
       setTotal(data.total || 0);

@@ -61,7 +61,6 @@ describe("UserDetailModal", () => {
         userId="user-001"
         startDate="2026-05-20"
         endDate="2026-05-20"
-        sourceId="CMSJY"
         bbkIds="100"
         onClose={vi.fn()}
       />,

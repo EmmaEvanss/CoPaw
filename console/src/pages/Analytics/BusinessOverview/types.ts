@@ -14,7 +14,6 @@ export interface UserDetailModalProps {
   userName?: string;
   startDate?: string;
   endDate?: string;
-  sourceId?: string;
   bbkIds?: string;
   onClose: () => void;
 }

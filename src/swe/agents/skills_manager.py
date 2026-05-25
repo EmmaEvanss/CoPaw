@@ -2404,7 +2404,6 @@ class SkillPoolService:
                 occupied = (
                     existing is not None or (pool_dir / skill_name).exists()
                 )
-                is_builtin_entry = _is_pool_builtin_entry(existing)
                 # overwrite=False 时任何冲突均拒绝
                 if occupied and not overwrite:
                     conflicts.append(

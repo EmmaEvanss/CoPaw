@@ -237,6 +237,7 @@ class SourceSystemConfigService:
             return EffectiveSourceSystemConfig(
                 source_id=source_id,
                 config=DEFAULT_SOURCE_SYSTEM_CONFIG,
+                raw_config=None,
                 version=0,
                 is_default=True,
             )
@@ -244,6 +245,7 @@ class SourceSystemConfigService:
         return EffectiveSourceSystemConfig(
             source_id=source_id,
             config=record.config.merged_with_defaults(),
+            raw_config=record.config,
             version=record.version,
             updated_by=record.updated_by,
             updated_at=record.updated_at,

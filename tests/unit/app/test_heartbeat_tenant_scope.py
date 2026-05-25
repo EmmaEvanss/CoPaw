@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for tenant-aware heartbeat config access."""
+"""租户感知 heartbeat 配置访问的回归测试。"""
 
 # pylint: disable=protected-access
 from __future__ import annotations
@@ -359,7 +359,7 @@ async def test_cron_manager_prefetch_targets_use_runtime_scope() -> None:
 async def test_cron_manager_register_missing_external_jobs_persists_runtime_scope(
     tmp_path: Path,
 ) -> None:
-    """补注册外部调度任务时必须把回调租户绑定到 runtime scope。"""
+    """补注册外部调度任务时必须保留可解析的 runtime scope。"""
     scope_id = encode_scope_id("tenant-a", "source-a")
     observed: dict[str, Any] = {}
     job = CronJobSpec(
@@ -422,11 +422,14 @@ async def test_cron_manager_register_missing_external_jobs_persists_runtime_scop
     result = await manager.register_missing_external_jobs()
 
     assert result["registered"] == 1
-    assert observed["register_job"]["tenant_id"] == scope_id
+    assert observed["register_job"]["tenant_id"] == "tenant-a"
+    assert observed["register_job"]["source_id"] == "source-a"
     assert observed["register_job"]["job_id"] == "job-1"
     assert observed["resume_job"] == "ext-job-1"
     saved_job = observed["saved_jobs"][0]
-    assert saved_job.tenant_id == scope_id
+    assert saved_job.tenant_id == "tenant-a"
+    assert saved_job.source_id == "source-a"
+    assert manager._get_job_runtime_tenant_id(saved_job) == scope_id
     assert saved_job.meta["external_job_id"] == "ext-job-1"
 
 

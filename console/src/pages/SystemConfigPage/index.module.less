@@ -71,6 +71,35 @@
   line-height: 1.6;
 }
 
+.toolResultIntro {
+  margin-bottom: 8px;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.numberGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  padding-top: 12px;
+}
+
+.numberField {
+  display: grid;
+  gap: 8px;
+}
+
+.numberLabel {
+  color: rgba(0, 0, 0, 0.65);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.numberField :global(.ant-input-number) {
+  width: 100%;
+}
+
 .actionRow {
   display: flex;
   justify-content: flex-end;
@@ -86,12 +115,14 @@
 
 :global(.dark-mode) {
   .metaLabel,
-  .switchDescription {
+  .switchDescription,
+  .toolResultIntro {
     color: rgba(255, 255, 255, 0.45);
   }
 
   .metaValue,
-  .switchTitle {
+  .switchTitle,
+  .numberLabel {
     color: rgba(255, 255, 255, 0.88);
   }
 

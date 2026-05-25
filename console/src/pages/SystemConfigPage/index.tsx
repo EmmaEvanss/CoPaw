@@ -1,5 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Card, Result, Space, Spin, Switch, Tag } from "antd";
+import {
+  Alert,
+  Button,
+  Card,
+  InputNumber,
+  Result,
+  Space,
+  Spin,
+  Switch,
+  Tag,
+} from "antd";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/PageHeader";
@@ -15,8 +25,12 @@ import { DEFAULT_SOURCE_ID } from "@/constants/identity";
 
 import {
   CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES,
+  TOOL_RESULT_COMPACT_NUMBER_FIELDS,
   readRegisteredSwitchValue,
+  readToolResultCompactConfig,
+  validateToolResultCompactConfig,
   writeRegisteredSwitchValue,
+  writeToolResultCompactValue,
 } from "./registry";
 import styles from "./index.module.less";
 
@@ -40,7 +54,8 @@ export default function SystemConfigPage() {
   const canManage = isSuperManager || manager;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [record, setRecord] =
     useState<CurrentSourceSystemConfigResponse | null>(null);
   const [draftConfig, setDraftConfig] = useState<SourceSystemConfig>({});
@@ -71,15 +86,15 @@ export default function SystemConfigPage() {
 
   const isLoadedSourceCurrent =
     record !== null && record.source_id === activeSourceId;
-  const formDisabled =
-    loading || saving || !!error || !isLoadedSourceCurrent;
+  const formDisabled = loading || saving || !isLoadedSourceCurrent;
 
   useEffect(() => {
     if (!canManage) {
       requestSeqRef.current += 1;
       setLoading(false);
       setSaving(false);
-      setError(null);
+      setRequestError(null);
+      setValidationError(null);
       setRecord(null);
       setDraftConfig({});
       return;
@@ -88,7 +103,8 @@ export default function SystemConfigPage() {
     const request = beginRequest(activeSourceId);
     setLoading(true);
     setSaving(false);
-    setError(null);
+    setRequestError(null);
+    setValidationError(null);
     setRecord(null);
     setDraftConfig({});
 
@@ -108,7 +124,7 @@ export default function SystemConfigPage() {
         if (!isCurrentRequest(request)) {
           return;
         }
-        setError(
+        setRequestError(
           requestError instanceof Error
             ? requestError.message
             : String(requestError),
@@ -153,8 +169,32 @@ export default function SystemConfigPage() {
     if (!definition) {
       return;
     }
+    setValidationError(null);
     setDraftConfig((previous) =>
       writeRegisteredSwitchValue(previous, definition, checked),
+    );
+  };
+
+  const handleToolResultEnabledChange = (checked: boolean) => {
+    if (formDisabled) {
+      return;
+    }
+    setValidationError(null);
+    setDraftConfig((previous) =>
+      writeToolResultCompactValue(previous, "enabled", checked),
+    );
+  };
+
+  const handleToolResultNumberChange = (
+    key: (typeof TOOL_RESULT_COMPACT_NUMBER_FIELDS)[number]["key"],
+    value: number | null,
+  ) => {
+    if (formDisabled || typeof value !== "number") {
+      return;
+    }
+    setValidationError(null);
+    setDraftConfig((previous) =>
+      writeToolResultCompactValue(previous, key, value),
     );
   };
 
@@ -162,9 +202,18 @@ export default function SystemConfigPage() {
     if (formDisabled) {
       return;
     }
+    const validationError = validateToolResultCompactConfig(
+      readToolResultCompactConfig(draftConfig),
+    );
+    if (validationError) {
+      setValidationError(validationError);
+      message.error(validationError);
+      return;
+    }
     const request = beginRequest(activeSourceId);
     setSaving(true);
-    setError(null);
+    setRequestError(null);
+    setValidationError(null);
     try {
       const nextRecord = await sourceSystemConfigApi.updateCurrent({
         config: draftConfig,
@@ -194,7 +243,7 @@ export default function SystemConfigPage() {
       if (!isCurrentRequest(request)) {
         return;
       }
-      setError(nextError);
+      setRequestError(nextError);
       message.error(nextError);
     } finally {
       if (isCurrentRequest(request)) {
@@ -203,13 +252,16 @@ export default function SystemConfigPage() {
     }
   };
 
+  const toolResultCompactConfig = readToolResultCompactConfig(draftConfig);
+
   const handleDelete = async () => {
     if (formDisabled) {
       return;
     }
     const request = beginRequest(activeSourceId);
     setSaving(true);
-    setError(null);
+    setRequestError(null);
+    setValidationError(null);
     try {
       await sourceSystemConfigApi.deleteCurrent();
       if (!isCurrentRequest(request)) {
@@ -241,7 +293,7 @@ export default function SystemConfigPage() {
       if (!isCurrentRequest(request)) {
         return;
       }
-      setError(nextError);
+      setRequestError(nextError);
       message.error(nextError);
     } finally {
       if (isCurrentRequest(request)) {
@@ -275,14 +327,25 @@ export default function SystemConfigPage() {
         }
       />
       <div className={styles.pageBody}>
-        {error ? (
+        {requestError ? (
           <Alert
             type="error"
             showIcon
-            message={t("sourceSystemConfigPage.loadFailed", {
-              defaultValue: "当前 Source 配置加载失败",
+            message={t("sourceSystemConfigPage.requestFailed", {
+              defaultValue: "当前 Source 配置请求失败",
             })}
-            description={error}
+            description={requestError}
+          />
+        ) : null}
+
+        {validationError ? (
+          <Alert
+            type="error"
+            showIcon
+            message={t("sourceSystemConfigPage.validationFailed", {
+              defaultValue: "当前 Source 配置校验失败",
+            })}
+            description={validationError}
           />
         ) : null}
 
@@ -343,10 +406,7 @@ export default function SystemConfigPage() {
             >
               <div className={styles.switchList}>
                 {CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES.map((definition) => (
-                  <div
-                    key={definition.key}
-                    className={styles.switchRow}
-                  >
+                  <div key={definition.key} className={styles.switchRow}>
                     <div className={styles.switchCopy}>
                       <span className={styles.switchTitle}>
                         {definition.title}
@@ -366,6 +426,59 @@ export default function SystemConfigPage() {
                       }
                     />
                   </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card
+              className={styles.switchCard}
+              title={t("sourceSystemConfigPage.toolResultCompactTitle", {
+                defaultValue: "工具结果压缩配置",
+              })}
+            >
+              <div className={styles.toolResultIntro}>
+                {t("sourceSystemConfigPage.toolResultCompactIntro", {
+                  defaultValue:
+                    "未保存 source 覆盖时继承 Agent 配置；保存后当前 source 下请求使用这些阈值。",
+                })}
+              </div>
+              <div className={styles.switchRow}>
+                <div className={styles.switchCopy}>
+                  <span className={styles.switchTitle}>
+                    {t("sourceSystemConfigPage.toolResultEnabled", {
+                      defaultValue: "启用工具结果压缩",
+                    })}
+                  </span>
+                  <span className={styles.switchDescription}>
+                    {t("sourceSystemConfigPage.toolResultEnabledDescription", {
+                      defaultValue:
+                        "关闭后当前 source 的历史工具结果不再压缩为 toolresult 文件。",
+                    })}
+                  </span>
+                </div>
+                <Switch
+                  checked={toolResultCompactConfig.enabled}
+                  disabled={formDisabled}
+                  onChange={handleToolResultEnabledChange}
+                />
+              </div>
+              <div className={styles.numberGrid}>
+                {TOOL_RESULT_COMPACT_NUMBER_FIELDS.map((definition) => (
+                  <label key={definition.key} className={styles.numberField}>
+                    <span className={styles.numberLabel}>
+                      {definition.title}
+                    </span>
+                    <InputNumber
+                      min={definition.min}
+                      max={definition.max}
+                      step={definition.step}
+                      value={toolResultCompactConfig[definition.key]}
+                      disabled={formDisabled}
+                      onChange={(value) =>
+                        handleToolResultNumberChange(definition.key, value)
+                      }
+                    />
+                  </label>
                 ))}
               </div>
             </Card>

@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+from swe.config.config import ToolResultCompactConfig
 from swe.app.middleware.tenant_identity import TenantIdentityMiddleware
 from swe.app.source_system_config import router as source_config_router
 from swe.app.source_system_config.middleware import (
@@ -26,6 +27,7 @@ from swe.app.source_system_config.models import (
 from swe.app.source_system_config.runtime import (
     bind_source_system_config,
     get_current_source_system_config,
+    resolve_tool_result_compact_config,
 )
 from swe.app.source_system_config.service import (
     SourceSystemConfigDataInvalid,
@@ -37,17 +39,28 @@ from swe.app.source_system_config.store import (
     SourceSystemConfigStoreUnavailable,
 )
 
+DEFAULT_EXPECTED_SOURCE_CONFIG = {
+    "feature_switches": {
+        "chat_task_progress_enabled": True,
+    },
+    "tool_result_compact": {
+        "enabled": True,
+        "recent_n": 2,
+        "old_max_bytes": 3000,
+        "recent_max_bytes": 50000,
+        "retention_days": 5,
+    },
+}
+
 
 class TestSourceSystemConfigModels:
     """验证 source 系统配置模型。"""
 
     def test_default_config_is_empty_object(self):
         """默认配置应包含代码注册的 task progress 开关默认值。"""
-        assert DEFAULT_SOURCE_SYSTEM_CONFIG.as_dict() == {
-            "feature_switches": {
-                "chat_task_progress_enabled": True,
-            },
-        }
+        assert DEFAULT_SOURCE_SYSTEM_CONFIG.as_dict() == (
+            DEFAULT_EXPECTED_SOURCE_CONFIG
+        )
 
     def test_arbitrary_object_config_is_allowed(self):
         """任意 JSON object key 都应允许由业务方自行解释。"""
@@ -83,8 +96,79 @@ class TestSourceSystemConfigModels:
             "feature_switches": {
                 "chat_task_progress_enabled": False,
             },
+            "tool_result_compact": {
+                "enabled": True,
+                "recent_n": 2,
+                "old_max_bytes": 3000,
+                "recent_max_bytes": 50000,
+                "retention_days": 5,
+            },
             "provider_policy": {"default_model": "qwen-max"},
         }
+
+    def test_tool_result_compact_config_is_accepted(self):
+        """合法工具结果压缩配置应被接受并保持数值字段。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "tool_result_compact": {
+                    "enabled": False,
+                    "recent_n": 4,
+                    "old_max_bytes": 1200,
+                    "recent_max_bytes": 8000,
+                    "retention_days": 7,
+                },
+            },
+        )
+
+        assert config.as_dict() == {
+            "tool_result_compact": {
+                "enabled": False,
+                "recent_n": 4,
+                "old_max_bytes": 1200,
+                "recent_max_bytes": 8000,
+                "retention_days": 7,
+            },
+        }
+
+    def test_tool_result_compact_partial_config_is_accepted(self):
+        """局部 source 覆盖应允许缺失字段，运行时再继承 Agent 配置。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "tool_result_compact": {
+                    "recent_max_bytes": 8000,
+                },
+            },
+        )
+
+        assert config.as_dict() == {
+            "tool_result_compact": {
+                "recent_max_bytes": 8000,
+            },
+        }
+
+    @pytest.mark.parametrize(
+        ("payload", "match"),
+        [
+            ({"recent_n": 0}, "recent_n"),
+            ({"old_max_bytes": 99}, "old_max_bytes"),
+            ({"recent_max_bytes": "large"}, "recent_max_bytes"),
+            ({"retention_days": 11}, "retention_days"),
+            (
+                {"old_max_bytes": 3000, "recent_max_bytes": 1000},
+                "recent_max_bytes",
+            ),
+        ],
+    )
+    def test_invalid_tool_result_compact_config_is_rejected(
+        self,
+        payload,
+        match,
+    ):
+        """非法类型、越界值和反向阈值不能被写入 source 配置。"""
+        with pytest.raises(ValueError, match=match):
+            SourceSystemConfig.model_validate(
+                {"tool_result_compact": payload},
+            )
 
     def test_registered_boolean_switch_normalizes_common_string_values(self):
         """历史脏值中的常见布尔字符串应被收敛为真实布尔值。"""
@@ -462,11 +546,7 @@ class TestSourceSystemConfigService:
 
         assert result.is_default is True
         assert result.version == 0
-        assert result.config.as_dict() == {
-            "feature_switches": {
-                "chat_task_progress_enabled": True,
-            },
-        }
+        assert result.config.as_dict() == DEFAULT_EXPECTED_SOURCE_CONFIG
 
     @pytest.mark.asyncio
     async def test_default_raw_config_response_is_empty_object(self):
@@ -518,6 +598,39 @@ class TestSourceSystemConfigService:
         assert store.deleted == ["portal"]
 
     @pytest.mark.asyncio
+    async def test_upsert_current_source_config_prunes_default_tool_result(
+        self,
+    ):
+        """保存等于注册默认值的工具结果配置时应删除无效显式覆盖。"""
+        store = _FakeManagementStore()
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.upsert_current_source_config(
+            "portal",
+            SourceSystemConfig.model_validate(
+                {
+                    "tool_result_compact": {
+                        "enabled": True,
+                        "recent_n": 2,
+                        "old_max_bytes": 3000,
+                        "recent_max_bytes": 50000,
+                        "retention_days": 5,
+                    },
+                },
+            ),
+            updated_by="alice",
+        )
+
+        assert result.is_default is True
+        assert result.config.as_dict() == {}
+        assert store.records == {}
+        assert store.deleted == ["portal"]
+
+    @pytest.mark.asyncio
     async def test_upsert_current_source_config_preserves_unknown_keys(
         self,
     ):
@@ -536,6 +649,9 @@ class TestSourceSystemConfigService:
                     "feature_switches": {
                         "chat_task_progress_enabled": False,
                     },
+                    "tool_result_compact": {
+                        "recent_max_bytes": 12000,
+                    },
                     "provider_policy": {"default_model": "qwen-max"},
                     "custom_flags": {"new_homepage": True},
                 },
@@ -548,12 +664,18 @@ class TestSourceSystemConfigService:
             "feature_switches": {
                 "chat_task_progress_enabled": False,
             },
+            "tool_result_compact": {
+                "recent_max_bytes": 12000,
+            },
             "provider_policy": {"default_model": "qwen-max"},
             "custom_flags": {"new_homepage": True},
         }
         assert store.records["portal"].config.as_dict() == {
             "feature_switches": {
                 "chat_task_progress_enabled": False,
+            },
+            "tool_result_compact": {
+                "recent_max_bytes": 12000,
             },
             "provider_policy": {"default_model": "qwen-max"},
             "custom_flags": {"new_homepage": True},
@@ -601,9 +723,7 @@ class TestSourceSystemConfigService:
         assert unchanged.version == 1
         assert refreshed.version == 2
         assert refreshed.config.as_dict() == {
-            "feature_switches": {
-                "chat_task_progress_enabled": True,
-            },
+            **DEFAULT_EXPECTED_SOURCE_CONFIG,
             "source_name": "Portal 2",
         }
         assert store.get_calls == ["portal", "portal"]
@@ -670,9 +790,7 @@ class TestSourceSystemConfigService:
         assert first.version == 1
         assert refreshed.version == 2
         assert refreshed.config.as_dict() == {
-            "feature_switches": {
-                "chat_task_progress_enabled": True,
-            },
+            **DEFAULT_EXPECTED_SOURCE_CONFIG,
             "source_name": "Portal V2",
         }
         assert store.get_calls == ["portal", "portal"]
@@ -760,9 +878,7 @@ class TestSourceSystemConfigService:
         assert within_window.version == 0
         assert after_probe.version == 1
         assert after_probe.config.as_dict() == {
-            "feature_switches": {
-                "chat_task_progress_enabled": True,
-            },
+            **DEFAULT_EXPECTED_SOURCE_CONFIG,
             "source_name": "Portal V2",
         }
 
@@ -824,6 +940,125 @@ class TestSourceSystemConfigRuntime:
 
         assert get_current_source_system_config() is None
 
+    def test_tool_result_config_uses_agent_config_without_override(self):
+        """无 source 显式覆盖时应完整继承 Agent 运行配置。"""
+        base = ToolResultCompactConfig(
+            enabled=True,
+            recent_n=6,
+            old_max_bytes=1800,
+            recent_max_bytes=9000,
+            retention_days=8,
+        )
+
+        result = resolve_tool_result_compact_config(base, None)
+
+        assert result == base
+
+    def test_tool_result_config_merges_partial_source_override(self):
+        """source 局部覆盖只替换显式字段，其余字段继承 Agent 配置。"""
+        base = ToolResultCompactConfig(
+            enabled=True,
+            recent_n=6,
+            old_max_bytes=1800,
+            recent_max_bytes=9000,
+            retention_days=8,
+        )
+        effective = EffectiveSourceSystemConfig(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                DEFAULT_EXPECTED_SOURCE_CONFIG,
+            ),
+            raw_config=SourceSystemConfig.model_validate(
+                {
+                    "tool_result_compact": {
+                        "enabled": False,
+                        "recent_max_bytes": 12000,
+                    },
+                },
+            ),
+            version=3,
+        )
+
+        result = resolve_tool_result_compact_config(base, effective)
+
+        assert result == ToolResultCompactConfig(
+            enabled=False,
+            recent_n=6,
+            old_max_bytes=1800,
+            recent_max_bytes=12000,
+            retention_days=8,
+        )
+
+    def test_tool_result_config_accepts_full_source_override(self):
+        """source 完整覆盖应成为本请求最终工具结果压缩配置。"""
+        base = ToolResultCompactConfig(
+            enabled=True,
+            recent_n=6,
+            old_max_bytes=1800,
+            recent_max_bytes=9000,
+            retention_days=8,
+        )
+
+        result = resolve_tool_result_compact_config(
+            base,
+            SourceSystemConfig.model_validate(
+                {
+                    "tool_result_compact": {
+                        "enabled": False,
+                        "recent_n": 1,
+                        "old_max_bytes": 500,
+                        "recent_max_bytes": 2000,
+                        "retention_days": 2,
+                    },
+                },
+            ),
+        )
+
+        assert result == ToolResultCompactConfig(
+            enabled=False,
+            recent_n=1,
+            old_max_bytes=500,
+            recent_max_bytes=2000,
+            retention_days=2,
+        )
+
+    def test_tool_result_config_recovers_resolved_invalid_thresholds(
+        self,
+        monkeypatch,
+    ):
+        """局部覆盖与 Agent 配置冲突时应修正阈值，避免请求入口失败。"""
+        from swe.app.source_system_config import runtime
+
+        warning = MagicMock()
+        monkeypatch.setattr(runtime.logger, "warning", warning)
+        base = ToolResultCompactConfig(
+            old_max_bytes=5000,
+            recent_max_bytes=10000,
+        )
+        effective = EffectiveSourceSystemConfig(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                DEFAULT_EXPECTED_SOURCE_CONFIG,
+            ),
+            raw_config=SourceSystemConfig.model_validate(
+                {
+                    "tool_result_compact": {
+                        "recent_max_bytes": 3000,
+                    },
+                },
+            ),
+            version=3,
+        )
+
+        result = resolve_tool_result_compact_config(base, effective)
+
+        assert result == ToolResultCompactConfig(
+            old_max_bytes=5000,
+            recent_max_bytes=5000,
+        )
+        warning.assert_called_once()
+        assert warning.call_args.args[1] == "portal"
+
 
 class TestSourceSystemConfigMiddleware:
     """验证 HTTP 请求级配置绑定。"""
@@ -870,9 +1105,7 @@ class TestSourceSystemConfigMiddleware:
             "state_version": 5,
             "context_version": 5,
             "config": {
-                "feature_switches": {
-                    "chat_task_progress_enabled": True,
-                },
+                **DEFAULT_EXPECTED_SOURCE_CONFIG,
                 "source_name": "Portal",
             },
         }
@@ -963,11 +1196,7 @@ class TestSourceSystemConfigApi:
         assert body["source_id"] == "portal"
         assert body["is_default"] is True
         assert body["version"] == 0
-        assert body["config"] == {
-            "feature_switches": {
-                "chat_task_progress_enabled": True,
-            },
-        }
+        assert body["config"] == DEFAULT_EXPECTED_SOURCE_CONFIG
 
     def test_manager_reads_current_source_default_state(self):
         """manager 读取 current-source 原始配置时，无记录应返回默认态对象。"""
@@ -1255,11 +1484,9 @@ class TestSourceSystemConfigApi:
         assert store.deleted == ["portal"]
         assert effective_response.status_code == 200
         assert effective_response.json()["is_default"] is True
-        assert effective_response.json()["config"] == {
-            "feature_switches": {
-                "chat_task_progress_enabled": True,
-            },
-        }
+        assert effective_response.json()["config"] == (
+            DEFAULT_EXPECTED_SOURCE_CONFIG
+        )
 
     def test_management_crud_returns_503_when_storage_unavailable(self):
         """DB 不可用时管理端 CRUD 应返回 503，不能返回伪成功。"""

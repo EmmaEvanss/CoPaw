@@ -1,5 +1,5 @@
 import { request } from "../request";
-import type { EnvVar } from "../types";
+import type { EnvPatchRequest, EnvVar } from "../types";
 
 export const envApi = {
   listEnvs: () => request<EnvVar[]>("/envs"),
@@ -9,6 +9,12 @@ export const envApi = {
     request<EnvVar[]>("/envs", {
       method: "PUT",
       body: JSON.stringify(envs),
+    }),
+
+  patchEnvs: (body: EnvPatchRequest) =>
+    request<EnvVar[]>("/envs", {
+      method: "PATCH",
+      body: JSON.stringify(body),
     }),
 
   deleteEnv: (key: string) =>

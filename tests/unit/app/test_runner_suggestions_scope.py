@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Runner background suggestion scope regression tests."""
+"""Runner 后台 suggestion 作用域回归测试。"""
 
 from unittest.mock import AsyncMock
 
@@ -8,13 +8,6 @@ from agentscope.message import Msg
 from swe.config.config import SuggestionMode
 
 from swe.app.runner import runner as runner_module
-
-
-class _SuggestionConfig:
-    max_suggestions = 3
-    timeout_seconds = 10
-    user_message_max_length = 200
-    assistant_response_max_length = 400
 
 
 class _QAOnlySuggestionConfig:
@@ -26,27 +19,30 @@ class _QAOnlySuggestionConfig:
 
 
 @pytest.mark.asyncio
-async def test_generate_and_store_suggestions_passes_scope_tenant(
+async def test_backend_suggestions_noops_after_frontend_takeover(
     monkeypatch,
 ) -> None:
     generate = AsyncMock(return_value=["next question"])
     store = AsyncMock(return_value=None)
-    monkeypatch.setattr(runner_module, "generate_suggestions", generate)
-    monkeypatch.setattr(runner_module, "store_suggestions", store)
+    monkeypatch.setattr(
+        "swe.app.suggestions.service.generate_suggestions",
+        generate,
+    )
+    monkeypatch.setattr("swe.app.suggestions.store.store_suggestions", store)
 
-    await runner_module._generate_and_store_suggestions(
-        "session-a",
-        "user says hi",
-        "assistant replies",
-        _SuggestionConfig(),
+    runner = runner_module.AgentRunner(
+        agent_id="agent-a",
         tenant_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
     )
-
-    store.assert_awaited_once_with(
-        "session-a",
-        ["next question"],
-        tenant_id="dGVuYW50LWE.c291cmNlLWE",
+    await runner._generate_backend_suggestions_if_needed(
+        runtime=object(),
+        plan=object(),
+        outcome=object(),
     )
+
+    generate.assert_not_awaited()
+    store.assert_not_awaited()
+
 
 @pytest.mark.asyncio
 async def test_store_qa_content_passes_scope_tenant(monkeypatch) -> None:

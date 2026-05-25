@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 
 from ...config.context import (
     get_current_effective_tenant_id,
-    resolve_runtime_tenant_id,
     resolve_scope_preferred_tenant_id,
 )
 from ...config.utils import (

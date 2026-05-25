@@ -26,6 +26,7 @@ from swe.agents.memory.base_memory_manager import BaseMemoryManager
 from swe.agents.model_factory import create_model_and_formatter
 from swe.agents.tools import read_file, write_file, edit_file
 from swe.agents.utils import get_swe_token_counter
+from swe.app.source_system_config import resolve_tool_result_compact_config
 from swe.config import load_config
 from swe.config.config import load_agent_config
 from swe.config.context import (
@@ -407,10 +408,10 @@ See: https://docs.trychroma.com/docs/overview/troubleshooting#sqlite
         cc = agent_config.running.context_compact
 
         set_current_workspace_dir(Path(self.working_dir))
-        recent_max_bytes = (
-            agent_config.running.tool_result_compact.recent_max_bytes
+        tool_result_compact = resolve_tool_result_compact_config(
+            agent_config.running.tool_result_compact,
         )
-        set_current_recent_max_bytes(recent_max_bytes)
+        set_current_recent_max_bytes(tool_result_compact.recent_max_bytes)
 
         return await self._reme.summary_memory(
             messages=messages,
@@ -494,10 +495,10 @@ See: https://docs.trychroma.com/docs/overview/troubleshooting#sqlite
         agent_config = load_agent_config(self.agent_id, tenant_id=tenant_id)
 
         set_current_workspace_dir(Path(self.working_dir))
-        recent_max_bytes = (
-            agent_config.running.tool_result_compact.recent_max_bytes
+        tool_result_compact = resolve_tool_result_compact_config(
+            agent_config.running.tool_result_compact,
         )
-        set_current_recent_max_bytes(recent_max_bytes)
+        set_current_recent_max_bytes(tool_result_compact.recent_max_bytes)
 
         # Determine language based on agent config
         language = getattr(agent_config, "language", "zh")

@@ -24,6 +24,7 @@ from anyio import ClosedResourceError
 from pydantic import BaseModel
 
 from ..app.mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
+from ..app.mcp.http_headers import resolve_mcp_http_headers
 from .command_handler import CommandHandler
 from ..app.mcp import HttpStatefulClient, StdIOStatefulClient
 from .hooks import BootstrapHook, MemoryCompactionHook
@@ -821,11 +822,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 return rebuilt_client
 
             raw_headers = rebuild_info.get("headers") or {}
-            headers = (
-                {k: os.path.expandvars(v) for k, v in raw_headers.items()}
-                if raw_headers
-                else None
-            )
+            headers = resolve_mcp_http_headers(raw_headers)
             rebuilt_client = HttpStatefulClient(
                 name=name,
                 transport=transport,
@@ -1358,11 +1355,15 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             set_current_workspace_dir,
             set_current_recent_max_bytes,
         )
+        from ..app.source_system_config import (
+            resolve_tool_result_compact_config,
+        )
 
         set_current_workspace_dir(self._workspace_dir)
-        set_current_recent_max_bytes(
-            self._agent_config.running.tool_result_compact.recent_max_bytes,
+        tool_result_compact = resolve_tool_result_compact_config(
+            self._agent_config.running.tool_result_compact,
         )
+        set_current_recent_max_bytes(tool_result_compact.recent_max_bytes)
         set_current_task_progress_tracker(self._task_tracker)
         set_current_task_progress_chat_id(
             self._request_context.get("chat_id"),

@@ -13,6 +13,7 @@ from agentscope.agent import ReActAgent
 from agentscope.message import Msg, TextBlock
 from swe.constant import MEMORY_COMPACT_KEEP_RECENT
 
+from ...app.source_system_config import resolve_tool_result_compact_config
 from ..utils import (
     check_valid_messages,
     get_swe_token_counter,
@@ -115,8 +116,10 @@ class MemoryCompactionHook:
 
             messages = await memory.get_memory(prepend_summary=False)
 
-            # Compact tool results with configured thresholds
-            trc = running_config.tool_result_compact
+            # source 显式覆盖只影响本请求，缺失字段继续继承 Agent 配置。
+            trc = resolve_tool_result_compact_config(
+                running_config.tool_result_compact,
+            )
             if trc.enabled:
                 await self.memory_manager.compact_tool_result(
                     messages=messages,

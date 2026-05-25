@@ -8,8 +8,6 @@ import { useIframeStore, getIframeContext } from "../stores/iframeStore";
 import {
   fetchCustomerInfo,
   fetchUserInit,
-  isUserInitialized,
-  setUserInitialized,
 } from "../api/modules/customerInfo";
 import {
   fetchUserInfo,
@@ -49,6 +47,9 @@ let pendingUserInfoUserId: string | null = null;
 
 /** 当前正在执行的用户信息查询任务 */
 let pendingUserInfoRequest: Promise<boolean> | null = null;
+
+/** 正在执行初始化的用户，避免同一用户在接口返回前被重复初始化 */
+const pendingUserInitUserIds = new Set<string>();
 
 /**
  * 将值转换为布尔值，用于处理父窗口可能传递的字符串 "true"/"false"
@@ -123,15 +124,16 @@ function buildIframeAuthHeaders(
 
 /**
  * 调用用户初始化接口并保存到 localStorage
- * 检查用户是否已初始化，未初始化则调用接口
  */
-function initializeUserIfNeeded(
+function initializeUser(
   userId: string,
   store: ReturnType<typeof useIframeStore.getState>,
 ): void {
-  if (isUserInitialized(userId)) {
+  if (pendingUserInitUserIds.has(userId)) {
     return;
   }
+
+  pendingUserInitUserIds.add(userId);
 
   const params = {
     filename: "PROFILE.md",
@@ -140,14 +142,15 @@ function initializeUserIfNeeded(
 
   void fetchUserInit(params)
     .then((initResponse) => {
-      if (initResponse?.appended) {
-        setUserInitialized(userId);
-      } else {
+      if (!initResponse?.appended) {
         console.warn("[IframeMessage] User init failed");
       }
     })
-    .catch ((error) => {
+    .catch((error) => {
       console.error("[IframeMessage] User init error:", error);
+    })
+    .finally(() => {
+      pendingUserInitUserIds.delete(userId);
     });
 }
 
@@ -376,13 +379,16 @@ async function initFromUrlParams(
   userId: string,
   store: ReturnType<typeof useIframeStore.getState>,
 ): Promise<void> {
+  // 首次进入时客户信息接口可能较慢或被嵌入环境阻塞，用户初始化不能依赖它完成。
+  initializeUser(userId, store);
+
   // 调用客户信息接口（使用 cookie 中的参数）
   await fetchAndApplyCustomerInfoFromCookie(userId, store);
 
-  // 用户初始化（不需要等待）
+  // 客户信息接口可能修正 userId，修正后的用户仍需要初始化。
   const currentUserId = store.userId;
   if (currentUserId) {
-    initializeUserIfNeeded(currentUserId, store);
+    initializeUser(currentUserId, store);
   }
 
   store.markInitialized();

@@ -14,13 +14,14 @@ import SessionCardList from "./SessionCardList";
 import ReadOnlySessionChat from "./ReadOnlySessionChat";
 import styles from "./index.module.less";
 
+const DEFAULT_SESSIONS_PAGE_SIZE = 10;
+
 export default function UserDetailModal({
   open,
   userId,
   userName,
   startDate,
   endDate,
-  sourceId,
   bbkIds,
   onClose,
 }: UserDetailModalProps) {
@@ -36,7 +37,9 @@ export default function UserDetailModal({
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [sessionsTotal, setSessionsTotal] = useState(0);
   const [sessionsPage, setSessionsPage] = useState(1);
-  const [sessionsPageSize] = useState(10);
+  const [sessionsPageSize, setSessionsPageSize] = useState(
+    DEFAULT_SESSIONS_PAGE_SIZE,
+  );
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const [hasAutoSelectedSession, setHasAutoSelectedSession] = useState(false);
@@ -58,7 +61,7 @@ export default function UserDetailModal({
     if (!userId) return;
     setUserLoading(true);
     try {
-      const data = await tracingApi.getUserStats(userId, startDate, endDate, sourceId, bbkIds);
+      const data = await tracingApi.getUserStats(userId, startDate, endDate, bbkIds);
       setUserStats(data);
     } catch (error) {
       console.error("Failed to fetch user stats:", error);
@@ -66,16 +69,15 @@ export default function UserDetailModal({
     } finally {
       setUserLoading(false);
     }
-  }, [userId, startDate, endDate, sourceId, bbkIds]);
+  }, [userId, startDate, endDate, bbkIds]);
 
   // 获取会话列表
-  const fetchSessions = useCallback(async (page: number) => {
+  const fetchSessions = useCallback(async (page: number, pageSize: number) => {
     if (!userId) return;
     setSessionsLoading(true);
     try {
-      const data = await tracingApi.getSessions(page, sessionsPageSize, {
+      const data = await tracingApi.getSessions(page, pageSize, {
         user_id: userId,
-        source_id: sourceId,
         bbk_ids: bbkIds,
       });
       setSessions(data.items || []);
@@ -86,7 +88,7 @@ export default function UserDetailModal({
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, sourceId, sessionsPageSize, bbkIds]);
+  }, [userId, bbkIds]);
 
   // 获取聊天映射
   const fetchUserChats = useCallback(async () => {
@@ -107,7 +109,6 @@ export default function UserDetailModal({
         sessionId,
         undefined,
         undefined,
-        sourceId,
         bbkIds,
       );
       setSessionStats(data);
@@ -115,18 +116,24 @@ export default function UserDetailModal({
       console.error("Failed to fetch session stats:", error);
       message.error("获取会话统计失败");
     }
-  }, [sourceId, bbkIds]);
+  }, [bbkIds]);
 
   // Modal 打开时加载数据
   useEffect(() => {
     if (open && userId) {
       fetchUserStats();
-      fetchSessions(1);
+      fetchSessions(1, DEFAULT_SESSIONS_PAGE_SIZE);
       fetchUserChats();
       setSessionsPage(1);
       setHasAutoSelectedSession(false);
     }
-  }, [open, userId, fetchUserStats, fetchSessions, fetchUserChats]);
+  }, [
+    open,
+    userId,
+    fetchUserStats,
+    fetchSessions,
+    fetchUserChats,
+  ]);
 
   // 首次打开详情弹窗时自动选中第一条会话，便于直接查看聊天内容
   useEffect(() => {
@@ -160,6 +167,7 @@ export default function UserDetailModal({
     setSessionsTotal(0);
     setChatSpecs([]);
     setSessionsPage(1);
+    setSessionsPageSize(DEFAULT_SESSIONS_PAGE_SIZE);
     setSessionsCollapsed(false);
     setHasAutoSelectedSession(false);
     setSelectedSessionId(null);
@@ -167,9 +175,10 @@ export default function UserDetailModal({
   };
 
   // 会话分页变化
-  const handleSessionsPageChange = (page: number) => {
+  const handleSessionsPageChange = (page: number, pageSize: number) => {
     setSessionsPage(page);
-    fetchSessions(page);
+    setSessionsPageSize(pageSize);
+    fetchSessions(page, pageSize);
   };
 
   // 会话选中变化 - 点击已选中的会话则取消选中
@@ -252,6 +261,7 @@ export default function UserDetailModal({
               <ReadOnlySessionChat
                 selectedSessionId={selectedSessionId}
                 chatIdBySessionId={chatIdBySessionId}
+                targetUserId={userId}
               />
             </div>
           </div>

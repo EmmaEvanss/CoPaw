@@ -9,11 +9,19 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from ...config.context import resolve_scope_preferred_tenant_id
 from ...config.utils import get_tenant_config_path, load_config
-from ..runner.models import ChatSpec
+from ..runner.api import (
+    TASK_RUNS_STATE_KEY,
+    _annotate_approval_action_statuses,
+    _annotate_task_run_messages,
+    _message_sort_key,
+    _messages_from_memory_state,
+    _task_session_messages_from_state,
+)
+from ..runner.models import ChatHistory, ChatMessage, ChatSpec
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/monitor/tracing", tags=["monitor-tracing"])
+router = APIRouter(tags=["monitor-tracing"])
 
 
 def _request_source_id(request: Request) -> str | None:
@@ -78,7 +86,7 @@ async def _get_target_workspace(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.get("/chats", response_model=list[ChatSpec])
+@router.get("/tracing/chats", response_model=list[ChatSpec])
 async def get_user_chats(
     request: Request,
     user_id: str = Query(..., description="目标用户 ID"),
@@ -94,3 +102,51 @@ async def get_user_chats(
         user_id=user_id,
         channel=channel,
     )
+
+
+@router.get("/tracing/chats/{chat_id}", response_model=ChatHistory)
+async def get_user_chat(
+    request: Request,
+    chat_id: str,
+    user_id: str = Query(..., description="目标用户 ID"),
+) -> ChatHistory:
+    """获取目标用户指定聊天的完整记录。
+
+    活跃用户弹窗需要按目标用户工作区读取详情，避免复用 `/chats/{id}`
+    时落到当前登录用户工作区导致映射存在但详情不存在。
+    """
+    workspace = await _get_target_workspace(request, user_id)
+    chat_spec = await workspace.chat_manager.get_chat(chat_id)
+    if not chat_spec or chat_spec.user_id != user_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Chat not found: {chat_id}",
+        )
+
+    state = await workspace.runner.session.get_session_state_dict(
+        chat_spec.session_id,
+        chat_spec.user_id,
+    )
+    status = await workspace.task_tracker.get_status(chat_id)
+    task_messages = _task_session_messages_from_state(state)
+    if not state:
+        return ChatHistory(messages=task_messages, status=status)
+
+    memory_state = state.get("agent", {}).get("memory", {})
+    messages: list[ChatMessage] = []
+    if memory_state:
+        if (
+            (chat_spec.meta or {}).get("session_kind") == "task"
+            and isinstance(state.get(TASK_RUNS_STATE_KEY), list)
+            and state.get(TASK_RUNS_STATE_KEY)
+        ):
+            messages = await _annotate_task_run_messages(
+                memory_state,
+                state[TASK_RUNS_STATE_KEY],
+            )
+        else:
+            messages = await _messages_from_memory_state(memory_state)
+    messages.extend(task_messages)
+    messages.sort(key=_message_sort_key)
+    messages = await _annotate_approval_action_statuses(messages)
+    return ChatHistory(messages=messages, status=status)

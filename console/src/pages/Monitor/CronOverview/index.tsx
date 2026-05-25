@@ -25,7 +25,6 @@ import {
   FilterOption,
   FilterOptionsResponse,
 } from "../../../api/modules/monitor";
-import { useIframeStore } from "../../../stores/iframeStore";
 import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP } from "../../../constants/bbk";
 import styles from "./index.module.less";
 
@@ -71,31 +70,10 @@ const EXEC_STATUS_OPTIONS = [
   { value: "skipped", label: "跳过" },
 ];
 
-// 平台名称映射
-const PLATFORM_NAME_MAP: Record<string, string> = {
-  RMASSIST: "RM小助",
-  CMSJY: "远程小助",
-  UPPCLAW: "智像小助",
-  copilotClaw: "数据赋能小助",
-  ruice: "睿策小助",
-  privatebanking: "私行小助",
-  SZLS: "数智零售",
-  rtauto: "实时数据",
-};
-
 // 分行选项（来自前端常量）
 const BBK_OPTIONS = [
   { value: "", label: "全部分行" },
   ...BBK_ID_MAP,
-];
-
-// 平台选项（来自前端常量）
-const PLATFORM_OPTIONS = [
-  { value: "", label: "全部平台" },
-  ...Object.entries(PLATFORM_NAME_MAP).map(([value, label]) => ({
-    value,
-    label,
-  })),
 ];
 
 // 是否启用选项
@@ -108,9 +86,6 @@ const ENABLED_OPTIONS = [
 export default function CronOverviewPage() {
   const { t } = useTranslation();
 
-  // 从 iframeStore 获取当前用户的 source，用于默认筛选
-  const currentUserSource = useIframeStore((state) => state.source);
-
   // 首次加载标记：控制是否自动触发查询
   const initialLoadDone = useRef(false);
 
@@ -119,7 +94,6 @@ export default function CronOverviewPage() {
     users: [],
     bbk_ids: [], // 不使用，分行来自前端常量
     channels: [], // 不使用
-    source_ids: [], // 不使用，平台来自前端常量
     job_names: [],
     job_ids: [],
   });
@@ -134,11 +108,6 @@ export default function CronOverviewPage() {
   // Jobs filters (dropdown selects)
   const [jobsUserFilter, setJobsUserFilter] = useState<string>("");
   const [jobsBbkFilter, setJobsBbkFilter] = useState<string>("");
-  const [jobsSourceFilter, setJobsSourceFilter] = useState<string>(() => {
-    // 默认选中登录人当前的平台，如果获取不到则使用 RMASSIST
-    const source = useIframeStore.getState().source;
-    return source || "RMASSIST";
-  });
   const [jobsEnabledFilter, setJobsEnabledFilter] = useState<string>("true"); // 默认选中已启用
 
   // Executions state
@@ -150,11 +119,6 @@ export default function CronOverviewPage() {
   // Executions filters (dropdown selects)
   const [execsJobFilter, setExecsJobFilter] = useState<string>("");
   const [execsUserFilter, setExecsUserFilter] = useState<string>("");
-  const [execsSourceFilter, setExecsSourceFilter] = useState<string>(() => {
-    // 默认选中登录人当前的平台，与任务列表保持一致
-    const source = useIframeStore.getState().source;
-    return source || "RMASSIST";
-  });
   const [execsStatusFilter, setExecsStatusFilter] = useState<string>("");
   const [execsTimeRangeType, setExecsTimeRangeType] = useState<string>("today");
   const [execsCustomTimeRange, setExecsCustomTimeRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([dayjs().subtract(7, "day"), dayjs()]);
@@ -221,16 +185,14 @@ export default function CronOverviewPage() {
     }
   };
 
-  // Fetch jobs - 可接收可选的 source 覆盖参数（用于首次加载）
-  const fetchJobs = async (overrideSource?: string) => {
+  // Fetch jobs
+  const fetchJobs = async () => {
     setJobsLoading(true);
     try {
-      const sourceId = overrideSource || jobsSourceFilter;
       const enabledValue = jobsEnabledFilter === "true" ? true : jobsEnabledFilter === "false" ? false : undefined;
       const result = await monitorApi.getJobs(jobsPage, jobsPageSize, {
         tenant_id: jobsUserFilter || undefined,
         bbk_id: jobsBbkFilter || undefined,
-        source_id: sourceId || undefined,
         enabled: enabledValue,
       });
       setJobs(result.items);
@@ -244,15 +206,13 @@ export default function CronOverviewPage() {
   };
 
   // Fetch executions
-  const fetchExecutions = async (overrideSource?: string) => {
+  const fetchExecutions = async () => {
     setExecsLoading(true);
     try {
       const timeRange = getTimeRange(execsTimeRangeType, execsCustomTimeRange);
-      const sourceId = overrideSource || execsSourceFilter;
       const result = await monitorApi.getExecutions(execsPage, execsPageSize, {
         job_id: execsJobFilter || undefined,
         tenant_id: execsUserFilter || undefined,
-        source_id: sourceId || undefined,
         status: execsStatusFilter || undefined,
         ...timeRange,
       });
@@ -271,28 +231,19 @@ export default function CronOverviewPage() {
     fetchFilterOptions();
   }, []);
 
-  // 首次加载逻辑：根据 iframe source 状态决定何时加载
+  // 首次加载逻辑
   useEffect(() => {
     // 如果已经完成首次加载，不再重复
     if (initialLoadDone.current) {
       return;
     }
 
-    // 如果有 iframe source，使用它进行首次加载
-    if (currentUserSource) {
-      setJobsSourceFilter(currentUserSource);
-      setExecsSourceFilter(currentUserSource);
-      fetchJobs(currentUserSource);
-      fetchExecutions(currentUserSource);
-      initialLoadDone.current = true;
-    } else {
-      // 没有 iframe source 时，使用空筛选进行首次加载
-      fetchJobs();
-      fetchExecutions();
-      initialLoadDone.current = true;
-    }
+    // 使用空筛选进行首次加载
+    fetchJobs();
+    fetchExecutions();
+    initialLoadDone.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserSource]);
+  }, []);
 
   // Jobs query effect (分页变化时触发查询，首次加载由上面的 effect 控制)
   useEffect(() => {
@@ -332,7 +283,6 @@ export default function CronOverviewPage() {
       const blob = await monitorApi.exportJobs({
         tenant_id: jobsUserFilter || undefined,
         bbk_id: jobsBbkFilter || undefined,
-        source_id: jobsSourceFilter || undefined,
         enabled: enabledValue,
       });
       const url = window.URL.createObjectURL(blob);
@@ -356,7 +306,6 @@ export default function CronOverviewPage() {
       const blob = await monitorApi.exportExecutions({
         job_id: execsJobFilter || undefined,
         tenant_id: execsUserFilter || undefined,
-        source_id: execsSourceFilter || undefined,
         status: execsStatusFilter || undefined,
         ...timeRange,
       });
@@ -410,13 +359,6 @@ export default function CronOverviewPage() {
       key: "tenant_id",
       width: 140,
       ellipsis: true,
-    },
-    {
-      title: "平台",
-      dataIndex: "source_id",
-      key: "source_id",
-      width: 120,
-      render: (source: string) => source || "-",
     },
     {
       title: "分行",
@@ -615,14 +557,6 @@ export default function CronOverviewPage() {
                         options={BBK_OPTIONS}
                       />
                       <Select
-                        placeholder="平台"
-                        value={jobsSourceFilter || undefined}
-                        onChange={(value) => setJobsSourceFilter(value || "")}
-                        style={{ width: 160 }}
-                        allowClear
-                        options={PLATFORM_OPTIONS}
-                      />
-                      <Select
                         placeholder="是否启用"
                         value={jobsEnabledFilter || undefined}
                         onChange={(value) => setJobsEnabledFilter(value || "")}
@@ -699,14 +633,6 @@ export default function CronOverviewPage() {
                         options={userOptions}
                         loading={filterOptionsLoading}
                         virtual={false}
-                      />
-                      <Select
-                        placeholder="平台"
-                        value={execsSourceFilter || undefined}
-                        onChange={(value) => setExecsSourceFilter(value || "")}
-                        style={{ width: 160 }}
-                        allowClear
-                        options={PLATFORM_OPTIONS}
                       />
                       <Select
                         placeholder="状态"

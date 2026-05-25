@@ -165,7 +165,7 @@ export default function MySkillsPage() {
         } else {
           message.info({ content: "未导入新技能，可能已存在", key: "upload" });
         }
-        refresh();
+        await refresh();
 
         // 刷新上传技能的文件树缓存并自动展开
         const importedNames = result.imported || [];
@@ -186,8 +186,10 @@ export default function MySkillsPage() {
             const sortedFiles = sortFileTreeNodes(files, true);
             setSkillFiles((prev) => ({ ...prev, [firstImportedName]: sortedFiles }));
 
-            // 找到新上传的技能并选中展开
-            const allSkills = [...createdSkills, ...receivedSkills];
+            // 刷新后重新获取最新的技能列表
+            const latestCreated = await mySkillsApi.getCreatedSkills();
+            const latestReceived = await mySkillsApi.getReceivedSkills();
+            const allSkills = [...latestCreated, ...latestReceived];
             const newSkill = allSkills.find(s => s.skill_name === firstImportedName);
             if (newSkill) {
               setSelectedSkill(newSkill);

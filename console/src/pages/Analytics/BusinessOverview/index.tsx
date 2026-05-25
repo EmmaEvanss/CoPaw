@@ -485,9 +485,9 @@ export default function BusinessOverviewPage() {
       const stored = sessionStorage.getItem("swe-iframe-context");
       if (stored) {
         const ctx = JSON.parse(stored);
-        if (ctx.state?.isSuperManager) {
-          return "all";
-        }
+        // if (ctx.state?.isSuperManager) {
+        //   return "all";
+        // }
         return ctx.state?.source || DEFAULT_SOURCE_ID || "all";
       }
     } catch {

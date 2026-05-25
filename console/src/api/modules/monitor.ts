@@ -172,7 +172,6 @@ export const monitorApi = {
     filters?: {
       tenant_id?: string;
       bbk_id?: string;
-      source_id?: string;
       enabled?: boolean;
     },
   ): Promise<Blob> => {
@@ -206,7 +205,6 @@ export const monitorApi = {
     filters?: {
       job_id?: string;
       tenant_id?: string;
-      source_id?: string;
       status?: string;
       start_time?: string;
       end_time?: string;

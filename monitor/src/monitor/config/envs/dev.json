@@ -16,5 +16,5 @@
   "ES_USER": "",
   "ES_ACCESS": "",
   "ES_INDEX": "swe_model_outputs",
-  "SWE_USER_INFO_API_URL": ""
+  "MONITOR_USER_INFO_API_URL": ""
 }

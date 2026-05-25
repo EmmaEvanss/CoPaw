@@ -15,8 +15,8 @@ import httpx
 
 from ...database import get_db_connection
 from ...models.cron import CronJobSyncRequest, ExecutionSyncRequest
-from monitor.utils.bbk import get_bbk_id_by_name
-from monitor.utils.scope_decode import (
+from ....utils.bbk import get_bbk_id_by_name
+from ....utils.scope_decode import (
     is_encoded_scope_id,
     try_decode_tenant_id,
 )
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 _BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 # 用户信息 API URL（与 SWE 服务共用同一个配置）
-USER_INFO_API_URL = os.environ.get("SWE_USER_INFO_API_URL", "")
+USER_INFO_API_URL = os.environ.get("MONITOR_USER_INFO_API_URL", "")
 
 
 def _get_beijing_now() -> datetime:

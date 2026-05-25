@@ -27,8 +27,11 @@ from ...marketplace.schemas import (
     UpdateMarketMCPMetadataRequest,
     UploadMCPResponse,
 )
-from ...marketplace.fs import load_mcp_config, load_index
-from ...marketplace.service import _normalize_market_mcp_config_data
+from ...marketplace.fs import (
+    load_mcp_config,
+    load_index,
+    normalize_mcp_config_data,
+)
 from ...runtime.config_store import MCPClientConfig
 from ...runtime.context import tenant_context
 from ..deps import require_source_id
@@ -419,7 +422,7 @@ async def test_market_mcp(
     if mcp_config is None:
         raise HTTPException(status_code=404, detail="MCP config not found")
 
-    config_data = _normalize_market_mcp_config_data(
+    config_data = normalize_mcp_config_data(
         mcp_config.get("config", {}),
     )
     if not config_data.get("name"):

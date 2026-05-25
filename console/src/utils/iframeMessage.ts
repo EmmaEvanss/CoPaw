@@ -123,16 +123,11 @@ function buildIframeAuthHeaders(
 
 /**
  * 调用用户初始化接口并保存到 localStorage
- * 检查用户是否已初始化，未初始化则调用接口
  */
-function initializeUserIfNeeded(
+function initializeUser(
   userId: string,
   store: ReturnType<typeof useIframeStore.getState>,
 ): void {
-  if (isUserInitialized(userId)) {
-    return;
-  }
-
   const params = {
     filename: "PROFILE.md",
     text: `\n### 用户身份信息\n分行号：${store.bbk}\n网点机构编号：${store.orgCode}\n岗位编号：${store.positionId}\n客户经理ID：${userId}`,
@@ -382,7 +377,7 @@ async function initFromUrlParams(
   // 用户初始化（不需要等待）
   const currentUserId = store.userId;
   if (currentUserId) {
-    initializeUserIfNeeded(currentUserId, store);
+    initializeUser(currentUserId, store);
   }
 
   store.markInitialized();

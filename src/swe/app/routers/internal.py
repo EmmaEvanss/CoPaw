@@ -145,6 +145,7 @@ class InternalTextAssetWriteResponse(BaseModel):
 class InternalTextAssetPreviewPathRequest(BaseModel):
     user_id: str
     source_id: str
+    file_name: Optional[str] = None
 
 
 class InternalTextAssetPreviewPathResponse(BaseModel):
@@ -297,6 +298,20 @@ def _parse_preview_target(preview_url: str, expected_scope_id: str) -> str:
         ) from exc
 
 
+def _normalize_preview_file_name(
+    file_name: Optional[str],
+    user_id: str,
+) -> str:
+    if file_name is None:
+        return _generate_text_asset_file_name(user_id)
+
+    safe_file_name = _validate_asset_file_name(file_name)
+    path = Path(file_name)
+    if path.suffix:
+        return safe_file_name
+    return f"{safe_file_name}.html"
+
+
 def _read_text_asset(file_name: str) -> InternalTextAssetReadResponse:
     safe_file_name = _validate_asset_file_name(file_name)
     asset_file = _get_asset_file_path(safe_file_name)
@@ -342,11 +357,13 @@ def _create_preview_path(
         payload.source_id,
     )
     file_name = _validate_preview_file_name(
-        _generate_text_asset_file_name(payload.user_id),
+        _normalize_preview_file_name(payload.file_name, payload.user_id),
     )
     static_dir = _get_scope_static_dir(scope_id)
     static_dir.mkdir(parents=True, exist_ok=True)
     target = _resolve_static_target(static_dir, file_name)
+    if target.exists():
+        target.unlink()
     target.write_text(_PREVIEW_PLACEHOLDER_HTML, encoding="utf-8")
 
     return InternalTextAssetPreviewPathResponse(

@@ -194,6 +194,42 @@ def test_internal_text_asset_preview_path_creates_placeholder_file(
     assert "内容准备完成后，页面会自动展示最新预览。" in placeholder_html
 
 
+def test_internal_text_asset_preview_path_recreates_named_placeholder_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _set_working_dir(monkeypatch, tmp_path)
+    monkeypatch.setenv("FILE_URL", "https://files.example")
+    client = _build_client()
+    scope_id = encode_scope_id("alice", "portal")
+    static_dir = tmp_path / scope_id / "workspaces" / "default" / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    existing_file = static_dir / "draft.html"
+    existing_file.write_text("<main>old</main>", encoding="utf-8")
+
+    response = client.post(
+        "/internal/assets/text/preview-path",
+        json={
+            "user_id": "alice",
+            "source_id": "portal",
+            "file_name": "draft",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["file_name"] == "draft.html"
+    assert payload["scope_id"] == scope_id
+    assert payload["public_url"] == (
+        f"https://files.example/static/{scope_id}/default/draft.html"
+    )
+    assert payload["static_path"] == f"/static/{scope_id}/default/draft.html"
+
+    placeholder_html = existing_file.read_text(encoding="utf-8")
+    assert "<main>old</main>" not in placeholder_html
+    assert "<title>文件正在生成中</title>" in placeholder_html
+
+
 def test_main_app_preview_path_returns_immediately_viewable_placeholder(
     monkeypatch,
     tmp_path: Path,

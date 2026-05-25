@@ -249,6 +249,7 @@ export default function UserDetailModal({
               <ReadOnlySessionChat
                 selectedSessionId={selectedSessionId}
                 chatIdBySessionId={chatIdBySessionId}
+                targetUserId={userId}
               />
             </div>
           </div>

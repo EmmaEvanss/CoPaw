@@ -13,7 +13,7 @@ from ..runner.models import ChatSpec
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/monitor/tracing", tags=["monitor-tracing"])
+router = APIRouter(tags=["monitor-tracing"])
 
 
 def _request_source_id(request: Request) -> str | None:
@@ -78,7 +78,7 @@ async def _get_target_workspace(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.get("/chats", response_model=list[ChatSpec])
+@router.get("/tracing/chats", response_model=list[ChatSpec])
 async def get_user_chats(
     request: Request,
     user_id: str = Query(..., description="目标用户 ID"),

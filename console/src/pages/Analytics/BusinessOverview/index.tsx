@@ -485,9 +485,9 @@ export default function BusinessOverviewPage() {
       const stored = sessionStorage.getItem("swe-iframe-context");
       if (stored) {
         const ctx = JSON.parse(stored);
-        if (ctx.state?.isSuperManager) {
-          return "all";
-        }
+        // if (ctx.state?.isSuperManager) {
+        //   return "all";
+        // }
         return ctx.state?.source || DEFAULT_SOURCE_ID || "all";
       }
     } catch {
@@ -1471,6 +1471,9 @@ export default function BusinessOverviewPage() {
               skills.slice(0, 5).map((skill, index) => {
                 const percent = (safeNumber(skill.count) / skillsTotal) * 100;
                 const barColor = SKILL_BAR_COLORS[index] || SKILL_BAR_COLORS[0];
+                // 根据描述字数动态计算tooltip宽度
+                const descLen = skill.skill_description?.length || 0;
+                const tooltipWidth = descLen <= 30 ? 240 : descLen <= 60 ? 320 : descLen <= 100 ? 400 : 520;
                 return (
                   <button
                     key={skill.skill_name}
@@ -1481,7 +1484,24 @@ export default function BusinessOverviewPage() {
                       setSkillModalOpen(true);
                     }}
                   >
-                    <Tooltip title={skill.skill_name} placement="top">
+                    <Tooltip
+                      placement="top"
+                      overlayInnerStyle={{ width: tooltipWidth, maxWidth: tooltipWidth }}
+                      title={
+                        skill.skill_description ? (
+                          <div className={styles.skillTooltip}>
+                            <div className={styles.skillTooltipName}>
+                              {skill.skill_name}
+                            </div>
+                            <div className={styles.skillTooltipDesc}>
+                              {skill.skill_description}
+                            </div>
+                          </div>
+                        ) : (
+                          skill.skill_name
+                        )
+                      }
+                    >
                       <span className={styles.skillName}>
                         {truncateName(skill.skill_name, 20)}
                       </span>

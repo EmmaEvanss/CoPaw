@@ -77,6 +77,7 @@ export interface ToolUsage {
 
 export interface SkillUsage {
   skill_name: string;
+  skill_description?: string;
   count: number;
   avg_duration_ms: number;
 }

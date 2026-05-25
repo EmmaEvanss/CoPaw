@@ -49,10 +49,20 @@ const mockedFetchUserInit = vi.mocked(fetchUserInit);
 describe("fetchAndSetUserName", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
     window.history.pushState({}, "", "/");
-    document.cookie = "userid=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
-    document.cookie =
-      "subBranchId=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    [
+      "userid",
+      "sysid",
+      "vbbk",
+      "vorgcode",
+      "subBranchId",
+      "vorglvl",
+      "positionID",
+      "token",
+    ].forEach((name) => {
+      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+    });
     useIframeStore.getState().clearContext();
     vi.clearAllMocks();
     mockedIsExternalTokenEnabled.mockReturnValue(false);
@@ -201,7 +211,9 @@ describe("fetchAndSetUserName", () => {
 
     expect(mockedFetchUserInit).toHaveBeenCalledWith({
       filename: "PROFILE.md",
-      text: expect.stringContaining("客户经理ID：80000002"),
+      text: expect.stringMatching(
+        /分行号：100[\s\S]*网点机构编号：ORG001[\s\S]*岗位编号：POS001[\s\S]*客户经理ID：80000002/,
+      ),
     });
   });
 
@@ -216,5 +228,66 @@ describe("fetchAndSetUserName", () => {
       filename: "PROFILE.md",
       text: expect.stringContaining("客户经理ID：80000002"),
     });
+  });
+
+  it("origin=Y 客户信息未切换用户时只同步 cookie token", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "token=fresh-token; path=/";
+    mockedFetchCustomerInfo.mockResolvedValueOnce({
+      returnCode: "SUC0000",
+      body: {
+        output: {
+          result: {
+            userChange: false,
+            sysId: "updated-sys",
+            token: "response-token",
+            bbk: "updated-bbk",
+            orgCode: "updated-org",
+            orgLvl: "updated-lvl",
+            userId: "updated-user",
+            positionId: "updated-position",
+          },
+        },
+      },
+    });
+
+    await handleUrlOriginParam();
+
+    expect(useIframeStore.getState()).toMatchObject({
+      userId: "80000002",
+      token: "fresh-token",
+      bbk: null,
+      orgCode: null,
+      positionId: null,
+      userChange: false,
+    });
+  });
+
+  it("origin=Y 客户信息未切换用户时只初始化一次", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    mockedFetchUserInit.mockResolvedValue({ appended: true });
+    mockedFetchCustomerInfo.mockResolvedValueOnce({
+      returnCode: "SUC0000",
+      body: {
+        output: {
+          result: {
+            userChange: false,
+            sysId: "sys",
+            token: "response-token",
+            bbk: "bbk",
+            orgCode: "org",
+            orgLvl: "lvl",
+            userId: "80000002",
+            positionId: "position",
+          },
+        },
+      },
+    });
+
+    await handleUrlOriginParam();
+
+    expect(mockedFetchUserInit).toHaveBeenCalledTimes(1);
   });
 });

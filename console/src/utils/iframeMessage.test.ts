@@ -10,6 +10,10 @@ import {
   ensureValidToken,
   isExternalTokenEnabled,
 } from "../api/externalToken";
+import {
+  fetchCustomerInfo,
+  fetchUserInit,
+} from "../api/modules/customerInfo";
 
 vi.mock("../api/modules/userInfo", async (importOriginal) => {
   const actual =
@@ -28,8 +32,6 @@ vi.mock("../api/externalToken", () => ({
 vi.mock("../api/modules/customerInfo", () => ({
   fetchCustomerInfo: vi.fn().mockResolvedValue(null),
   fetchUserInit: vi.fn().mockResolvedValue(null),
-  isUserInitialized: vi.fn().mockReturnValue(false),
-  setUserInitialized: vi.fn(),
 }));
 
 vi.mock("../api/modules/auth", () => ({
@@ -41,12 +43,26 @@ vi.mock("../api/modules/auth", () => ({
 const mockedFetchUserInfo = vi.mocked(fetchUserInfo);
 const mockedEnsureValidToken = vi.mocked(ensureValidToken);
 const mockedIsExternalTokenEnabled = vi.mocked(isExternalTokenEnabled);
+const mockedFetchCustomerInfo = vi.mocked(fetchCustomerInfo);
+const mockedFetchUserInit = vi.mocked(fetchUserInit);
 
 describe("fetchAndSetUserName", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
     window.history.pushState({}, "", "/");
-    document.cookie = "userid=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    [
+      "userid",
+      "sysid",
+      "vbbk",
+      "vorgcode",
+      "subBranchId",
+      "vorglvl",
+      "positionID",
+      "token",
+    ].forEach((name) => {
+      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+    });
     useIframeStore.getState().clearContext();
     vi.clearAllMocks();
     mockedIsExternalTokenEnabled.mockReturnValue(false);
@@ -170,5 +186,108 @@ describe("fetchAndSetUserName", () => {
 
     expect(useIframeStore.getState().userId).toBe("80000002");
     expect(useIframeStore.getState().userName).toBeNull();
+  });
+
+  it("origin=Y 时从 cookie 读取 subBranchId", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "subBranchId=SUB001; path=/";
+
+    await handleUrlOriginParam();
+
+    expect(useIframeStore.getState().subBranchId).toBe("SUB001");
+  });
+
+  it("origin=Y 首次进入时不被客户信息接口阻塞用户初始化", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "vbbk=100; path=/";
+    document.cookie = "vorgcode=ORG001; path=/";
+    document.cookie = "positionID=POS001; path=/";
+    mockedFetchCustomerInfo.mockReturnValueOnce(new Promise<null>(() => {}));
+
+    void handleUrlOriginParam();
+    await Promise.resolve();
+
+    expect(mockedFetchUserInit).toHaveBeenCalledWith({
+      filename: "PROFILE.md",
+      text: expect.stringMatching(
+        /分行号：100[\s\S]*网点机构编号：ORG001[\s\S]*岗位编号：POS001[\s\S]*客户经理ID：80000002/,
+      ),
+    });
+  });
+
+  it("origin=Y 进入时不使用本地初始化标记跳过接口", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    localStorage.setItem("swe-80000002", "exist");
+
+    await handleUrlOriginParam();
+
+    expect(mockedFetchUserInit).toHaveBeenCalledWith({
+      filename: "PROFILE.md",
+      text: expect.stringContaining("客户经理ID：80000002"),
+    });
+  });
+
+  it("origin=Y 客户信息未切换用户时只同步 cookie token", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "token=fresh-token; path=/";
+    mockedFetchCustomerInfo.mockResolvedValueOnce({
+      returnCode: "SUC0000",
+      body: {
+        output: {
+          result: {
+            userChange: false,
+            sysId: "updated-sys",
+            token: "response-token",
+            bbk: "updated-bbk",
+            orgCode: "updated-org",
+            orgLvl: "updated-lvl",
+            userId: "updated-user",
+            positionId: "updated-position",
+          },
+        },
+      },
+    });
+
+    await handleUrlOriginParam();
+
+    expect(useIframeStore.getState()).toMatchObject({
+      userId: "80000002",
+      token: "fresh-token",
+      bbk: null,
+      orgCode: null,
+      positionId: null,
+      userChange: false,
+    });
+  });
+
+  it("origin=Y 客户信息未切换用户时只初始化一次", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    mockedFetchUserInit.mockResolvedValue({ appended: true });
+    mockedFetchCustomerInfo.mockResolvedValueOnce({
+      returnCode: "SUC0000",
+      body: {
+        output: {
+          result: {
+            userChange: false,
+            sysId: "sys",
+            token: "response-token",
+            bbk: "bbk",
+            orgCode: "org",
+            orgLvl: "lvl",
+            userId: "80000002",
+            positionId: "position",
+          },
+        },
+      },
+    });
+
+    await handleUrlOriginParam();
+
+    expect(mockedFetchUserInit).toHaveBeenCalledTimes(1);
   });
 });

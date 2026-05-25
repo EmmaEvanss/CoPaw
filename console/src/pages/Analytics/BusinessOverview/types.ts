@@ -11,6 +11,7 @@ export interface UserRow {
 export interface UserDetailModalProps {
   open: boolean;
   userId: string | null;
+  userName?: string;
   startDate?: string;
   endDate?: string;
   sourceId?: string;

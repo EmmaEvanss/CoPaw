@@ -16,7 +16,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
-import { DownloadOutlined, EyeOutlined, ReloadOutlined, CheckOutlined } from "@ant-design/icons";
+import { DownloadOutlined, EyeOutlined, ReloadOutlined } from "@ant-design/icons";
 import { PageHeader } from "@/components/PageHeader";
 import {
   monitorApi,
@@ -150,6 +150,11 @@ export default function CronOverviewPage() {
   // Executions filters (dropdown selects)
   const [execsJobFilter, setExecsJobFilter] = useState<string>("");
   const [execsUserFilter, setExecsUserFilter] = useState<string>("");
+  const [execsSourceFilter, setExecsSourceFilter] = useState<string>(() => {
+    // 默认选中登录人当前的平台，与任务列表保持一致
+    const source = useIframeStore.getState().source;
+    return source || "RMASSIST";
+  });
   const [execsStatusFilter, setExecsStatusFilter] = useState<string>("");
   const [execsTimeRangeType, setExecsTimeRangeType] = useState<string>("today");
   const [execsCustomTimeRange, setExecsCustomTimeRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([dayjs().subtract(7, "day"), dayjs()]);
@@ -239,13 +244,15 @@ export default function CronOverviewPage() {
   };
 
   // Fetch executions
-  const fetchExecutions = async () => {
+  const fetchExecutions = async (overrideSource?: string) => {
     setExecsLoading(true);
     try {
       const timeRange = getTimeRange(execsTimeRangeType, execsCustomTimeRange);
+      const sourceId = overrideSource || execsSourceFilter;
       const result = await monitorApi.getExecutions(execsPage, execsPageSize, {
         job_id: execsJobFilter || undefined,
         tenant_id: execsUserFilter || undefined,
+        source_id: sourceId || undefined,
         status: execsStatusFilter || undefined,
         ...timeRange,
       });
@@ -274,8 +281,9 @@ export default function CronOverviewPage() {
     // 如果有 iframe source，使用它进行首次加载
     if (currentUserSource) {
       setJobsSourceFilter(currentUserSource);
+      setExecsSourceFilter(currentUserSource);
       fetchJobs(currentUserSource);
-      fetchExecutions();
+      fetchExecutions(currentUserSource);
       initialLoadDone.current = true;
     } else {
       // 没有 iframe source 时，使用空筛选进行首次加载
@@ -348,6 +356,7 @@ export default function CronOverviewPage() {
       const blob = await monitorApi.exportExecutions({
         job_id: execsJobFilter || undefined,
         tenant_id: execsUserFilter || undefined,
+        source_id: execsSourceFilter || undefined,
         status: execsStatusFilter || undefined,
         ...timeRange,
       });
@@ -368,21 +377,6 @@ export default function CronOverviewPage() {
   const handleViewExecution = (exec: ExecutionItem) => {
     setSelectedExecution(exec);
     setDetailDrawerOpen(true);
-  };
-
-  // Mark job as read
-  const handleMarkAsRead = async (jobId: string) => {
-    try {
-      const result = await monitorApi.markJobAsRead(jobId);
-      if (result.marked) {
-        message.success(`已标记 ${result.count} 条记录为已读`);
-        // 刷新执行记录列表
-        fetchExecutions();
-      }
-    } catch (error) {
-      console.error("Failed to mark as read:", error);
-      message.error("标记已读失败");
-    }
   };
 
   // 构建带"全部"选项的筛选项列表（使用 useMemo 缓存）
@@ -566,28 +560,16 @@ export default function CronOverviewPage() {
     {
       title: "操作",
       key: "action",
-      width: 120,
+      width: 80,
       render: (_, record) => (
-        <Space size="small">
-          <Button
-            type="link"
-            size="small"
-            icon={<EyeOutlined />}
-            onClick={() => handleViewExecution(record)}
-          >
-            详情
-          </Button>
-          {record.status === "success" && !record.is_read && (
-            <Button
-              type="link"
-              size="small"
-              icon={<CheckOutlined />}
-              onClick={() => handleMarkAsRead(record.job_id)}
-            >
-              标记已读
-            </Button>
-          )}
-        </Space>
+        <Button
+          type="link"
+          size="small"
+          icon={<EyeOutlined />}
+          onClick={() => handleViewExecution(record)}
+        >
+          详情
+        </Button>
       ),
     },
   ];
@@ -717,6 +699,14 @@ export default function CronOverviewPage() {
                         options={userOptions}
                         loading={filterOptionsLoading}
                         virtual={false}
+                      />
+                      <Select
+                        placeholder="平台"
+                        value={execsSourceFilter || undefined}
+                        onChange={(value) => setExecsSourceFilter(value || "")}
+                        style={{ width: 160 }}
+                        allowClear
+                        options={PLATFORM_OPTIONS}
                       />
                       <Select
                         placeholder="状态"

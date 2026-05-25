@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Modal, Spin, Empty, message } from "antd";
 import { User } from "lucide-react";
 import {
@@ -6,8 +6,8 @@ import {
   UserStats,
   SessionStats,
   SessionListItem,
-  TraceListItem,
 } from "../../../../../api/modules/tracing";
+import type { ChatSpec } from "../../../../../api/types";
 import { UserDetailModalProps } from "../../types";
 import UserStatsHeader from "./UserStatsHeader";
 import SessionCardList from "./SessionCardList";
@@ -17,6 +17,7 @@ import styles from "./index.module.less";
 export default function UserDetailModal({
   open,
   userId,
+  userName,
   startDate,
   endDate,
   sourceId,
@@ -39,14 +40,18 @@ export default function UserDetailModal({
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
   const [hasAutoSelectedSession, setHasAutoSelectedSession] = useState(false);
+  const [chatSpecs, setChatSpecs] = useState<ChatSpec[]>([]);
 
-  // 对话列表状态
+  // 聊天记录状态
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [traces, setTraces] = useState<TraceListItem[]>([]);
-  const [tracesTotal, setTracesTotal] = useState(0);
-  const [tracesPage, setTracesPage] = useState(1);
-  const [tracesPageSize] = useState(10);
-  const [tracesLoading, setTracesLoading] = useState(false);
+
+  const chatIdBySessionId = useMemo(
+    () =>
+      Object.fromEntries(
+        chatSpecs.map((chat) => [chat.session_id, chat.id]),
+      ),
+    [chatSpecs],
+  );
 
   // 获取用户统计
   const fetchUserStats = useCallback(async () => {
@@ -70,8 +75,6 @@ export default function UserDetailModal({
     try {
       const data = await tracingApi.getSessions(page, sessionsPageSize, {
         user_id: userId,
-        start_date: startDate,
-        end_date: endDate,
         source_id: sourceId,
         bbk_ids: bbkIds,
       });
@@ -83,15 +86,27 @@ export default function UserDetailModal({
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, startDate, endDate, sourceId, sessionsPageSize, bbkIds]);
+  }, [userId, sourceId, sessionsPageSize, bbkIds]);
+
+  // 获取聊天映射
+  const fetchUserChats = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const data = await tracingApi.getUserChats(userId);
+      setChatSpecs(data || []);
+    } catch (error) {
+      console.error("Failed to fetch user chats:", error);
+      setChatSpecs([]);
+    }
+  }, [userId]);
 
   // 获取会话统计
   const fetchSessionStats = useCallback(async (sessionId: string) => {
     try {
       const data = await tracingApi.getSessionStats(
         sessionId,
-        startDate,
-        endDate,
+        undefined,
+        undefined,
         sourceId,
         bbkIds,
       );
@@ -100,39 +115,18 @@ export default function UserDetailModal({
       console.error("Failed to fetch session stats:", error);
       message.error("获取会话统计失败");
     }
-  }, [startDate, endDate, sourceId, bbkIds]);
-
-  // 获取对话列表
-  const fetchTraces = useCallback(async (sessionId: string, page: number) => {
-    if (!sessionId) return;
-    setTracesLoading(true);
-    try {
-      const data = await tracingApi.getTraces(page, tracesPageSize, {
-        session_id: sessionId,
-        start_date: startDate,
-        end_date: endDate,
-        source_id: sourceId,
-        bbk_ids: bbkIds,
-      });
-      setTraces(data.items || []);
-      setTracesTotal(data.total || 0);
-    } catch (error) {
-      console.error("Failed to fetch traces:", error);
-      message.error("获取对话列表失败");
-    } finally {
-      setTracesLoading(false);
-    }
-  }, [startDate, endDate, sourceId, tracesPageSize, bbkIds]);
+  }, [sourceId, bbkIds]);
 
   // Modal 打开时加载数据
   useEffect(() => {
     if (open && userId) {
       fetchUserStats();
       fetchSessions(1);
+      fetchUserChats();
       setSessionsPage(1);
       setHasAutoSelectedSession(false);
     }
-  }, [open, userId, fetchUserStats, fetchSessions]);
+  }, [open, userId, fetchUserStats, fetchSessions, fetchUserChats]);
 
   // 首次打开详情弹窗时自动选中第一条会话，便于直接查看聊天内容
   useEffect(() => {
@@ -157,17 +151,6 @@ export default function UserDetailModal({
     fetchSessionStats,
   ]);
 
-  // 选中会话变化时加载对话
-  useEffect(() => {
-    if (selectedSessionId) {
-      fetchTraces(selectedSessionId, 1);
-      setTracesPage(1);
-    } else {
-      setTraces([]);
-      setTracesTotal(0);
-    }
-  }, [selectedSessionId, fetchTraces]);
-
   // 关闭时重置状态
   const handleClose = () => {
     setUserStats(null);
@@ -175,13 +158,11 @@ export default function UserDetailModal({
     setStatsCollapsed(false);
     setSessions([]);
     setSessionsTotal(0);
+    setChatSpecs([]);
     setSessionsPage(1);
     setSessionsCollapsed(false);
     setHasAutoSelectedSession(false);
     setSelectedSessionId(null);
-    setTraces([]);
-    setTracesTotal(0);
-    setTracesPage(1);
     onClose();
   };
 
@@ -204,14 +185,6 @@ export default function UserDetailModal({
     }
   };
 
-  // 对话分页变化
-  const handleTracesPageChange = (page: number) => {
-    setTracesPage(page);
-    if (selectedSessionId) {
-      fetchTraces(selectedSessionId, page);
-    }
-  };
-
   // 判断当前显示的是用户级还是会话级统计
   const showSessionStats = selectedSessionId !== null && sessionStats !== null;
 
@@ -223,10 +196,8 @@ export default function UserDetailModal({
             <User size={18} />
           </span>
           <div className={styles.modalTitleText}>
-            <div className={styles.modalTitle}>用户详情</div>
-            <div className={styles.modalSubtitle}>
-              调用排行 · 运营看板 · 只读审计视图
-            </div>
+            <div className={styles.modalTitle}>{userName || userId || '未知用户'}</div>
+            <div className={styles.modalSubtitle}>{userId || "-"}</div>
           </div>
         </div>
       }
@@ -280,13 +251,7 @@ export default function UserDetailModal({
             <div className={styles.rightPanel}>
               <ReadOnlySessionChat
                 selectedSessionId={selectedSessionId}
-                userId={userId}
-                traces={traces}
-                total={tracesTotal}
-                page={tracesPage}
-                pageSize={tracesPageSize}
-                tracesLoading={tracesLoading}
-                onPageChange={handleTracesPageChange}
+                chatIdBySessionId={chatIdBySessionId}
               />
             </div>
           </div>

@@ -82,7 +82,7 @@ def _client() -> tuple[TestClient, _FakeManager, _FakeChatManager, _FakePool]:
 def test_get_user_chats_requires_user_id() -> None:
     client, _, _, _ = _client()
 
-    response = client.get("/monitor/tracing/chats")
+    response = client.get("/tracing/chats")
 
     assert response.status_code == 422
 
@@ -91,7 +91,7 @@ def test_get_user_chats_reads_target_user_workspace() -> None:
     client, manager, chat_manager, pool = _client()
 
     response = client.get(
-        "/monitor/tracing/chats",
+        "/tracing/chats",
         params={"user_id": "target-user", "channel": "console"},
         headers={
             "X-Agent-Id": "agent-a",

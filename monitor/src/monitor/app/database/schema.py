@@ -108,6 +108,16 @@ CREATE TABLE IF NOT EXISTS swe_cron_executions (
     -- 执行元数据
     meta            VARCHAR(2048) DEFAULT '' COMMENT '执行元数据',
 
+    -- 通知状态
+    notification_status VARCHAR(16) DEFAULT 'not_required' COMMENT '通知状态',
+    notification_due_at DATETIME DEFAULT NULL COMMENT '计划通知时间',
+    notification_timezone VARCHAR(64) DEFAULT '' COMMENT '通知计算时区',
+    notification_sent_at DATETIME DEFAULT NULL COMMENT '通知发送时间',
+    notification_attempts INT DEFAULT 0 COMMENT '通知尝试次数',
+    notification_error VARCHAR(2048) DEFAULT '' COMMENT '通知错误',
+    notification_lock_owner VARCHAR(128) DEFAULT '' COMMENT '通知锁持有者',
+    notification_locked_at DATETIME DEFAULT NULL COMMENT '通知锁时间',
+
     -- 时间戳
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
 
@@ -117,10 +127,75 @@ CREATE TABLE IF NOT EXISTS swe_cron_executions (
     INDEX idx_scheduled_time (scheduled_time),
     INDEX idx_actual_time (actual_time),
     INDEX idx_trace_id (trace_id),
+    INDEX idx_notification_scan (notification_status, notification_due_at),
+    INDEX idx_notification_lock (notification_lock_owner, notification_locked_at),
     INDEX idx_tenant_actual (tenant_id, actual_time),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行历史表';
 """
+
+
+ALTER_CRON_EXECUTIONS_NOTIFICATION_COLUMNS = [
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_status VARCHAR(16) DEFAULT 'not_required'
+    COMMENT '通知状态'
+    AFTER meta
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_due_at DATETIME DEFAULT NULL
+    COMMENT '计划通知时间'
+    AFTER notification_status
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_timezone VARCHAR(64) DEFAULT ''
+    COMMENT '通知计算时区'
+    AFTER notification_due_at
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_sent_at DATETIME DEFAULT NULL
+    COMMENT '通知发送时间'
+    AFTER notification_timezone
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_attempts INT DEFAULT 0
+    COMMENT '通知尝试次数'
+    AFTER notification_sent_at
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_error VARCHAR(2048) DEFAULT ''
+    COMMENT '通知错误'
+    AFTER notification_attempts
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_lock_owner VARCHAR(128) DEFAULT ''
+    COMMENT '通知锁持有者'
+    AFTER notification_error
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD COLUMN notification_locked_at DATETIME DEFAULT NULL
+    COMMENT '通知锁时间'
+    AFTER notification_lock_owner
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD INDEX idx_notification_scan (notification_status, notification_due_at)
+    """,
+    """
+    ALTER TABLE swe_cron_executions
+    ADD INDEX idx_notification_lock (
+        notification_lock_owner,
+        notification_locked_at
+    )
+    """,
+]
 
 
 async def init_database_tables() -> None:
@@ -136,6 +211,15 @@ async def init_database_tables() -> None:
 
         await db.execute(CREATE_CRON_EXECUTIONS_TABLE)
         logger.info("Created cron_executions table (or already exists)")
+
+        for statement in ALTER_CRON_EXECUTIONS_NOTIFICATION_COLUMNS:
+            try:
+                await db.execute(statement)
+            except Exception as exc:  # pylint: disable=broad-except
+                message = str(exc).lower()
+                if "duplicate" not in message and "exists" not in message:
+                    raise
+        logger.info("Ensured cron execution notification columns")
 
     except Exception as e:
         logger.error("Failed to initialize database tables: %s", e)

@@ -43,6 +43,7 @@ from ..tracing import init_trace_manager, close_trace_manager
 from ..database import get_database_config
 from .service_heartbeat import start_service_heartbeat, stop_service_heartbeat
 from .crons.monitor_sync_client import get_monitor_sync_client
+from .crons.notification_worker import CronNotificationWorker
 
 # Apply log level on load so reload child process gets same level as CLI.
 logger = setup_logger(os.environ.get(LOG_LEVEL_ENV, "info"))
@@ -408,10 +409,26 @@ async def lifespan(
     get_monitor_sync_client().schedule_swe_cron_warmup(
         start_delay_seconds=5.0,
     )
+    cron_notification_worker = CronNotificationWorker(
+        multi_agent_manager=multi_agent_manager,
+    )
+    app.state.cron_notification_worker = cron_notification_worker
+    cron_notification_worker.start()
 
     try:
         yield
     finally:
+        cron_notification_worker = getattr(
+            app.state,
+            "cron_notification_worker",
+            None,
+        )
+        if cron_notification_worker is not None:
+            try:
+                await cron_notification_worker.stop()
+            except Exception as e:
+                logger.warning("Error stopping cron notification worker: %s", e)
+
         # Close tracing manager
         try:
             await close_trace_manager()

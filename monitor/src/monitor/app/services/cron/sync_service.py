@@ -6,7 +6,7 @@ from SWE to Monitor database.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -26,6 +26,14 @@ def _get_beijing_now() -> datetime:
         当前北京时间（无时区信息）
     """
     return datetime.now(_BEIJING_TZ).replace(tzinfo=None)
+
+
+def _to_beijing_naive(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(_BEIJING_TZ).replace(tzinfo=None)
 
 
 class SyncService:
@@ -252,10 +260,11 @@ class SyncService:
                 instance_id, executor_leader, is_manual,
                 trace_id, session_id,
                 input_snapshot, output_preview, meta,
+                notification_status, notification_due_at, notification_timezone,
                 is_read, read_at,
                 created_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
             (
@@ -276,6 +285,9 @@ class SyncService:
                 request.input_snapshot,
                 request.output_preview,
                 request.meta,
+                request.notification_status,
+                _to_beijing_naive(request.notification_due_at),
+                request.notification_timezone,
                 request.is_read,
                 request.read_at,
                 now,

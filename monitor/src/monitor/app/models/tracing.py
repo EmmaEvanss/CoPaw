@@ -79,6 +79,10 @@ class Span(BaseModel):
         default=None,
         description="Skill name for skill events",
     )
+    skill_description: Optional[str] = Field(
+        default=None,
+        description="Skill description from SKILL.md",
+    )
     mcp_server: Optional[str] = Field(
         default=None,
         description="MCP server name if this tool is from MCP",
@@ -186,6 +190,10 @@ class SkillUsage(BaseModel):
     """Skill usage statistics with weighted attribution."""
 
     skill_name: str
+    skill_description: Optional[str] = Field(
+        default=None,
+        description="技能描述",
+    )
     count: int = 0
     weighted_count: float = 0.0
     avg_duration_ms: int = 0

@@ -205,20 +205,24 @@ def copy_skill_to_user(
     version: str,
     agent_id: str = DEFAULT_AGENT_ID,
 ) -> dict:
-    """将市场技能复制到用户工作目录，并写入分发元数据.
+    """将市场技能复制到用户工作目录，返回分发元数据供 manifest 使用.
 
     分发前检查目标目录是否已有同名技能：
     - 自建技能（source=customized）：跳过，保护用户自建内容
     - 接收的技能（source=marketplace:...）：覆盖更新
     - 不存在：正常分发
 
+    注意：不再写入技能目录内的 skill.json，分发元数据由调用方写入 workspace manifest。
+
     Args:
         skill_name: 规范的目录名（normalize 后，保留中文等 Unicode 字符）
         original_name: 原始技能名称（用于前端展示）
         description: 技能描述（用于前端展示）
+        distributed_by: 分发者标识
+        version: 技能版本
 
     Returns:
-        {"status": "distributed"} 或 {"status": "conflict", "reason": "customized"}
+        {"status": "distributed", "metadata": {...}} 或 {"status": "conflict", "reason": "customized"}
     """
     import shutil
 
@@ -228,27 +232,38 @@ def copy_skill_to_user(
         get_user_skills_dir(swe_root, user_id, agent_id, source_id)
         / skill_name
     )
-    dst_skill_json = dst_dir / "skill.json"
 
-    # 检查目标目录是否已有同名技能
+    # 检查目标目录是否已有同名技能（通过 workspace manifest 判断）
+    manifest_path = get_user_skill_manifest_path(
+        swe_root,
+        user_id,
+        agent_id,
+        source_id,
+    )
     existing_created_at = None
-    if dst_dir.exists() and dst_skill_json.exists():
+    if manifest_path.exists():
         try:
-            existing_data = json.loads(
-                dst_skill_json.read_text(encoding="utf-8"),
+            manifest_data = json.loads(
+                manifest_path.read_text(encoding="utf-8"),
             )
-            existing_source = existing_data.get("source", "customized")
-            existing_created_at = existing_data.get("created_at")
+            existing_entry = manifest_data.get("skills", {}).get(skill_name)
 
-            # 自建技能：跳过，不覆盖
-            if existing_source == "customized":
-                return {"status": "conflict", "reason": "customized"}
+            # 技能不存在于 manifest 中，可以正常分发
+            if existing_entry is None:
+                pass  # 不存在，正常分发
+            else:
+                existing_source = existing_entry.get("source", "customized")
+                existing_created_at = existing_entry.get("created_at")
 
-            # 接收的技能：继续覆盖更新
+                # 自建技能：跳过，不覆盖
+                if existing_source == "customized":
+                    return {"status": "conflict", "reason": "customized"}
+
+                # 接收的技能：继续覆盖更新
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(
-                "Failed to read existing skill.json %s: %s",
-                dst_skill_json,
+                "Failed to read manifest %s: %s",
+                manifest_path,
                 e,
             )
 
@@ -257,42 +272,27 @@ def copy_skill_to_user(
         shutil.rmtree(dst_dir)
     shutil.copytree(src_dir, dst_dir)
 
-    # 读取复制后的 skill.json 并注入分发元数据
-    skill_data: dict = {}
+    # 删除复制过来的 skill.json（不再需要）
+    dst_skill_json = dst_dir / "skill.json"
     if dst_skill_json.exists():
         try:
-            skill_data = json.loads(
-                dst_skill_json.read_text(encoding="utf-8"),
-            )
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(
-                "Failed to read copied skill.json %s: %s",
-                dst_skill_json,
-                e,
-            )
+            dst_skill_json.unlink()
+        except OSError:
+            pass
 
-    # 确保 name 字段存在（用于前端展示）
-    if "name" not in skill_data:
-        skill_data["name"] = original_name
+    # 构建分发元数据，供调用方写入 workspace manifest
+    metadata = {
+        "name": original_name,
+        "description": description,
+        "distributed_by": distributed_by,
+        "received_version": version,
+    }
 
-    # 确保 description 字段存在（用于前端展示）
-    if not skill_data.get("description"):
-        skill_data["description"] = description
-
-    skill_data["source"] = f"marketplace:{item_id}"
-    skill_data["distributed_by"] = distributed_by
-    skill_data["received_version"] = version
     # 保留原有 created_at（重复分发时不覆盖首次创建时间）
     if existing_created_at:
-        skill_data["created_at"] = existing_created_at
-    else:
-        skill_data.setdefault(
-            "created_at",
-            datetime.now(timezone.utc).isoformat(),
-        )
+        metadata["created_at"] = existing_created_at
 
-    _atomic_write_json(dst_dir / "skill.json", skill_data)
-    return {"status": "distributed"}
+    return {"status": "distributed", "metadata": metadata}
 
 
 def get_user_skill_manifest_path(
@@ -301,11 +301,17 @@ def get_user_skill_manifest_path(
     agent_id: str = DEFAULT_AGENT_ID,
     source_id: str | None = None,
 ) -> Path:
-    """获取用户工作空间的 skill.json 路径."""
-    return (
-        get_user_skills_dir(swe_root, user_id, agent_id, source_id)
-        / "skill.json"
-    )
+    """获取用户 workspace 的运行时 manifest 路径（skill.json）.
+
+    该文件存储技能的运行时状态（enabled、channels、config 等），
+    与技能目录内的 skill.json（存储展示元数据）职责不同。
+    路径与 src/swe 的 get_workspace_skill_manifest_path 保持一致。
+    """
+    effective_user_id = resolve_effective_user_id(user_id, source_id)
+    _validate_path_segment(effective_user_id, "user_id")
+    _validate_path_segment(agent_id, "agent_id")
+    user_root = migrate_legacy_scope_dir_if_needed(swe_root, effective_user_id)
+    return user_root / "workspaces" / agent_id / "skill.json"
 
 
 def read_user_skill_manifest(

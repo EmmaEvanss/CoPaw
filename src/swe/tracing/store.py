@@ -336,9 +336,9 @@ class TraceStore:
             INSERT INTO swe_tracing_spans (
                 span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
-                model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
+                model_name, input_tokens, output_tokens, tool_name, skill_name, skill_description, mcp_server,
                 tool_input, tool_output, error, user_name, bbk_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             span.span_id,
@@ -361,6 +361,7 @@ class TraceStore:
             span.output_tokens,
             span.tool_name,
             span.skill_name,
+            span.skill_description,
             span.mcp_server,
             json.dumps(span.tool_input) if span.tool_input else None,
             span.tool_output,
@@ -443,9 +444,9 @@ class TraceStore:
             INSERT INTO swe_tracing_spans (
                 span_id, trace_id, source_id, name, event_type,
                 start_time, end_time, duration_ms, user_id, session_id, channel,
-                model_name, input_tokens, output_tokens, tool_name, skill_name, mcp_server,
+                model_name, input_tokens, output_tokens, tool_name, skill_name, skill_description, mcp_server,
                 tool_input, tool_output, error, user_name, bbk_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params_list = []
         for span in spans:
@@ -471,6 +472,7 @@ class TraceStore:
                     span.output_tokens,
                     span.tool_name,
                     span.skill_name,
+                    span.skill_description,
                     span.mcp_server,
                     json.dumps(span.tool_input) if span.tool_input else None,
                     span.tool_output,

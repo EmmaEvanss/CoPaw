@@ -1,5 +1,6 @@
 import { request } from "../request";
 import { buildAuthHeaders } from "../authHeaders";
+import type { ChatSpec } from "../types";
 import type { FeedbackRecord } from "../types/feedback";
 
 // Types
@@ -383,6 +384,16 @@ export const tracingApi = {
     return request(
       `/monitor/tracing/users/${encodeURIComponent(userId)}${query}`,
     );
+  },
+
+  getUserChats: async (
+    userId: string,
+    channel?: string,
+  ): Promise<ChatSpec[]> => {
+    const params = new URLSearchParams();
+    params.append("user_id", userId);
+    if (channel) params.append("channel", channel);
+    return request<ChatSpec[]>(`/monitor/tracing/chats?${params.toString()}`);
   },
 
   getTraces: async (

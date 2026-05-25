@@ -332,7 +332,6 @@ export default function CronOverviewPage() {
       const blob = await monitorApi.exportJobs({
         tenant_id: jobsUserFilter || undefined,
         bbk_id: jobsBbkFilter || undefined,
-        source_id: jobsSourceFilter || undefined,
         enabled: enabledValue,
       });
       const url = window.URL.createObjectURL(blob);
@@ -356,7 +355,6 @@ export default function CronOverviewPage() {
       const blob = await monitorApi.exportExecutions({
         job_id: execsJobFilter || undefined,
         tenant_id: execsUserFilter || undefined,
-        source_id: execsSourceFilter || undefined,
         status: execsStatusFilter || undefined,
         ...timeRange,
       });

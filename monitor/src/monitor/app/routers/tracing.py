@@ -7,7 +7,7 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import httpx
 from fastapi import APIRouter, Query, HTTPException, Request, Body
@@ -32,11 +32,7 @@ from ..models.tracing import (
 from ..services.tracing import TracingQueryService, TracingExportService
 from ..services.tracing.extract_service import ExtractCustomerNamesService
 from ..database import get_es_client, get_db_connection
-from ...config.constant import (
-    API_CALL_TIMEOUT,
-    SWE_API_BASE_URL,
-    USER_INFO_API_URL,
-)
+from ...config.constant import USER_INFO_API_URL
 
 
 def _get_source_id_from_header(request: Request) -> str:
@@ -91,92 +87,6 @@ def _parse_date(
 
 
 router = APIRouter(prefix="/monitor/tracing", tags=["tracing"])
-
-
-class ChatSpec(BaseModel):
-    """SWE 聊天规格，用于运营看板会话到聊天记录的映射。"""
-
-    id: str
-    session_id: str
-    user_id: str
-    channel: str
-    name: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    meta: dict[str, Any] = Field(default_factory=dict)
-    status: Optional[str] = None
-
-
-def _forward_swe_headers(
-    request: Request,
-    target_user_id: str,
-) -> dict[str, str]:
-    """构造调用 SWE 时使用的身份头，目标用户覆盖当前查看人。"""
-    headers: dict[str, str] = {}
-    for name in (
-        "Authorization",
-        "X-Agent-Id",
-        "X-Source-Id",
-        "X-Bbk-Id",
-        "X-User-Role",
-        "X-User-Name",
-        "X-Org-Code",
-        "X-Position-Id",
-        "space",
-        "x-header-cookie",
-    ):
-        value = request.headers.get(name)
-        if value:
-            headers[name] = value
-
-    # SWE 的聊天仓储按请求用户/租户解析工作区，因此这里必须切到目标用户。
-    headers["X-User-Id"] = target_user_id
-    headers["X-Tenant-Id"] = target_user_id
-    return headers
-
-
-async def _fetch_swe_chats(
-    request: Request,
-    target_user_id: str,
-    channel: Optional[str] = None,
-) -> list[dict[str, Any]]:
-    """从 SWE 服务读取目标用户的 ChatSpec 列表。"""
-    params: dict[str, str] = {"user_id": target_user_id}
-    if channel:
-        params["channel"] = channel
-
-    try:
-        async with httpx.AsyncClient(timeout=API_CALL_TIMEOUT) as client:
-            response = await client.get(
-                f"{SWE_API_BASE_URL}/chats",
-                params=params,
-                headers=_forward_swe_headers(request, target_user_id),
-            )
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "Failed to query SWE chats: status=%s user_id=%s",
-            exc.response.status_code,
-            target_user_id,
-        )
-        raise HTTPException(
-            status_code=exc.response.status_code,
-            detail=exc.response.text or "Failed to query chats",
-        ) from exc
-    except httpx.HTTPError as exc:
-        logger.warning("Failed to query SWE chats: %s", exc)
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to query chats",
-        ) from exc
-
-    if not isinstance(payload, list):
-        raise HTTPException(
-            status_code=502,
-            detail="Invalid chats response",
-        )
-    return payload
 
 
 # ===== 运营概览 =====
@@ -323,21 +233,6 @@ async def get_user_stats(
         end,
         bbk_ids,
     )
-
-
-@router.get("/chats", response_model=list[ChatSpec])
-async def get_user_chats(
-    request: Request,
-    user_id: str = Query(..., description="目标用户 ID"),
-    channel: Optional[str] = Query(None, description="按渠道筛选"),
-) -> list[ChatSpec]:
-    """获取目标用户聊天映射列表。
-
-    该接口服务于运营看板用户详情弹窗，只读取 ChatSpec 映射信息，
-    不改变 SWE `/chats` 的当前用户语义。
-    """
-    chats = await _fetch_swe_chats(request, user_id, channel)
-    return [ChatSpec.model_validate(chat) for chat in chats]
 
 
 # ===== 对话分析 =====

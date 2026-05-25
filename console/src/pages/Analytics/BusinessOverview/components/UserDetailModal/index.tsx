@@ -20,7 +20,6 @@ export default function UserDetailModal({
   userName,
   startDate,
   endDate,
-  sourceId,
   bbkIds,
   onClose,
 }: UserDetailModalProps) {
@@ -58,7 +57,7 @@ export default function UserDetailModal({
     if (!userId) return;
     setUserLoading(true);
     try {
-      const data = await tracingApi.getUserStats(userId, startDate, endDate, sourceId, bbkIds);
+      const data = await tracingApi.getUserStats(userId, startDate, endDate, bbkIds);
       setUserStats(data);
     } catch (error) {
       console.error("Failed to fetch user stats:", error);
@@ -66,7 +65,7 @@ export default function UserDetailModal({
     } finally {
       setUserLoading(false);
     }
-  }, [userId, startDate, endDate, sourceId, bbkIds]);
+  }, [userId, startDate, endDate, bbkIds]);
 
   // 获取会话列表
   const fetchSessions = useCallback(async (page: number) => {
@@ -75,7 +74,6 @@ export default function UserDetailModal({
     try {
       const data = await tracingApi.getSessions(page, sessionsPageSize, {
         user_id: userId,
-        source_id: sourceId,
         bbk_ids: bbkIds,
       });
       setSessions(data.items || []);
@@ -86,7 +84,7 @@ export default function UserDetailModal({
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, sourceId, sessionsPageSize, bbkIds]);
+  }, [userId, sessionsPageSize, bbkIds]);
 
   // 获取聊天映射
   const fetchUserChats = useCallback(async () => {
@@ -107,7 +105,6 @@ export default function UserDetailModal({
         sessionId,
         undefined,
         undefined,
-        sourceId,
         bbkIds,
       );
       setSessionStats(data);
@@ -115,7 +112,7 @@ export default function UserDetailModal({
       console.error("Failed to fetch session stats:", error);
       message.error("获取会话统计失败");
     }
-  }, [sourceId, bbkIds]);
+  }, [bbkIds]);
 
   // Modal 打开时加载数据
   useEffect(() => {

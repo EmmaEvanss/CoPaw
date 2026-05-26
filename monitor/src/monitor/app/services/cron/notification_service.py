@@ -18,6 +18,7 @@ class ClaimedCronNotification(BaseModel):
     job_id: str
     job_name: str = ""
     tenant_id: str
+    source_id: str = ""
     notification_due_at: Optional[datetime] = None
     notification_timezone: str = ""
     notification_attempts: int = 0
@@ -117,6 +118,7 @@ class CronNotificationService:
                 e.job_id,
                 e.job_name,
                 e.tenant_id,
+                COALESCE(j.source_id, '') AS source_id,
                 e.notification_due_at,
                 e.notification_timezone,
                 e.notification_attempts,

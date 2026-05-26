@@ -12,6 +12,7 @@ from typing import Any, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from ...config.context import resolve_runtime_tenant_id
 from ...config.utils import load_config
 from .monitor_sync_client import MonitorSyncClient, get_monitor_sync_client
 
@@ -109,10 +110,15 @@ class CronNotificationWorker:
         execution_id = int(row.get("id"))
         try:
             tenant_id = str(row.get("tenant_id") or "")
+            source_id = str(row.get("source_id") or "")
             job_id = str(row.get("job_id") or "")
+            runtime_tenant_id = resolve_runtime_tenant_id(
+                tenant_id or None,
+                source_id or None,
+            )
             workspace = await self._multi_agent_manager.get_agent(
                 "default",
-                tenant_id=tenant_id or None,
+                tenant_id=runtime_tenant_id,
             )
             if workspace.cron_manager is None:
                 raise RuntimeError(f"cron manager unavailable: {tenant_id}")

@@ -92,7 +92,7 @@ def intercept_command(command: str) -> Tuple[str, bool]:
     Returns:
         Tuple of (modified_command, was_intercepted)
     """
-    tenant_id = get_current_tenant_id() or get_current_effective_tenant_id()
+    tenant_id = get_current_tenant_id()
     source_id = get_current_source_id()
     user_id = get_current_user_id()
 

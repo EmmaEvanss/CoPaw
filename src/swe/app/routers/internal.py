@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import unquote, urlsplit
 
-from fastapi import APIRouter, Body, Header, HTTPException, Request
+from fastapi import APIRouter, Body, File, Header, HTTPException, Request
+from fastapi import UploadFile
 from pydantic import BaseModel, Field
 
 from ...config.context import (
@@ -142,6 +143,15 @@ class InternalTextAssetWriteResponse(BaseModel):
     public_url: str
 
 
+class InternalAssetUploadResponse(BaseModel):
+    """内部 asset 上传响应。"""
+
+    success: bool = Field(default=True)
+    file_name: str
+    asset_path: str
+    size: int
+
+
 class InternalTextAssetPreviewPathRequest(BaseModel):
     user_id: str
     source_id: str
@@ -217,6 +227,10 @@ def _build_public_url(scope_id: str, file_name: str) -> str:
 
 def _get_asset_file_path(file_name: str) -> Path:
     return WORKING_DIR / _ASSET_ROOT_DIRNAME / file_name
+
+
+def _build_asset_path(file_name: str) -> str:
+    return f"{_ASSET_ROOT_DIRNAME}/{file_name}"
 
 
 def _get_scope_static_dir(scope_id: str) -> Path:
@@ -324,6 +338,23 @@ def _read_text_asset(file_name: str) -> InternalTextAssetReadResponse:
     )
 
 
+async def _save_uploaded_asset_file(
+    file: UploadFile,
+) -> InternalAssetUploadResponse:
+    safe_file_name = _validate_asset_file_name(file.filename or "")
+    content = await file.read()
+    asset_dir = WORKING_DIR / _ASSET_ROOT_DIRNAME
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    asset_file = _get_asset_file_path(safe_file_name)
+    asset_file.write_bytes(content)
+
+    return InternalAssetUploadResponse(
+        file_name=safe_file_name,
+        asset_path=_build_asset_path(safe_file_name),
+        size=len(content),
+    )
+
+
 def _write_text_asset(
     payload: InternalTextAssetWriteRequest,
 ) -> InternalTextAssetWriteResponse:
@@ -392,6 +423,25 @@ async def internal_read_text_asset(
 ) -> InternalTextAssetReadResponse:
     _verify_internal_token(x_internal_token)
     return _read_text_asset(file_name)
+
+
+@router.post(
+    "/assets/upload",
+    response_model=InternalAssetUploadResponse,
+    responses={
+        400: {"model": InternalErrorResponse},
+        401: {"model": InternalErrorResponse},
+    },
+)
+async def internal_upload_asset(
+    file: UploadFile = File(...),
+    x_internal_token: Optional[str] = Header(
+        default=None,
+        alias="X-Internal-Token",
+    ),
+) -> InternalAssetUploadResponse:
+    _verify_internal_token(x_internal_token)
+    return await _save_uploaded_asset_file(file)
 
 
 @router.post(

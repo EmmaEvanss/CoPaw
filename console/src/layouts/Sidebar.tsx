@@ -138,12 +138,14 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   // ── Collapsed nav items (all leaf pages) ──────────────────────────────
 
   const collapsedNavItems = [
+    // 聊天
     {
       key: "chat",
       icon: <SparkChatTabFill size={18} />,
       path: "/chat",
       label: t("nav.chat"),
     },
+    // 创作中心
     {
       key: "workspace",
       icon: <SparkLocalFileLine size={18} />,
@@ -168,6 +170,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       path: "/my-mcp",
       label: t("nav.myMcp"),
     },
+    // 运行中心
     {
       key: "cron-jobs",
       icon: <SparkDateLine size={18} />,
@@ -192,6 +195,14 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       path: "/heartbeat",
       label: t("nav.heartbeat"),
     },
+    // 应用市场
+    {
+      key: "market",
+      icon: <Store size={18} />,
+      path: "/market",
+      label: t("nav.market"),
+    },
+    // 系统设置
     {
       key: "models",
       icon: <SparkModePlazaLine size={18} />,
@@ -228,6 +239,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           },
         ]
       : []),
+    // 洞察中心
     {
       key: "analytics-business-overview",
       icon: <SparkBarChartLine size={18} />,
@@ -258,17 +270,12 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       path: "/analytics/traces",
       label: t("nav.analyticsTraces", "Traces"),
     },
+    // 质量工程
     {
       key: "continuous-iteration",
       icon: <SparkRefreshLine size={18} />,
       path: "/continuous-iteration",
       label: t("nav.continuousIteration", "持续治理"),
-    },
-    {
-      key: "market",
-      icon: <Store size={18} />,
-      path: "/market",
-      label: t("nav.market"),
     },
   ];
 
@@ -335,7 +342,13 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
         },
       ],
     },
-    // 4. 系统设置
+    // 4. 应用市场（单独一级）
+    {
+      key: "market",
+      label: collapsed ? null : t("nav.market"),
+      icon: <Store size={16} />,
+    },
+    // 5. 系统设置
     {
       key: "system-settings",
       label: collapsed ? null : t("nav.systemSettings"),
@@ -375,7 +388,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           : []),
       ],
     },
-    // 5. 洞察中心
+    // 6. 洞察中心
     {
       key: "insight-center",
       label: collapsed ? null : t("nav.insightCenter"),
@@ -409,7 +422,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
         },
       ],
     },
-    // 6. 质量工程
+    // 7. 质量工程
     {
       key: "quality-engineering",
       label: collapsed ? null : t("nav.qualityEngineering"),
@@ -420,12 +433,6 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           icon: <SparkRefreshLine size={16} />,
         },
       ],
-    },
-    // 7. 应用市场（单独一级）
-    {
-      key: "market",
-      label: collapsed ? null : t("nav.market"),
-      icon: <Store size={16} />,
     },
   ];
 

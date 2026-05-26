@@ -65,6 +65,7 @@ export default function TracesPage() {
   const [userIdFilter, setUserIdFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [bbkIdFilter, setBbkIdFilter] = useState<string | undefined>();
+  const [feedbackFilter, setFeedbackFilter] = useState<string | undefined>();
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(
     [dayjs().subtract(30, "day"), dayjs()],
   );
@@ -75,7 +76,7 @@ export default function TracesPage() {
 
   useEffect(() => {
     fetchTraces();
-  }, [page, pageSize, statusFilter, bbkIdFilter, dateRange]);
+  }, [page, pageSize, statusFilter, bbkIdFilter, feedbackFilter, dateRange]);
 
   useEffect(() => {
     setFeedbackExpanded(true);
@@ -88,6 +89,7 @@ export default function TracesPage() {
         user_id: userIdFilter || undefined,
         status: statusFilter,
         bbk_ids: bbkIdFilter,
+        has_feedback: feedbackFilter === "has_feedback" || undefined,
         start_date: dateRange?.[0]?.format("YYYY-MM-DD"),
         end_date: dateRange?.[1]?.format("YYYY-MM-DD"),
       });
@@ -310,6 +312,22 @@ export default function TracesPage() {
               { value: "running", label: "Running" },
               { value: "error", label: "Error" },
               { value: "cancelled", label: "Cancelled" },
+            ]}
+          />
+          <Select
+            placeholder={t("analytics.filterFeedback", "反馈内容")}
+            value={feedbackFilter}
+            onChange={(v) => {
+              setFeedbackFilter(v);
+              setPage(1);
+            }}
+            allowClear
+            style={{ width: 150 }}
+            options={[
+              {
+                value: "has_feedback",
+                label: t("analytics.hasFeedback", "包含反馈"),
+              },
             ]}
           />
           <Button type="primary" onClick={handleSearch}>

@@ -411,6 +411,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       bbk_ids?: string;
+      has_feedback?: boolean;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -423,7 +424,9 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== "") {
+          params.append(key, String(value));
+        }
       });
     }
     return request(`/monitor/tracing/traces?${params.toString()}`);

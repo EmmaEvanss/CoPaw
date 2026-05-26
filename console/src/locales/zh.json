@@ -30,6 +30,11 @@
     "total": "共 {{count}} 条"
   },
   "nav": {
+    "creationCenter": "创作中心",
+    "runCenter": "运行中心",
+    "insightCenter": "洞察中心",
+    "qualityEngineering": "质量工程",
+    "systemSettings": "系统设置",
     "chat": "聊天",
     "control": "控制",
     "channels": "频道",

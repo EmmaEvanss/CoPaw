@@ -28,6 +28,11 @@
     "total": "Total {{count}}"
   },
   "nav": {
+    "creationCenter": "Creation Center",
+    "runCenter": "Run Center",
+    "insightCenter": "Insight Center",
+    "qualityEngineering": "Quality Engineering",
+    "systemSettings": "System Settings",
     "chat": "Chat",
     "control": "Control",
     "channels": "Channels",

@@ -134,4 +134,25 @@ describe("UserDetailModal", () => {
       });
     });
   });
+
+  it("falls back to an empty chat mapping when user chats response is not an array", async () => {
+    tracingApiMock.getUserChats.mockResolvedValue({});
+
+    render(
+      <UserDetailModal
+        open
+        userId="user-001"
+        startDate="2026-05-20"
+        endDate="2026-05-20"
+        bbkIds="100"
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(tracingApiMock.getUserChats).toHaveBeenCalledWith("user-001");
+    });
+
+    expect(sessionCardListMock).toHaveBeenCalled();
+  });
 });

@@ -2,6 +2,9 @@
 import logging
 import os
 import time
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from .utils.my_logging import setup_logger
 
@@ -10,19 +13,19 @@ LOG_LEVEL_ENV = "SWE_LOG_LEVEL"
 
 _bootstrap_err: Exception | None = None
 try:
-    # Load persisted env vars before importing modules that read env-backed
-    # constants at import time (e.g., WORKING_DIR).
-    from .envs import load_envs_into_environ
+    _project_root = Path(__file__).resolve().parent.parent.parent
+    _base_env_path = _project_root / ".env"
+    if _base_env_path.exists():
+        load_dotenv(_base_env_path, override=False)
+
+    from .envs.store import load_envs_into_environ
 
     load_envs_into_environ()
 
-    # Load environment-specific defaults (dev/prd) before importing
-    # heavier config modules that depend on env-backed constants.
     from .env_defaults import load_env_defaults
 
     load_env_defaults()
 except Exception as exc:
-    # Best effort: package import should not fail if env bootstrap fails.
     _bootstrap_err = exc
 
 _t0 = time.perf_counter()

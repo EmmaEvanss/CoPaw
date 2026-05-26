@@ -23,7 +23,7 @@ from ...config.utils import list_all_tenant_ids
 from ...constant import WORKING_DIR
 
 router = APIRouter(prefix="/internal", tags=["internal"])
-public_router = APIRouter(prefix="/assets/text", tags=["assets"])
+public_router = APIRouter(prefix="/assets", tags=["assets"])
 logger = logging.getLogger(__name__)
 
 # 内部服务认证 Token（可选）
@@ -405,64 +405,6 @@ def _create_preview_path(
     )
 
 
-@router.get(
-    "/assets/text/read",
-    response_model=InternalTextAssetReadResponse,
-    responses={
-        400: {"model": InternalErrorResponse},
-        401: {"model": InternalErrorResponse},
-        404: {"model": InternalErrorResponse},
-    },
-)
-async def internal_read_text_asset(
-    file_name: str,
-    x_internal_token: Optional[str] = Header(
-        default=None,
-        alias="X-Internal-Token",
-    ),
-) -> InternalTextAssetReadResponse:
-    _verify_internal_token(x_internal_token)
-    return _read_text_asset(file_name)
-
-
-@router.post(
-    "/assets/upload",
-    response_model=InternalAssetUploadResponse,
-    responses={
-        400: {"model": InternalErrorResponse},
-        401: {"model": InternalErrorResponse},
-    },
-)
-async def internal_upload_asset(
-    file: UploadFile = File(...),
-    x_internal_token: Optional[str] = Header(
-        default=None,
-        alias="X-Internal-Token",
-    ),
-) -> InternalAssetUploadResponse:
-    _verify_internal_token(x_internal_token)
-    return await _save_uploaded_asset_file(file)
-
-
-@router.post(
-    "/assets/text/write",
-    response_model=InternalTextAssetWriteResponse,
-    responses={
-        400: {"model": InternalErrorResponse},
-        401: {"model": InternalErrorResponse},
-    },
-)
-async def internal_write_text_asset(
-    payload: InternalTextAssetWriteRequest,
-    x_internal_token: Optional[str] = Header(
-        default=None,
-        alias="X-Internal-Token",
-    ),
-) -> InternalTextAssetWriteResponse:
-    _verify_internal_token(x_internal_token)
-    return _write_text_asset(payload)
-
-
 @router.post(
     "/assets/text/preview-path",
     response_model=InternalTextAssetPreviewPathResponse,
@@ -482,8 +424,22 @@ async def internal_create_text_asset_preview_path(
     return _create_preview_path(payload)
 
 
+@public_router.post(
+    "/upload",
+    response_model=InternalAssetUploadResponse,
+    responses={
+        400: {"model": InternalErrorResponse},
+    },
+)
+async def upload_asset(
+    file: UploadFile = File(...),
+) -> InternalAssetUploadResponse:
+    """公开上传 asset 文件，不校验内部服务 Token。"""
+    return await _save_uploaded_asset_file(file)
+
+
 @public_router.get(
-    "/read",
+    "/text/read",
     response_model=InternalTextAssetReadResponse,
     responses={
         400: {"model": InternalErrorResponse},
@@ -497,7 +453,7 @@ async def read_text_asset(
 
 
 @public_router.post(
-    "/write",
+    "/text/write",
     response_model=InternalTextAssetWriteResponse,
     responses={
         400: {"model": InternalErrorResponse},

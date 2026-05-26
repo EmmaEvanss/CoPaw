@@ -386,7 +386,8 @@ export const tracingApi = {
     const params = new URLSearchParams();
     params.append("user_id", userId);
     if (channel) params.append("channel", channel);
-    return request<ChatSpec[]>(`/tracing/chats?${params.toString()}`);
+    const data = await request<unknown>(`/tracing/chats?${params.toString()}`);
+    return Array.isArray(data) ? (data as ChatSpec[]) : [];
   },
 
   getUserChat: async (

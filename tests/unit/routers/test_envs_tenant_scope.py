@@ -107,7 +107,9 @@ def test_tenant_env_api_is_file_scoped_not_process_scoped(
 
     assert response.status_code == 200
     assert load_envs(envs_path) == {"TENANT_ONLY_KEY": "value-a"}
-    assert response.json() == [{"key": "TENANT_ONLY_KEY", "value": "********"}]
+    assert response.json() == [
+        {"key": "TENANT_ONLY_KEY", "value": "value-a"},
+    ]
     assert "TENANT_ONLY_KEY" not in os.environ
 
 
@@ -126,10 +128,10 @@ def test_tenant_env_api_rejects_malformed_and_protected_keys(
         assert next(iter(payload)) in response.text
 
 
-def test_list_envs_masks_values_by_default(
+def test_list_envs_returns_plain_values(
     client: TestClient,
 ):
-    """普通读取只返回 masked value，避免控制台 routine read 泄露密钥。"""
+    """GET /envs 返回原始值，便于控制台回显和编辑。"""
     client.put(
         "/api/envs",
         headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
@@ -142,8 +144,10 @@ def test_list_envs_masks_values_by_default(
     )
 
     assert response.status_code == 200
-    assert response.json() == [{"key": "API_TOKEN", "value": "********"}]
-    assert "tenant-secret" not in response.text
+    assert response.json() == [
+        {"key": "API_TOKEN", "value": "tenant-secret"},
+    ]
+    assert "tenant-secret" in response.text
 
 
 def test_patch_envs_preserves_existing_secret_without_placeholder(
@@ -175,8 +179,31 @@ def test_patch_envs_preserves_existing_secret_without_placeholder(
         "API_TOKEN": "old-secret",
         "NEW_TOKEN": "new-secret",
     }
-    assert "old-secret" not in response.text
-    assert "new-secret" not in response.text
+    assert response.json() == [
+        {"key": "API_TOKEN", "value": "old-secret"},
+        {"key": "NEW_TOKEN", "value": "new-secret"},
+    ]
+
+
+def test_delete_envs_returns_plain_remaining_values(
+    client: TestClient,
+):
+    """DELETE /envs 返回删除后的原始值列表。"""
+    client.put(
+        "/api/envs",
+        headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
+        json={"API_TOKEN": "tenant-secret", "OLD_KEY": "remove-me"},
+    )
+
+    response = client.delete(
+        "/api/envs/OLD_KEY",
+        headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"key": "API_TOKEN", "value": "tenant-secret"},
+    ]
 
 
 @pytest.mark.parametrize(

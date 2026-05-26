@@ -1,6 +1,6 @@
 import { request } from "../request";
 import { buildAuthHeaders } from "../authHeaders";
-import type { ChatSpec } from "../types";
+import type { ChatHistory, ChatSpec } from "../types";
 import type { FeedbackRecord } from "../types/feedback";
 
 // Types
@@ -77,6 +77,7 @@ export interface ToolUsage {
 
 export interface SkillUsage {
   skill_name: string;
+  skill_description?: string;
   count: number;
   avg_duration_ms: number;
 }
@@ -320,14 +321,11 @@ export const tracingApi = {
   getOverview: async (
     startDate?: string,
     endDate?: string,
-    sourceId?: string,
     bbkIds?: string,
   ): Promise<OverviewStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    // source_id 使用 "all" 表示查询全部平台，需要显式传递
-    if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/overview?${params.toString()}`);
   },
@@ -339,7 +337,6 @@ export const tracingApi = {
       user_id?: string;
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       sort_by?: string;
       filter_user_type?: string;
       bbk_ids?: string;
@@ -356,7 +353,6 @@ export const tracingApi = {
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
         // filter_user_type 需要传递 "all" 或 "filtered"
-        // source_id 为 "all" 时不需要传递，后端 /users 接口默认为 "all"
         if (key === "filter_user_type") {
           if (value) params.append(key, value);
         } else if (value && value !== "all") {
@@ -371,14 +367,11 @@ export const tracingApi = {
     userId: string,
     startDate?: string,
     endDate?: string,
-    sourceId?: string,
     bbkIds?: string,
   ): Promise<UserStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    // source_id 使用 "all" 表示查询全部平台，需要显式传递
-    if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
@@ -393,7 +386,19 @@ export const tracingApi = {
     const params = new URLSearchParams();
     params.append("user_id", userId);
     if (channel) params.append("channel", channel);
-    return request<ChatSpec[]>(`/monitor/tracing/chats?${params.toString()}`);
+    const data = await request<unknown>(`/tracing/chats?${params.toString()}`);
+    return Array.isArray(data) ? (data as ChatSpec[]) : [];
+  },
+
+  getUserChat: async (
+    userId: string,
+    chatId: string,
+  ): Promise<ChatHistory> => {
+    const params = new URLSearchParams();
+    params.append("user_id", userId);
+    return request<ChatHistory>(
+      `/tracing/chats/${encodeURIComponent(chatId)}?${params.toString()}`,
+    );
   },
 
   getTraces: async (
@@ -405,8 +410,8 @@ export const tracingApi = {
       status?: string;
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
+      has_feedback?: boolean;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -419,8 +424,9 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        // source_id 使用 "all" 表示查询全部平台，需要显式传递
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== "") {
+          params.append(key, String(value));
+        }
       });
     }
     return request(`/monitor/tracing/traces?${params.toString()}`);
@@ -433,12 +439,10 @@ export const tracingApi = {
   getModelUsage: async (
     startDate?: string,
     endDate?: string,
-    sourceId?: string,
   ): Promise<{ models: ModelUsage[] }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/models${query}`);
   },
@@ -446,12 +450,10 @@ export const tracingApi = {
   getToolUsage: async (
     startDate?: string,
     endDate?: string,
-    sourceId?: string,
   ): Promise<{ tools: ToolUsage[] }> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    if (sourceId) params.append("source_id", sourceId);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/tools${query}`);
   },
@@ -464,7 +466,6 @@ export const tracingApi = {
       session_id?: string;
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<{
@@ -478,7 +479,6 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        // source_id 使用 "all" 表示查询全部平台，需要显式传递
         if (value) params.append(key, value);
       });
     }
@@ -489,14 +489,11 @@ export const tracingApi = {
     sessionId: string,
     startDate?: string,
     endDate?: string,
-    sourceId?: string,
     bbkIds?: string,
   ): Promise<SessionStats> => {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    // source_id 使用 "all" 表示查询全部平台，需要显式传递
-    if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(
@@ -513,7 +510,6 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<{
@@ -540,7 +536,6 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       query?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
     format: string = "xlsx",
@@ -596,7 +591,6 @@ export const tracingApi = {
   },
 
   getChannelDistribution: async (
-    sourceId?: string,
     startDate?: string,
     endDate?: string,
   ): Promise<{
@@ -605,8 +599,6 @@ export const tracingApi = {
     totalPlatforms: number;
   }> => {
     const params = new URLSearchParams();
-    // source_id 使用 "all" 表示查询全部平台，需要显式传递
-    if (sourceId) params.append("source_id", sourceId);
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
     const query = params.toString() ? `?${params.toString()}` : "";
@@ -617,7 +609,6 @@ export const tracingApi = {
     startDate: string,
     endDate: string,
     timeRange: string = "day",
-    sourceId?: string,
     bbkIds?: string,
   ): Promise<{
     callsGrowth: number | null;
@@ -636,8 +627,6 @@ export const tracingApi = {
     params.append("start_date", startDate);
     params.append("end_date", endDate);
     params.append("time_range", timeRange);
-    // source_id 使用 "all" 表示查询全部平台，需要显式传递
-    if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     return request(`/monitor/tracing/growth-stats?${params.toString()}`);
   },
@@ -645,7 +634,6 @@ export const tracingApi = {
   getDailyTrend: async (
     startDate?: string,
     endDate?: string,
-    sourceId?: string,
     bbkIds?: string,
   ): Promise<{
     trendData: { date: string; calls: number; tokens: number; users: number }[];
@@ -653,8 +641,6 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    // source_id 使用 "all" 表示查询全部平台，需要显式传递
-    if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/daily-trend${query}`);
@@ -664,7 +650,6 @@ export const tracingApi = {
   getHourlyTrend: async (
     startDate?: string,
     endDate?: string,
-    sourceId?: string,
     bbkIds?: string,
   ): Promise<{
     trendData: { date: string; calls: number; tokens: number; users: number }[];
@@ -672,8 +657,6 @@ export const tracingApi = {
     const params = new URLSearchParams();
     if (startDate) params.append("start_date", startDate);
     if (endDate) params.append("end_date", endDate);
-    // source_id 使用 "all" 表示查询全部平台，需要显式传递
-    if (sourceId) params.append("source_id", sourceId);
     if (bbkIds) params.append("bbk_ids", bbkIds);
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/hourly-trend${query}`);
@@ -685,7 +668,6 @@ export const tracingApi = {
     filters?: {
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<{
@@ -713,7 +695,6 @@ export const tracingApi = {
     filters?: {
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<{
@@ -744,7 +725,6 @@ export const tracingApi = {
     filters?: {
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<{
@@ -769,7 +749,6 @@ export const tracingApi = {
     filters?: {
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<MCPSummary> => {
@@ -788,7 +767,6 @@ export const tracingApi = {
     filters?: {
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<TaskStatusSummary> => {
@@ -807,7 +785,6 @@ export const tracingApi = {
     filters?: {
       start_date?: string;
       end_date?: string;
-      source_id?: string;
       bbk_ids?: string;
     },
   ): Promise<DepthSummary> => {

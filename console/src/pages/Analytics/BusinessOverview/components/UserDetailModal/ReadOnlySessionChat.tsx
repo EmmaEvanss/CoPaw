@@ -6,7 +6,7 @@ import {
   IAgentScopeRuntimeWebUIMessage,
   IAgentScopeRuntimeWebUIOptions,
 } from "@/components/agentscope-chat";
-import { chatApi } from "../../../../../api/modules/chat";
+import { tracingApi } from "../../../../../api/modules/tracing";
 import type { Message } from "../../../../../api/types";
 import {
   convertMessages,
@@ -58,12 +58,14 @@ const READONLY_CARDS = {
 interface ReadOnlySessionChatProps {
   selectedSessionId: string | null;
   chatIdBySessionId: Record<string, string>;
+  targetUserId?: string;
   mockMessages?: Message[];
 }
 
 export default function ReadOnlySessionChat({
   selectedSessionId,
   chatIdBySessionId,
+  targetUserId,
   mockMessages,
 }: ReadOnlySessionChatProps) {
   const requestSeqRef = useRef(0);
@@ -96,7 +98,11 @@ export default function ReadOnlySessionChat({
           return;
         }
 
-        const history = await chatApi.getChat(chatId);
+        if (!targetUserId) {
+          return;
+        }
+
+        const history = await tracingApi.getUserChat(targetUserId, chatId);
         if (requestSeqRef.current !== seq) return;
 
         const messages = convertMessages(history.messages || []);
@@ -111,7 +117,7 @@ export default function ReadOnlySessionChat({
     };
 
     void loadChatHistory();
-  }, [selectedSessionId, chatIdBySessionId, mockMessages]);
+  }, [selectedSessionId, chatIdBySessionId, targetUserId, mockMessages]);
 
   if (!selectedSessionId) {
     return (

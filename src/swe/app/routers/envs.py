@@ -100,9 +100,9 @@ class TargetEnvWriteResponse(BaseModel):
     summary="List all environment variables",
 )
 async def list_envs(request: Request) -> List[EnvVar]:
-    """Return all configured env vars for the tenant."""
+    """返回当前租户配置的原始 env 值。"""
     envs = load_envs(_get_tenant_envs_path(request))
-    return _masked_env_list(envs)
+    return _plain_env_list(envs)
 
 
 @router.put(
@@ -120,7 +120,7 @@ async def batch_save_envs(
     _reject_reserved_scope_fields_or_400(body)
     cleaned = _validate_envs_or_400(body)
     save_envs(cleaned, _get_tenant_envs_path(request))
-    return _masked_env_list(cleaned)
+    return _plain_env_list(cleaned)
 
 
 @router.patch(
@@ -148,7 +148,7 @@ async def patch_envs(
     }
     updated.update(cleaned_values)
     save_envs(updated, envs_path)
-    return _masked_env_list(updated)
+    return _plain_env_list(updated)
 
 
 @router.delete(
@@ -166,7 +166,7 @@ async def delete_env(request: Request, key: str) -> List[EnvVar]:
             detail=f"Env var '{key}' not found",
         )
     envs = delete_env_var(key, envs_path)
-    return _masked_env_list(envs)
+    return _plain_env_list(envs)
 
 
 @router.put(
@@ -202,6 +202,11 @@ def _masked_env_list(envs: dict[str, str]) -> List[EnvVar]:
     return [
         EnvVar(key=k, value=mask_env_value(v)) for k, v in sorted(envs.items())
     ]
+
+
+def _plain_env_list(envs: dict[str, str]) -> List[EnvVar]:
+    """构造保留原始值的 env 列表响应。"""
+    return [EnvVar(key=k, value=v) for k, v in sorted(envs.items())]
 
 
 def _validate_key_or_400(key: str) -> str:

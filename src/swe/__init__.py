@@ -12,11 +12,15 @@ from .utils.my_logging import setup_logger
 LOG_LEVEL_ENV = "SWE_LOG_LEVEL"
 
 _bootstrap_err: Exception | None = None
+_dotenv_err: Exception | None = None
 try:
     _project_root = Path(__file__).resolve().parent.parent.parent
     _base_env_path = _project_root / ".env"
-    if _base_env_path.exists():
-        load_dotenv(_base_env_path, override=False)
+    try:
+        if _base_env_path.exists():
+            load_dotenv(_base_env_path, override=False)
+    except Exception as exc:
+        _dotenv_err = exc
 
     from .envs.store import load_envs_into_environ
 
@@ -34,6 +38,11 @@ if _bootstrap_err is not None:
     logging.getLogger(__name__).warning(
         "swe: failed to load persisted envs on init: %s",
         _bootstrap_err,
+    )
+if _dotenv_err is not None:
+    logging.getLogger(__name__).debug(
+        "swe: skipped base .env during bootstrap: %s",
+        _dotenv_err,
     )
 logging.getLogger(__name__).debug(
     "%.3fs package init",

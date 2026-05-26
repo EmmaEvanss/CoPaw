@@ -141,7 +141,7 @@ export default function SystemConfigPage() {
     return (
       <div className={styles.systemConfigPage}>
         <PageHeader
-          parent={t("nav.settings")}
+          parent={t("nav.systemSettings")}
           current={t("nav.currentSourceConfig", {
             defaultValue: "当前 Source 配置",
           })}
@@ -305,7 +305,7 @@ export default function SystemConfigPage() {
   return (
     <div className={styles.systemConfigPage}>
       <PageHeader
-        parent={t("nav.settings")}
+        parent={t("nav.systemSettings")}
         current={t("nav.currentSourceConfig", {
           defaultValue: "系统特性配置",
         })}

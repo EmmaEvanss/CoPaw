@@ -51,7 +51,7 @@ def _set_app_working_dir(monkeypatch, tmp_path: Path) -> None:
     )
 
 
-def test_internal_text_asset_read_returns_404_for_missing_file(
+def test_internal_text_asset_read_route_is_not_exposed(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -61,66 +61,14 @@ def test_internal_text_asset_read_returns_404_for_missing_file(
     response = client.get("/internal/assets/text/read?file_name=guide.txt")
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Asset file not found"
 
 
-def test_internal_text_asset_read_rejects_invalid_file_name(
+def test_internal_text_asset_write_route_is_not_exposed(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     _set_working_dir(monkeypatch, tmp_path)
     client = _build_client()
-
-    response = client.get("/internal/assets/text/read?file_name=../guide.txt")
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid file_name"
-
-
-def test_internal_text_asset_read_rejects_invalid_utf8(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    _set_working_dir(monkeypatch, tmp_path)
-    asset_dir = tmp_path / "asset"
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    (asset_dir / "broken.txt").write_bytes(b"\xff\xfe\xfd")
-    client = _build_client()
-
-    response = client.get("/internal/assets/text/read?file_name=broken.txt")
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Asset file is not valid UTF-8"
-
-
-def test_internal_text_asset_read_returns_utf8_content(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    _set_working_dir(monkeypatch, tmp_path)
-    asset_dir = tmp_path / "asset"
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    (asset_dir / "guide.txt").write_text("hello\nworld", encoding="utf-8")
-    client = _build_client()
-
-    response = client.get("/internal/assets/text/read?file_name=guide.txt")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "success": True,
-        "file_name": "guide.txt",
-        "content": "hello\nworld",
-    }
-
-
-def test_internal_text_asset_write_creates_scope_static_file_and_public_url(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    _set_working_dir(monkeypatch, tmp_path)
-    monkeypatch.setenv("FILE_URL", "https://files.example")
-    client = _build_client()
-    scope_id = encode_scope_id("alice", "portal")
 
     response = client.post(
         "/internal/assets/text/write",
@@ -131,25 +79,7 @@ def test_internal_text_asset_write_creates_scope_static_file_and_public_url(
         },
     )
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["success"] is True
-    assert payload["scope_id"] == scope_id
-    assert re.match(r"^alice-\d{17}\.html$", payload["file_name"])
-    assert payload["public_url"] == (
-        f"https://files.example/static/{scope_id}/default/"
-        f"{payload['file_name']}"
-    )
-
-    stored_file = (
-        tmp_path
-        / scope_id
-        / "workspaces"
-        / "default"
-        / "static"
-        / payload["file_name"]
-    )
-    assert stored_file.read_text(encoding="utf-8") == "<p>hello</p>"
+    assert response.status_code == 404
 
 
 def test_internal_text_asset_preview_path_creates_placeholder_file(
@@ -380,7 +310,7 @@ def test_public_text_asset_write_without_preview_target_creates_new_file(
     )
 
 
-def test_internal_text_asset_write_rejects_invalid_utf8_payload(
+def test_public_text_asset_write_rejects_invalid_utf8_payload(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -388,7 +318,7 @@ def test_internal_text_asset_write_rejects_invalid_utf8_payload(
     client = _build_client()
 
     response = client.post(
-        "/internal/assets/text/write",
+        "/assets/text/write",
         content=(
             b'{"user_id":"alice","source_id":"portal",' b'"content":"\\ud800"}'
         ),

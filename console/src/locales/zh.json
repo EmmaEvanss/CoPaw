@@ -1525,6 +1525,8 @@
     "filterUser": "用户 ID",
     "filterSession": "会话 ID",
     "filterStatus": "筛选状态",
+    "filterFeedback": "反馈内容",
+    "hasFeedback": "包含反馈",
     "exportExcel": "导出 Excel",
     "search": "查询",
     "totalItems": "共 {{total}} 条",

@@ -386,7 +386,8 @@ export const tracingApi = {
     const params = new URLSearchParams();
     params.append("user_id", userId);
     if (channel) params.append("channel", channel);
-    return request<ChatSpec[]>(`/tracing/chats?${params.toString()}`);
+    const data = await request<unknown>(`/tracing/chats?${params.toString()}`);
+    return Array.isArray(data) ? (data as ChatSpec[]) : [];
   },
 
   getUserChat: async (
@@ -410,6 +411,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       bbk_ids?: string;
+      has_feedback?: boolean;
     },
   ): Promise<{
     items: TraceListItem[];
@@ -422,7 +424,9 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== "") {
+          params.append(key, String(value));
+        }
       });
     }
     return request(`/monitor/tracing/traces?${params.toString()}`);

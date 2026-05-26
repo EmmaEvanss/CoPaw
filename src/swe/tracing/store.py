@@ -1352,6 +1352,7 @@ class TraceStore:
         status: Optional[str] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        has_feedback: Optional[bool] = None,
     ) -> tuple[list[TraceListItem], int]:
         """Get list of traces.
 
@@ -1364,38 +1365,69 @@ class TraceStore:
             status: Filter by status
             start_date: Filter by start date
             end_date: Filter by end date
+            has_feedback: 仅返回包含反馈内容的对话
 
         Returns:
             Tuple of (traces list, total count)
         """
         # Build WHERE clauses based on source_id
         if source_id == "all":
-            where_clauses: list[str] = []
+            count_where_clauses: list[str] = []
+            query_where_clauses: list[str] = []
             params: list[Any] = []
         else:
-            where_clauses = ["source_id = %s"]
+            count_where_clauses = ["source_id = %s"]
+            query_where_clauses = ["t.source_id = %s"]
             params = [source_id]
 
         if user_id:
-            where_clauses.append("user_id = %s")
+            count_where_clauses.append("user_id = %s")
+            query_where_clauses.append("t.user_id = %s")
             params.append(user_id)
         if session_id:
-            where_clauses.append("session_id = %s")
+            count_where_clauses.append("session_id = %s")
+            query_where_clauses.append("t.session_id = %s")
             params.append(session_id)
         if status:
-            where_clauses.append("status = %s")
+            count_where_clauses.append("status = %s")
+            query_where_clauses.append("t.status = %s")
             params.append(status)
         if start_date:
-            where_clauses.append("start_time >= %s")
+            count_where_clauses.append("start_time >= %s")
+            query_where_clauses.append("t.start_time >= %s")
             params.append(start_date)
         if end_date:
-            where_clauses.append("start_time <= %s")
+            count_where_clauses.append("start_time <= %s")
+            query_where_clauses.append("t.start_time <= %s")
             params.append(end_date)
+        if has_feedback is True:
+            count_where_clauses.append(
+                """
+                EXISTS (
+                    SELECT 1 FROM swe_response_feedback rf
+                    WHERE rf.trace_id = swe_tracing_traces.trace_id
+                      AND rf.source_id <=> swe_tracing_traces.source_id
+                      AND NULLIF(TRIM(rf.feedback_content), '') IS NOT NULL
+                )
+                """,
+            )
+            query_where_clauses.append(
+                "NULLIF(TRIM(rf.feedback_content), '') IS NOT NULL",
+            )
 
-        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        count_where_sql = (
+            " AND ".join(count_where_clauses) if count_where_clauses else "1=1"
+        )
+        query_where_sql = (
+            " AND ".join(query_where_clauses) if query_where_clauses else "1=1"
+        )
 
         # Get total count
-        count_query = f"SELECT COUNT(*) as total FROM swe_tracing_traces WHERE {where_sql}"
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM swe_tracing_traces
+            WHERE {count_where_sql}
+        """
         count_row = await self.db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
 
@@ -1430,7 +1462,7 @@ class TraceStore:
                     GROUP BY trace_id
                 ) latest ON latest.max_id = rf1.id
             ) rf ON rf.trace_id = t.trace_id AND rf.source_id <=> t.source_id
-            WHERE {where_sql}
+            WHERE {query_where_sql}
             ORDER BY t.start_time DESC
             LIMIT %s OFFSET %s
         """

@@ -51,7 +51,10 @@ export default function UserDetailModal({
   const chatIdBySessionId = useMemo(
     () =>
       Object.fromEntries(
-        chatSpecs.map((chat) => [chat.session_id, chat.id]),
+        (Array.isArray(chatSpecs) ? chatSpecs : []).map((chat) => [
+          chat.session_id,
+          chat.id,
+        ]),
       ),
     [chatSpecs],
   );
@@ -95,7 +98,7 @@ export default function UserDetailModal({
     if (!userId) return;
     try {
       const data = await tracingApi.getUserChats(userId);
-      setChatSpecs(data || []);
+      setChatSpecs(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to fetch user chats:", error);
       setChatSpecs([]);

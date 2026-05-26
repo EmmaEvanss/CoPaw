@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  cleanupIframeMessageListener,
   fetchAndSetUserName,
   handleUrlOriginParam,
   resetIframeContextForStandalone,
@@ -14,6 +15,7 @@ import {
   fetchCustomerInfo,
   fetchUserInit,
 } from "../api/modules/customerInfo";
+import { envApi } from "../api/modules/env";
 
 vi.mock("../api/modules/userInfo", async (importOriginal) => {
   const actual =
@@ -40,11 +42,18 @@ vi.mock("../api/modules/auth", () => ({
   },
 }));
 
+vi.mock("../api/modules/env", () => ({
+  envApi: {
+    patchEnvs: vi.fn().mockResolvedValue([]),
+  },
+}));
+
 const mockedFetchUserInfo = vi.mocked(fetchUserInfo);
 const mockedEnsureValidToken = vi.mocked(ensureValidToken);
 const mockedIsExternalTokenEnabled = vi.mocked(isExternalTokenEnabled);
 const mockedFetchCustomerInfo = vi.mocked(fetchCustomerInfo);
 const mockedFetchUserInit = vi.mocked(fetchUserInit);
+const mockedPatchEnvs = vi.mocked(envApi.patchEnvs);
 
 describe("fetchAndSetUserName", () => {
   beforeEach(() => {
@@ -60,6 +69,7 @@ describe("fetchAndSetUserName", () => {
       "vorglvl",
       "positionID",
       "token",
+      "brnOrgId",
     ].forEach((name) => {
       document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
     });
@@ -67,6 +77,12 @@ describe("fetchAndSetUserName", () => {
     vi.clearAllMocks();
     mockedIsExternalTokenEnabled.mockReturnValue(false);
     mockedEnsureValidToken.mockResolvedValue("token");
+    mockedPatchEnvs.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanupIframeMessageListener();
+    vi.useRealTimers();
   });
 
   it("在 userId 缺失时不请求用户信息接口", async () => {
@@ -289,5 +305,83 @@ describe("fetchAndSetUserName", () => {
     await handleUrlOriginParam();
 
     expect(mockedFetchUserInit).toHaveBeenCalledTimes(1);
+  });
+
+  it("origin=Y 初始化后增量同步用户环境变量", async () => {
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "token=fresh-token; path=/";
+    document.cookie = "brnOrgId=BRN001; path=/";
+    mockedFetchCustomerInfo.mockResolvedValueOnce({
+      returnCode: "SUC0000",
+      body: {
+        output: {
+          result: {
+            userChange: true,
+            sysId: "sys",
+            token: "response-token",
+            bbk: "bbk-001",
+            orgCode: "org",
+            orgLvl: "lvl",
+            userId: "80000003",
+            positionId: "position-001",
+          },
+        },
+      },
+    });
+
+    await handleUrlOriginParam();
+
+    expect(mockedPatchEnvs).toHaveBeenCalledWith({
+      values: expect.objectContaining({
+        token: "response-token",
+        bbkOrgId: "bbk-001",
+        brnOrgId: "BRN001",
+        sapId: "80000003",
+        rtlPstId: "position-001",
+        sourceId: "RMASSIST",
+      }),
+      delete: [],
+    });
+    expect(mockedPatchEnvs.mock.calls[0][0]).not.toHaveProperty("preserve");
+  });
+
+  it("origin=Y 定时刷新后再次增量同步环境变量", async () => {
+    vi.useFakeTimers();
+    window.history.pushState({}, "", "/?origin=Y");
+    document.cookie = "userid=80000002; path=/";
+    document.cookie = "token=fresh-token; path=/";
+    document.cookie = "brnOrgId=BRN001; path=/";
+    mockedFetchCustomerInfo.mockResolvedValue({
+      returnCode: "SUC0000",
+      body: {
+        output: {
+          result: {
+            userChange: false,
+            sysId: "sys",
+            token: "response-token",
+            bbk: "bbk",
+            orgCode: "org",
+            orgLvl: "lvl",
+            userId: "80000002",
+            positionId: "position",
+          },
+        },
+      },
+    });
+
+    await handleUrlOriginParam();
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+
+    expect(mockedFetchCustomerInfo).toHaveBeenCalledTimes(2);
+    expect(mockedPatchEnvs).toHaveBeenCalledTimes(2);
+    expect(mockedPatchEnvs.mock.calls[1][0]).toMatchObject({
+      values: expect.objectContaining({
+        token: "fresh-token",
+        sapId: "80000002",
+        sourceId: "RMASSIST",
+      }),
+      delete: [],
+    });
   });
 });

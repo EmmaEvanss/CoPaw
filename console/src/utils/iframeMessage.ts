@@ -19,7 +19,8 @@ import {
 } from "../api/externalToken";
 import { getTargetCookie } from "./cookie-utils";
 import { authApi } from "../api/modules/auth";
-import { buildAuthHeaders } from "../api/authHeaders";
+import { envApi } from "../api/modules/env";
+import { buildAuthHeaders as buildCookieHeaders } from "../api/authHeaders";
 // import mmj from 'xxxx'
 
 /**
@@ -32,12 +33,21 @@ const ALLOWED_ORIGINS: string[] = [
   // 生产环境 - 从环境变量读取
   // ...(typeof import.meta !== "undefined" &&
   // import.meta.env?.VITE_ALLOWED_PARENT_ORIGINS
-  //   ? import.meta.env.VITE_ALLOWED_PARENT_ORIGINS.split(",").filter(Boolean)
-  //   : []),
+  //   ? import.meta.env.VITE_ALLOWED_PARENT_ORIGINS.split(",").filter(Boolean)
+  //   : []),
 ];
 
 /** 是否已注册监听器 */
 let isListenerRegistered = false;
+
+
+/** Cookie刷新定时器 */
+let cookieRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+
+/** Cookie刷新间隔（30分钟） */
+const COOKIE_REFRESH_INTERVAL = 30 * 60 * 1000;
+
 
 /** 清理函数 */
 let cleanupFn: (() => void) | null = null;
@@ -50,6 +60,9 @@ let pendingUserInfoRequest: Promise<boolean> | null = null;
 
 /** 正在执行初始化的用户，避免同一用户在接口返回前被重复初始化 */
 const pendingUserInitUserIds = new Set<string>();
+
+/** 当前正在同步 origin=Y 环境变量的任务 */
+let pendingOriginYEnvSync: Promise<void> | null = null;
 
 /**
  * 将值转换为布尔值，用于处理父窗口可能传递的字符串 "true"/"false"
@@ -108,7 +121,7 @@ function validateMessage(data: unknown): data is IframeIncomingMessage {
  * 构建 iframe 上下文中的认证 headers
  * 将 sapId 作为 X-User-Id，并合并父窗口传递的 auth 数组
  */
-function buildIframeAuthHeaders(
+function buildAuthHeaders(
   message: IframeUserDataMessage,
 ): AuthHeaderItem[] {
   const authHeaders = [...(message.data.auth ?? [])];
@@ -120,7 +133,6 @@ function buildIframeAuthHeaders(
   }
   return authHeaders;
 }
-
 
 /**
  * 调用用户初始化接口并保存到 localStorage
@@ -161,7 +173,7 @@ function handleUserDataMessage(
   origin: string,
 ): void {
   const store = useIframeStore.getState();
-  const authHeaders = buildIframeAuthHeaders(message);
+  const authHeaders = buildAuthHeaders(message);
   const nextUserId = message.data.sapId ?? null;
 
   store.setContext({
@@ -181,12 +193,12 @@ function handleUserDataMessage(
   store.markInitialized();
   void fetchAndSetUserName();
   // sendMessageToParent({ type: "READY_RESPONSE", initialized: true });
-  // 用户首次进入系统时，发起cron-auth请求
-  // const headers = buildCookieHeaders(message);
+  // 只在W发起
+  // const headers = buildCookieHeaders();
   // const cookieValue = headers["x-header-cookie"] || document.cookie;
   // void authApi.sendCronAuth(cookieValue);
 
-  // initMmj();
+  // initMmj(message?.data?.sapId ?? null)
 }
 
 /**
@@ -205,8 +217,8 @@ function handleReadyRequest(): void {
   // 父容器不需要知道初始化状态，已注释
   // const context = getIframeContext();
   // sendMessageToParent({
-  //   type: "READY_RESPONSE",
-  //   initialized: context.initialized,
+  //   type: "READY_RESPONSE",
+  //   initialized: context.initialized,
   // });
 }
 
@@ -284,6 +296,7 @@ export function initIframeMessageListener(): void {
   cleanupFn = () => {
     window.removeEventListener("message", handleMessage);
     isListenerRegistered = false;
+    stopCookieRefreshTimer();
     cleanupFn = null;
   };
 
@@ -368,7 +381,6 @@ export async function handleUrlOriginParam(): Promise<void> {
   await initFromUrlParams(userId);
 }
 
-
 /**
  * 从 URL 参数初始化时的异步处理
  * 调用客户信息接口和用户初始化
@@ -389,10 +401,13 @@ async function initFromUrlParams(userId: string): Promise<void> {
 
   latestStore.markInitialized();
 
-  const headers = buildAuthHeaders();
+  const headers = buildCookieHeaders();
   const cookieValue = headers["x-header-cookie"] || document.cookie;
   void authApi.sendCronAuth(cookieValue);
-  // initMmj()
+  // initMmj(currentUserId);
+
+  // 启动Cookie定时刷新机制
+  startCookieRefreshTimer();
 }
 
 // async function initMmj()
@@ -441,6 +456,7 @@ async function fetchAndApplyCustomerInfoFromCookie(userId: string): Promise<void
     if (response?.returnCode === "SUC0000") {
       const result = response.body.output.result;
       if (result.userChange) {
+        // 接口返回了新的cookie，使用接口返回的值
         store.setContext({
           userId: result.userId ?? userId,
           sysId: result.sysId ?? sysId,
@@ -453,18 +469,100 @@ async function fetchAndApplyCustomerInfoFromCookie(userId: string): Promise<void
           userChange: result.userChange ?? false,
         });
       } else {
-        // 接口可能通过 Set-Cookie 刷新 token，未切换用户时只同步 token，避免重复覆盖身份字段。
-        const token = getTargetCookie("token");
-        if (token) {
-          store.setContext({
-            token,
-            userChange: false,
-          });
-        }
+        // 接口未返回新cookie，刷新document.cookie的值到store
+        store.setContext({
+          token: getTargetCookie("token"),
+          userChange: false,
+        });
       }
     }
   } catch (error) {
     console.error("[IframeMessage] Customer info fetch error:", error);
+  } finally {
+    void syncOriginYEnvFromCurrentContext();
+  }
+}
+
+/**
+ * 将 origin=Y 场景下的用户上下文合并到后端环境变量。
+ */
+function syncOriginYEnvFromCurrentContext(): Promise<void> {
+  if (pendingOriginYEnvSync) {
+    return pendingOriginYEnvSync;
+  }
+
+  pendingOriginYEnvSync = (async () => {
+    const store = useIframeStore.getState();
+    const headers = buildCookieHeaders();
+    const cookieValue = headers["x-header-cookie"] || document.cookie;
+    const token = store.token || getTargetCookie("token") || "";
+
+    await envApi.patchEnvs({
+      values: {
+        token,
+        bbkOrgId: store.bbk ?? "",
+        brnOrgId: getTargetCookie("brnOrgId") ?? "",
+        sapId: store.userId ?? "",
+        rtlPstId: store.positionId ?? "",
+        sourceId: "RMASSIST",
+        cookie: cookieValue,
+      },
+      delete: [],
+    });
+  })()
+    .catch((error) => {
+      console.error("[IframeMessage] Env sync error:", error);
+    })
+    .finally(() => {
+      pendingOriginYEnvSync = null;
+    });
+
+  return pendingOriginYEnvSync;
+}
+
+/**
+ * 启动Cookie定时刷新机制
+ * 每隔30分钟调用一次 fetchCustomerInfo 来更新cookie
+ */
+function startCookieRefreshTimer(): void {
+  if (cookieRefreshTimer) {
+    return; // 定时器已启动
+  }
+
+  cookieRefreshTimer = setInterval(async () => {
+    const store = useIframeStore.getState();
+    const userId = store.userId;
+
+    if (!userId) {
+      return;
+    }
+
+    try {
+      // 调用 fetchCustomerInfo 更新cookie
+      await fetchAndApplyCustomerInfoFromCookie(userId);
+
+      // 更新 cron-auth
+      const headers = buildCookieHeaders();
+      const cookieValue = headers["x-header-cookie"] || document.cookie;
+      void authApi.sendCronAuth(cookieValue);
+
+      console.debug("[CookieRefresh] Timer triggered, cookie refreshed");
+    } catch (error) {
+      console.error("[CookieRefresh] Timer error:", error);
+    }
+  }, COOKIE_REFRESH_INTERVAL);
+
+  console.info("[CookieRefresh] Timer started, interval:", COOKIE_REFRESH_INTERVAL, "ms");
+}
+
+/**
+ * 停止Cookie定时刷新机制
+ */
+function stopCookieRefreshTimer(): void {
+  if (cookieRefreshTimer) {
+    clearInterval(cookieRefreshTimer);
+    cookieRefreshTimer = null;
+    console.info("[CookieRefresh] Timer stopped");
   }
 }
 
@@ -478,6 +576,7 @@ export function cleanupIframeMessageListener(): void {
   if (cleanupFn) {
     cleanupFn();
   }
+  stopCookieRefreshTimer();
 }
 
 /**

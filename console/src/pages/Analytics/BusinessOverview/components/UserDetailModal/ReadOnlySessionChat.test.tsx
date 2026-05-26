@@ -3,12 +3,12 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import ReadOnlySessionChat from "./ReadOnlySessionChat";
 
-const chatApiMock = vi.hoisted(() => ({
-  getChat: vi.fn(),
+const tracingApiMock = vi.hoisted(() => ({
+  getUserChat: vi.fn(),
 }));
 
-vi.mock("../../../../../api/modules/chat", () => ({
-  chatApi: chatApiMock,
+vi.mock("../../../../../api/modules/tracing", () => ({
+  tracingApi: tracingApiMock,
 }));
 
 vi.mock("../../../../Chat/sessionApi", () => ({
@@ -42,7 +42,7 @@ describe("ReadOnlySessionChat", () => {
   });
 
   it("loads history with mapped chat id", async () => {
-    chatApiMock.getChat.mockResolvedValue({
+    tracingApiMock.getUserChat.mockResolvedValue({
       messages: [{ id: "message-1", role: "assistant", content: [] }],
     });
 
@@ -50,11 +50,15 @@ describe("ReadOnlySessionChat", () => {
       <ReadOnlySessionChat
         selectedSessionId="cron-task:job-1"
         chatIdBySessionId={{ "cron-task:job-1": "chat-uuid-1" }}
+        targetUserId="user-001"
       />,
     );
 
     await waitFor(() => {
-      expect(chatApiMock.getChat).toHaveBeenCalledWith("chat-uuid-1");
+      expect(tracingApiMock.getUserChat).toHaveBeenCalledWith(
+        "user-001",
+        "chat-uuid-1",
+      );
     });
   });
 
@@ -67,6 +71,6 @@ describe("ReadOnlySessionChat", () => {
     );
 
     await screen.findByText("暂无聊天内容");
-    expect(chatApiMock.getChat).not.toHaveBeenCalled();
+    expect(tracingApiMock.getUserChat).not.toHaveBeenCalled();
   });
 });

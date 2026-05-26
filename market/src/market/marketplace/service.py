@@ -31,6 +31,7 @@ from .fs import (
     mutate_user_skill_manifest,
     read_user_skill_manifest,
     load_mcp_config,
+    normalize_mcp_config_data,
     resolve_effective_user_id,
     save_index,
     save_mcp_config,
@@ -163,88 +164,6 @@ def _sort_items_by_updated_at_desc(
         return (1 if timestamp else 0, timestamp)
 
     return sorted(items, key=sort_key, reverse=True)
-
-
-def _normalize_transport_value(raw_transport: str) -> str | None:
-    """Normalize transport string to standard values."""
-    lowered = raw_transport.strip().lower()
-    if lowered == "streamable-http":
-        return "streamable_http"
-    if lowered in {"stdio", "sse", "streamable_http"}:
-        return lowered
-    return None
-
-
-def _extract_first_mcp_server(config_data: dict) -> dict:
-    """Extract first MCP server config from nested mcpServers structure."""
-    mcp_servers = config_data.get("mcpServers")
-    if not isinstance(mcp_servers, dict) or not mcp_servers:
-        return dict(config_data)
-
-    _, first_value = next(iter(mcp_servers.items()))
-    if isinstance(first_value, dict):
-        return dict(first_value)
-    return dict(config_data)
-
-
-def _apply_advanced_fields(normalized: dict) -> None:
-    """Apply fields from nested 'advanced' dict to normalized config."""
-    advanced = normalized.get("advanced")
-    if not isinstance(advanced, dict):
-        return
-
-    if "headers" not in normalized and isinstance(
-        advanced.get("headers"),
-        dict,
-    ):
-        normalized["headers"] = advanced.get("headers", {})
-
-    if "transport" not in normalized and isinstance(
-        advanced.get("transport"),
-        str,
-    ):
-        transport = _normalize_transport_value(advanced["transport"])
-        if transport:
-            normalized["transport"] = transport
-
-
-def _infer_transport_from_config(normalized: dict) -> None:
-    """Infer transport type from command or url if not set."""
-    if "transport" in normalized:
-        return
-
-    command = normalized.get("command")
-    if isinstance(command, str) and command.strip():
-        normalized["transport"] = "stdio"
-        return
-
-    url = normalized.get("url")
-    if isinstance(url, str) and url.strip():
-        normalized["transport"] = "streamable_http"
-
-
-def _normalize_market_mcp_config_data(config_data: dict) -> dict:
-    """兼容旧市场条目中的原始 MCP 上传结构。
-
-    历史上部分市场条目直接把上传 JSON 原样保存到了 config 中，
-    例如 {"mcpServers": {...}}。详情展示和测试连接都需要先把这类
-    旧结构归一化成 MCPClientConfig 可识别的扁平字段。
-    """
-    if not isinstance(config_data, dict):
-        return {}
-
-    normalized = _extract_first_mcp_server(config_data)
-    _apply_advanced_fields(normalized)
-
-    # Normalize top-level transport/type field
-    raw_transport = normalized.get("transport") or normalized.get("type")
-    if isinstance(raw_transport, str):
-        transport = _normalize_transport_value(raw_transport)
-        if transport:
-            normalized["transport"] = transport
-
-    _infer_transport_from_config(normalized)
-    return normalized
 
 
 def _bump_patch(version: str) -> str:
@@ -1891,7 +1810,7 @@ class MarketplaceService:
         user_stats = await self._get_mcp_user_stats(item.client_key, source_id)
 
         # 获取并脱敏敏感字段
-        config_data = _normalize_market_mcp_config_data(
+        config_data = normalize_mcp_config_data(
             mcp_config.get("config", {}),
         )
         masked_env = {

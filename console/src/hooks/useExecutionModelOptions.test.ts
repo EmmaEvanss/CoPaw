@@ -12,8 +12,24 @@ const providerFixtures = [
     name: "OpenAI",
     api_key_prefix: "sk-",
     chat_model: "gpt-5.4",
-    models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
-    extra_models: [{ id: "gpt-4.1", name: "GPT-4.1" }],
+    models: [
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        supports_multimodal: null,
+        supports_image: null,
+        supports_video: null,
+      },
+    ],
+    extra_models: [
+      {
+        id: "gpt-4.1",
+        name: "GPT-4.1",
+        supports_multimodal: null,
+        supports_image: null,
+        supports_video: null,
+      },
+    ],
     is_custom: false,
     is_local: false,
     support_model_discovery: true,

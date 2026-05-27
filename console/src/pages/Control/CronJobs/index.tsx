@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import { Button, Card, Form, Modal, Table } from "@agentscope-ai/design";
-import dayjs from "dayjs";
 import type {
   CronBroadcastTenantResult,
   CronJobSpecOutput,
@@ -13,15 +12,18 @@ import {
   useCronJobs,
   DEFAULT_FORM_VALUES,
 } from "./components";
-import { parseCron, serializeCron } from "./components/parseCron";
 import { PageHeader } from "@/components/PageHeader";
 import { TenantTargetPicker } from "@/components/TenantTargetPicker";
 import { useAppMessage } from "../../../hooks/useAppMessage";
 import {
   buildExecutionModelKey,
-  parseExecutionModelKey,
   useExecutionModelOptions,
 } from "@/hooks/useExecutionModelOptions";
+import {
+  buildCronJobFormValues,
+  buildCronJobSubmitPayload,
+  getBroadcastResultMessage,
+} from "./helpers";
 import styles from "./index.module.less";
 
 type CronJob = CronJobSpecOutput;
@@ -83,40 +85,7 @@ function CronJobsPage() {
 
   const handleEdit = (job: CronJob) => {
     setEditingJob(job);
-
-    // Parse cron expression to form fields
-    const cronParts = parseCron(job.schedule?.cron || "0 9 * * *");
-
-    const formValues: any = {
-      ...job,
-      request: {
-        ...job.request,
-        input: job.request?.input
-          ? JSON.stringify(job.request.input, null, 2)
-          : "",
-      },
-      cronType: cronParts.type,
-      execution_model_key: buildExecutionModelKey(job.model_slot),
-    };
-
-    // Set time picker value
-    if (cronParts.type === "daily" || cronParts.type === "weekly") {
-      const h = cronParts.hour ?? 9;
-      const m = cronParts.minute ?? 0;
-      formValues.cronTime = dayjs().hour(h).minute(m);
-    }
-
-    // Set days of week
-    if (cronParts.type === "weekly" && cronParts.daysOfWeek) {
-      formValues.cronDaysOfWeek = cronParts.daysOfWeek;
-    }
-
-    // Set custom cron
-    if (cronParts.type === "custom" && cronParts.rawCron) {
-      formValues.cronCustom = cronParts.rawCron;
-    }
-
-    form.setFieldsValue(formValues);
+    form.setFieldsValue(buildCronJobFormValues(job) as any);
     setDrawerOpen(true);
   };
 
@@ -176,17 +145,11 @@ function CronJobsPage() {
     setBroadcasting(true);
     try {
       const res = await api.broadcastCronJob(broadcastingJob.id, targetTenantIds);
-      const successCount = res.results.filter((item) => item.success).length;
-      const failedCount = res.results.length - successCount;
-      const warningCount = res.results.filter((item) => item.warning).length;
-      if (failedCount > 0) {
-        message.warning(`Broadcasted ${successCount}, failed ${failedCount}`);
-      } else if (warningCount > 0) {
-        message.warning(
-          `Broadcasted ${successCount} tenants, ${warningCount} using tenant default model`,
-        );
+      const resultMessage = getBroadcastResultMessage(res.results);
+      if (resultMessage.tone === "warning") {
+        message.warning(resultMessage.text);
       } else {
-        message.success(`Broadcasted ${successCount} tenants`);
+        message.success(resultMessage.text);
       }
       setBroadcastResults(res.results);
     } catch (error) {
@@ -203,58 +166,12 @@ function CronJobsPage() {
   };
 
   const handleSubmit = async (values: any) => {
-    // Serialize cron from form fields
-    const cronParts: any = {
-      type: values.cronType || "daily",
-    };
-
-    if (values.cronType === "daily" || values.cronType === "weekly") {
-      if (values.cronTime) {
-        cronParts.hour = values.cronTime.hour();
-        cronParts.minute = values.cronTime.minute();
-      }
-    }
-
-    if (values.cronType === "weekly" && values.cronDaysOfWeek) {
-      cronParts.daysOfWeek = values.cronDaysOfWeek;
-    }
-
-    if (values.cronType === "custom" && values.cronCustom) {
-      cronParts.rawCron = values.cronCustom;
-    }
-
-    const cronExpression = serializeCron(cronParts);
-
-    const {
-      execution_model_key: executionModelKey,
-      ...rawValues
-    } = values;
-
-    let processedValues = {
-      ...rawValues,
-      schedule: {
-        ...values.schedule,
-        cron: cronExpression,
-      },
-      model_slot:
-        values.task_type === "agent"
-          ? parseExecutionModelKey(executionModelKey)
-          : undefined,
-    };
-
-    // Parse request input JSON
-    if (values.request?.input && typeof values.request.input === "string") {
-      try {
-        processedValues = {
-          ...processedValues,
-          request: {
-            ...values.request,
-            input: JSON.parse(values.request.input as any),
-          },
-        };
-      } catch (error) {
-        console.error("❌ Failed to parse request.input JSON:", error);
-      }
+    let processedValues;
+    try {
+      processedValues = buildCronJobSubmitPayload(values);
+    } catch (error) {
+      console.error("❌ Failed to normalize cron job payload:", error);
+      return;
     }
 
     let success = false;

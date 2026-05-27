@@ -7,17 +7,17 @@
 
 ## 2. Scoped Model Resolution
 
-- [ ] 2.1 Add a request-scoped model slot override context manager with safe token reset semantics.
-- [ ] 2.2 Update `create_model_and_formatter()` to prefer the scoped override before reading the tenant active model.
-- [ ] 2.3 Update active/effective model label helpers used by tracing and hooks to report the scoped effective model when present.
-- [ ] 2.4 Bind the scoped model override around agent cron execution without mutating `ProviderManager.active_model`.
+- [x] 2.1 Add a request-scoped model slot override context manager with safe token reset semantics.
+- [x] 2.2 Update `create_model_and_formatter()` to prefer the scoped override before reading the tenant active model.
+- [x] 2.3 Update active/effective model label helpers used by tracing and hooks to report the scoped effective model when present.
+- [x] 2.4 Bind the scoped model override around agent cron execution without mutating `ProviderManager.active_model`.
 
 ## 3. Execution Fallback And Observability
 
-- [ ] 3.1 Resolve the effective cron execution model before each agent run and detect missing provider/model drift.
-- [ ] 3.2 Fall back to the current tenant default model when a persisted `model_slot` no longer resolves.
-- [ ] 3.3 Log fallback reason, original `model_slot`, and effective model slot without surfacing a user-facing model error.
-- [ ] 3.4 Add Monitor execution `meta` payload support for original model slot, effective model slot, and `fallback_reason` while keeping `input_snapshot` as the actual request.
+- [x] 3.1 Resolve the effective cron execution model before each agent run and detect missing provider/model drift.
+- [x] 3.2 Fall back to the current tenant default model when a persisted `model_slot` no longer resolves.
+- [x] 3.3 Log fallback reason, original `model_slot`, and effective model slot without surfacing a user-facing model error.
+- [x] 3.4 Add Monitor execution `meta` payload support for original model slot, effective model slot, and `fallback_reason` while keeping `input_snapshot` as the actual request.
 
 ## 4. Cron Broadcast
 
@@ -44,8 +44,8 @@
 ## 7. Tests And Verification
 
 - [ ] 7.1 Add backend unit tests for valid `model_slot` persistence, invalid create/update rejection, omitted default behavior, and text-job clearing.
-- [ ] 7.2 Add backend unit tests proving scoped overrides do not mutate tenant active model and do not leak across concurrent/default runs.
-- [ ] 7.3 Add backend unit tests for execution fallback and Monitor execution `meta` contents.
+- [x] 7.2 Add backend unit tests proving scoped overrides do not mutate tenant active model and do not leak across concurrent/default runs.
+- [x] 7.3 Add backend unit tests for execution fallback and Monitor execution `meta` contents.
 - [ ] 7.4 Add backend unit tests for broadcast copy, clear, and warning behavior across target tenants.
 - [ ] 7.5 Run focused Python tests with `venv/bin/python -m pytest` for cron, model factory, and provider-related units.
 - [ ] 7.6 Run focused frontend tests for cron management, `ScheduledTaskPopup`, and cron utilities.

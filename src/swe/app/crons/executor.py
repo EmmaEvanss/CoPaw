@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -11,11 +12,14 @@ from typing import Any, Dict, Optional
 import httpx
 
 from .auth_state import resolve_auth_token_for_execution
+from .model_slot_context import bind_model_slot_override
 from .models import CronJobSpec
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
 from ...config.context import canonicalize_scope_id, resolve_scope_id
+from ...providers.models import ModelSlotConfig
+from ...providers.provider_manager import ProviderManager
 from ...tracing import has_trace_manager, get_trace_manager
 from ...tracing.models import TraceStatus
 
@@ -35,6 +39,30 @@ class ExecutionResult:
     output_preview: str = ""
     input_snapshot: Optional[Dict[str, Any]] = None  # 执行时的输入快照
     executor_leader: str = ""  # 执行者 leader ID
+    execution_meta: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class _ResolvedExecutionModel:
+    original_model_slot: Optional[ModelSlotConfig]
+    effective_model_slot: Optional[ModelSlotConfig]
+    fallback_reason: str = ""
+    bound_model_slot: Optional[ModelSlotConfig] = None
+
+    def build_meta(self) -> Dict[str, Any]:
+        return {
+            "original_model_slot": (
+                self.original_model_slot.model_dump(mode="json")
+                if self.original_model_slot is not None
+                else None
+            ),
+            "effective_model_slot": (
+                self.effective_model_slot.model_dump(mode="json")
+                if self.effective_model_slot is not None
+                else None
+            ),
+            "fallback_reason": self.fallback_reason,
+        }
 
 
 @dataclass
@@ -145,6 +173,7 @@ class CronExecutor:
             dispatch_meta["source_id"] = source_id
         if scope_id:
             dispatch_meta["scope_id"] = scope_id
+        resolved_model = self._resolve_execution_model(job, scope_id)
 
         logger.info(
             "cron execute: job_id=%s channel=%s task_type=%s "
@@ -158,6 +187,12 @@ class CronExecutor:
         )
 
         # Wrap execution in tenant context
+        model_slot_context = (
+            bind_model_slot_override(resolved_model.bound_model_slot)
+            if resolved_model is not None
+            and resolved_model.bound_model_slot is not None
+            else nullcontext()
+        )
         with (
             bind_tenant_context(
                 tenant_id=tenant_id,
@@ -167,6 +202,7 @@ class CronExecutor:
                 scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
+            model_slot_context,
         ):
             result = await self._execute_job(
                 job,
@@ -182,6 +218,103 @@ class CronExecutor:
             output_preview=output_preview[:100],
             input_snapshot=result.get("input_snapshot"),
             executor_leader=str(result.get("executor_leader") or ""),
+            execution_meta=(
+                resolved_model.build_meta()
+                if resolved_model is not None
+                else None
+            ),
+        )
+
+    def _resolve_execution_model(
+        self,
+        job: CronJobSpec,
+        scope_id: str | None,
+    ) -> Optional[_ResolvedExecutionModel]:
+        if job.task_type != "agent":
+            return None
+
+        runtime_tenant_id = scope_id or getattr(job, "tenant_id", None)
+        manager_tenant_id = runtime_tenant_id or "default"
+        ProviderManager.ensure_tenant_provider_storage(manager_tenant_id)
+        manager = ProviderManager.get_instance(manager_tenant_id)
+        active_model = manager.get_active_model()
+        effective_default = self._normalize_model_slot(active_model)
+        original_model = self._normalize_model_slot(job.model_slot)
+
+        if original_model is None:
+            return _ResolvedExecutionModel(
+                original_model_slot=None,
+                effective_model_slot=effective_default,
+            )
+
+        provider = manager.get_provider(original_model.provider_id)
+        if provider is None:
+            logger.warning(
+                "cron model_slot fallback: job_id=%s reason=provider_not_found "
+                "original_provider=%s original_model=%s effective_provider=%s "
+                "effective_model=%s",
+                job.id,
+                original_model.provider_id,
+                original_model.model,
+                (
+                    effective_default.provider_id
+                    if effective_default is not None
+                    else ""
+                ),
+                (
+                    effective_default.model
+                    if effective_default is not None
+                    else ""
+                ),
+            )
+            return _ResolvedExecutionModel(
+                original_model_slot=original_model,
+                effective_model_slot=effective_default,
+                fallback_reason="provider_not_found",
+            )
+        if not provider.has_model(original_model.model):
+            logger.warning(
+                "cron model_slot fallback: job_id=%s reason=model_not_found "
+                "original_provider=%s original_model=%s effective_provider=%s "
+                "effective_model=%s",
+                job.id,
+                original_model.provider_id,
+                original_model.model,
+                (
+                    effective_default.provider_id
+                    if effective_default is not None
+                    else ""
+                ),
+                (
+                    effective_default.model
+                    if effective_default is not None
+                    else ""
+                ),
+            )
+            return _ResolvedExecutionModel(
+                original_model_slot=original_model,
+                effective_model_slot=effective_default,
+                fallback_reason="model_not_found",
+            )
+        return _ResolvedExecutionModel(
+            original_model_slot=original_model,
+            effective_model_slot=original_model,
+            bound_model_slot=original_model,
+        )
+
+    @staticmethod
+    def _normalize_model_slot(
+        model_slot: Any,
+    ) -> ModelSlotConfig | None:
+        if model_slot is None:
+            return None
+        provider_id = getattr(model_slot, "provider_id", "") or ""
+        model = getattr(model_slot, "model", "") or ""
+        if not provider_id or not model:
+            return None
+        return ModelSlotConfig(
+            provider_id=provider_id,
+            model=model,
         )
 
     async def _execute_job(

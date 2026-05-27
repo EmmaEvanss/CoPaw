@@ -34,6 +34,7 @@ class TestSyncService:
         assert request.name == "Test Job"
         assert request.enabled is True
         assert request.task_type == "agent"
+        assert request.job_origin == "manual"
 
     def test_execution_sync_request_model(self):
         """Test ExecutionSyncRequest model validation."""
@@ -60,8 +61,12 @@ class TestSyncService:
             cron_expr="0 9 * * *",
             channel="console",
             meta='{"key": "value"}',
+            job_origin="subscription",
+            subscription_key="featured_case:1",
         )
         assert request.meta == '{"key": "value"}'
+        assert request.job_origin == "subscription"
+        assert request.subscription_key == "featured_case:1"
 
     def test_execution_sync_request_with_error(self):
         """Test ExecutionSyncRequest with error message."""

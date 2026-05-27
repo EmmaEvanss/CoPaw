@@ -237,6 +237,7 @@ describe("buildCronJobSpec", () => {
       sessionId: "session-456",
       caseValue: "帮我分析存款到期客户",
       channel: "console",
+      subscriptionKey: "featured_case:case-001",
     });
 
     expect(result.task_type).toBe("agent");
@@ -250,6 +251,8 @@ describe("buildCronJobSpec", () => {
     expect(result.request?.user_id).toBe("user-123");
     expect(result.request?.session_id).toBe("session-456");
     expect(result.meta?.creator_user_id).toBe("user-123");
+    expect(result.meta?.job_origin).toBe("subscription");
+    expect(result.meta?.subscription_key).toBe("featured_case:case-001");
     expect(result.text).toBeUndefined();
     expect(result.enabled).toBe(true);
     expect(result.schedule.type).toBe("cron");
@@ -266,6 +269,7 @@ describe("buildCronJobSpec", () => {
       cronExpression: "0 9 * * *",
       name: "每日任务",
       userId: "alice",
+      subscriptionKey: "featured_case:daily",
       caseValue: "每日提醒",
     });
 
@@ -281,6 +285,7 @@ describe("buildCronJobSpec", () => {
       cronExpression: "0 9 * * *",
       name: "任务A",
       userId: "user1",
+      subscriptionKey: "featured_case:a",
       caseValue: "内容",
     });
 
@@ -288,6 +293,7 @@ describe("buildCronJobSpec", () => {
       cronExpression: "0 9 * * *",
       name: "任务B",
       userId: "user1",
+      subscriptionKey: "featured_case:b",
       caseValue: "内容",
     });
 

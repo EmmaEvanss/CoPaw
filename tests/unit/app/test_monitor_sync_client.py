@@ -98,6 +98,8 @@ class TestSyncRequestFormat:
             "meta": {
                 "creator_user_id": "user-001",
                 "task_chat_id": "chat-001",
+                "job_origin": "subscription",
+                "subscription_key": "featured_case:1",
             },
         }
 
@@ -116,6 +118,37 @@ class TestSyncRequestFormat:
         assert target.get("user_id") == "user-001"
         assert runtime.get("timeout_seconds") == 7200
         assert meta.get("creator_user_id") == "user-001"
+
+    def test_sync_request_includes_subscription_fields(
+        self,
+        sample_job_spec_dict,
+    ):
+        """订阅字段应从 meta 展开，供 Monitor 写入任务表。"""
+        client = MonitorSyncClient("http://test:8080/api")
+        job = MagicMock()
+        job.model_dump = MagicMock(return_value=sample_job_spec_dict)
+
+        sync_data = client._build_job_sync_data(job)
+
+        assert sync_data["job_origin"] == "subscription"
+        assert sync_data["subscription_key"] == "featured_case:1"
+
+    def test_sync_request_defaults_to_manual_origin(self):
+        """缺少订阅标识的历史任务应按自主创建任务同步。"""
+        client = MonitorSyncClient("http://test:8080/api")
+        job = MagicMock()
+        job.model_dump = MagicMock(
+            return_value={
+                "id": "job-002",
+                "name": "Manual Job",
+                "meta": {},
+            },
+        )
+
+        sync_data = client._build_job_sync_data(job)
+
+        assert sync_data["job_origin"] == "manual"
+        assert sync_data["subscription_key"] == ""
 
 
 class TestExecutionRecordFormat:

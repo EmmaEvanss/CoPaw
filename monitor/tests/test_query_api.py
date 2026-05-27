@@ -22,18 +22,21 @@ class TestQueryParams:
         assert params.page_size == 10
         assert params.tenant_id is None
         assert params.status is None
+        assert params.job_origin is None
 
     def test_cron_job_query_params_with_filters(self):
         """Test CronJobQueryParams with filters."""
         params = CronJobQueryParams(
             tenant_id="tenant-001",
             status="active",
+            job_origin="manual",
             enabled=True,
             page=2,
             page_size=50,
         )
         assert params.tenant_id == "tenant-001"
         assert params.status == "active"
+        assert params.job_origin == "manual"
         assert params.enabled is True
         assert params.page == 2
         assert params.page_size == 50
@@ -104,6 +107,7 @@ class TestCronJobModel:
         assert job.id == "job-001"
         assert job.enabled is True
         assert job.status == "active"  # default value
+        assert job.job_origin == "manual"
 
     def test_cron_job_model_get_meta_dict(self):
         """Test CronJobModel.get_meta_dict method."""

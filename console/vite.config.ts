@@ -49,9 +49,6 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    optimizeDeps: {
-      include: ["@antv/g2", "@ant-design/plots", "@ant-design/charts"],
-    },
     // build: {
     //   // Output to CoPaw's console directory,
     //   // so we don't need to copy files manually after build.

@@ -24,7 +24,7 @@ import {
   Zap,
 } from "lucide-react";
 import { DatePicker, Select, Tooltip, message } from "antd";
-import { Funnel } from "@ant-design/charts";
+import ReactECharts from "echarts-for-react";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
@@ -284,7 +284,7 @@ function buildDonutSegments(items: SummaryLegendItem[]) {
   });
 }
 
-/** 漏斗图组件：使用 @ant-design/charts Funnel 展示任务执行转化率 */
+/** 漏斗图组件：使用 echarts 展示任务执行转化率 */
 function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummary | null }) {
   const totalTasks = safeNumber(taskStatusSummary?.total_tasks);
   const successCount = safeNumber(taskStatusSummary?.success);
@@ -299,60 +299,70 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
     );
   }
 
-  const successRate = `${((successCount / totalTasks) * 100).toFixed(1)}%`;
-  const readRate = successCount > 0 ? `${((readCount / successCount) * 100).toFixed(1)}%` : "0.0%";
+  const successRate = ((successCount / totalTasks) * 100).toFixed(1);
+  const readRate = successCount > 0 ? ((readCount / successCount) * 100).toFixed(1) : "0.0";
 
-  // 值为 0 时 G2 不渲染该层，给视觉最小占比保住图层
+  // 值为 0 时保证有最小值显示
   const minBar = Math.max(totalTasks * 0.12, 1);
   const ensureVisible = (v: number) => (v <= minBar ? minBar : v);
 
+  const funnelColors = ["#4f46e5", "#16a34a", "#0891b2"];
+
   const chartData = [
-    { stage: "总任务数", value: ensureVisible(totalTasks), rawValue: totalTasks },
-    { stage: "执行成功", value: ensureVisible(successCount), rawValue: successCount },
-    { stage: "已读", value: ensureVisible(readCount), rawValue: readCount },
+    { name: "总任务数", value: ensureVisible(totalTasks), rawValue: totalTasks },
+    { name: "执行成功", value: ensureVisible(successCount), rawValue: successCount },
+    { name: "已读", value: ensureVisible(readCount), rawValue: readCount },
   ];
 
-  const funnelColors = ["#4f46e5", "#16a34a", "#0891b2"];
+  const option = {
+    tooltip: {
+      trigger: "item",
+      formatter: (params: { name: string; data: { rawValue: number } }) => {
+        const { name, data } = params;
+        let rate = "";
+        if (name === "执行成功") rate = `  转化率 ${successRate}%`;
+        if (name === "已读") rate = `  转化率 ${readRate}%`;
+        return `${name}: ${formatNumber(data.rawValue)}${rate}`;
+      },
+    },
+    series: [
+      {
+        type: "funnel",
+        left: "10%",
+        right: "10%",
+        top: "10%",
+        bottom: "15%",
+        min: 0,
+        max: totalTasks,
+        minSize: "20%",
+        maxSize: "100%",
+        sort: "descending",
+        gap: 2,
+        label: {
+          show: true,
+          position: "inside",
+          formatter: (params: { name: string; data: { rawValue: number } }) =>
+            `${params.name}  ${formatNumber(params.data.rawValue)}`,
+          color: "#fff",
+          fontSize: 12,
+          fontWeight: 600,
+        },
+        itemStyle: {
+          borderWidth: 0,
+        },
+        data: chartData.map((item, index) => ({
+          name: item.name,
+          value: item.value,
+          rawValue: item.rawValue,
+          itemStyle: { color: funnelColors[index] },
+        })),
+      },
+    ],
+  };
 
   return (
     <div className={styles.funnelWrap}>
-      <Funnel
-        data={chartData}
-        xField="stage"
-        yField="value"
-        colorField="stage"
-        color={funnelColors}
-        height={160}
-        autoFit
-        label={{
-          position: "inside",
-          text: (d: { stage: string; rawValue: number }) =>
-            `${d.stage}  ${formatNumber(d.rawValue)}`,
-          style: { fill: "#fff", fontSize: 12, fontWeight: 600 },
-        }}
-        legend={{
-          position: "bottom",
-          itemMarker: "circle",
-          itemMarkerSize: 8,
-          itemName: {
-            style: { fill: "#475569", fontSize: 12, fontWeight: 500 },
-          },
-        }}
-        tooltip={{
-          title: false,
-          items: [
-            (d: { stage: string; rawValue: number }) => {
-              let rate = "";
-              if (d.stage === "执行成功") rate = `  转化率 ${successRate}`;
-              if (d.stage === "已读") rate = `  转化率 ${readRate}`;
-              return {
-                name: d.stage,
-                value: `${formatNumber(d.rawValue)}${rate}`,
-              };
-            },
-          ],
-        }}
-      />
+      <ReactECharts option={option} style={{ height: 160 }} />
     </div>
   );
 }

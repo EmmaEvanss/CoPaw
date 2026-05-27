@@ -116,3 +116,4 @@ src/.hypothesis/
 /.mini-wiki/
 /venv_swe/
 /venv_monitor/
+/.codegraph/

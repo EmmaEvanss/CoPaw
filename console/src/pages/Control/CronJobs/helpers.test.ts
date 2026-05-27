@@ -120,4 +120,36 @@ describe("CronJobs helpers", () => {
       text: "Broadcasted 1 tenants, 1 using tenant default model",
     });
   });
+
+  it("prefers failure summary over warning summary for mixed broadcast results", () => {
+    expect(
+      getBroadcastResultMessage([
+        {
+          tenant_id: "tenant-a",
+          success: true,
+          job_id: "job-1",
+          cron: "0 9 * * *",
+          timezone: "UTC",
+          offset_minutes: 0,
+          notification_timezone: "UTC",
+          error: "",
+          warning: "model_slot not copied",
+        },
+        {
+          tenant_id: "tenant-b",
+          success: false,
+          job_id: "",
+          cron: "0 9 * * *",
+          timezone: "UTC",
+          offset_minutes: 60,
+          notification_timezone: "UTC",
+          error: "boom",
+          warning: "",
+        },
+      ]),
+    ).toEqual({
+      tone: "warning",
+      text: "Broadcasted 1, failed 1",
+    });
+  });
 });

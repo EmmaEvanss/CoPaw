@@ -310,24 +310,19 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
 
   const chartData = [
     { name: "总任务数", value: ensureVisible(totalTasks), rawValue: totalTasks },
-    { name: "执行成功", value: ensureVisible(successCount), rawValue: successCount },
-    { name: "已读", value: ensureVisible(readCount), rawValue: readCount },
+    { name: "执行成功数", value: ensureVisible(successCount), rawValue: successCount },
+    { name: "已读数", value: ensureVisible(readCount), rawValue: readCount },
   ];
 
   const option = {
     tooltip: {
       trigger: "item",
-      formatter: (params: { name: string; data: { rawValue: number } }) => {
-        const { name, data } = params;
-        let rate = "";
-        if (name === "执行成功") rate = `  转化率 ${successRate}%`;
-        if (name === "已读") rate = `  转化率 ${readRate}%`;
-        return `${name}: ${formatNumber(data.rawValue)}${rate}`;
-      },
+      formatter: (params: { name: string; data: { rawValue: number } }) =>
+        `${params.name}: ${formatNumber(params.data.rawValue)}`,
     },
     legend: {
       data: chartData.map((item) => item.name),
-      bottom: 0,
+      top: 0,
       itemWidth: 10,
       itemHeight: 10,
       itemGap: 16,
@@ -350,11 +345,11 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
         type: "funnel",
         left: "5%",
         right: "40%",
-        top: "5%",
-        bottom: "20%",
+        top: "15%",
+        bottom: "10%",
         min: 0,
         max: totalTasks,
-        minSize: "20%",
+        minSize: "35%",
         maxSize: "100%",
         sort: "descending",
         gap: 2,
@@ -384,11 +379,11 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
       {
         type: "group",
         left: "68%",
-        top: "18%",
+        top: "28%",
         children: [
           {
             type: "circle",
-            shape: { r: 3 },
+            shape: { cx: 3, cy: 0, r: 3 },
             style: { fill: "#94a3b8" },
           },
           {
@@ -418,11 +413,11 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
       {
         type: "group",
         left: "68%",
-        top: "46%",
+        top: "56%",
         children: [
           {
             type: "circle",
-            shape: { r: 3 },
+            shape: { cx: 3, cy: 0, r: 3 },
             style: { fill: "#94a3b8" },
           },
           {

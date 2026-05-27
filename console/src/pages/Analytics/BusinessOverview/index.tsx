@@ -325,13 +325,25 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
         return `${name}: ${formatNumber(data.rawValue)}${rate}`;
       },
     },
+    legend: {
+      data: chartData.map((item) => item.name),
+      bottom: 0,
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 16,
+      textStyle: {
+        color: "#475569",
+        fontSize: 12,
+        fontWeight: 500,
+      },
+    },
     series: [
       {
         type: "funnel",
         left: "10%",
         right: "10%",
-        top: "10%",
-        bottom: "15%",
+        top: "5%",
+        bottom: "20%",
         min: 0,
         max: totalTasks,
         minSize: "20%",

@@ -466,3 +466,111 @@ def test_broadcast_clears_model_slot_and_returns_warning_for_unsupported_tenant(
             ),
         },
     ]
+
+
+def test_broadcast_persists_model_not_found_reason_for_unsupported_model():
+    source_job = CronJobSpec.model_validate(
+        {
+            **_job_spec(
+                "job-source",
+                model_slot=_model_slot(),
+            ),
+            "schedule": ScheduleSpec(
+                cron="0 9 * * *",
+            ).model_dump(mode="json"),
+            "tenant_id": "tenant-a",
+            "source_id": "source-a",
+            "scope_id": encode_scope_id("tenant-a", "source-a"),
+        },
+    )
+    source_manager = _Manager({"job-source": source_job})
+    target_missing = _Manager()
+    multi_agent_manager = _MultiAgentManager(
+        {
+            encode_scope_id("tenant-c", "source-a"): _Workspace(
+                target_missing,
+            ),
+        },
+    )
+    client = _build_client(
+        source_manager,
+        multi_agent_manager=multi_agent_manager,
+        tenant_workspace_pool=_TenantWorkspacePool(),
+    )
+    _install_provider_manager(
+        {},
+        providers_by_tenant={
+            encode_scope_id("tenant-c", "source-a"): {
+                "openai": _Provider(["gpt-4.1"]),
+            },
+        },
+    )
+
+    response = client.post(
+        "/cron/jobs/job-source/broadcast",
+        json={"target_tenant_ids": ["tenant-c"]},
+    )
+
+    assert response.status_code == 200
+    assert target_missing.created[0].model_slot is None
+    assert (
+        target_missing.created[0].meta["broadcast_model_slot_fallback_reason"]
+        == "model_not_found"
+    )
+
+
+def test_broadcast_clears_stale_fallback_meta_when_source_model_slot_missing():
+    source_job = CronJobSpec.model_validate(
+        {
+            **_job_spec("job-source"),
+            "schedule": ScheduleSpec(
+                cron="0 9 * * *",
+            ).model_dump(mode="json"),
+            "tenant_id": "tenant-a",
+            "source_id": "source-a",
+            "scope_id": encode_scope_id("tenant-a", "source-a"),
+            "meta": {
+                "broadcast_original_model_slot": {
+                    "provider_id": "openai",
+                    "model": "gpt-5.4",
+                },
+                "broadcast_model_slot_fallback_reason": ("provider_not_found"),
+            },
+        },
+    )
+    source_manager = _Manager({"job-source": source_job})
+    target_supported = _Manager()
+    multi_agent_manager = _MultiAgentManager(
+        {
+            encode_scope_id("tenant-b", "source-a"): _Workspace(
+                target_supported,
+            ),
+        },
+    )
+    client = _build_client(
+        source_manager,
+        multi_agent_manager=multi_agent_manager,
+        tenant_workspace_pool=_TenantWorkspacePool(),
+    )
+    _install_provider_manager(
+        {},
+        providers_by_tenant={
+            encode_scope_id("tenant-b", "source-a"): {
+                "openai": _Provider(["gpt-5.4"]),
+            },
+        },
+    )
+
+    response = client.post(
+        "/cron/jobs/job-source/broadcast",
+        json={"target_tenant_ids": ["tenant-b"]},
+    )
+
+    assert response.status_code == 200
+    assert (
+        "broadcast_original_model_slot" not in target_supported.created[0].meta
+    )
+    assert (
+        "broadcast_model_slot_fallback_reason"
+        not in target_supported.created[0].meta
+    )

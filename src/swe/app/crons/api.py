@@ -242,6 +242,8 @@ def _build_broadcast_job(
         "auto_paused_at",
         "unread_count_at_pause",
         "external_job_id",
+        BROADCAST_ORIGINAL_MODEL_SLOT_META_KEY,
+        BROADCAST_MODEL_SLOT_FALLBACK_REASON_META_KEY,
     ):
         meta.pop(key, None)
     meta.update(

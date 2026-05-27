@@ -337,11 +337,19 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
         fontWeight: 500,
       },
     },
+    grid: {
+      left: "5%",
+      right: "35%",
+      top: "10%",
+      bottom: "15%",
+    },
+    xAxis: { show: false, type: "value" },
+    yAxis: { show: false, type: "category" },
     series: [
       {
         type: "funnel",
-        left: "10%",
-        right: "10%",
+        left: "5%",
+        right: "40%",
         top: "5%",
         bottom: "20%",
         min: 0,
@@ -368,6 +376,77 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
           rawValue: item.rawValue,
           itemStyle: { color: funnelColors[index] },
         })),
+      },
+    ],
+    // 右侧转化率标注
+    graphic: [
+      // 第一层到第二层的转化率
+      {
+        type: "group",
+        left: "68%",
+        top: "18%",
+        children: [
+          {
+            type: "circle",
+            shape: { r: 3 },
+            style: { fill: "#94a3b8" },
+          },
+          {
+            type: "line",
+            shape: { x1: 3, y1: 0, x2: 3, y2: 30 },
+            style: { stroke: "#94a3b8", lineWidth: 1, lineDash: [3, 2] },
+          },
+          {
+            type: "circle",
+            shape: { cx: 3, cy: 30, r: 3 },
+            style: { fill: "#94a3b8" },
+          },
+          {
+            type: "text",
+            style: {
+              text: `→ ${successRate}%`,
+              x: 12,
+              y: 15,
+              fill: "#64748b",
+              fontSize: 11,
+              fontWeight: 500,
+            },
+          },
+        ],
+      },
+      // 第二层到第三层的转化率
+      {
+        type: "group",
+        left: "68%",
+        top: "46%",
+        children: [
+          {
+            type: "circle",
+            shape: { r: 3 },
+            style: { fill: "#94a3b8" },
+          },
+          {
+            type: "line",
+            shape: { x1: 3, y1: 0, x2: 3, y2: 30 },
+            style: { stroke: "#94a3b8", lineWidth: 1, lineDash: [3, 2] },
+          },
+          {
+            type: "circle",
+            shape: { cx: 3, cy: 30, r: 3 },
+            style: { fill: "#94a3b8" },
+          },
+          {
+            type: "text",
+            style: {
+              text: `→ ${readRate}%`,
+              x: 12,
+              y: 15,
+              fill: "#64748b",
+              fontSize: 11,
+              fontWeight: 500,
+            },
+          },
+        ],
       },
     ],
   };

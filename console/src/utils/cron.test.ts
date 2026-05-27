@@ -274,6 +274,25 @@ describe("buildCronJobSpec", () => {
     expect(result.dispatch.target.session_id).toBe("");
     expect(result.dispatch.channel).toBe("default");
     expect(result.meta?.creator_user_id).toBe("alice");
+    expect(result.model_slot).toBeUndefined();
+  });
+
+  it("includes explicit model_slot when provided", () => {
+    const result = buildCronJobSpec({
+      cronExpression: "0 9 * * *",
+      name: "指定模型任务",
+      userId: "alice",
+      caseValue: "每日提醒",
+      modelSlot: {
+        provider_id: "openai",
+        model: "gpt-5.4",
+      },
+    });
+
+    expect(result.model_slot).toEqual({
+      provider_id: "openai",
+      model: "gpt-5.4",
+    });
   });
 
   it("generates unique id based on name and timestamp", () => {

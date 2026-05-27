@@ -17,6 +17,11 @@ import { parseCron, serializeCron } from "./components/parseCron";
 import { PageHeader } from "@/components/PageHeader";
 import { TenantTargetPicker } from "@/components/TenantTargetPicker";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import {
+  buildExecutionModelKey,
+  parseExecutionModelKey,
+  useExecutionModelOptions,
+} from "@/hooks/useExecutionModelOptions";
 import styles from "./index.module.less";
 
 type CronJob = CronJobSpecOutput;
@@ -47,6 +52,11 @@ function CronJobsPage() {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<CronJob>();
   const userTimezoneRef = useRef("UTC");
+  const {
+    loading: executionModelLoading,
+    options: executionModelOptions,
+    tenantDefaultLabel,
+  } = useExecutionModelOptions(true);
 
   useEffect(() => {
     api
@@ -66,7 +76,8 @@ function CronJobsPage() {
         ...DEFAULT_FORM_VALUES.schedule,
         timezone: userTimezoneRef.current,
       },
-    });
+      execution_model_key: buildExecutionModelKey(undefined),
+    } as any);
     setDrawerOpen(true);
   };
 
@@ -85,6 +96,7 @@ function CronJobsPage() {
           : "",
       },
       cronType: cronParts.type,
+      execution_model_key: buildExecutionModelKey(job.model_slot),
     };
 
     // Set time picker value
@@ -166,8 +178,13 @@ function CronJobsPage() {
       const res = await api.broadcastCronJob(broadcastingJob.id, targetTenantIds);
       const successCount = res.results.filter((item) => item.success).length;
       const failedCount = res.results.length - successCount;
+      const warningCount = res.results.filter((item) => item.warning).length;
       if (failedCount > 0) {
         message.warning(`Broadcasted ${successCount}, failed ${failedCount}`);
+      } else if (warningCount > 0) {
+        message.warning(
+          `Broadcasted ${successCount} tenants, ${warningCount} using tenant default model`,
+        );
       } else {
         message.success(`Broadcasted ${successCount} tenants`);
       }
@@ -208,12 +225,21 @@ function CronJobsPage() {
 
     const cronExpression = serializeCron(cronParts);
 
+    const {
+      execution_model_key: executionModelKey,
+      ...rawValues
+    } = values;
+
     let processedValues = {
-      ...values,
+      ...rawValues,
       schedule: {
         ...values.schedule,
         cron: cronExpression,
       },
+      model_slot:
+        values.task_type === "agent"
+          ? parseExecutionModelKey(executionModelKey)
+          : undefined,
     };
 
     // Parse request input JSON
@@ -255,6 +281,8 @@ function CronJobsPage() {
     onDelete: handleDelete,
     onCopySuccess: () => message.success(t("common.copied")),
     onCopyError: () => message.error(t("common.copyFailed")),
+    executionModelOptions,
+    tenantDefaultModelLabel: tenantDefaultLabel,
     t,
   });
 
@@ -287,6 +315,9 @@ function CronJobsPage() {
         editingJob={editingJob}
         form={form}
         saving={saving}
+        executionModelOptions={executionModelOptions}
+        executionModelLoading={executionModelLoading}
+        tenantDefaultModelLabel={tenantDefaultLabel}
         onClose={handleDrawerClose}
         onSubmit={handleSubmit}
       />
@@ -319,10 +350,17 @@ function CronJobsPage() {
               <div style={{ display: "grid", gap: 6 }}>
                 {broadcastResults.map((item) => (
                   <div key={item.tenant_id}>
-                    {item.tenant_id}:{" "}
-                    {item.success
-                      ? `${item.cron} (${item.timezone})`
-                      : item.error || "failed"}
+                    <div>
+                      {item.tenant_id}:{" "}
+                      {item.success
+                        ? `${item.cron} (${item.timezone})`
+                        : item.error || "failed"}
+                    </div>
+                    {item.warning ? (
+                      <div style={{ color: "#d46b08", fontSize: 12 }}>
+                        {item.warning}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>

@@ -3,7 +3,7 @@
 - [x] 1.1 Add optional top-level `model_slot` to `CronJobSpec` using the existing provider model slot shape.
 - [x] 1.2 Normalize text cron jobs so saved specs clear any submitted `model_slot`.
 - [x] 1.3 Add provider/model validation for agent cron job create and replace paths against the current tenant's configured `models + extra_models`.
-- [ ] 1.4 Update cron API response models and TypeScript API types so `model_slot` round-trips in create, replace, get, and list responses.
+- [x] 1.4 Update cron API response models and TypeScript API types so `model_slot` round-trips in create, replace, get, and list responses.
 
 ## 2. Scoped Model Resolution
 
@@ -21,31 +21,31 @@
 
 ## 4. Cron Broadcast
 
-- [ ] 4.1 Extend `CronBroadcastTenantResult` with `warning: string = ""` in backend and frontend types.
+- [x] 4.1 Extend `CronBroadcastTenantResult` with `warning: string = ""` in backend and frontend types.
 - [x] 4.2 Validate source `model_slot` against each target tenant during broadcast.
 - [x] 4.3 Copy `model_slot` only when the target tenant has the same provider/model.
 - [x] 4.4 Clear `model_slot` and return `warning="model_slot not copied: provider/model unavailable in target tenant"` when a target tenant lacks the source model.
 
 ## 5. Frontend Cron Management UI
 
-- [ ] 5.1 Load current tenant configured providers and active model data for cron management forms.
-- [ ] 5.2 Add an execution model selector to the `Control/CronJobs` drawer for agent tasks with tenant-default as the default option.
-- [ ] 5.3 Hide or clear execution model selection when the drawer task type is text.
-- [ ] 5.4 Display execution model in the cron management list, showing tenant default when `model_slot` is absent.
-- [ ] 5.5 Preserve and submit `model_slot` correctly for create and edit flows.
+- [x] 5.1 Load current tenant configured providers and active model data for cron management forms.
+- [x] 5.2 Add an execution model selector to the `Control/CronJobs` drawer for agent tasks with tenant-default as the default option.
+- [x] 5.3 Hide or clear execution model selection when the drawer task type is text.
+- [x] 5.4 Display execution model in the cron management list, showing tenant default when `model_slot` is absent.
+- [x] 5.5 Preserve and submit `model_slot` correctly for create and edit flows.
 
 ## 6. Frontend Quick Scheduled Task Popup
 
-- [ ] 6.1 Add tenant-default and configured provider/model options to `ScheduledTaskPopup`.
-- [ ] 6.2 Keep tenant default as the popup default and omit `model_slot` when selected.
-- [ ] 6.3 Submit top-level `model_slot` from `CaseDetailDrawer` quick scheduled-task creation when the user selects an explicit model.
-- [ ] 6.4 Update popup and cron utility tests for default and explicit model creation payloads.
+- [x] 6.1 Add tenant-default and configured provider/model options to `ScheduledTaskPopup`.
+- [x] 6.2 Keep tenant default as the popup default and omit `model_slot` when selected.
+- [x] 6.3 Submit top-level `model_slot` from `CaseDetailDrawer` quick scheduled-task creation when the user selects an explicit model.
+- [x] 6.4 Update popup and cron utility tests for default and explicit model creation payloads.
 
 ## 7. Tests And Verification
 
-- [ ] 7.1 Add backend unit tests for valid `model_slot` persistence, invalid create/update rejection, omitted default behavior, and text-job clearing.
+- [x] 7.1 Add backend unit tests for valid `model_slot` persistence, invalid create/update rejection, omitted default behavior, and text-job clearing.
 - [x] 7.2 Add backend unit tests proving scoped overrides do not mutate tenant active model and do not leak across concurrent/default runs.
 - [x] 7.3 Add backend unit tests for execution fallback and Monitor execution `meta` contents.
 - [x] 7.4 Add backend unit tests for broadcast copy, clear, and warning behavior across target tenants.
 - [x] 7.5 Run focused Python tests with `venv/bin/python -m pytest` for cron, model factory, and provider-related units.
-- [ ] 7.6 Run focused frontend tests for cron management, `ScheduledTaskPopup`, and cron utilities.
+- [x] 7.6 Run focused frontend tests for cron management, `ScheduledTaskPopup`, and cron utilities.

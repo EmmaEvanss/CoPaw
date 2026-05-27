@@ -264,6 +264,8 @@ def test_create_job_injects_request_tenant_id():
     )
     assert manager.created[0].tenant_name == "Alice"
     assert manager.created[0].bbk_id == "1001"
+    assert manager.created[0].model_slot is None
+    assert response.json().get("model_slot") is None
 
 
 def test_replace_job_overrides_payload_tenant_with_request_tenant():

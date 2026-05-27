@@ -1,16 +1,18 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { SparkDownloadLine } from "@agentscope-ai/icons";
 import FilePreviewModal from "../FilePreviewModal";
 import {
   extractDecodedFileNameFromUrl,
   getFileIcon,
   getFileType,
+  isAutoPreviewHtmlLink,
   safeDecodeFileName,
 } from "../FilePreviewModal/fileUtils";
 
 export interface DownloadFileCardProps {
   url: string;
   fileName?: string;
+  autoPreview?: boolean;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -79,8 +81,9 @@ const downloadBtnStyle: React.CSSProperties = {
 };
 
 function DownloadFileCard(props: DownloadFileCardProps) {
-  const { url, fileName: propFileName, className, style } = props;
+  const { url, fileName: propFileName, autoPreview, className, style } = props;
   const [previewOpen, setPreviewOpen] = useState(false);
+  const autoPreviewOpenedRef = useRef(false);
 
   // Extract filename from URL if not provided
   const fileName = useMemo(() => {
@@ -97,6 +100,23 @@ function DownloadFileCard(props: DownloadFileCardProps) {
   }, [fileName]);
 
   const fileType = useMemo(() => getFileType(fileName), [fileName]);
+  const shouldAutoPreview = useMemo(
+    () => autoPreview ?? isAutoPreviewHtmlLink(url, fileName),
+    [autoPreview, url, fileName],
+  );
+
+  useEffect(() => {
+    if (
+      !shouldAutoPreview ||
+      autoPreviewOpenedRef.current ||
+      fileType !== "previewable"
+    ) {
+      return;
+    }
+
+    autoPreviewOpenedRef.current = true;
+    setPreviewOpen(true);
+  }, [fileType, shouldAutoPreview]);
 
   const handlePreview = () => {
     setPreviewOpen(true);

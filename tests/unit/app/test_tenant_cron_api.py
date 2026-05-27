@@ -109,6 +109,22 @@ class _Manager:
         return types.SimpleNamespace(model_dump=lambda mode=None: {})
 
 
+class _Provider:
+    def __init__(self, models: list[str]):
+        self._models = set(models)
+
+    def has_model(self, model_id: str) -> bool:
+        return model_id in self._models
+
+
+class _ProviderManager:
+    def __init__(self, providers: dict[str, _Provider]):
+        self._providers = providers
+
+    def get_provider(self, provider_id: str):
+        return self._providers.get(provider_id)
+
+
 CronJobSpec = models_module.CronJobSpec
 ScheduleSpec = models_module.ScheduleSpec
 DispatchSpec = models_module.DispatchSpec
@@ -117,17 +133,18 @@ JobRuntimeSpec = models_module.JobRuntimeSpec
 CronJobRequest = models_module.CronJobRequest
 
 
-def _job_spec(job_id: str = ""):
-    return {
+def _job_spec(
+    job_id: str = "",
+    *,
+    task_type: str = "agent",
+    model_slot: dict | None = None,
+):
+    payload = {
         "id": job_id,
         "name": "tenant cron",
         "enabled": True,
         "tenant_id": None,
         "schedule": ScheduleSpec(cron="* * * * *").model_dump(mode="json"),
-        "task_type": "agent",
-        "request": CronJobRequest(
-            input=[{"content": [{"type": "text", "text": "ping"}]}],
-        ).model_dump(mode="json"),
         "dispatch": DispatchSpec(
             channel="console",
             target=DispatchTarget(user_id="user-a", session_id="session-a"),
@@ -135,6 +152,44 @@ def _job_spec(job_id: str = ""):
         ).model_dump(mode="json"),
         "runtime": JobRuntimeSpec().model_dump(mode="json"),
         "meta": {},
+    }
+    if task_type == "agent":
+        payload.update(
+            {
+                "task_type": "agent",
+                "request": CronJobRequest(
+                    input=[{"content": [{"type": "text", "text": "ping"}]}],
+                ).model_dump(mode="json"),
+            },
+        )
+    else:
+        payload.update(
+            {
+                "task_type": "text",
+                "text": "hello cron",
+            },
+        )
+    if model_slot is not None:
+        payload["model_slot"] = model_slot
+    return payload
+
+
+def _install_provider_manager(
+    providers: dict[str, _Provider],
+):
+    api_module.ProviderManager = types.SimpleNamespace(  # type: ignore[attr-defined]
+        ensure_tenant_provider_storage=lambda _tenant_id: None,
+        get_instance=lambda _tenant_id: _ProviderManager(providers),
+    )
+
+
+def _model_slot(
+    provider_id: str = "openai",
+    model: str = "gpt-5.4",
+) -> dict[str, str]:
+    return {
+        "provider_id": provider_id,
+        "model": model,
     }
 
 
@@ -189,3 +244,95 @@ def test_replace_job_overrides_payload_tenant_with_request_tenant():
         "tenant-a",
         "source-a",
     )
+
+
+def test_create_job_persists_model_slot():
+    manager = _Manager()
+    client = _build_client(manager)
+    _install_provider_manager(
+        {
+            "openai": _Provider(["gpt-5.4"]),
+        },
+    )
+
+    response = client.post(
+        "/cron/jobs",
+        json=_job_spec(model_slot=_model_slot()),
+    )
+
+    assert response.status_code == 200
+    assert manager.created[0].model_slot is not None
+    assert manager.created[0].model_slot.provider_id == "openai"
+    assert manager.created[0].model_slot.model == "gpt-5.4"
+    assert response.json()["model_slot"] == _model_slot()
+
+
+def test_create_job_rejects_unknown_model_slot_provider():
+    manager = _Manager()
+    client = _build_client(manager)
+    _install_provider_manager(
+        {
+            "openai": _Provider(["gpt-5.4"]),
+        },
+    )
+
+    response = client.post(
+        "/cron/jobs",
+        json=_job_spec(
+            model_slot=_model_slot(provider_id="missing-provider"),
+        ),
+    )
+
+    assert response.status_code == 404
+    assert (
+        response.json()["detail"] == "Provider 'missing-provider' not found."
+    )
+    assert manager.created == []
+
+
+def test_replace_job_rejects_unknown_model_slot_model():
+    manager = _Manager()
+    client = _build_client(manager)
+    _install_provider_manager(
+        {
+            "openai": _Provider(["gpt-5.4"]),
+        },
+    )
+
+    response = client.put(
+        "/cron/jobs/job-1",
+        json=_job_spec(
+            "job-1",
+            model_slot=_model_slot(model="gpt-4.1"),
+        ),
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.json()["detail"]
+        == "Model 'gpt-4.1' not found in provider 'openai'."
+    )
+    assert manager.created == []
+
+
+def test_create_text_job_clears_model_slot():
+    manager = _Manager()
+    client = _build_client(manager)
+    _install_provider_manager(
+        {
+            "openai": _Provider(["gpt-5.4"]),
+        },
+    )
+
+    response = client.post(
+        "/cron/jobs",
+        json=_job_spec(
+            task_type="text",
+            model_slot=_model_slot(),
+        ),
+    )
+
+    assert response.status_code == 200
+    assert manager.created[0].task_type == "text"
+    assert manager.created[0].model_slot is None
+    assert response.json().get("model_slot") is None

@@ -5,8 +5,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ...config.context import resolve_runtime_tenant_id, resolve_scope_id
+from ...config.context import (
+    resolve_runtime_tenant_id,
+    resolve_scope_id,
+    resolve_scope_preferred_tenant_id,
+)
 from ...config.utils import list_logical_tenant_ids
+from ...providers.provider_manager import ProviderManager
 from .broadcast import compute_broadcast_offsets, shift_cron_expression
 from .manager import CronManager
 from .models import CronJobListItem, CronJobSpec, CronJobView
@@ -96,6 +101,36 @@ def _inject_creator_user(
     if creator_user_id:
         meta["creator_user_id"] = creator_user_id
     return spec.model_copy(update={"meta": meta})
+
+
+def _validate_cron_job_model_slot(
+    request: Request,
+    spec: CronJobSpec,
+) -> None:
+    if spec.task_type != "agent" or spec.model_slot is None:
+        return
+    tenant_id = resolve_scope_preferred_tenant_id(
+        getattr(request.state, "tenant_id", None),
+        getattr(request.state, "source_id", None),
+        getattr(request.state, "scope_id", None),
+    )
+    manager_tenant_id = tenant_id or "default"
+    ProviderManager.ensure_tenant_provider_storage(manager_tenant_id)
+    manager = ProviderManager.get_instance(manager_tenant_id)
+    provider = manager.get_provider(spec.model_slot.provider_id)
+    if provider is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"Provider '{spec.model_slot.provider_id}' not found."),
+        )
+    if not provider.has_model(spec.model_slot.model):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Model '{spec.model_slot.model}' not found in provider "
+                f"'{spec.model_slot.provider_id}'."
+            ),
+        )
 
 
 async def _ensure_task_binding_for_read(
@@ -293,9 +328,16 @@ async def broadcast_job(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     offsets = compute_broadcast_offsets(len(normalized_tenants))
-    multi_agent_manager = getattr(request.app.state, "multi_agent_manager", None)
+    multi_agent_manager = getattr(
+        request.app.state,
+        "multi_agent_manager",
+        None,
+    )
     if multi_agent_manager is None:
-        raise HTTPException(status_code=500, detail="multi_agent_manager missing")
+        raise HTTPException(
+            status_code=500,
+            detail="multi_agent_manager missing",
+        )
     tenant_workspace_pool = getattr(
         request.app.state,
         "tenant_workspace_pool",
@@ -407,6 +449,7 @@ async def create_job(
     created = spec.model_copy(update={"id": job_id})
     created = _inject_request_tenant(created, request)
     created = _inject_creator_user(created, request)
+    _validate_cron_job_model_slot(request, created)
     await mgr.create_or_replace_job(created)
     saved = await mgr.get_job(job_id)
     return saved or created
@@ -424,6 +467,7 @@ async def replace_job(
     existing = await mgr.get_job(job_id)
     spec = _inject_request_tenant(spec, request)
     spec = _inject_creator_user(spec, request, existing=existing)
+    _validate_cron_job_model_slot(request, spec)
     await mgr.create_or_replace_job(spec)
     saved = await mgr.get_job(job_id)
     return saved or spec

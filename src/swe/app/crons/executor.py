@@ -26,6 +26,10 @@ from ...tracing.models import TraceStatus
 logger = logging.getLogger(__name__)
 
 CONSOLE_CHANNEL = "console"
+BROADCAST_ORIGINAL_MODEL_SLOT_META_KEY = "broadcast_original_model_slot"
+BROADCAST_MODEL_SLOT_FALLBACK_REASON_META_KEY = (
+    "broadcast_model_slot_fallback_reason"
+)
 
 
 @dataclass
@@ -251,6 +255,12 @@ class CronExecutor:
         original_model = self._normalize_model_slot(job.model_slot)
 
         if original_model is None:
+            broadcast_resolved = self._resolve_broadcast_execution_model(
+                job,
+                effective_default,
+            )
+            if broadcast_resolved is not None:
+                return broadcast_resolved
             return _ResolvedExecutionModel(
                 original_model_slot=None,
                 effective_model_slot=effective_default,
@@ -311,14 +321,53 @@ class CronExecutor:
             bound_model_slot=original_model,
         )
 
+    def _resolve_broadcast_execution_model(
+        self,
+        job: CronJobSpec,
+        effective_default: ModelSlotConfig | None,
+    ) -> _ResolvedExecutionModel | None:
+        meta = dict(job.meta or {})
+        original_model = self._normalize_model_slot(
+            meta.get(BROADCAST_ORIGINAL_MODEL_SLOT_META_KEY),
+        )
+        fallback_reason = str(
+            meta.get(BROADCAST_MODEL_SLOT_FALLBACK_REASON_META_KEY) or "",
+        )
+        if original_model is None or not fallback_reason:
+            return None
+        logger.warning(
+            "cron model_slot fallback: job_id=%s reason=%s "
+            "original_provider=%s original_model=%s effective_provider=%s "
+            "effective_model=%s",
+            job.id,
+            fallback_reason,
+            original_model.provider_id,
+            original_model.model,
+            (
+                effective_default.provider_id
+                if effective_default is not None
+                else ""
+            ),
+            effective_default.model if effective_default is not None else "",
+        )
+        return _ResolvedExecutionModel(
+            original_model_slot=original_model,
+            effective_model_slot=effective_default,
+            fallback_reason=fallback_reason,
+        )
+
     @staticmethod
     def _normalize_model_slot(
         model_slot: Any,
     ) -> ModelSlotConfig | None:
         if model_slot is None:
             return None
-        provider_id = getattr(model_slot, "provider_id", "") or ""
-        model = getattr(model_slot, "model", "") or ""
+        if isinstance(model_slot, dict):
+            provider_id = str(model_slot.get("provider_id") or "")
+            model = str(model_slot.get("model") or "")
+        else:
+            provider_id = getattr(model_slot, "provider_id", "") or ""
+            model = getattr(model_slot, "model", "") or ""
         if not provider_id or not model:
             return None
         return ModelSlotConfig(

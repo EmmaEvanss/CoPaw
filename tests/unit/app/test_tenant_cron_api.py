@@ -431,6 +431,14 @@ def test_broadcast_clears_model_slot_and_returns_warning_for_unsupported_tenant(
     assert target_supported.created[0].model_slot.provider_id == "openai"
     assert target_supported.created[0].model_slot.model == "gpt-5.4"
     assert target_missing.created[0].model_slot is None
+    assert target_missing.created[0].meta["broadcast_original_model_slot"] == {
+        "provider_id": "openai",
+        "model": "gpt-5.4",
+    }
+    assert (
+        target_missing.created[0].meta["broadcast_model_slot_fallback_reason"]
+        == "provider_not_found"
+    )
     assert response.json()["results"] == [
         {
             "tenant_id": "tenant-b",

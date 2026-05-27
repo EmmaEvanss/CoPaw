@@ -8,6 +8,7 @@ import {
   isAutoPreviewHtmlLink,
   safeDecodeFileName,
 } from "../FilePreviewModal/fileUtils";
+import { useAutoPreviewHtml } from "../AutoPreviewHtmlContext";
 
 export interface DownloadFileCardProps {
   url: string;
@@ -84,6 +85,8 @@ function DownloadFileCard(props: DownloadFileCardProps) {
   const { url, fileName: propFileName, autoPreview, className, style } = props;
   const [previewOpen, setPreviewOpen] = useState(false);
   const autoPreviewOpenedRef = useRef(false);
+  const { enabled: pageAutoPreviewEnabled, register: registerAutoPreview } =
+    useAutoPreviewHtml();
 
   // Extract filename from URL if not provided
   const fileName = useMemo(() => {
@@ -101,8 +104,10 @@ function DownloadFileCard(props: DownloadFileCardProps) {
 
   const fileType = useMemo(() => getFileType(fileName), [fileName]);
   const shouldAutoPreview = useMemo(
-    () => autoPreview ?? isAutoPreviewHtmlLink(url, fileName),
-    [autoPreview, url, fileName],
+    () =>
+      autoPreview ??
+      (pageAutoPreviewEnabled && isAutoPreviewHtmlLink(url, fileName)),
+    [autoPreview, pageAutoPreviewEnabled, url, fileName],
   );
 
   useEffect(() => {
@@ -114,9 +119,24 @@ function DownloadFileCard(props: DownloadFileCardProps) {
       return;
     }
 
+    if (autoPreview === undefined && pageAutoPreviewEnabled) {
+      return registerAutoPreview({
+        open: () => {
+          autoPreviewOpenedRef.current = true;
+          setPreviewOpen(true);
+        },
+      });
+    }
+
     autoPreviewOpenedRef.current = true;
     setPreviewOpen(true);
-  }, [fileType, shouldAutoPreview]);
+  }, [
+    autoPreview,
+    fileType,
+    pageAutoPreviewEnabled,
+    registerAutoPreview,
+    shouldAutoPreview,
+  ]);
 
   const handlePreview = () => {
     setPreviewOpen(true);

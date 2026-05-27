@@ -4,7 +4,7 @@ import DownloadFileCard from "@/components/agentscope-chat/DownloadFileCard";
 
 const { Title, Paragraph } = Typography;
 
-const AUTO_PREVIEW_FILE_NAME = "到期完整客户名单-1779875663603.html";
+const AUTO_PREVIEW_FILE_NAME = "存款到期完整客户名单-1779875663603.html";
 
 function buildHtmlPreviewUrl(description: string): string {
   const html = `<!doctype html>
@@ -148,6 +148,7 @@ function TestDownloadCardPage() {
             key={autoPreviewKey}
             url={autoPreviewUrl}
             fileName={AUTO_PREVIEW_FILE_NAME}
+            autoPreview
           />
           <Tag color="purple">自动弹窗</Tag>
           <DownloadFileCard

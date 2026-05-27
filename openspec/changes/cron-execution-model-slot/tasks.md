@@ -22,9 +22,9 @@
 ## 4. Cron Broadcast
 
 - [ ] 4.1 Extend `CronBroadcastTenantResult` with `warning: string = ""` in backend and frontend types.
-- [ ] 4.2 Validate source `model_slot` against each target tenant during broadcast.
-- [ ] 4.3 Copy `model_slot` only when the target tenant has the same provider/model.
-- [ ] 4.4 Clear `model_slot` and return `warning="model_slot not copied: provider/model unavailable in target tenant"` when a target tenant lacks the source model.
+- [x] 4.2 Validate source `model_slot` against each target tenant during broadcast.
+- [x] 4.3 Copy `model_slot` only when the target tenant has the same provider/model.
+- [x] 4.4 Clear `model_slot` and return `warning="model_slot not copied: provider/model unavailable in target tenant"` when a target tenant lacks the source model.
 
 ## 5. Frontend Cron Management UI
 
@@ -46,6 +46,6 @@
 - [ ] 7.1 Add backend unit tests for valid `model_slot` persistence, invalid create/update rejection, omitted default behavior, and text-job clearing.
 - [x] 7.2 Add backend unit tests proving scoped overrides do not mutate tenant active model and do not leak across concurrent/default runs.
 - [x] 7.3 Add backend unit tests for execution fallback and Monitor execution `meta` contents.
-- [ ] 7.4 Add backend unit tests for broadcast copy, clear, and warning behavior across target tenants.
-- [ ] 7.5 Run focused Python tests with `venv/bin/python -m pytest` for cron, model factory, and provider-related units.
+- [x] 7.4 Add backend unit tests for broadcast copy, clear, and warning behavior across target tenants.
+- [x] 7.5 Run focused Python tests with `venv/bin/python -m pytest` for cron, model factory, and provider-related units.
 - [ ] 7.6 Run focused frontend tests for cron management, `ScheduledTaskPopup`, and cron utilities.

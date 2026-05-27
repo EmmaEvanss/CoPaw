@@ -1891,7 +1891,12 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     job.id,
                     trace_id[:20] if trace_id else "(empty)",
                 )
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
+                execution_meta = getattr(
+                    exc,
+                    "cron_execution_meta",
+                    execution_meta,
+                )
                 # 检查任务是否实际执行成功
                 # CancelledError 可能是在 finally 块中（trace 结束时）抛出的
                 # 如果任务已执行成功，应该记录为 success 而非 cancelled
@@ -1915,6 +1920,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     )
                 raise
             except Exception as e:  # pylint: disable=broad-except
+                execution_meta = getattr(
+                    e,
+                    "cron_execution_meta",
+                    execution_meta,
+                )
                 exec_status, error_message, end_time, duration_ms = (
                     self._handle_execution_error(st, actual_time, e)
                 )

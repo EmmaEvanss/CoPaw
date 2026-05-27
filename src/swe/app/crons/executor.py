@@ -193,23 +193,32 @@ class CronExecutor:
             and resolved_model.bound_model_slot is not None
             else nullcontext()
         )
-        with (
-            bind_tenant_context(
-                tenant_id=tenant_id,
-                user_id=target_user_id,
-                workspace_dir=workspace_dir,
-                source_id=source_id,
-                scope_id=scope_id,
-            ),
-            bind_llm_workload(LLM_WORKLOAD_CRON),
-            model_slot_context,
-        ):
-            result = await self._execute_job(
-                job,
-                target_user_id,
-                target_session_id,
-                dispatch_meta,
-            )
+        try:
+            with (
+                bind_tenant_context(
+                    tenant_id=tenant_id,
+                    user_id=target_user_id,
+                    workspace_dir=workspace_dir,
+                    source_id=source_id,
+                    scope_id=scope_id,
+                ),
+                bind_llm_workload(LLM_WORKLOAD_CRON),
+                model_slot_context,
+            ):
+                result = await self._execute_job(
+                    job,
+                    target_user_id,
+                    target_session_id,
+                    dispatch_meta,
+                )
+        except BaseException as exc:
+            if resolved_model is not None:
+                setattr(
+                    exc,
+                    "cron_execution_meta",
+                    resolved_model.build_meta(),
+                )
+            raise
         result = result or {}
         output_preview = str(result.get("output_preview") or "")
 

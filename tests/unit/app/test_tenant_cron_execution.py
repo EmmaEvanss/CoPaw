@@ -685,6 +685,74 @@ def test_execute_falls_back_to_tenant_default_when_model_slot_is_missing(
     assert get_current_model_slot_override() is None
 
 
+def test_execute_falls_back_to_tenant_default_when_model_is_missing(
+    monkeypatch,
+):
+    from swe.providers.models import ModelSlotConfig
+    from swe.app.crons.model_slot_context import (
+        get_current_model_slot_override,
+    )
+
+    observed = {}
+    executor = CronExecutor(
+        runner=_Runner(),
+        channel_manager=_ChannelManager(),
+    )
+    job = _build_agent_job("/tmp/tenant-a/workspaces/alpha").model_copy(
+        update={
+            "model_slot": ModelSlotConfig(
+                provider_id="openai",
+                model="gpt-5.4",
+            ),
+        },
+    )
+
+    async def fake_execute_job(
+        _self,
+        _job,
+        _target_user_id,
+        _target_session_id,
+        _dispatch_meta,
+    ):
+        current = get_current_model_slot_override()
+        observed["override"] = None if current is None else current.model
+        return {}
+
+    monkeypatch.setattr(CronExecutor, "_execute_job", fake_execute_job)
+    monkeypatch.setattr(
+        executor_module,
+        "ProviderManager",
+        types.SimpleNamespace(
+            ensure_tenant_provider_storage=lambda _tenant_id: None,
+            get_instance=lambda _tenant_id: types.SimpleNamespace(
+                get_provider=lambda provider_id: (
+                    _Provider(["gpt-4.1"]) if provider_id == "openai" else None
+                ),
+                get_active_model=lambda: ModelSlotConfig(
+                    provider_id="anthropic",
+                    model="claude-3-7-sonnet",
+                ),
+            ),
+        ),
+    )
+
+    result = asyncio.run(executor.execute(job))
+
+    assert observed["override"] is None
+    assert result.execution_meta == {
+        "original_model_slot": {
+            "provider_id": "openai",
+            "model": "gpt-5.4",
+        },
+        "effective_model_slot": {
+            "provider_id": "anthropic",
+            "model": "claude-3-7-sonnet",
+        },
+        "fallback_reason": "model_not_found",
+    }
+    assert get_current_model_slot_override() is None
+
+
 def test_execute_does_not_leak_model_slot_override_between_concurrent_runs(
     monkeypatch,
 ):

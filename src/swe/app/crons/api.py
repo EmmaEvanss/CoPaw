@@ -36,6 +36,7 @@ class CronBroadcastTenantResult(BaseModel):
     offset_minutes: int = 0
     notification_timezone: str = ""
     error: str = ""
+    warning: str = ""
 
 
 class CronBroadcastResponse(BaseModel):
@@ -115,8 +116,7 @@ def _validate_cron_job_model_slot(
         getattr(request.state, "scope_id", None),
     )
     manager_tenant_id = tenant_id or "default"
-    ProviderManager.ensure_tenant_provider_storage(manager_tenant_id)
-    manager = ProviderManager.get_instance(manager_tenant_id)
+    manager = _get_provider_manager(manager_tenant_id)
     provider = manager.get_provider(spec.model_slot.provider_id)
     if provider is None:
         raise HTTPException(
@@ -131,6 +131,27 @@ def _validate_cron_job_model_slot(
                 f"'{spec.model_slot.provider_id}'."
             ),
         )
+
+
+def _get_provider_manager(manager_tenant_id: str):
+    ProviderManager.ensure_tenant_provider_storage(manager_tenant_id)
+    return ProviderManager.get_instance(manager_tenant_id)
+
+
+def _resolve_broadcast_model_slot(
+    runtime_tenant_id: str,
+    source_job: CronJobSpec,
+):
+    if source_job.model_slot is None:
+        return None, ""
+    manager = _get_provider_manager(runtime_tenant_id)
+    provider = manager.get_provider(source_job.model_slot.provider_id)
+    if provider is None or not provider.has_model(source_job.model_slot.model):
+        return (
+            None,
+            "model_slot not copied: provider/model unavailable in target tenant",
+        )
+    return source_job.model_slot, ""
 
 
 async def _ensure_task_binding_for_read(
@@ -191,6 +212,7 @@ def _build_broadcast_job(
     cron: str,
     timezone_name: str,
     offset_minutes: int,
+    model_slot,
 ) -> CronJobSpec:
     meta = dict(source_job.meta or {})
     for key in (
@@ -253,6 +275,7 @@ def _build_broadcast_job(
                 },
             ),
             "request": request_spec,
+            "model_slot": model_slot,
             "dispatch": dispatch,
             "meta": meta,
         },
@@ -383,6 +406,10 @@ async def broadcast_job(
             if workspace.cron_manager is None:
                 raise RuntimeError("CronManager not initialized")
             target_job_id = str(uuid.uuid4())
+            model_slot, warning = _resolve_broadcast_model_slot(
+                runtime_tenant_id or "default",
+                source_job,
+            )
             target_job = _build_broadcast_job(
                 source_job,
                 job_id=target_job_id,
@@ -391,6 +418,7 @@ async def broadcast_job(
                 cron=shifted.cron,
                 timezone_name=shifted.timezone,
                 offset_minutes=offset,
+                model_slot=model_slot,
             )
             await workspace.cron_manager.create_or_replace_job(target_job)
             saved = await workspace.cron_manager.get_job(target_job_id)
@@ -403,6 +431,7 @@ async def broadcast_job(
                     timezone=(saved or target_job).schedule.timezone,
                     offset_minutes=offset,
                     notification_timezone=timezone_name,
+                    warning=warning,
                 ),
             )
         except Exception as exc:  # pylint: disable=broad-except

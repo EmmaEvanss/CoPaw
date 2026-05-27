@@ -87,12 +87,18 @@ def build_bbk_in_filter(bbk_ids: Optional[str]) -> tuple[str, list[str]]:
     Returns:
         (filter_sql, params) - 如 " AND bbk_id IN (%s, %s, %s)", ["100", "200", "201"]
         无值时返回 ("", [])
+
+    Note:
+        选择总行(100)时，需同时包含虚拟标识 V00，确保数据完整统计
     """
     if not bbk_ids:
         return "", []
     ids = [id.strip() for id in bbk_ids.split(",") if id.strip()]
     if not ids:
         return "", []
+    # 总行 100 需同时查询 V00（虚拟标识）
+    if "100" in ids and "V00" not in ids:
+        ids.append("V00")
     placeholders = ", ".join(["%s"] * len(ids))
     return f" AND bbk_id IN ({placeholders})", ids
 
@@ -153,12 +159,18 @@ def build_cron_bbk_in_filter(bbk_ids: Optional[str]) -> tuple[str, list[str]]:
     Returns:
         (filter_sql, params) - 如 " AND j.bbk_id IN (%s, %s, %s)", ["100", "200", "201"]
         无值时返回 ("", [])
+
+    Note:
+        选择总行(100)时，需同时包含虚拟标识 V00，确保数据完整统计
     """
     if not bbk_ids:
         return "", []
     ids = [id.strip() for id in bbk_ids.split(",") if id.strip()]
     if not ids:
         return "", []
+    # 总行 100 需同时查询 V00（虚拟标识）
+    if "100" in ids and "V00" not in ids:
+        ids.append("V00")
     placeholders = ", ".join(["%s"] * len(ids))
     return f" AND j.bbk_id IN ({placeholders})", ids
 

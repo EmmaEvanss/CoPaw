@@ -423,6 +423,7 @@ class MonitorSyncClient:
         instance_id: str = "",
         executor_leader: str = "",
         scheduled_time: Optional[datetime] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Record an execution to Monitor.
 
@@ -443,6 +444,7 @@ class MonitorSyncClient:
             instance_id: Instance ID
             executor_leader: Executor leader ID
             scheduled_time: Scheduled execution time
+            meta: 执行模型等扩展元数据
         """
         if not self._enabled:
             return
@@ -462,6 +464,7 @@ class MonitorSyncClient:
             instance_id=instance_id,
             executor_leader=executor_leader,
             scheduled_time=scheduled_time,
+            meta=meta,
         )
 
         # Fire and forget
@@ -483,6 +486,7 @@ class MonitorSyncClient:
         instance_id: str,
         executor_leader: str,
         scheduled_time: Optional[datetime],
+        meta: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Build execution sync data dict.
 
@@ -501,6 +505,7 @@ class MonitorSyncClient:
             instance_id: Instance ID
             executor_leader: Executor leader ID
             scheduled_time: Scheduled execution time
+            meta: 执行模型等扩展元数据
 
         Returns:
             Dict with execution sync fields
@@ -528,7 +533,7 @@ class MonitorSyncClient:
             "session_id": session_id,
             "input_snapshot": self._format_optional_json(input_snapshot),
             "output_preview": self._truncate_preview(output_preview),
-            "meta": "",
+            "meta": self._format_optional_json(meta),
             "is_read": is_read,
             "read_at": read_at,
         }

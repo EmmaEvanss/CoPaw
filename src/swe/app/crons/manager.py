@@ -1624,6 +1624,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         trace_id: str = "",
         input_snapshot: Optional[Dict[str, Any]] = None,
         executor_leader: str = "",
+        execution_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Sync execution record to Monitor service (non-blocking).
 
@@ -1639,6 +1640,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id: 从执行过程中捕获的 trace_id
             input_snapshot: 执行时的输入快照
             executor_leader: 执行者 leader ID
+            execution_meta: 执行模型相关的监控元数据
         """
         if self._monitor_sync_client is None:
             return
@@ -1658,6 +1660,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             output_preview=output_preview,
             input_snapshot=input_snapshot,
             executor_leader=executor_leader,
+            meta=execution_meta,
         )
 
     async def _handle_success_notifications(
@@ -1793,6 +1796,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         trace_id: str,
         input_snapshot: Optional[Dict[str, Any]],
         executor_leader: str,
+        execution_meta: Optional[Dict[str, Any]],
     ) -> None:
         """最终化执行状态并同步到 Monitor。
 
@@ -1809,6 +1813,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id: trace ID
             input_snapshot: 输入快照
             executor_leader: 执行者 leader ID
+            execution_meta: 执行模型相关的监控元数据
         """
         st.last_run_at = datetime.now(timezone.utc)
         self._states[job.id] = st
@@ -1825,6 +1830,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id=trace_id,
             input_snapshot=input_snapshot,
             executor_leader=executor_leader,
+            execution_meta=execution_meta,
         )
         logger.info(
             "cron execution finalized: job_id=%s exec_status=%s "
@@ -1863,6 +1869,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id = ""
             input_snapshot: Optional[Dict[str, Any]] = None
             executor_leader = ""
+            execution_meta: Optional[Dict[str, Any]] = None
 
             try:
                 # 执行任务并获取执行结果
@@ -1871,6 +1878,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 output_preview = exec_result.output_preview
                 input_snapshot = exec_result.input_snapshot
                 executor_leader = exec_result.executor_leader
+                execution_meta = exec_result.execution_meta
                 st.last_status = "success"
                 st.last_error = None
                 end_time = datetime.now(timezone.utc)
@@ -1883,7 +1891,12 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     job.id,
                     trace_id[:20] if trace_id else "(empty)",
                 )
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
+                execution_meta = getattr(
+                    exc,
+                    "cron_execution_meta",
+                    execution_meta,
+                )
                 # 检查任务是否实际执行成功
                 # CancelledError 可能是在 finally 块中（trace 结束时）抛出的
                 # 如果任务已执行成功，应该记录为 success 而非 cancelled
@@ -1907,6 +1920,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     )
                 raise
             except Exception as e:  # pylint: disable=broad-except
+                execution_meta = getattr(
+                    e,
+                    "cron_execution_meta",
+                    execution_meta,
+                )
                 exec_status, error_message, end_time, duration_ms = (
                     self._handle_execution_error(st, actual_time, e)
                 )
@@ -1925,6 +1943,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     trace_id=trace_id,
                     input_snapshot=input_snapshot,
                     executor_leader=executor_leader,
+                    execution_meta=execution_meta,
                 )
 
     async def run_heartbeat(self) -> None:

@@ -27,6 +27,8 @@ from swe.app.source_system_config.models import (
 from swe.app.source_system_config.runtime import (
     bind_source_system_config,
     get_current_source_system_config,
+    resolve_external_tool_output_truncation_config,
+    resolve_file_read_truncation_config,
     resolve_tool_result_compact_config,
 )
 from swe.app.source_system_config.service import (
@@ -49,6 +51,14 @@ DEFAULT_EXPECTED_SOURCE_CONFIG = {
         "old_max_bytes": 3000,
         "recent_max_bytes": 50000,
         "retention_days": 5,
+    },
+    "file_read_truncation": {
+        "enabled": True,
+        "max_bytes": 50000,
+    },
+    "external_tool_output_truncation": {
+        "enabled": False,
+        "max_bytes": 50000,
     },
 }
 
@@ -93,15 +103,9 @@ class TestSourceSystemConfigModels:
         )
 
         assert config.merged_with_defaults().as_dict() == {
+            **DEFAULT_EXPECTED_SOURCE_CONFIG,
             "feature_switches": {
                 "chat_task_progress_enabled": False,
-            },
-            "tool_result_compact": {
-                "enabled": True,
-                "recent_n": 2,
-                "old_max_bytes": 3000,
-                "recent_max_bytes": 50000,
-                "retention_days": 5,
             },
             "provider_policy": {"default_model": "qwen-max"},
         }
@@ -145,6 +149,59 @@ class TestSourceSystemConfigModels:
                 "recent_max_bytes": 8000,
             },
         }
+
+    def test_immediate_truncation_configs_are_accepted(self):
+        """即时截断配置应作为 tool_result_compact 的兄弟配置保存。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "file_read_truncation": {
+                    "enabled": False,
+                    "max_bytes": 12000,
+                },
+                "external_tool_output_truncation": {
+                    "enabled": True,
+                    "max_bytes": 64000,
+                },
+            },
+        )
+
+        assert config.as_dict() == {
+            "file_read_truncation": {
+                "enabled": False,
+                "max_bytes": 12000,
+            },
+            "external_tool_output_truncation": {
+                "enabled": True,
+                "max_bytes": 64000,
+            },
+        }
+
+    @pytest.mark.parametrize(
+        ("payload", "match"),
+        [
+            ({"file_read_truncation": {"max_bytes": 999}}, "max_bytes"),
+            (
+                {"external_tool_output_truncation": {"max_bytes": "50000"}},
+                "max_bytes",
+            ),
+            (
+                {"file_read_truncation": {"enabled": "disabled"}},
+                "enabled",
+            ),
+            (
+                {"external_tool_output_truncation": {"max_bytes": True}},
+                "max_bytes",
+            ),
+        ],
+    )
+    def test_invalid_immediate_truncation_configs_are_rejected(
+        self,
+        payload,
+        match,
+    ):
+        """即时截断配置只接受整数阈值和可识别布尔值。"""
+        with pytest.raises(ValueError, match=match):
+            SourceSystemConfig.model_validate(payload)
 
     @pytest.mark.parametrize(
         ("payload", "match"),
@@ -631,6 +688,45 @@ class TestSourceSystemConfigService:
         assert store.deleted == ["portal"]
 
     @pytest.mark.asyncio
+    async def test_upsert_current_source_config_keeps_immediate_markers(
+        self,
+    ):
+        """即时截断配置即使等于默认值，也应保留 enabled 表示显式接管。"""
+        store = _FakeManagementStore()
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.upsert_current_source_config(
+            "portal",
+            SourceSystemConfig.model_validate(
+                {
+                    "file_read_truncation": {
+                        "enabled": True,
+                        "max_bytes": 50000,
+                    },
+                    "external_tool_output_truncation": {
+                        "enabled": False,
+                        "max_bytes": 50000,
+                    },
+                },
+            ),
+            updated_by="alice",
+        )
+
+        assert result.is_default is False
+        assert result.config.as_dict() == {
+            "file_read_truncation": {"enabled": True},
+            "external_tool_output_truncation": {"enabled": False},
+        }
+        assert store.records["portal"].config.as_dict() == {
+            "file_read_truncation": {"enabled": True},
+            "external_tool_output_truncation": {"enabled": False},
+        }
+
+    @pytest.mark.asyncio
     async def test_upsert_current_source_config_preserves_unknown_keys(
         self,
     ):
@@ -954,6 +1050,29 @@ class TestSourceSystemConfigRuntime:
 
         assert result == base
 
+    def test_tool_result_config_ignores_effective_defaults_without_raw(self):
+        """effective 默认值不能被误判为 source 显式工具结果覆盖。"""
+        base = ToolResultCompactConfig(
+            enabled=False,
+            recent_n=6,
+            old_max_bytes=1800,
+            recent_max_bytes=9000,
+            retention_days=8,
+        )
+        effective = EffectiveSourceSystemConfig(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                DEFAULT_EXPECTED_SOURCE_CONFIG,
+            ),
+            raw_config=None,
+            version=0,
+            is_default=True,
+        )
+
+        result = resolve_tool_result_compact_config(base, effective)
+
+        assert result == base
+
     def test_tool_result_config_merges_partial_source_override(self):
         """source 局部覆盖只替换显式字段，其余字段继承 Agent 配置。"""
         base = ToolResultCompactConfig(
@@ -1058,6 +1177,103 @@ class TestSourceSystemConfigRuntime:
         )
         warning.assert_called_once()
         assert warning.call_args.args[1] == "portal"
+
+    def test_file_read_truncation_inherits_tool_result_when_missing(self):
+        """缺少显式配置时，文件读取截断沿用历史近期工具结果阈值。"""
+        tool_result = ToolResultCompactConfig(recent_max_bytes=24000)
+
+        result = resolve_file_read_truncation_config(tool_result, None)
+
+        assert result.enabled is True
+        assert result.max_bytes == 24000
+        assert result.explicit is False
+
+    def test_file_read_truncation_explicit_config_owns_runtime(self):
+        """显式配置后，文件读取截断不再回退到工具结果近期阈值。"""
+        tool_result = ToolResultCompactConfig(recent_max_bytes=24000)
+        effective = EffectiveSourceSystemConfig(
+            source_id="portal",
+            config=SourceSystemConfig.model_validate(
+                DEFAULT_EXPECTED_SOURCE_CONFIG,
+            ),
+            raw_config=SourceSystemConfig.model_validate(
+                {
+                    "file_read_truncation": {
+                        "enabled": False,
+                        "max_bytes": 12000,
+                    },
+                },
+            ),
+            version=3,
+        )
+
+        result = resolve_file_read_truncation_config(tool_result, effective)
+
+        assert result.enabled is False
+        assert result.max_bytes == 12000
+        assert result.explicit is True
+
+    def test_file_read_truncation_marker_uses_default_max_bytes(self):
+        """保存裁剪后只剩 enabled 时，应使用文件读取截断默认阈值。"""
+        tool_result = ToolResultCompactConfig(recent_max_bytes=24000)
+
+        result = resolve_file_read_truncation_config(
+            tool_result,
+            SourceSystemConfig.model_validate(
+                {
+                    "file_read_truncation": {
+                        "enabled": True,
+                    },
+                },
+            ),
+        )
+
+        assert result.enabled is True
+        assert result.max_bytes == 50000
+        assert result.explicit is True
+
+    def test_external_tool_output_truncation_is_opt_in(self):
+        """缺少显式配置时，外部工具输出不新增 SWE 侧截断。"""
+        result = resolve_external_tool_output_truncation_config(None)
+
+        assert result.enabled is False
+        assert result.max_bytes == 50000
+        assert result.explicit is False
+
+    def test_external_tool_output_truncation_marker_uses_default_max_bytes(
+        self,
+    ):
+        """保存裁剪后只剩 enabled 时，应使用外部工具默认文本阈值。"""
+        result = resolve_external_tool_output_truncation_config(
+            SourceSystemConfig.model_validate(
+                {
+                    "external_tool_output_truncation": {
+                        "enabled": True,
+                    },
+                },
+            ),
+        )
+
+        assert result.enabled is True
+        assert result.max_bytes == 50000
+        assert result.explicit is True
+
+    def test_external_tool_output_truncation_reads_explicit_config(self):
+        """外部工具输出截断只读取显式 source 配置。"""
+        result = resolve_external_tool_output_truncation_config(
+            SourceSystemConfig.model_validate(
+                {
+                    "external_tool_output_truncation": {
+                        "enabled": True,
+                        "max_bytes": 90000,
+                    },
+                },
+            ),
+        )
+
+        assert result.enabled is True
+        assert result.max_bytes == 90000
+        assert result.explicit is True
 
 
 class TestSourceSystemConfigMiddleware:

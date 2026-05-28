@@ -67,6 +67,33 @@ TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING = SourceSystemConfigSetting(
     le=10,
 )
 
+FILE_READ_TRUNCATION_ENABLED_SETTING = SourceSystemConfigSetting(
+    key="file_read_truncation.enabled",
+    path=("file_read_truncation", "enabled"),
+    default_value=True,
+    value_type="bool",
+)
+FILE_READ_TRUNCATION_MAX_BYTES_SETTING = SourceSystemConfigSetting(
+    key="file_read_truncation.max_bytes",
+    path=("file_read_truncation", "max_bytes"),
+    default_value=50000,
+    value_type="int",
+    ge=1000,
+)
+EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING = SourceSystemConfigSetting(
+    key="external_tool_output_truncation.enabled",
+    path=("external_tool_output_truncation", "enabled"),
+    default_value=False,
+    value_type="bool",
+)
+EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING = SourceSystemConfigSetting(
+    key="external_tool_output_truncation.max_bytes",
+    path=("external_tool_output_truncation", "max_bytes"),
+    default_value=50000,
+    value_type="int",
+    ge=1000,
+)
+
 CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES: tuple[SourceSystemConfigSwitch, ...] = (
     CHAT_TASK_PROGRESS_ENABLED_SWITCH,
 )
@@ -80,11 +107,22 @@ CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS: tuple[
     TOOL_RESULT_COMPACT_OLD_MAX_BYTES_SETTING,
     TOOL_RESULT_COMPACT_RECENT_MAX_BYTES_SETTING,
     TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING,
+    FILE_READ_TRUNCATION_ENABLED_SETTING,
+    FILE_READ_TRUNCATION_MAX_BYTES_SETTING,
+    EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING,
+    EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING,
 )
 
 _MISSING = object()
 _TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
+_IMMEDIATE_TRUNCATION_ENABLED_SETTINGS = (
+    FILE_READ_TRUNCATION_ENABLED_SETTING,
+    EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING,
+)
+_PRESERVED_DEFAULT_SETTING_PATHS = frozenset(
+    setting.path for setting in _IMMEDIATE_TRUNCATION_ENABLED_SETTINGS
+)
 
 
 def build_default_source_system_config_payload() -> dict[str, Any]:
@@ -118,6 +156,8 @@ def prune_registered_default_overrides(
         if value is _MISSING:
             continue
         if value == setting.default_value:
+            if setting.path in _PRESERVED_DEFAULT_SETTING_PATHS:
+                continue
             _delete_nested_path(pruned, setting.path)
     return pruned
 
@@ -163,6 +203,7 @@ def normalize_registered_setting_values(
         if setting.value_type == "int":
             coerced = _coerce_registered_int_value(setting, value)
             _set_nested_value(normalized, setting.path, coerced)
+    _ensure_immediate_truncation_markers(raw_config, normalized)
     if validate_cross_ranges:
         _validate_explicit_tool_result_compact_ranges(raw_config, normalized)
     return normalized
@@ -311,6 +352,20 @@ def _coerce_registered_int_value(
     return value
 
 
+def _ensure_immediate_truncation_markers(
+    raw_config: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    """显式即时截断对象即使只写阈值，也要补齐 enabled 作为接管标记。"""
+    for setting in _IMMEDIATE_TRUNCATION_ENABLED_SETTINGS:
+        raw_section = raw_config.get(setting.path[0])
+        if not isinstance(raw_section, dict):
+            continue
+        value = _get_nested_value(payload, setting.path)
+        if value is _MISSING:
+            _set_nested_value(payload, setting.path, setting.default_value)
+
+
 def _validate_explicit_tool_result_compact_ranges(
     raw_config: dict[str, Any],
     payload: dict[str, Any],
@@ -343,6 +398,10 @@ __all__ = [
     "CHAT_TASK_PROGRESS_ENABLED_SWITCH",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES",
+    "EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING",
+    "EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING",
+    "FILE_READ_TRUNCATION_ENABLED_SETTING",
+    "FILE_READ_TRUNCATION_MAX_BYTES_SETTING",
     "SourceSystemConfigSwitch",
     "SourceSystemConfigSetting",
     "TOOL_RESULT_COMPACT_ENABLED_SETTING",

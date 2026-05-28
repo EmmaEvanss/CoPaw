@@ -11,6 +11,9 @@ that solve the CPU leak issue caused by cross-task context manager exits.
 import asyncio
 from dataclasses import replace
 import logging
+from pathlib import Path
+import re
+import time
 import uuid
 from typing import Any
 
@@ -18,11 +21,17 @@ from agentscope.mcp._client_base import MCPClientBase
 from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import ToolResponse
 from mcp import ClientSession as _CS
+from ...agents.tools.utils import truncate_text_output
 from ...config.context import get_current_effective_tenant_id
 from ...constant import (
     MCP_MAX_TOTAL_TIMEOUT,
     MCP_PER_NOTIFICATION_TIMEOUT,
     TRUNCATION_NOTICE_MARKER,
+    WORKING_DIR,
+)
+from ...config.context import (
+    get_current_tool_result_retention_days,
+    get_current_workspace_dir,
 )
 
 from .manager import MCPClientManager
@@ -34,6 +43,8 @@ from .stateful_client import (
 from .watcher import MCPConfigWatcher
 
 logger = logging.getLogger(__name__)
+
+_EXTERNAL_TOOL_OUTPUT_DIR = Path("memory") / "external_tool_output"
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +66,13 @@ def _build_on_progress(progress_event, progress_queue, watchdog_cb):
     return _on_progress
 
 
-def _truncate_text_block_output(text: str, max_bytes: int) -> str:
-    """按字节裁剪外部工具文本块，并追加统一提示。"""
+def _truncate_text_block_output(
+    text: str,
+    max_bytes: int,
+    *,
+    tool_name: str,
+) -> str:
+    """按字节裁剪外部工具文本块，并保留可续读的完整文本文件。"""
     if not text or max_bytes <= 0:
         return text
 
@@ -65,18 +81,30 @@ def _truncate_text_block_output(text: str, max_bytes: int) -> str:
     if len(original_bytes) <= max_bytes:
         return text
 
-    truncated = original_bytes[:max_bytes].decode("utf-8", errors="ignore")
-    notice = (
-        TRUNCATION_NOTICE_MARKER
-        + "\nThe output above was truncated."
-        + f"\nThis excerpt covers the next {max_bytes} bytes."
+    saved_path = _persist_external_tool_output_text(tool_name, original_text)
+    if saved_path is None:
+        logger.warning(
+            "skip truncating external tool output because persistence failed: "
+            "tool=%s",
+            tool_name,
+        )
+        return text
+
+    total_lines = max(len(original_text.splitlines()), 1)
+    return truncate_text_output(
+        original_text,
+        start_line=1,
+        total_lines=total_lines,
+        max_bytes=max_bytes,
+        file_path=saved_path,
     )
-    return truncated + notice
 
 
 def _truncate_tool_response_text_blocks(
     response: Any,
     max_bytes: int | None,
+    *,
+    tool_name: str,
 ) -> Any:
     """仅裁剪 ToolResponse 中的文本块，保留其他块和 metadata。"""
     if max_bytes is None:
@@ -86,6 +114,7 @@ def _truncate_tool_response_text_blocks(
         truncated_text = _truncate_text_block_output(
             response.content,
             max_bytes,
+            tool_name=tool_name,
         )
         if truncated_text == response.content:
             return response
@@ -100,6 +129,7 @@ def _truncate_tool_response_text_blocks(
         next_block, block_changed = _truncate_response_text_block(
             block,
             max_bytes,
+            tool_name=tool_name,
         )
         changed = changed or block_changed
         next_content.append(next_block)
@@ -121,6 +151,8 @@ def _replace_response_content(response: Any, content: Any) -> Any:
 def _truncate_response_text_block(
     block: Any,
     max_bytes: int,
+    *,
+    tool_name: str,
 ) -> tuple[Any, bool]:
     """统一裁剪 dict / 模型对象里的文本块。"""
     if isinstance(block, dict):
@@ -129,7 +161,11 @@ def _truncate_response_text_block(
         text = block.get("text")
         if not isinstance(text, str):
             return block, False
-        truncated_text = _truncate_text_block_output(text, max_bytes)
+        truncated_text = _truncate_text_block_output(
+            text,
+            max_bytes,
+            tool_name=tool_name,
+        )
         if truncated_text == text:
             return block, False
         return {**block, "text": truncated_text}, True
@@ -140,7 +176,11 @@ def _truncate_response_text_block(
     if not isinstance(text, str):
         return block, False
 
-    truncated_text = _truncate_text_block_output(text, max_bytes)
+    truncated_text = _truncate_text_block_output(
+        text,
+        max_bytes,
+        tool_name=tool_name,
+    )
     if truncated_text == text:
         return block, False
     if hasattr(block, "model_copy"):
@@ -212,6 +252,7 @@ async def _drain_progress(
             yield _truncate_tool_response_text_blocks(
                 item,
                 external_tool_output_max_bytes,
+                tool_name=tool_name,
             )
         elif isinstance(item, tuple):
             _p, _t, msg = item
@@ -222,6 +263,7 @@ async def _drain_progress(
                     is_last=False,
                 ),
                 external_tool_output_max_bytes,
+                tool_name=tool_name,
             )
         else:
             result_box.append(item)
@@ -289,12 +331,75 @@ async def _call_with_progress(
                 is_last=True,
             ),
             external_tool_output_max_bytes,
+            tool_name=tool_name,
         )
     else:
         yield _truncate_tool_response_text_blocks(
             res,
             external_tool_output_max_bytes,
+            tool_name=tool_name,
         )
+
+
+def _persist_external_tool_output_text(
+    tool_name: str,
+    text: str,
+) -> str | None:
+    """把完整外部工具文本落到当前工作区，供 read_file 续读。"""
+    try:
+        base_dir = get_current_workspace_dir() or WORKING_DIR
+        output_dir = base_dir / _EXTERNAL_TOOL_OUTPUT_DIR
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _cleanup_expired_external_tool_output_files(
+            output_dir,
+            get_current_tool_result_retention_days(),
+        )
+        file_name = (
+            f"{_sanitize_external_tool_name(tool_name)}-"
+            f"{uuid.uuid4().hex[:12]}.txt"
+        )
+        file_path = output_dir / file_name
+        file_path.write_text(text, encoding="utf-8")
+        return str(file_path.relative_to(base_dir))
+    except Exception:
+        logger.warning(
+            "failed to persist external tool output for recovery: tool=%s",
+            tool_name,
+            exc_info=True,
+        )
+        return None
+
+
+def _cleanup_expired_external_tool_output_files(
+    output_dir: Path,
+    retention_days: int | None,
+) -> None:
+    """按共享 retention_days 清理过期的外部工具输出文件。"""
+    if (
+        retention_days is None
+        or retention_days <= 0
+        or not output_dir.exists()
+    ):
+        return
+    expire_before = time.time() - (retention_days * 24 * 60 * 60)
+    for path in output_dir.glob("*.txt"):
+        try:
+            if path.stat().st_mtime < expire_before:
+                path.unlink()
+        except FileNotFoundError:
+            continue
+        except Exception:
+            logger.debug(
+                "failed to cleanup expired external tool output: %s",
+                path,
+                exc_info=True,
+            )
+
+
+def _sanitize_external_tool_name(tool_name: str) -> str:
+    """把工具名收敛为适合文件名的 ASCII 片段。"""
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", tool_name).strip("-")
+    return cleaned or "tool"
 
 
 # ---------------------------------------------------------------------------

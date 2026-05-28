@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +16,10 @@ from mcp.types import CallToolResult, TextContent
 
 from swe.app import mcp as app_mcp
 from swe.constant import TRUNCATION_NOTICE_MARKER
-from swe.config.context import tenant_context
+from swe.config.context import (
+    set_current_tool_result_retention_days,
+    tenant_context,
+)
 
 
 @pytest.mark.asyncio
@@ -65,8 +72,12 @@ async def test_patched_mcp_call_namespaces_progress_tokens_by_scope(
     ]
 
 
-def test_truncate_tool_response_text_blocks_only_touches_text_blocks() -> None:
+def test_truncate_tool_response_text_blocks_only_touches_text_blocks(
+    tmp_path: Path,
+) -> None:
     """外部工具文本块截断应保留非文本块与 metadata。"""
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
     response = ToolResponse(
         content=[
             TextBlock(type="text", text="line-1\n" * 400),
@@ -77,10 +88,16 @@ def test_truncate_tool_response_text_blocks_only_touches_text_blocks() -> None:
         is_last=True,
     )
 
-    truncated = app_mcp._truncate_tool_response_text_blocks(
-        response,
-        max_bytes=1000,
-    )
+    with tenant_context(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        workspace_dir=workspace_dir,
+    ):
+        truncated = app_mcp._truncate_tool_response_text_blocks(
+            response,
+            max_bytes=1000,
+            tool_name="demo-tool",
+        )
 
     assert truncated.metadata == {"source": "demo"}
     assert truncated.stream is True
@@ -89,8 +106,12 @@ def test_truncate_tool_response_text_blocks_only_touches_text_blocks() -> None:
     assert TRUNCATION_NOTICE_MARKER in truncated.content[0]["text"]
 
 
-def test_truncate_tool_response_text_blocks_handles_call_tool_result() -> None:
+def test_truncate_tool_response_text_blocks_handles_call_tool_result(
+    tmp_path: Path,
+) -> None:
     """原始 CallToolResult 的 TextContent 文本块也应走统一截断逻辑。"""
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
     response = CallToolResult(
         content=[
             TextContent(type="text", text="line-1\n" * 400),
@@ -98,13 +119,94 @@ def test_truncate_tool_response_text_blocks_handles_call_tool_result() -> None:
         isError=False,
     )
 
-    truncated = app_mcp._truncate_tool_response_text_blocks(
-        response,
-        max_bytes=1000,
-    )
+    with tenant_context(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        workspace_dir=workspace_dir,
+    ):
+        truncated = app_mcp._truncate_tool_response_text_blocks(
+            response,
+            max_bytes=1000,
+            tool_name="demo-tool",
+        )
 
     assert isinstance(truncated, CallToolResult)
-    assert truncated.content[0].text.endswith(
-        "This excerpt covers the next 1000 bytes.",
-    )
     assert TRUNCATION_NOTICE_MARKER in truncated.content[0].text
+    assert "call `read_file` with file_path=" in truncated.content[0].text
+
+
+def test_truncate_tool_response_text_blocks_persists_full_text_for_recovery(
+    tmp_path: Path,
+) -> None:
+    """MCP 截断后的完整文本应落到可续读文件中。"""
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    response = ToolResponse(
+        content=[
+            TextBlock(type="text", text="line-1\n" * 400),
+        ],
+        stream=True,
+        is_last=True,
+    )
+
+    with tenant_context(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        workspace_dir=workspace_dir,
+    ):
+        set_current_tool_result_retention_days(7)
+        try:
+            truncated = app_mcp._truncate_tool_response_text_blocks(
+                response,
+                max_bytes=1000,
+                tool_name="demo-tool",
+            )
+        finally:
+            set_current_tool_result_retention_days(None)
+
+    assert TRUNCATION_NOTICE_MARKER in truncated.content[0]["text"]
+    match = re.search(
+        r"file_path=([^\s]+)\s+start_line=(\d+)",
+        truncated.content[0]["text"],
+    )
+    assert match is not None
+    saved_path = workspace_dir / match.group(1)
+    assert saved_path.exists()
+    assert saved_path.read_text(encoding="utf-8") == "line-1\n" * 400
+
+
+def test_truncate_tool_response_text_blocks_cleans_expired_saved_outputs(
+    tmp_path: Path,
+) -> None:
+    """共享 retention_days 到期后应清理旧的外部工具输出文件。"""
+    workspace_dir = tmp_path / "workspace"
+    output_dir = workspace_dir / app_mcp._EXTERNAL_TOOL_OUTPUT_DIR
+    output_dir.mkdir(parents=True)
+    expired_file = output_dir / "expired.txt"
+    expired_file.write_text("old", encoding="utf-8")
+    expired_at = time.time() - (3 * 24 * 60 * 60)
+    os.utime(expired_file, (expired_at, expired_at))
+    response = ToolResponse(
+        content=[
+            TextBlock(type="text", text="line-1\n" * 400),
+        ],
+        stream=True,
+        is_last=True,
+    )
+
+    with tenant_context(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        workspace_dir=workspace_dir,
+    ):
+        set_current_tool_result_retention_days(1)
+        try:
+            app_mcp._truncate_tool_response_text_blocks(
+                response,
+                max_bytes=1000,
+                tool_name="demo-tool",
+            )
+        finally:
+            set_current_tool_result_retention_days(None)
+
+    assert not expired_file.exists()

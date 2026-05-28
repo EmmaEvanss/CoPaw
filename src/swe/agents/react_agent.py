@@ -1356,6 +1356,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             set_current_task_progress_chat_id,
             set_current_task_progress_tracker,
             set_current_task_progress_turn_id,
+            set_current_tool_result_retention_days,
             set_current_workspace_dir,
             set_current_recent_max_bytes,
         )
@@ -1389,6 +1390,9 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 if external_tool_output_truncation.enabled
                 else None
             ),
+        )
+        set_current_tool_result_retention_days(
+            tool_result_compact.retention_days,
         )
         set_current_task_progress_tracker(self._task_tracker)
         set_current_task_progress_chat_id(

@@ -20,9 +20,11 @@ from swe.config.context import (
     get_current_external_tool_output_max_bytes,
     get_current_file_read_max_bytes,
     get_current_recent_max_bytes,
+    get_current_tool_result_retention_days,
     set_current_external_tool_output_max_bytes,
     set_current_file_read_max_bytes,
     set_current_recent_max_bytes,
+    set_current_tool_result_retention_days,
 )
 
 
@@ -34,6 +36,7 @@ def _build_effective_config() -> EffectiveSourceSystemConfig:
             {
                 "tool_result_compact": {
                     "recent_max_bytes": 32000,
+                    "retention_days": 8,
                 },
                 "file_read_truncation": {
                     "enabled": True,
@@ -49,6 +52,7 @@ def _build_effective_config() -> EffectiveSourceSystemConfig:
             {
                 "tool_result_compact": {
                     "recent_max_bytes": 32000,
+                    "retention_days": 8,
                 },
                 "file_read_truncation": {
                     "enabled": True,
@@ -105,6 +109,7 @@ async def test_reply_binds_source_output_truncation_contexts(
         assert get_current_recent_max_bytes() == 32000
         assert get_current_file_read_max_bytes() == 12000
         assert get_current_external_tool_output_max_bytes() == 9000
+        assert get_current_tool_result_retention_days() == 8
         return SimpleNamespace(ok=True)
 
     monkeypatch.setattr(
@@ -124,5 +129,6 @@ async def test_reply_binds_source_output_truncation_contexts(
             set_current_recent_max_bytes(None)
             set_current_file_read_max_bytes(None)
             set_current_external_tool_output_max_bytes(None)
+            set_current_tool_result_retention_days(None)
 
     assert result.ok is True

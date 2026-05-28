@@ -96,49 +96,41 @@ async def record_execution(
     Returns:
         立即返回成功响应，execution_id 为 None（实际 ID 在后台写入后生成）
     """
-
     # 创建后台任务异步处理数据库写入
-    async def _background_record() -> None:
-        try:
-            execution_id = await service.record_execution(request)
-            if execution_id:
-                logger.info(
-                    "Background recorded execution: job_id=%s execution_id=%s status=%s",
-                    request.job_id,
-                    execution_id,
-                    request.status,
-                )
-            else:
-                logger.warning(
-                    "Background record execution returned None: job_id=%s",
-                    request.job_id,
-                )
-        except Exception as e:
-            logger.error(
-                "Background record execution failed for job %s: %s",
-                request.job_id,
-                e,
-                exc_info=True,
-            )
-
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_background_record())
-    except RuntimeError:
-        # 如果没有运行中的事件循环，直接同步执行（罕见情况）
-        logger.warning(
-            "No running loop, executing record synchronously: job_id=%s",
-            request.job_id,
-        )
-        try:
-            await service.record_execution(request)
-        except Exception as e:
-            logger.error(
-                "Fallback sync record execution failed for job %s: %s",
-                request.job_id,
-                e,
-                exc_info=True,
-            )
+    asyncio.create_task(_background_record_execution(service, request))
 
     # 立即返回成功响应
     return RecordExecutionResponse(recorded=True, execution_id=None)
+
+
+async def _background_record_execution(
+    service: SyncService,
+    request: ExecutionSyncRequest,
+) -> None:
+    """后台异步处理执行记录写入。
+
+    Args:
+        service: Sync service
+        request: Execution sync request
+    """
+    try:
+        execution_id = await service.record_execution(request)
+        if execution_id:
+            logger.info(
+                "Background recorded execution: job_id=%s execution_id=%s status=%s",
+                request.job_id,
+                execution_id,
+                request.status,
+            )
+        else:
+            logger.warning(
+                "Background record execution returned None: job_id=%s",
+                request.job_id,
+            )
+    except Exception as e:
+        logger.error(
+            "Background record execution failed for job %s: %s",
+            request.job_id,
+            e,
+            exc_info=True,
+        )

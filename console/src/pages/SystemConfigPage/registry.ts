@@ -48,6 +48,14 @@ export const CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES: CurrentSourceConfigSwitchDef
       description:
         "关闭后不再注入 task progress 提示词，也不会写入或展示步骤进度。",
     },
+    {
+      key: "feature_switches.database_access_guard_enabled",
+      path: ["feature_switches", "database_access_guard_enabled"],
+      defaultValue: true,
+      title: "数据库访问拦截",
+      description:
+        "关闭后模型可通过 Python/命令行直连数据库，不再拦截。",
+    },
   ];
 
 export const TOOL_RESULT_COMPACT_DEFAULTS: ToolResultCompactConfig = {

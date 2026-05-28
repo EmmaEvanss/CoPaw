@@ -67,6 +67,12 @@ TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING = SourceSystemConfigSetting(
     le=10,
 )
 
+DATABASE_ACCESS_GUARD_ENABLED_SWITCH = SourceSystemConfigSwitch(
+    key="feature_switches.database_access_guard_enabled",
+    path=("feature_switches", "database_access_guard_enabled"),
+    default_value=True,
+    value_type="bool",
+)
 FILE_READ_TRUNCATION_ENABLED_SETTING = SourceSystemConfigSetting(
     key="file_read_truncation.enabled",
     path=("file_read_truncation", "enabled"),
@@ -83,12 +89,14 @@ FILE_READ_TRUNCATION_MAX_BYTES_SETTING = SourceSystemConfigSetting(
 
 CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES: tuple[SourceSystemConfigSwitch, ...] = (
     CHAT_TASK_PROGRESS_ENABLED_SWITCH,
+    DATABASE_ACCESS_GUARD_ENABLED_SWITCH,
 )
 CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS: tuple[
     SourceSystemConfigSetting,
     ...,
 ] = (
     CHAT_TASK_PROGRESS_ENABLED_SWITCH,
+    DATABASE_ACCESS_GUARD_ENABLED_SWITCH,
     TOOL_RESULT_COMPACT_ENABLED_SETTING,
     TOOL_RESULT_COMPACT_RECENT_N_SETTING,
     TOOL_RESULT_COMPACT_OLD_MAX_BYTES_SETTING,
@@ -166,6 +174,24 @@ def is_chat_task_progress_enabled(config: Any | None) -> bool:
         CHAT_TASK_PROGRESS_ENABLED_SWITCH.key,
         value,
         default=bool(CHAT_TASK_PROGRESS_ENABLED_SWITCH.default_value),
+        strict=False,
+    )
+
+
+def is_database_access_guard_enabled(config: Any | None) -> bool:
+    """读取数据库访问拦截开关，缺失时回退为默认启用。"""
+    raw_config = _normalize_config_payload(config)
+    merged = merge_source_system_config_with_defaults(raw_config)
+    value = _get_nested_value(
+        merged,
+        DATABASE_ACCESS_GUARD_ENABLED_SWITCH.path,
+    )
+    if value is _MISSING:
+        return bool(DATABASE_ACCESS_GUARD_ENABLED_SWITCH.default_value)
+    return _coerce_registered_boolean_value(
+        DATABASE_ACCESS_GUARD_ENABLED_SWITCH.key,
+        value,
+        default=bool(DATABASE_ACCESS_GUARD_ENABLED_SWITCH.default_value),
         strict=False,
     )
 
@@ -391,6 +417,7 @@ __all__ = [
     "CHAT_TASK_PROGRESS_ENABLED_SWITCH",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES",
+    "DATABASE_ACCESS_GUARD_ENABLED_SWITCH",
     "FILE_READ_TRUNCATION_ENABLED_SETTING",
     "FILE_READ_TRUNCATION_MAX_BYTES_SETTING",
     "SourceSystemConfigSwitch",
@@ -402,6 +429,7 @@ __all__ = [
     "TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING",
     "build_default_source_system_config_payload",
     "is_chat_task_progress_enabled",
+    "is_database_access_guard_enabled",
     "merge_source_system_config_with_defaults",
     "normalize_registered_setting_values",
     "normalize_registered_switch_values",

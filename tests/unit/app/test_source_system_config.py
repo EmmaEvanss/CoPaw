@@ -43,6 +43,7 @@ from swe.app.source_system_config.store import (
 DEFAULT_EXPECTED_SOURCE_CONFIG = {
     "feature_switches": {
         "chat_task_progress_enabled": True,
+        "database_access_guard_enabled": True,
     },
     "tool_result_compact": {
         "enabled": True,
@@ -101,6 +102,7 @@ class TestSourceSystemConfigModels:
             **DEFAULT_EXPECTED_SOURCE_CONFIG,
             "feature_switches": {
                 "chat_task_progress_enabled": False,
+                "database_access_guard_enabled": True,
             },
             "provider_policy": {"default_model": "qwen-max"},
         }

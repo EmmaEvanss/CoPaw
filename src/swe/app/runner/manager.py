@@ -175,6 +175,41 @@ class ChatManager:
             await self._repo.upsert_chat(spec)
             return spec
 
+    async def update_chat_name(
+        self,
+        chat_id: str,
+        name: str,
+        *,
+        meta: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """更新会话名称。
+
+        Args:
+            chat_id: Chat 标识
+            name: 新名称
+            meta: 需要同步合并写入的元数据
+
+        Returns:
+            更新成功返回 True，chat 不存在返回 False
+        """
+        async with self._lock:
+            spec = await self._repo.get_chat(chat_id)
+            if spec is None:
+                logger.warning(
+                    "update_chat_name: chat not found chat_id=%s",
+                    chat_id,
+                )
+                return False
+            spec.name = name
+            if meta:
+                spec.meta = {
+                    **(spec.meta or {}),
+                    **meta,
+                }
+            spec.updated_at = datetime.now(timezone.utc)
+            await self._repo.upsert_chat(spec)
+            return True
+
     async def delete_chats(self, chat_ids: list[str]) -> bool:
         """Delete a chat spec.
 

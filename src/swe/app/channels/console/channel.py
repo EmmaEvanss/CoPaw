@@ -12,6 +12,7 @@ pretty-printed to the terminal.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import os
@@ -426,6 +427,40 @@ class ConsoleChannel(BaseChannel):
 
                 elif obj == "response":
                     last_response = event
+
+            title_task = getattr(request, "_session_title_task", None)
+            if title_task is not None:
+                try:
+                    await asyncio.shield(title_task)
+                except asyncio.CancelledError:
+                    if getattr(title_task, "cancelled", lambda: False)():
+                        logger.debug("异步标题任务已取消")
+                    else:
+                        raise
+                except Exception:
+                    logger.warning("等待异步标题任务失败", exc_info=True)
+
+            send_meta = getattr(request, "channel_meta", None) or send_meta
+
+            # 异步标题生成完成后，推送 SSE 事件通知前端
+            session_title = send_meta.get("session_title")
+            if session_title:
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "object": "session_title_updated",
+                            "session_id": getattr(
+                                request,
+                                "session_id",
+                                "",
+                            ),
+                            "session_title": session_title,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n\n"
+                )
 
             logger.info(
                 "console stream done: event_count=%s has_response=%s",

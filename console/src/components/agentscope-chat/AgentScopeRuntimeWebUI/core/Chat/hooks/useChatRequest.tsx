@@ -22,6 +22,7 @@ import {
   createChatStreamAbortReason,
   isAbortLikeError,
 } from "./abortReasons";
+import { emit } from "../../Context/useChatAnywhereEventEmitter";
 
 interface UseChatRequestOptions {
   currentQARef: CurrentQARef;
@@ -334,6 +335,13 @@ export default function useChatRequest(options: UseChatRequestOptions) {
           const responseParser =
             apiOptionsRef.current.responseParser || JSON.parse;
           const chunkData = responseParser(chunk.data);
+
+          // 异步标题生成完成，通知侧边栏刷新
+          if (chunkData?.object === "session_title_updated") {
+            emit({ type: "refreshSessionList" });
+            continue;
+          }
+
           if (isTaskCancellationFrame(chunkData)) {
             emitTaskProgressUpdate(null, owner);
             onFinish(owner);

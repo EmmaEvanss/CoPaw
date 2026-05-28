@@ -90,6 +90,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 TASK_RUNS_STATE_KEY = "task_runs"
 _INTERNAL_FOLLOW_UP_METADATA_KEY = "swe_internal_follow_up"
+_SESSION_TITLE_GENERATED_META_KEY = "session_title_generated"
 _BEFORE_STOP_FOLLOW_UP_REASON_TEMPLATE = (
     "BeforeStop completion gate blocked stopping: {reason}\n"
     "Continue working until the gate can allow completion."
@@ -1014,6 +1015,28 @@ def _chat_name_from_messages(msgs: list[Any]) -> str:
     return "Media Message"
 
 
+def _should_generate_session_title(
+    chat: Any,
+    *,
+    fallback_name: str,
+) -> bool:
+    """判断当前 chat 是否仍可由自动标题覆盖。
+
+    只允许覆盖尚未生成过标题且仍保持默认/历史自动名称的会话，避免后续
+    轮次或人工改名被后台任务再次覆盖。
+    """
+    if chat is None:
+        return False
+
+    meta = getattr(chat, "meta", None) or {}
+    if meta.get(_SESSION_TITLE_GENERATED_META_KEY):
+        return False
+
+    current_name = (getattr(chat, "name", "") or "").strip()
+    auto_names = {"New Chat", "新会话", fallback_name}
+    return current_name in auto_names
+
+
 def _request_source_id(request: AgentRequest) -> str:
     """从请求属性和 channel_meta 中解析追踪或 hook 的来源标识。"""
     channel_meta = getattr(request, "channel_meta", None) or {}
@@ -1426,10 +1449,104 @@ class AgentRunner(Runner):
             if trace_id:
                 # 通道层负责把事件发给前端，这里写回 request 让 SSE 能透传 trace_id。
                 setattr(request, "trace_id", trace_id)
+
             return trace_id
         except Exception as e:
             logger.warning("Failed to start trace: %s", e)
             return None
+
+    def _start_session_title_task(
+        self,
+        *,
+        request: AgentRequest,
+        chat: Any,
+        msgs: list[Any],
+        trace_id: str | None,
+    ) -> None:
+        """在 chat 注册完成后启动标题任务，确保任务能写回正确 chat。"""
+        if not trace_id or getattr(request, "_session_title_task", None):
+            return
+
+        user_question = _get_last_user_text(msgs)
+        if not user_question or not user_question.strip():
+            return
+
+        fallback_name = _chat_name_from_messages(msgs)
+        if not _should_generate_session_title(
+            chat,
+            fallback_name=fallback_name,
+        ):
+            return
+
+        title_task = asyncio.create_task(
+            self._async_generate_and_update_title(
+                request=request,
+                user_question=user_question,
+                trace_id=trace_id,
+            ),
+        )
+        setattr(request, "_session_title_task", title_task)
+
+    async def _async_generate_and_update_title(
+        self,
+        request: AgentRequest,
+        user_question: str | None,
+        trace_id: str,
+    ) -> None:
+        """后台异步生成会话标题并更新存储。
+
+        调用外部标题 API，成功后更新 chats.json、MySQL 和 channel_meta；
+        失败只记日志，不修改任何数据。
+        """
+        if not user_question or not user_question.strip():
+            return
+
+        try:
+            from ..title_generator import generate_title
+
+            title = await generate_title(user_question)
+            if not title:
+                return
+
+            # 更新 chats.json（前端侧边栏数据源）
+            channel_meta = getattr(request, "channel_meta", None) or {}
+            chat_id = channel_meta.get("chat_id")
+            if chat_id and self._chat_manager is not None:
+                try:
+                    await self._chat_manager.update_chat_name(
+                        chat_id,
+                        title,
+                        meta={
+                            _SESSION_TITLE_GENERATED_META_KEY: True,
+                        },
+                    )
+                except Exception:
+                    logger.warning(
+                        "更新 chats.json 标题失败 chat_id=%s",
+                        chat_id,
+                        exc_info=True,
+                    )
+
+            # 更新 MySQL tracing
+            if has_trace_manager():
+                trace_mgr = get_trace_manager()
+                await trace_mgr.update_session_name(trace_id, title)
+
+            # 写入 channel_meta 供 SSE 层推送前端
+            channel_meta["session_title"] = title
+            request.channel_meta = channel_meta
+
+            logger.info(
+                "会话标题已更新: trace_id=%s title=%s",
+                trace_id,
+                title,
+            )
+        except Exception:
+            logger.warning(
+                "异步标题生成失败 trace_id=%s",
+                trace_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _attach_trace_id_to_event(event: Any, trace_id: str | None) -> Any:
@@ -1753,6 +1870,12 @@ class AgentRunner(Runner):
                 name=_chat_name_from_messages(msgs),
                 request=request,
                 turn_id=turn_id,
+            )
+            self._start_session_title_task(
+                request=request,
+                chat=chat,
+                msgs=msgs,
+                trace_id=getattr(request, "trace_id", None),
             )
             env_context, block_response = await self._emit_session_start_hook(
                 request=request,

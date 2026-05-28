@@ -15,7 +15,7 @@ import { fetchTenantsBySource, TenantSourceInfo } from "@/api/modules/userInfo.t
 
 const { Header: AntHeader } = Layout;
 
-const OPS_MODE_KEY = "swe-ops-mode";
+export const OPS_MODE_KEY = "swe-ops-mode";
 const REAL_USER_ID_KEY = "swe-real-user-id";
 const REAL_USER_NAME_KEY = "swe-real-user-name";
 const REAL_USER_BBK_KEY = "swe-real-user-bbk";

@@ -206,7 +206,7 @@ function CronJobsPage() {
   return (
     <div className={styles.cronJobsPage}>
       <PageHeader
-        items={[{ title: t("nav.control") }, { title: t("cronJobs.title") }]}
+        items={[{ title: t("nav.runCenter") }, { title: t("cronJobs.title") }]}
         extra={
           <Button type="primary" onClick={handleCreate}>
             + {t("cronJobs.createJob")}

@@ -134,6 +134,7 @@ export default function CaseDetailDrawer({
       caseValue: caseData.value,
       channel,
       modelSlot,
+      subscriptionKey: `featured_case:${caseData.id}`,
     });
 
     await cronJobApi.createCronJob(spec);

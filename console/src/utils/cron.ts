@@ -208,6 +208,7 @@ export interface CreateScheduledTaskOptions {
   caseValue: string;
   channel?: string;
   modelSlot?: ModelSlotConfig;
+  subscriptionKey?: string;
 }
 
 export function buildCronJobSpec(options: CreateScheduledTaskOptions): import("../api/types/cronjob").CronJobSpecInput {
@@ -219,7 +220,17 @@ export function buildCronJobSpec(options: CreateScheduledTaskOptions): import(".
     caseValue,
     channel,
     modelSlot,
+    subscriptionKey,
   } = options;
+
+  const meta: Record<string, unknown> = {
+    creator_user_id: userId,
+  };
+
+  if (subscriptionKey) {
+    meta.job_origin = "subscription";
+    meta.subscription_key = subscriptionKey;
+  }
 
   return {
     id: `${name}-${Date.now()}`,
@@ -252,9 +263,7 @@ export function buildCronJobSpec(options: CreateScheduledTaskOptions): import(".
       },
       mode: "final",
     },
-    meta: {
-      creator_user_id: userId,
-    },
+    meta,
     model_slot: modelSlot,
   };
 }

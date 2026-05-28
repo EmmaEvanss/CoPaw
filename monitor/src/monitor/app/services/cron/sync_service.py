@@ -246,6 +246,8 @@ class SyncService:
                     creator_user_id = %s,
                     task_chat_id = %s,
                     task_session_id = %s,
+                    job_origin = %s,
+                    subscription_key = %s,
                     meta = %s,
                     status = %s,
                     pause_reason = %s,
@@ -274,6 +276,8 @@ class SyncService:
                     request.creator_user_id,
                     request.task_chat_id,
                     request.task_session_id,
+                    request.job_origin,
+                    request.subscription_key,
                     request.meta,
                     request.status,
                     request.pause_reason,
@@ -296,10 +300,12 @@ class SyncService:
                     cron_expr, timezone, channel, target_user_id, target_session_id,
                     timeout_seconds, max_concurrency, misfire_grace_seconds,
                     text_content, request_input,
-                    creator_user_id, task_chat_id, task_session_id, meta,
+                    creator_user_id, task_chat_id, task_session_id,
+                    job_origin, subscription_key,
+                    meta,
                     status, pause_reason, created_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 """,
                 (
@@ -324,6 +330,8 @@ class SyncService:
                     request.creator_user_id,
                     request.task_chat_id,
                     request.task_session_id,
+                    request.job_origin,
+                    request.subscription_key,
                     request.meta,
                     request.status,
                     request.pause_reason,

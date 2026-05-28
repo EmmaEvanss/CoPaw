@@ -295,6 +295,22 @@ describe("buildCronJobSpec", () => {
     });
   });
 
+  it("includes subscription metadata when provided", () => {
+    const result = buildCronJobSpec({
+      cronExpression: "0 9 * * *",
+      name: "案例订阅任务",
+      userId: "alice",
+      caseValue: "每日提醒",
+      subscriptionKey: "featured_case:case-123",
+    });
+
+    expect(result.meta).toMatchObject({
+      creator_user_id: "alice",
+      job_origin: "subscription",
+      subscription_key: "featured_case:case-123",
+    });
+  });
+
   it("generates unique id based on name and timestamp", () => {
     const result1 = buildCronJobSpec({
       cronExpression: "0 9 * * *",

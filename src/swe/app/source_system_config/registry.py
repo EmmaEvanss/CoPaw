@@ -356,14 +356,14 @@ def _ensure_immediate_truncation_markers(
     raw_config: dict[str, Any],
     payload: dict[str, Any],
 ) -> None:
-    """显式即时截断对象即使只写阈值，也要补齐 enabled 作为接管标记。"""
+    """显式即时截断对象缺少 enabled 时，补齐启用标记避免误判关闭。"""
     for setting in _IMMEDIATE_TRUNCATION_ENABLED_SETTINGS:
         raw_section = raw_config.get(setting.path[0])
         if not isinstance(raw_section, dict):
             continue
         value = _get_nested_value(payload, setting.path)
         if value is _MISSING:
-            _set_nested_value(payload, setting.path, setting.default_value)
+            _set_nested_value(payload, setting.path, True)
 
 
 def _validate_explicit_tool_result_compact_ranges(

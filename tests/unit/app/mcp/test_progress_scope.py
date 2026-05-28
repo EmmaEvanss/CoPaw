@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
+from mcp.types import CallToolResult, TextContent
 
 from swe.app import mcp as app_mcp
 from swe.constant import TRUNCATION_NOTICE_MARKER
@@ -86,3 +87,24 @@ def test_truncate_tool_response_text_blocks_only_touches_text_blocks() -> None:
     assert truncated.is_last is True
     assert truncated.content[1] == response.content[1]
     assert TRUNCATION_NOTICE_MARKER in truncated.content[0]["text"]
+
+
+def test_truncate_tool_response_text_blocks_handles_call_tool_result() -> None:
+    """原始 CallToolResult 的 TextContent 文本块也应走统一截断逻辑。"""
+    response = CallToolResult(
+        content=[
+            TextContent(type="text", text="line-1\n" * 400),
+        ],
+        isError=False,
+    )
+
+    truncated = app_mcp._truncate_tool_response_text_blocks(
+        response,
+        max_bytes=1000,
+    )
+
+    assert isinstance(truncated, CallToolResult)
+    assert truncated.content[0].text.endswith(
+        "This excerpt covers the next 1000 bytes.",
+    )
+    assert TRUNCATION_NOTICE_MARKER in truncated.content[0].text

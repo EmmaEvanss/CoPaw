@@ -75,9 +75,9 @@ def _truncate_text_block_output(text: str, max_bytes: int) -> str:
 
 
 def _truncate_tool_response_text_blocks(
-    response: ToolResponse,
+    response: Any,
     max_bytes: int | None,
-) -> ToolResponse:
+) -> Any:
     """仅裁剪 ToolResponse 中的文本块，保留其他块和 metadata。"""
     if max_bytes is None:
         return response
@@ -89,7 +89,7 @@ def _truncate_tool_response_text_blocks(
         )
         if truncated_text == response.content:
             return response
-        return replace(response, content=truncated_text)
+        return _replace_response_content(response, truncated_text)
 
     if not isinstance(response.content, list):
         return response
@@ -97,22 +97,58 @@ def _truncate_tool_response_text_blocks(
     next_content = []
     changed = False
     for block in response.content:
-        if not isinstance(block, dict) or block.get("type") != "text":
-            next_content.append(block)
-            continue
-
-        text = block.get("text")
-        if not isinstance(text, str):
-            next_content.append(block)
-            continue
-
-        truncated_text = _truncate_text_block_output(text, max_bytes)
-        changed = changed or truncated_text != text
-        next_content.append({**block, "text": truncated_text})
+        next_block, block_changed = _truncate_response_text_block(
+            block,
+            max_bytes,
+        )
+        changed = changed or block_changed
+        next_content.append(next_block)
 
     if not changed:
         return response
-    return replace(response, content=next_content)
+    return _replace_response_content(response, next_content)
+
+
+def _replace_response_content(response: Any, content: Any) -> Any:
+    """按响应对象类型回填新的 content，保留其余字段。"""
+    if isinstance(response, ToolResponse):
+        return replace(response, content=content)
+    if hasattr(response, "model_copy"):
+        return response.model_copy(update={"content": content})
+    return response
+
+
+def _truncate_response_text_block(
+    block: Any,
+    max_bytes: int,
+) -> tuple[Any, bool]:
+    """统一裁剪 dict / 模型对象里的文本块。"""
+    if isinstance(block, dict):
+        if block.get("type") != "text":
+            return block, False
+        text = block.get("text")
+        if not isinstance(text, str):
+            return block, False
+        truncated_text = _truncate_text_block_output(text, max_bytes)
+        if truncated_text == text:
+            return block, False
+        return {**block, "text": truncated_text}, True
+
+    if getattr(block, "type", None) != "text":
+        return block, False
+    text = getattr(block, "text", None)
+    if not isinstance(text, str):
+        return block, False
+
+    truncated_text = _truncate_text_block_output(text, max_bytes)
+    if truncated_text == text:
+        return block, False
+    if hasattr(block, "model_copy"):
+        return block.model_copy(update={"text": truncated_text}), True
+    try:
+        return replace(block, text=truncated_text), True
+    except TypeError:
+        return block, False
 
 
 def _launch_call_tool(

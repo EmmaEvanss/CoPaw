@@ -1275,6 +1275,24 @@ class TestSourceSystemConfigRuntime:
         assert result.max_bytes == 90000
         assert result.explicit is True
 
+    def test_external_tool_output_truncation_max_bytes_only_enables_config(
+        self,
+    ):
+        """只传 max_bytes 时应视为显式启用，而不是静默解释成关闭。"""
+        result = resolve_external_tool_output_truncation_config(
+            SourceSystemConfig.model_validate(
+                {
+                    "external_tool_output_truncation": {
+                        "max_bytes": 9000,
+                    },
+                },
+            ),
+        )
+
+        assert result.enabled is True
+        assert result.max_bytes == 9000
+        assert result.explicit is True
+
 
 class TestSourceSystemConfigMiddleware:
     """验证 HTTP 请求级配置绑定。"""

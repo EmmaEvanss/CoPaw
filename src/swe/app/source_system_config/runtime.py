@@ -194,6 +194,8 @@ def _extract_immediate_truncation_override(
     raw_section = payload.get(section)
     if not isinstance(raw_section, dict):
         return None
+    if "enabled" not in raw_section:
+        return None
     normalized = normalize_registered_setting_values({section: raw_section})
     normalized_section = normalized.get(section)
     if not isinstance(normalized_section, dict):

@@ -159,6 +159,7 @@ def prune_registered_default_overrides(
             if setting.path in _PRESERVED_DEFAULT_SETTING_PATHS:
                 continue
             _delete_nested_path(pruned, setting.path)
+    _drop_immediate_truncation_sections_without_enabled(pruned)
     return pruned
 
 
@@ -203,7 +204,6 @@ def normalize_registered_setting_values(
         if setting.value_type == "int":
             coerced = _coerce_registered_int_value(setting, value)
             _set_nested_value(normalized, setting.path, coerced)
-    _ensure_immediate_truncation_markers(raw_config, normalized)
     if validate_cross_ranges:
         _validate_explicit_tool_result_compact_ranges(raw_config, normalized)
     return normalized
@@ -352,18 +352,15 @@ def _coerce_registered_int_value(
     return value
 
 
-def _ensure_immediate_truncation_markers(
-    raw_config: dict[str, Any],
+def _drop_immediate_truncation_sections_without_enabled(
     payload: dict[str, Any],
 ) -> None:
-    """显式即时截断对象缺少 enabled 时，补齐启用标记避免误判关闭。"""
+    """即时截断缺少 enabled 时视为未配置，避免空对象误判为显式接管。"""
     for setting in _IMMEDIATE_TRUNCATION_ENABLED_SETTINGS:
-        raw_section = raw_config.get(setting.path[0])
-        if not isinstance(raw_section, dict):
-            continue
-        value = _get_nested_value(payload, setting.path)
-        if value is _MISSING:
-            _set_nested_value(payload, setting.path, True)
+        section_key = setting.path[0]
+        section = payload.get(section_key)
+        if isinstance(section, dict) and "enabled" not in section:
+            payload.pop(section_key, None)
 
 
 def _validate_explicit_tool_result_compact_ranges(

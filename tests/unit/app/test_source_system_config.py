@@ -727,6 +727,34 @@ class TestSourceSystemConfigService:
         }
 
     @pytest.mark.asyncio
+    async def test_upsert_current_source_config_prunes_empty_immediate_sections(
+        self,
+    ):
+        """缺少 enabled 的即时截断空对象不应被保存成显式接管。"""
+        store = _FakeManagementStore()
+        service = SourceSystemConfigService(
+            store,
+            ttl_seconds=30,
+            time_fn=lambda: 100,
+        )
+
+        result = await service.upsert_current_source_config(
+            "portal",
+            SourceSystemConfig.model_validate(
+                {
+                    "file_read_truncation": {},
+                    "external_tool_output_truncation": {},
+                },
+            ),
+            updated_by="alice",
+        )
+
+        assert result.is_default is True
+        assert result.config.as_dict() == {}
+        assert store.records == {}
+        assert store.deleted == ["portal"]
+
+    @pytest.mark.asyncio
     async def test_upsert_current_source_config_preserves_unknown_keys(
         self,
     ):
@@ -1232,9 +1260,61 @@ class TestSourceSystemConfigRuntime:
         assert result.max_bytes == 50000
         assert result.explicit is True
 
+    def test_file_read_truncation_empty_section_keeps_inheritance(self):
+        """缺少 enabled 的空对象应继续沿用工具结果近期阈值。"""
+        tool_result = ToolResultCompactConfig(recent_max_bytes=24000)
+
+        result = resolve_file_read_truncation_config(
+            tool_result,
+            SourceSystemConfig.model_validate(
+                {
+                    "file_read_truncation": {},
+                },
+            ),
+        )
+
+        assert result.enabled is True
+        assert result.max_bytes == 24000
+        assert result.explicit is False
+
+    def test_file_read_truncation_max_bytes_only_keeps_inheritance(self):
+        """缺少 enabled 时，仅 max_bytes 不应让文件读取截断接管。"""
+        tool_result = ToolResultCompactConfig(recent_max_bytes=24000)
+
+        result = resolve_file_read_truncation_config(
+            tool_result,
+            SourceSystemConfig.model_validate(
+                {
+                    "file_read_truncation": {
+                        "max_bytes": 12000,
+                    },
+                },
+            ),
+        )
+
+        assert result.enabled is True
+        assert result.max_bytes == 24000
+        assert result.explicit is False
+
     def test_external_tool_output_truncation_is_opt_in(self):
         """缺少显式配置时，外部工具输出不新增 SWE 侧截断。"""
         result = resolve_external_tool_output_truncation_config(None)
+
+        assert result.enabled is False
+        assert result.max_bytes == 50000
+        assert result.explicit is False
+
+    def test_external_tool_output_truncation_empty_section_is_not_explicit(
+        self,
+    ):
+        """缺少 enabled 的空对象应继续表现为未启用。"""
+        result = resolve_external_tool_output_truncation_config(
+            SourceSystemConfig.model_validate(
+                {
+                    "external_tool_output_truncation": {},
+                },
+            ),
+        )
 
         assert result.enabled is False
         assert result.max_bytes == 50000
@@ -1275,10 +1355,10 @@ class TestSourceSystemConfigRuntime:
         assert result.max_bytes == 90000
         assert result.explicit is True
 
-    def test_external_tool_output_truncation_max_bytes_only_enables_config(
+    def test_external_tool_output_truncation_requires_enabled_marker(
         self,
     ):
-        """只传 max_bytes 时应视为显式启用，而不是静默解释成关闭。"""
+        """缺少 enabled 时，仅 max_bytes 不应让外部工具截断接管。"""
         result = resolve_external_tool_output_truncation_config(
             SourceSystemConfig.model_validate(
                 {
@@ -1289,9 +1369,9 @@ class TestSourceSystemConfigRuntime:
             ),
         )
 
-        assert result.enabled is True
-        assert result.max_bytes == 9000
-        assert result.explicit is True
+        assert result.enabled is False
+        assert result.max_bytes == 50000
+        assert result.explicit is False
 
 
 class TestSourceSystemConfigMiddleware:

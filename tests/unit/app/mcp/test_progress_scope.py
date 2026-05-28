@@ -6,8 +6,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from agentscope.message import TextBlock
+from agentscope.tool import ToolResponse
 
 from swe.app import mcp as app_mcp
+from swe.constant import TRUNCATION_NOTICE_MARKER
 from swe.config.context import tenant_context
 
 
@@ -59,3 +62,27 @@ async def test_patched_mcp_call_namespaces_progress_tokens_by_scope(
         "dGVuYW50LWE.c291cmNlLWE@uuid-a",
         "dGVuYW50LWE.c291cmNlLWI@uuid-b",
     ]
+
+
+def test_truncate_tool_response_text_blocks_only_touches_text_blocks() -> None:
+    """外部工具文本块截断应保留非文本块与 metadata。"""
+    response = ToolResponse(
+        content=[
+            TextBlock(type="text", text="line-1\n" * 400),
+            {"type": "image", "source": {"type": "url", "url": "file://x"}},
+        ],
+        metadata={"source": "demo"},
+        stream=True,
+        is_last=True,
+    )
+
+    truncated = app_mcp._truncate_tool_response_text_blocks(
+        response,
+        max_bytes=1000,
+    )
+
+    assert truncated.metadata == {"source": "demo"}
+    assert truncated.stream is True
+    assert truncated.is_last is True
+    assert truncated.content[1] == response.content[1]
+    assert TRUNCATION_NOTICE_MARKER in truncated.content[0]["text"]

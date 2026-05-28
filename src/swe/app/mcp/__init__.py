@@ -9,6 +9,7 @@ that solve the CPU leak issue caused by cross-task context manager exits.
 """
 
 import asyncio
+from dataclasses import replace
 import logging
 import uuid
 from typing import Any
@@ -18,7 +19,11 @@ from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import ToolResponse
 from mcp import ClientSession as _CS
 from ...config.context import get_current_effective_tenant_id
-from ...constant import MCP_MAX_TOTAL_TIMEOUT, MCP_PER_NOTIFICATION_TIMEOUT
+from ...constant import (
+    MCP_MAX_TOTAL_TIMEOUT,
+    MCP_PER_NOTIFICATION_TIMEOUT,
+    TRUNCATION_NOTICE_MARKER,
+)
 
 from .manager import MCPClientManager
 from .stateful_client import (
@@ -48,6 +53,66 @@ def _build_on_progress(progress_event, progress_queue, watchdog_cb):
         await progress_queue.put((_progress, _total, _message))
 
     return _on_progress
+
+
+def _truncate_text_block_output(text: str, max_bytes: int) -> str:
+    """按字节裁剪外部工具文本块，并追加统一提示。"""
+    if not text or max_bytes <= 0:
+        return text
+
+    original_text = text.split(TRUNCATION_NOTICE_MARKER, 1)[0]
+    original_bytes = original_text.encode("utf-8")
+    if len(original_bytes) <= max_bytes:
+        return text
+
+    truncated = original_bytes[:max_bytes].decode("utf-8", errors="ignore")
+    notice = (
+        TRUNCATION_NOTICE_MARKER
+        + "\nThe output above was truncated."
+        + f"\nThis excerpt covers the next {max_bytes} bytes."
+    )
+    return truncated + notice
+
+
+def _truncate_tool_response_text_blocks(
+    response: ToolResponse,
+    max_bytes: int | None,
+) -> ToolResponse:
+    """仅裁剪 ToolResponse 中的文本块，保留其他块和 metadata。"""
+    if max_bytes is None:
+        return response
+
+    if isinstance(response.content, str):
+        truncated_text = _truncate_text_block_output(
+            response.content,
+            max_bytes,
+        )
+        if truncated_text == response.content:
+            return response
+        return replace(response, content=truncated_text)
+
+    if not isinstance(response.content, list):
+        return response
+
+    next_content = []
+    changed = False
+    for block in response.content:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            next_content.append(block)
+            continue
+
+        text = block.get("text")
+        if not isinstance(text, str):
+            next_content.append(block)
+            continue
+
+        truncated_text = _truncate_text_block_output(text, max_bytes)
+        changed = changed or truncated_text != text
+        next_content.append({**block, "text": truncated_text})
+
+    if not changed:
+        return response
+    return replace(response, content=next_content)
 
 
 def _launch_call_tool(
@@ -92,7 +157,12 @@ def _launch_call_tool(
     return asyncio.ensure_future(_run())
 
 
-async def _drain_progress(progress_queue, tool_name, result_box):
+async def _drain_progress(
+    progress_queue,
+    tool_name,
+    result_box,
+    external_tool_output_max_bytes: int | None,
+):
     """Yield intermediate ``ToolResponse`` chunks from *progress_queue*.
 
     The final ``CallToolResult`` is appended to *result_box* (a one-element
@@ -103,13 +173,19 @@ async def _drain_progress(progress_queue, tool_name, result_box):
         if isinstance(item, Exception):
             raise item
         if isinstance(item, ToolResponse):
-            yield item
+            yield _truncate_tool_response_text_blocks(
+                item,
+                external_tool_output_max_bytes,
+            )
         elif isinstance(item, tuple):
             _p, _t, msg = item
-            yield ToolResponse(
-                content=msg or f"tool '{tool_name}' running",
-                stream=True,
-                is_last=False,
+            yield _truncate_tool_response_text_blocks(
+                ToolResponse(
+                    content=msg or f"tool '{tool_name}' running",
+                    stream=True,
+                    is_last=False,
+                ),
+                external_tool_output_max_bytes,
             )
         else:
             result_box.append(item)
@@ -128,6 +204,7 @@ async def _call_with_progress(
     watchdog_cb,
     progress_queue: asyncio.Queue,
     wrap_tool_result: bool,
+    external_tool_output_max_bytes: int | None = None,
 ):
     """Run ``call_tool`` in a background task, yield all chunks.
 
@@ -152,6 +229,7 @@ async def _call_with_progress(
             progress_queue,
             tool_name,
             result_box,
+            external_tool_output_max_bytes,
         ):
             yield chunk
     finally:
@@ -167,14 +245,20 @@ async def _call_with_progress(
         as_content = MCPClientBase._convert_mcp_content_to_as_blocks(
             res.content,
         )
-        yield ToolResponse(
-            content=as_content,
-            metadata=res.meta,
-            stream=True,
-            is_last=True,
+        yield _truncate_tool_response_text_blocks(
+            ToolResponse(
+                content=as_content,
+                metadata=res.meta,
+                stream=True,
+                is_last=True,
+            ),
+            external_tool_output_max_bytes,
         )
     else:
-        yield res
+        yield _truncate_tool_response_text_blocks(
+            res,
+            external_tool_output_max_bytes,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +282,10 @@ _original_mcp_call = MCPToolFunction.__call__
 
 
 async def _patched_mcp_call(self: MCPToolFunction, **kwargs: Any):  # type: ignore[override]
+    from ..source_system_config import (
+        resolve_external_tool_output_truncation_config,
+    )
+
     kwargs.pop("_meta", None)
 
     scope_id = get_current_effective_tenant_id() or "default"
@@ -215,6 +303,9 @@ async def _patched_mcp_call(self: MCPToolFunction, **kwargs: Any):  # type: igno
 
     per_timeout = MCP_PER_NOTIFICATION_TIMEOUT
     max_total = MCP_MAX_TOTAL_TIMEOUT or None
+    external_tool_output_truncation = (
+        resolve_external_tool_output_truncation_config()
+    )
 
     # Common keyword arguments for _call_with_progress.
     call_kw = {
@@ -228,6 +319,11 @@ async def _patched_mcp_call(self: MCPToolFunction, **kwargs: Any):  # type: igno
         "watchdog_cb": watchdog_cb,
         "progress_queue": progress_queue,
         "wrap_tool_result": self.wrap_tool_result,
+        "external_tool_output_max_bytes": (
+            external_tool_output_truncation.max_bytes
+            if external_tool_output_truncation.enabled
+            else None
+        ),
     }
 
     if self.client_gen:

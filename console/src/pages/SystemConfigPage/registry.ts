@@ -273,6 +273,15 @@ export function enableImmediateTruncationConfig(
   return nextConfig;
 }
 
+export function clearImmediateTruncationConfig(
+  config: SourceSystemConfig,
+  configKey: ImmediateTruncationConfigKey,
+): SourceSystemConfig {
+  const nextConfig = structuredClone(config);
+  delete nextConfig[configKey];
+  return nextConfig;
+}
+
 export function validateToolResultCompactConfig(
   config: ToolResultCompactConfig,
 ): string | null {

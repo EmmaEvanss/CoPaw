@@ -237,6 +237,62 @@ describe("SystemConfigPage", () => {
     });
   });
 
+  it("can restore a single immediate truncation section to inheritance", async () => {
+    mocks.sourceSystemConfigApi.getCurrent.mockResolvedValueOnce({
+      source_id: "portal",
+      config: {
+        provider_policy: { default_model: "qwen-max" },
+        file_read_truncation: {
+          enabled: true,
+          max_bytes: 12000,
+        },
+        external_tool_output_truncation: {
+          enabled: true,
+          max_bytes: 9000,
+        },
+      },
+      version: 1,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 10:00:00",
+    });
+    mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
+      source_id: "portal",
+      config: {
+        provider_policy: { default_model: "qwen-max" },
+        external_tool_output_truncation: {
+          enabled: true,
+          max_bytes: 9000,
+        },
+      },
+      version: 2,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 11:00:00",
+    });
+
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("工具输出控制")).toBeTruthy();
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "恢复继承" })[0],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
+        config: {
+          provider_policy: { default_model: "qwen-max" },
+          external_tool_output_truncation: {
+            enabled: true,
+            max_bytes: 9000,
+          },
+        },
+      });
+    });
+  });
+
   it("blocks invalid tool result compact thresholds before saving", async () => {
     mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
       source_id: "portal",

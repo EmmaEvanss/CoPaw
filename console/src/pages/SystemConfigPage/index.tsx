@@ -26,6 +26,7 @@ import { DEFAULT_SOURCE_ID } from "@/constants/identity";
 import {
   CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES,
   TOOL_RESULT_COMPACT_NUMBER_FIELDS,
+  clearImmediateTruncationConfig,
   enableImmediateTruncationConfig,
   readRegisteredSwitchValue,
   readImmediateTruncationConfig,
@@ -237,6 +238,18 @@ export default function SystemConfigPage() {
     setValidationError(null);
     setDraftConfig((previous) =>
       writeImmediateTruncationValue(previous, configKey, "max_bytes", value),
+    );
+  };
+
+  const handleRestoreImmediateTruncationInheritance = (
+    configKey: ImmediateTruncationConfigKey,
+  ) => {
+    if (formDisabled) {
+      return;
+    }
+    setValidationError(null);
+    setDraftConfig((previous) =>
+      clearImmediateTruncationConfig(previous, configKey),
     );
   };
 
@@ -647,6 +660,18 @@ export default function SystemConfigPage() {
                         />
                       </label>
                     </div>
+                    <Button
+                      disabled={formDisabled}
+                      onClick={() =>
+                        handleRestoreImmediateTruncationInheritance(
+                          "file_read_truncation",
+                        )
+                      }
+                    >
+                      {t("sourceSystemConfigPage.restoreInheritance", {
+                        defaultValue: "恢复继承",
+                      })}
+                    </Button>
                   </>
                 ) : (
                   <Button
@@ -767,6 +792,18 @@ export default function SystemConfigPage() {
                         />
                       </label>
                     </div>
+                    <Button
+                      disabled={formDisabled}
+                      onClick={() =>
+                        handleRestoreImmediateTruncationInheritance(
+                          "external_tool_output_truncation",
+                        )
+                      }
+                    >
+                      {t("sourceSystemConfigPage.restoreInheritance", {
+                        defaultValue: "恢复继承",
+                      })}
+                    </Button>
                   </>
                 ) : (
                   <Button

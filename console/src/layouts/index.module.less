@@ -133,23 +133,19 @@
     .swe-menu {
       background: #ffffff !important;
       border-inline-end: 0 !important;
-      color: #1a1716;
-      font-family:
-        "PingFang SC",
-        "Microsoft YaHei",
-        sans-serif !important;
+      color: var(--colorText, #1a1716);
     }
 
     .swe-menu-submenu-title {
       height: 36px !important;
-      margin: 4px 0 2px !important;
+      margin: 6px 0 4px !important;
       padding: 0 8px 0 8px !important;
       border-radius: 8px !important;
-      font-size: 13px !important;
-      font-weight: 650 !important;
+      font-size: 14px !important;
+      font-weight: 400 !important;
       line-height: 36px !important;
       letter-spacing: normal !important;
-      color: rgba(26, 23, 22, 0.82) !important;
+      color: var(--colorText, #1a1716) !important;
       cursor: pointer !important;
       transition:
         background-color 0.16s ease,
@@ -157,11 +153,11 @@
 
       &:hover {
         background: rgba(26, 23, 22, 0.04) !important;
-        color: #1a1716 !important;
+        color: var(--colorText, #1a1716) !important;
       }
 
       .swe-menu-item-icon {
-        color: rgba(26, 23, 22, 0.56) !important;
+        color: var(--colorTextSecondary, rgba(26, 23, 22, 0.45)) !important;
       }
 
       .swe-menu-title-content {
@@ -175,19 +171,18 @@
       justify-content: center;
       inset-inline-end: 8px !important;
       width: 14px;
-      color: rgba(26, 23, 22, 0.46) !important;
+      color: var(--colorTextSecondary, rgba(26, 23, 22, 0.45)) !important;
     }
 
     .swe-menu-item {
       position: relative;
-      height: 32px !important;
-      margin: 1px 0 !important;
+      height: 36px !important;
+      margin: 3px 0 !important;
       padding: 0 10px 0 30px !important;
       border-radius: 8px !important;
-      color: rgba(26, 23, 22, 0.68) !important;
-      font-size: 13px !important;
-      font-weight: 500;
-      line-height: 32px !important;
+      color: var(--colorText, #1a1716) !important;
+      font-size: 14px !important;
+      line-height: 36px !important;
       letter-spacing: normal !important;
       transition:
         background-color 0.16s ease,
@@ -206,12 +201,12 @@
 
       &:hover {
         background: rgba(55, 105, 252, 0.06) !important;
-        color: rgba(26, 23, 22, 0.92) !important;
+        color: var(--colorText, #1a1716) !important;
       }
 
       .swe-menu-item-icon {
         display: inline-flex !important;
-        color: rgba(26, 23, 22, 0.48) !important;
+        color: var(--colorTextSecondary, rgba(26, 23, 22, 0.45)) !important;
       }
 
       .swe-menu-title-content {
@@ -221,10 +216,10 @@
 
     .swe-menu-root > .swe-menu-item {
       height: 36px !important;
-      margin: 0 0 6px !important;
+      margin: 2px 0 8px !important;
       padding: 0 8px !important;
-      color: rgba(26, 23, 22, 0.82) !important;
-      font-weight: 650 !important;
+      color: var(--colorText, #1a1716) !important;
+      font-weight: 400 !important;
       line-height: 36px !important;
 
       &::before {
@@ -233,7 +228,7 @@
 
       .swe-menu-item-icon {
         display: inline-flex !important;
-        color: rgba(26, 23, 22, 0.56) !important;
+        color: var(--colorTextSecondary, rgba(26, 23, 22, 0.45)) !important;
       }
 
       .swe-menu-title-content {
@@ -273,7 +268,7 @@
 
     .swe-menu-submenu .swe-menu-item-selected {
       color: #3769fc !important;
-      font-weight: 650 !important;
+      font-weight: 500 !important;
 
       .swe-menu-item-icon {
         color: #3769fc !important;
@@ -282,7 +277,7 @@
 
     .swe-menu-submenu-selected > .swe-menu-submenu-title {
       background: rgba(55, 105, 252, 0.08) !important;
-      color: #1a1716 !important;
+      color: var(--colorText, #1a1716) !important;
       box-shadow: none;
 
       .swe-menu-item-icon,

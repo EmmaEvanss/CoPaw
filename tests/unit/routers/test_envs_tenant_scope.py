@@ -150,23 +150,65 @@ def test_list_envs_returns_plain_values(
     assert "tenant-secret" in response.text
 
 
-def test_patch_envs_preserves_existing_secret_without_placeholder(
+def test_patch_envs_merges_values_and_preserves_unmentioned_keys(
     client: TestClient,
     _use_tmp_env_paths: Path,
 ):
-    """增量更新应允许客户端不读取原值也能保留已有 secret。"""
+    """PATCH /envs 只传 values 时应新增或覆盖并保留未提及变量。"""
     client.put(
         "/api/envs",
         headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
-        json={"API_TOKEN": "old-secret", "OLD_KEY": "remove-me"},
+        json={"API_TOKEN": "old-secret", "OLD_KEY": "keep-me"},
     )
 
     response = client.patch(
         "/api/envs",
         headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
         json={
-            "values": {"NEW_TOKEN": "new-secret"},
-            "preserve": ["API_TOKEN"],
+            "values": {
+                "API_TOKEN": "new-secret",
+                "NEW_TOKEN": "created-secret",
+            },
+        },
+    )
+
+    envs_path = (
+        _use_tmp_env_paths / "tenant-a.source-a" / ".secret" / "envs.json"
+    )
+    assert response.status_code == 200
+    assert load_envs(envs_path) == {
+        "API_TOKEN": "new-secret",
+        "NEW_TOKEN": "created-secret",
+        "OLD_KEY": "keep-me",
+    }
+    assert response.json() == [
+        {"key": "API_TOKEN", "value": "new-secret"},
+        {"key": "NEW_TOKEN", "value": "created-secret"},
+        {"key": "OLD_KEY", "value": "keep-me"},
+    ]
+
+
+def test_patch_envs_deletes_keys_and_ignores_preserve_compat_field(
+    client: TestClient,
+    _use_tmp_env_paths: Path,
+):
+    """preserve 是兼容字段，不应影响 merge 更新结果。"""
+    client.put(
+        "/api/envs",
+        headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
+        json={
+            "API_TOKEN": "old-secret",
+            "OLD_KEY": "remove-me",
+            "KEEP_KEY": "keep-me",
+        },
+    )
+
+    response = client.patch(
+        "/api/envs",
+        headers={"X-Tenant-Id": "tenant-a", **_SOURCE_HEADERS},
+        json={
+            "values": {"API_TOKEN": "new-secret"},
+            "preserve": ["OLD_KEY"],
             "delete": ["OLD_KEY"],
         },
     )
@@ -176,12 +218,12 @@ def test_patch_envs_preserves_existing_secret_without_placeholder(
     )
     assert response.status_code == 200
     assert load_envs(envs_path) == {
-        "API_TOKEN": "old-secret",
-        "NEW_TOKEN": "new-secret",
+        "API_TOKEN": "new-secret",
+        "KEEP_KEY": "keep-me",
     }
     assert response.json() == [
-        {"key": "API_TOKEN", "value": "old-secret"},
-        {"key": "NEW_TOKEN", "value": "new-secret"},
+        {"key": "API_TOKEN", "value": "new-secret"},
+        {"key": "KEEP_KEY", "value": "keep-me"},
     ]
 
 

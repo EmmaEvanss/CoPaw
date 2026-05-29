@@ -36,7 +36,7 @@ function buildInitialRows(envVars: EnvVar[]): Row[] {
 
 function buildPatchRequest(rows: Row[]): EnvPatchRequest {
   const values: Record<string, string> = {};
-  const preserve: string[] = [];
+  const deleteKeys: string[] = [];
 
   for (const row of rows) {
     const key = row.key.trim();
@@ -47,17 +47,18 @@ function buildPatchRequest(rows: Row[]): EnvPatchRequest {
       !row.valueEdited;
 
     if (isUnchangedPersistedRow) {
-      preserve.push(key);
       continue;
     }
 
+    if (!row.isNew && row.originalKey && row.originalKey !== key) {
+      deleteKeys.push(row.originalKey);
+    }
     values[key] = row.value;
   }
 
   return {
     values,
-    preserve,
-    delete: [],
+    delete: deleteKeys,
   };
 }
 
@@ -302,7 +303,7 @@ function EnvironmentsPage() {
     <div className={styles.environmentsPage}>
       {/* ---- Page header ---- */}
       <PageHeader
-        parent={t("environments.parent")}
+        parent={t("nav.systemSettings")}
         current={t("environments.environments")}
       />
 

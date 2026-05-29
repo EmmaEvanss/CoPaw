@@ -258,11 +258,19 @@ class MonitorSyncClient:
         """
         meta = spec_dict.get("meta", {})
         pause_reason = meta.get("pause_reason") or ""
+        subscription_key = meta.get("subscription_key") or ""
+        job_origin = (
+            meta.get("job_origin")
+            or ("subscription" if subscription_key else "")
+            or "manual"
+        )
         meta_json = json.dumps(meta, ensure_ascii=False) if meta else ""
         return {
             "creator_user_id": meta.get("creator_user_id") or "",
             "task_chat_id": meta.get("task_chat_id") or "",
             "task_session_id": meta.get("task_session_id") or "",
+            "job_origin": job_origin,
+            "subscription_key": subscription_key,
             "meta": meta_json,
             "status": "paused" if pause_reason else "active",
             "pause_reason": pause_reason,

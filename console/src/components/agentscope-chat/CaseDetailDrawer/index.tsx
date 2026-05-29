@@ -130,6 +130,7 @@ export default function CaseDetailDrawer({
       sessionId: undefined,
       caseValue: caseData.value,
       channel,
+      subscriptionKey: `featured_case:${caseData.id}`,
     });
 
     await cronJobApi.createCronJob(spec);

@@ -206,10 +206,11 @@ export interface CreateScheduledTaskOptions {
   sessionId?: string;
   caseValue: string;
   channel?: string;
+  subscriptionKey: string;
 }
 
 export function buildCronJobSpec(options: CreateScheduledTaskOptions): import("../api/types/cronjob").CronJobSpecInput {
-  const { cronExpression, name, userId, sessionId, caseValue, channel } = options;
+  const { cronExpression, name, userId, sessionId, caseValue, channel, subscriptionKey } = options;
 
   return {
     id: `${name}-${Date.now()}`,
@@ -244,6 +245,8 @@ export function buildCronJobSpec(options: CreateScheduledTaskOptions): import(".
     },
     meta: {
       creator_user_id: userId,
+      job_origin: "subscription",
+      subscription_key: subscriptionKey,
     },
   };
 }

@@ -1725,6 +1725,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
     def _handle_cancelled_after_success(
         self,
+        job_id: str,
         st: CronJobState,
         actual_time: datetime,
         end_time: Optional[datetime],
@@ -1744,7 +1745,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         logger.info(
             "cron _execute_once: job_id=%s CancelledError after success, "
             "keeping success status",
-            st.last_run_at,
+            job_id,
         )
         exec_status = "success"
         end_time = end_time or datetime.now(timezone.utc)
@@ -1755,6 +1756,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
     def _handle_execution_cancelled(
         self,
+        job_id: str,
         st: CronJobState,
         actual_time: datetime,
     ) -> tuple[str, str, datetime, int]:
@@ -1769,7 +1771,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         """
         logger.info(
             "cron _execute_once: job_id=%s status=cancelled",
-            st.last_run_at,
+            job_id,
         )
         end_time, duration_ms = self._record_failure_timing(
             st,
@@ -1856,6 +1858,16 @@ class CronManager:  # pylint: disable=too-many-public-methods
             input_snapshot=input_snapshot,
             executor_leader=executor_leader,
         )
+        logger.info(
+            "cron execution finalized: job_id=%s exec_status=%s "
+            "last_status=%s trace_id=%s duration_ms=%s output_preview_len=%s",
+            job.id,
+            exec_status,
+            st.last_status,
+            trace_id[:20] if trace_id else "(empty)",
+            duration_ms,
+            len(output_preview or ""),
+        )
 
     async def _execute_once(
         self,
@@ -1910,6 +1922,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 if st.last_status == "success":
                     exec_status, error_message, end_time, duration_ms = (
                         self._handle_cancelled_after_success(
+                            job.id,
                             st,
                             actual_time,
                             end_time,
@@ -1918,7 +1931,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     )
                 else:
                     exec_status, error_message, end_time, duration_ms = (
-                        self._handle_execution_cancelled(st, actual_time)
+                        self._handle_execution_cancelled(
+                            job.id,
+                            st,
+                            actual_time,
+                        )
                     )
                 raise
             except Exception as e:  # pylint: disable=broad-except

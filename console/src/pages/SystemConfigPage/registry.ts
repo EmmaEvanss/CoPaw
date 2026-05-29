@@ -1,4 +1,5 @@
 import type { SourceSystemConfig } from "@/api/types/sourceSystemConfig";
+import { clonePlainConfig } from "@/utils/clonePlainConfig";
 
 export interface CurrentSourceConfigSwitchDefinition {
   key: string;
@@ -93,7 +94,7 @@ export function writeRegisteredSwitchValue(
   definition: CurrentSourceConfigSwitchDefinition,
   value: boolean,
 ): SourceSystemConfig {
-  const nextConfig = structuredClone(config);
+  const nextConfig = clonePlainConfig(config);
   let current: Record<string, unknown> = nextConfig;
   definition.path.forEach((segment, index) => {
     const isLeaf = index === definition.path.length - 1;
@@ -153,7 +154,7 @@ export function writeToolResultCompactValue<
   key: K,
   value: ToolResultCompactConfig[K],
 ): SourceSystemConfig {
-  const nextConfig = structuredClone(config);
+  const nextConfig = clonePlainConfig(config);
   const rawValue = nextConfig.tool_result_compact;
   if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
     nextConfig.tool_result_compact = {};

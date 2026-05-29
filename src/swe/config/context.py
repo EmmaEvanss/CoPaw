@@ -489,10 +489,6 @@ current_file_read_max_bytes: ContextVar[int | None] = ContextVar(
     "current_file_read_max_bytes",
     default=None,
 )
-current_external_tool_output_max_bytes: ContextVar[int | None] = ContextVar(
-    "current_external_tool_output_max_bytes",
-    default=None,
-)
 current_tool_result_retention_days: ContextVar[int | None] = ContextVar(
     "current_tool_result_retention_days",
     default=None,
@@ -525,18 +521,6 @@ def get_current_file_read_max_bytes() -> int | None:
 def set_current_file_read_max_bytes(max_bytes: int | None) -> None:
     """设置当前 source 生效后的文件读取即时截断阈值。"""
     current_file_read_max_bytes.set(max_bytes)
-
-
-def get_current_external_tool_output_max_bytes() -> int | None:
-    """读取当前 source 生效后的外部工具文本截断阈值。"""
-    return current_external_tool_output_max_bytes.get()
-
-
-def set_current_external_tool_output_max_bytes(
-    max_bytes: int | None,
-) -> None:
-    """设置当前 source 生效后的外部工具文本截断阈值。"""
-    current_external_tool_output_max_bytes.set(max_bytes)
 
 
 def get_current_tool_result_retention_days() -> int | None:

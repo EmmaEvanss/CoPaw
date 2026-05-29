@@ -80,19 +80,6 @@ FILE_READ_TRUNCATION_MAX_BYTES_SETTING = SourceSystemConfigSetting(
     value_type="int",
     ge=1000,
 )
-EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING = SourceSystemConfigSetting(
-    key="external_tool_output_truncation.enabled",
-    path=("external_tool_output_truncation", "enabled"),
-    default_value=False,
-    value_type="bool",
-)
-EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING = SourceSystemConfigSetting(
-    key="external_tool_output_truncation.max_bytes",
-    path=("external_tool_output_truncation", "max_bytes"),
-    default_value=50000,
-    value_type="int",
-    ge=1000,
-)
 
 CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES: tuple[SourceSystemConfigSwitch, ...] = (
     CHAT_TASK_PROGRESS_ENABLED_SWITCH,
@@ -109,8 +96,6 @@ CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS: tuple[
     TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING,
     FILE_READ_TRUNCATION_ENABLED_SETTING,
     FILE_READ_TRUNCATION_MAX_BYTES_SETTING,
-    EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING,
-    EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING,
 )
 
 _MISSING = object()
@@ -118,7 +103,11 @@ _TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
 _IMMEDIATE_TRUNCATION_ENABLED_SETTINGS = (
     FILE_READ_TRUNCATION_ENABLED_SETTING,
-    EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING,
+)
+_DEPRECATED_SYSTEM_SECTION_KEYS = frozenset(
+    {
+        "external_tool_output_truncation",
+    },
 )
 _PRESERVED_DEFAULT_SETTING_PATHS = frozenset(
     setting.path for setting in _IMMEDIATE_TRUNCATION_ENABLED_SETTINGS
@@ -188,6 +177,7 @@ def normalize_registered_setting_values(
 ) -> dict[str, Any]:
     """规范化已注册配置项的值，避免脏值进入持久化配置。"""
     normalized = deepcopy(raw_config)
+    _drop_deprecated_system_sections(normalized)
     for setting in CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS:
         value = _get_nested_value(normalized, setting.path)
         if value is _MISSING:
@@ -363,6 +353,12 @@ def _drop_immediate_truncation_sections_without_enabled(
             payload.pop(section_key, None)
 
 
+def _drop_deprecated_system_sections(payload: dict[str, Any]) -> None:
+    """移除已经下线的系统配置段，避免死配置在读写链路中回流。"""
+    for key in _DEPRECATED_SYSTEM_SECTION_KEYS:
+        payload.pop(key, None)
+
+
 def _validate_explicit_tool_result_compact_ranges(
     raw_config: dict[str, Any],
     payload: dict[str, Any],
@@ -395,8 +391,6 @@ __all__ = [
     "CHAT_TASK_PROGRESS_ENABLED_SWITCH",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES",
-    "EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING",
-    "EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING",
     "FILE_READ_TRUNCATION_ENABLED_SETTING",
     "FILE_READ_TRUNCATION_MAX_BYTES_SETTING",
     "SourceSystemConfigSwitch",

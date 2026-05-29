@@ -1351,7 +1351,6 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         """
         # Set workspace_dir and recent_max_bytes in context for tool functions
         from ..config.context import (
-            set_current_external_tool_output_max_bytes,
             set_current_file_read_max_bytes,
             set_current_task_progress_chat_id,
             set_current_task_progress_tracker,
@@ -1361,7 +1360,6 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             set_current_recent_max_bytes,
         )
         from ..app.source_system_config import (
-            resolve_external_tool_output_truncation_config,
             resolve_file_read_truncation_config,
             resolve_tool_result_compact_config,
         )
@@ -1373,22 +1371,12 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         file_read_truncation = resolve_file_read_truncation_config(
             tool_result_compact,
         )
-        external_tool_output_truncation = (
-            resolve_external_tool_output_truncation_config()
-        )
         set_current_recent_max_bytes(tool_result_compact.recent_max_bytes)
         set_current_file_read_max_bytes(
             (
                 file_read_truncation.max_bytes
                 if file_read_truncation.enabled
                 else 0
-            ),
-        )
-        set_current_external_tool_output_max_bytes(
-            (
-                external_tool_output_truncation.max_bytes
-                if external_tool_output_truncation.enabled
-                else None
             ),
         )
         set_current_tool_result_retention_days(

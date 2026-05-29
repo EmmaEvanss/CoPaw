@@ -17,13 +17,12 @@ Swe 会同时处理两类问题：
 |------|----------|----------|
 | Historical Tool Result Compaction | 历史工具结果 | 旧的工具输出太长，需要缩短后再继续保留在会话里 |
 | File Read Truncation | 当前轮文件读取结果 | `read_file` 返回的内容太长，不适合一次性全给模型 |
-| External Tool Output Truncation | 当前轮外部工具文本输出 | MCP 等外部工具返回的文本太长，不适合一次性全给模型 |
 | Context Compaction | 整体历史消息 | 整个会话快撑满上下文，需要把旧消息整理成摘要 |
 
 要点是：
 
 - `Historical Tool Result Compaction` 处理“已经在会话里的历史工具结果”。
-- `File Read Truncation` 和 `External Tool Output Truncation` 处理“当前这一轮刚返回的大文本”。
+- `File Read Truncation` 处理“当前这一轮刚返回的大文本”。
 - `Context Compaction` 处理“整段会话历史”。
 
 它们不是一回事，也不是同一个开关。
@@ -36,7 +35,6 @@ Swe 会同时处理两类问题：
 用户发起请求
   -> 模型开始本轮处理
   -> 如果调用 read_file，先按 File Read Truncation 决定当前轮最多返回多少文本
-  -> 如果调用外部工具，先按 External Tool Output Truncation 决定当前轮最多保留多少文本
   -> 本轮结束前，系统检查历史工具结果是否需要做 Historical Tool Result Compaction
   -> 如果整段会话仍然过长，再决定是否触发 Context Compaction
   -> 后续轮次继续在“摘要 + 最近消息 + 近期工具结果”的结构上推进
@@ -75,21 +73,7 @@ Swe 会同时处理两类问题：
 
 如果文件读取结果被截断，系统会给出继续读取的提示，通常可以继续按提示使用 `read_file` 读取后续部分。
 
-### 3. External Tool Output Truncation
-
-这是“外部工具输出截断”。
-
-它只作用于外部集成工具返回的文本结果，例如 MCP 工具的文本输出。它不处理媒体块、文件块，也不负责控制外部工具自身在返回前是否已经做过截断。
-
-它主要解决：
-
-- 某个外部工具一次返回了很长的文本
-- 当前轮不适合把整段文本都放进上下文
-- 但仍希望保留继续读取完整文本的路径
-
-如果外部工具文本被截断，系统会在提示里给出一个可继续读取的文件路径，之后可以按提示使用 `read_file` 查看完整内容或后续部分。
-
-### 4. Context Compaction
+### 3. Context Compaction
 
 这是“会话摘要压缩”。
 
@@ -109,13 +93,11 @@ Swe 会同时处理两类问题：
 |------|----------|
 | Historical Tool Result Compaction | 默认开启 |
 | File Read Truncation | 默认沿用历史工具结果的近期字节阈值 |
-| External Tool Output Truncation | 默认不额外新增 Swe 侧文本截断 |
 | Context Compaction | 默认开启 |
 
-这里最容易误解的是两点：
+这里最容易误解的是：
 
 1. `File Read Truncation` 默认不是“关闭”，而是继续沿用历史工具结果里的近期阈值。
-2. `External Tool Output Truncation` 默认不是“继承近期阈值”，而是默认不新增 Swe 侧截断。
 
 ## 配置位置
 
@@ -175,12 +157,11 @@ Swe 会同时处理两类问题：
 | `recent_n` | `2` | 最近多少段相关消息按“近期结果”规则处理 |
 | `old_max_bytes` | `3000` | 更早工具结果保留的最大字节数 |
 | `recent_max_bytes` | `50000` | 近期工具结果保留的最大字节数 |
-| `retention_days` | `5` | 工具结果文件与外部工具续读文件的保留天数 |
+| `retention_days` | `5` | 工具结果文件的保留天数 |
 
 注意点：
 
 - `recent_max_bytes` 应该大于等于 `old_max_bytes`。
-- `retention_days` 不只影响历史工具结果文件，也影响外部工具文本截断后为续读保留的文件。
 - `recent_max_bytes` 还会影响默认的 `File Read Truncation` 行为。
 
 调参建议：
@@ -223,10 +204,6 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
   },
   "file_read_truncation": {
     "enabled": true,
-    "max_bytes": 50000
-  },
-  "external_tool_output_truncation": {
-    "enabled": false,
     "max_bytes": 50000
   }
 }
@@ -279,37 +256,9 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 
 表示这个 source 显式关闭文件读取截断，不应再自动回退到另一套阈值。
 
-#### `external_tool_output_truncation`
-
-- 只有显式配置并带 `enabled`，才算这个 source 接管了外部工具文本输出截断。
-- 如果整段缺失，或者没有 `enabled`，就继续视为“未启用 Swe 侧新增截断”。
-
-例如：
-
-```json
-{
-  "external_tool_output_truncation": {
-    "enabled": true,
-    "max_bytes": 9000
-  }
-}
-```
-
-表示这个 source 开启外部工具文本输出截断。
-
-```json
-{
-  "external_tool_output_truncation": {
-    "enabled": false
-  }
-}
-```
-
-表示这个 source 显式关闭该能力。
-
 ### 一个重要规则：是否接管，要看 `enabled`
 
-对 `file_read_truncation` 和 `external_tool_output_truncation`，建议始终显式写出 `enabled`。
+对 `file_read_truncation`，建议始终显式写出 `enabled`。
 
 推荐写法：
 
@@ -346,18 +295,7 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 - 会附带继续读取提示
 - 你可以继续按提示使用 `read_file`
 
-### 场景二：外部工具文本输出太长
-
-如果当前 source 显式开启了 `External Tool Output Truncation`：
-
-- 当前轮只会保留一个文本片段
-- 系统会把完整文本保存成一个可继续读取的文件
-- 返回结果里会附带 `read_file` 提示
-- 你可以用 `read_file` 查看完整内容或后续部分
-
-如果当前 source 没显式开启该能力，则不会新增 Swe 侧截断。
-
-### 场景三：历史消息还是太长
+### 场景二：历史消息还是太长
 
 即使你已经做了当前轮截断，随着对话继续增长，系统仍可能触发：
 
@@ -405,23 +343,6 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 }
 ```
 
-### 策略三：为某个 source 开启外部工具文本截断
-
-适合：
-
-- 某个 source 常常调用返回超长文本的外部工具
-
-建议：
-
-```json
-{
-  "external_tool_output_truncation": {
-    "enabled": true,
-    "max_bytes": 9000
-  }
-}
-```
-
 ### 策略四：临时排查“是不是压缩影响了判断”
 
 适合：
@@ -455,16 +376,8 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 
 - 关闭 `Historical Tool Result Compaction`，不等于关闭 `Context Compaction`
 - 关闭 `File Read Truncation`，不等于关闭历史工具结果压缩
-- 不开启 `External Tool Output Truncation`，不代表整个会话永远不会被摘要压缩
 
-### 2. `File Read Truncation` 和 `External Tool Output Truncation` 不是同一类
-
-- `File Read Truncation` 针对 `read_file`
-- `External Tool Output Truncation` 针对外部集成工具文本输出
-
-不要把它们当成一个总开关。
-
-### 3. 外部工具自己的截断，不归 Swe 控制
+### 2. 外部工具自己的截断，不归 Swe 控制
 
 如果外部工具在返回给 Swe 之前就已经把结果裁掉了，那么 Swe 只能处理“已经收到的那部分内容”。
 
@@ -473,16 +386,7 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 - Swe 能控制“收到之后如何保留”
 - 不能控制“外部工具自己返回了多少”
 
-### 4. 续读文件也会过期
-
-外部工具截断后保留的完整文本文件，不会永久保存。它和历史工具结果文件共享 `retention_days`。
-
-如果你依赖这类续读文件：
-
-- 请尽量在近期轮次内完成查看
-- 不要假定几周后仍然一定存在
-
-### 5. 调大阈值不是越大越好
+### 3. 调大阈值不是越大越好
 
 阈值越大：
 
@@ -497,8 +401,6 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 | 现象 | 优先检查 |
 |------|----------|
 | 文件读取结果总是太短 | 是否被 `file_read_truncation` 接管；否则看 `tool_result_compact.recent_max_bytes` |
-| 外部工具文本被截断 | 是否显式开启了 `external_tool_output_truncation` |
-| 想看被截断的完整外部工具文本 | 查看返回提示里的 `read_file` 路径并继续读取 |
 | 最近几轮工具结果不够完整 | 提高 `recent_n` 或 `recent_max_bytes` |
 | 历史消息还是太快变成摘要 | 检查 `memory_compact_ratio`、`memory_reserve_ratio` 和工具结果阈值 |
 | 关闭某个截断后仍觉得上下文变短 | 可能是 `Context Compaction` 仍在工作 |
@@ -538,17 +440,6 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 }
 ```
 
-### 外部工具长文本友好型 source
-
-```json
-{
-  "external_tool_output_truncation": {
-    "enabled": true,
-    "max_bytes": 9000
-  }
-}
-```
-
 ### 最近结果更完整、旧结果更精简型
 
 ```json
@@ -570,10 +461,9 @@ Source 级配置用于“只对某个接入来源覆盖默认行为”。
 可以用下面的简单判断：
 
 - 问题发生在 `read_file` 当轮返回太短：先看 `File Read Truncation`
-- 问题发生在外部工具当轮文本太长或太短：先看 `External Tool Output Truncation`
 - 问题发生在“几轮之后历史工具结果被收缩”：看 `Historical Tool Result Compaction`
 - 问题发生在“整段对话越聊越短，只剩摘要”：看 `Context Compaction`
 
 如果你只记住一句话：
 
-`File Read Truncation` 和 `External Tool Output Truncation` 管“当前轮”，`Historical Tool Result Compaction` 和 `Context Compaction` 管“历史”。
+`File Read Truncation` 管“当前轮”，`Historical Tool Result Compaction` 和 `Context Compaction` 管“历史”。

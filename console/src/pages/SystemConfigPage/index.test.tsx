@@ -200,10 +200,6 @@ describe("SystemConfigPage", () => {
           enabled: true,
           max_bytes: 50000,
         },
-        external_tool_output_truncation: {
-          enabled: true,
-          max_bytes: 50000,
-        },
       },
       version: 1,
       is_default: false,
@@ -215,20 +211,14 @@ describe("SystemConfigPage", () => {
 
     expect(await screen.findByText("工具输出控制")).toBeTruthy();
     expect(screen.getByText("继承旧工具结果近期阈值")).toBeTruthy();
-    expect(screen.getByText("未启用")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "启用独立配置" }));
-    fireEvent.click(screen.getByRole("button", { name: "启用截断" }));
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => {
       expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
         config: {
           file_read_truncation: {
-            enabled: true,
-            max_bytes: 50000,
-          },
-          external_tool_output_truncation: {
             enabled: true,
             max_bytes: 50000,
           },
@@ -246,10 +236,6 @@ describe("SystemConfigPage", () => {
           enabled: true,
           max_bytes: 12000,
         },
-        external_tool_output_truncation: {
-          enabled: true,
-          max_bytes: 9000,
-        },
       },
       version: 1,
       is_default: false,
@@ -260,10 +246,6 @@ describe("SystemConfigPage", () => {
       source_id: "portal",
       config: {
         provider_policy: { default_model: "qwen-max" },
-        external_tool_output_truncation: {
-          enabled: true,
-          max_bytes: 9000,
-        },
       },
       version: 2,
       is_default: false,
@@ -275,19 +257,13 @@ describe("SystemConfigPage", () => {
 
     expect(await screen.findByText("工具输出控制")).toBeTruthy();
 
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "恢复继承" })[0],
-    );
+    fireEvent.click(screen.getByRole("button", { name: "恢复继承" }));
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
 
     await waitFor(() => {
       expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
         config: {
           provider_policy: { default_model: "qwen-max" },
-          external_tool_output_truncation: {
-            enabled: true,
-            max_bytes: 9000,
-          },
         },
       });
     });

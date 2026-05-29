@@ -27,7 +27,6 @@ from swe.app.source_system_config.models import (
 from swe.app.source_system_config.runtime import (
     bind_source_system_config,
     get_current_source_system_config,
-    resolve_external_tool_output_truncation_config,
     resolve_file_read_truncation_config,
     resolve_tool_result_compact_config,
 )
@@ -54,10 +53,6 @@ DEFAULT_EXPECTED_SOURCE_CONFIG = {
     },
     "file_read_truncation": {
         "enabled": True,
-        "max_bytes": 50000,
-    },
-    "external_tool_output_truncation": {
-        "enabled": False,
         "max_bytes": 50000,
     },
 }
@@ -158,10 +153,6 @@ class TestSourceSystemConfigModels:
                     "enabled": False,
                     "max_bytes": 12000,
                 },
-                "external_tool_output_truncation": {
-                    "enabled": True,
-                    "max_bytes": 64000,
-                },
             },
         )
 
@@ -170,10 +161,6 @@ class TestSourceSystemConfigModels:
                 "enabled": False,
                 "max_bytes": 12000,
             },
-            "external_tool_output_truncation": {
-                "enabled": True,
-                "max_bytes": 64000,
-            },
         }
 
     @pytest.mark.parametrize(
@@ -181,16 +168,8 @@ class TestSourceSystemConfigModels:
         [
             ({"file_read_truncation": {"max_bytes": 999}}, "max_bytes"),
             (
-                {"external_tool_output_truncation": {"max_bytes": "50000"}},
-                "max_bytes",
-            ),
-            (
                 {"file_read_truncation": {"enabled": "disabled"}},
                 "enabled",
-            ),
-            (
-                {"external_tool_output_truncation": {"max_bytes": True}},
-                "max_bytes",
             ),
         ],
     )
@@ -253,6 +232,22 @@ class TestSourceSystemConfigModels:
                     },
                 },
             )
+
+    def test_deprecated_external_tool_output_truncation_is_dropped(self):
+        """已下线的外部工具输出截断配置在读写链路中应被清理。"""
+        config = SourceSystemConfig.model_validate(
+            {
+                "external_tool_output_truncation": {
+                    "enabled": True,
+                    "max_bytes": 64000,
+                },
+                "provider_policy": {"default_model": "qwen-max"},
+            },
+        )
+
+        assert config.as_dict() == {
+            "provider_policy": {"default_model": "qwen-max"},
+        }
 
 
 class TestSourceSystemConfigStore:
@@ -707,10 +702,6 @@ class TestSourceSystemConfigService:
                         "enabled": True,
                         "max_bytes": 50000,
                     },
-                    "external_tool_output_truncation": {
-                        "enabled": False,
-                        "max_bytes": 50000,
-                    },
                 },
             ),
             updated_by="alice",
@@ -719,11 +710,9 @@ class TestSourceSystemConfigService:
         assert result.is_default is False
         assert result.config.as_dict() == {
             "file_read_truncation": {"enabled": True},
-            "external_tool_output_truncation": {"enabled": False},
         }
         assert store.records["portal"].config.as_dict() == {
             "file_read_truncation": {"enabled": True},
-            "external_tool_output_truncation": {"enabled": False},
         }
 
     @pytest.mark.asyncio
@@ -743,7 +732,6 @@ class TestSourceSystemConfigService:
             SourceSystemConfig.model_validate(
                 {
                     "file_read_truncation": {},
-                    "external_tool_output_truncation": {},
                 },
             ),
             updated_by="alice",
@@ -1294,83 +1282,6 @@ class TestSourceSystemConfigRuntime:
 
         assert result.enabled is True
         assert result.max_bytes == 24000
-        assert result.explicit is False
-
-    def test_external_tool_output_truncation_is_opt_in(self):
-        """缺少显式配置时，外部工具输出不新增 SWE 侧截断。"""
-        result = resolve_external_tool_output_truncation_config(None)
-
-        assert result.enabled is False
-        assert result.max_bytes == 50000
-        assert result.explicit is False
-
-    def test_external_tool_output_truncation_empty_section_is_not_explicit(
-        self,
-    ):
-        """缺少 enabled 的空对象应继续表现为未启用。"""
-        result = resolve_external_tool_output_truncation_config(
-            SourceSystemConfig.model_validate(
-                {
-                    "external_tool_output_truncation": {},
-                },
-            ),
-        )
-
-        assert result.enabled is False
-        assert result.max_bytes == 50000
-        assert result.explicit is False
-
-    def test_external_tool_output_truncation_marker_uses_default_max_bytes(
-        self,
-    ):
-        """保存裁剪后只剩 enabled 时，应使用外部工具默认文本阈值。"""
-        result = resolve_external_tool_output_truncation_config(
-            SourceSystemConfig.model_validate(
-                {
-                    "external_tool_output_truncation": {
-                        "enabled": True,
-                    },
-                },
-            ),
-        )
-
-        assert result.enabled is True
-        assert result.max_bytes == 50000
-        assert result.explicit is True
-
-    def test_external_tool_output_truncation_reads_explicit_config(self):
-        """外部工具输出截断只读取显式 source 配置。"""
-        result = resolve_external_tool_output_truncation_config(
-            SourceSystemConfig.model_validate(
-                {
-                    "external_tool_output_truncation": {
-                        "enabled": True,
-                        "max_bytes": 90000,
-                    },
-                },
-            ),
-        )
-
-        assert result.enabled is True
-        assert result.max_bytes == 90000
-        assert result.explicit is True
-
-    def test_external_tool_output_truncation_requires_enabled_marker(
-        self,
-    ):
-        """缺少 enabled 时，仅 max_bytes 不应让外部工具截断接管。"""
-        result = resolve_external_tool_output_truncation_config(
-            SourceSystemConfig.model_validate(
-                {
-                    "external_tool_output_truncation": {
-                        "max_bytes": 9000,
-                    },
-                },
-            ),
-        )
-
-        assert result.enabled is False
-        assert result.max_bytes == 50000
         assert result.explicit is False
 
 

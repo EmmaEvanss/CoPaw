@@ -17,11 +17,9 @@ from swe.app.source_system_config.models import (
 from swe.app.source_system_config.runtime import bind_source_system_config
 from swe.config.config import ToolResultCompactConfig
 from swe.config.context import (
-    get_current_external_tool_output_max_bytes,
     get_current_file_read_max_bytes,
     get_current_recent_max_bytes,
     get_current_tool_result_retention_days,
-    set_current_external_tool_output_max_bytes,
     set_current_file_read_max_bytes,
     set_current_recent_max_bytes,
     set_current_tool_result_retention_days,
@@ -29,7 +27,7 @@ from swe.config.context import (
 
 
 def _build_effective_config() -> EffectiveSourceSystemConfig:
-    """构造同时携带三段工具输出配置的 source 运行时配置。"""
+    """构造携带工具输出配置的 source 运行时配置。"""
     return EffectiveSourceSystemConfig(
         source_id="portal",
         config=SourceSystemConfig.model_validate(
@@ -41,10 +39,6 @@ def _build_effective_config() -> EffectiveSourceSystemConfig:
                 "file_read_truncation": {
                     "enabled": True,
                     "max_bytes": 12000,
-                },
-                "external_tool_output_truncation": {
-                    "enabled": True,
-                    "max_bytes": 9000,
                 },
             },
         ).merged_with_defaults(),
@@ -58,10 +52,6 @@ def _build_effective_config() -> EffectiveSourceSystemConfig:
                     "enabled": True,
                     "max_bytes": 12000,
                 },
-                "external_tool_output_truncation": {
-                    "enabled": True,
-                    "max_bytes": 9000,
-                },
             },
         ),
         version=1,
@@ -72,7 +62,7 @@ def _build_effective_config() -> EffectiveSourceSystemConfig:
 async def test_reply_binds_source_output_truncation_contexts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """reply 进入父类前应把三段 runtime 截断上下文全部接好。"""
+    """reply 进入父类前应把 runtime 截断上下文接好。"""
     agent = object.__new__(SWEAgent)
     agent._workspace_dir = Path(".")
     agent._task_tracker = None
@@ -108,7 +98,6 @@ async def test_reply_binds_source_output_truncation_contexts(
         assert structured_model is None
         assert get_current_recent_max_bytes() == 32000
         assert get_current_file_read_max_bytes() == 12000
-        assert get_current_external_tool_output_max_bytes() == 9000
         assert get_current_tool_result_retention_days() == 8
         return SimpleNamespace(ok=True)
 
@@ -128,7 +117,6 @@ async def test_reply_binds_source_output_truncation_contexts(
         finally:
             set_current_recent_max_bytes(None)
             set_current_file_read_max_bytes(None)
-            set_current_external_tool_output_max_bytes(None)
             set_current_tool_result_retention_days(None)
 
     assert result.ok is True

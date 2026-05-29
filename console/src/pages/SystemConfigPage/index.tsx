@@ -310,10 +310,6 @@ export default function SystemConfigPage() {
     draftConfig,
     "file_read_truncation",
   );
-  const externalToolOutputTruncationState = readImmediateTruncationConfig(
-    draftConfig,
-    "external_tool_output_truncation",
-  );
 
   const handleDelete = async () => {
     if (formDisabled) {
@@ -500,7 +496,7 @@ export default function SystemConfigPage() {
               <div className={styles.toolResultIntro}>
                 {t("sourceSystemConfigPage.toolResultCompactIntro", {
                   defaultValue:
-                    "当前 Source 下工具历史压缩和即时文本输出截断的解析配置。",
+                    "当前 Source 下工具历史压缩和文件读取即时截断的解析配置。",
                 })}
               </div>
               <section className={styles.toolOutputSection}>
@@ -687,139 +683,6 @@ export default function SystemConfigPage() {
                 )}
               </section>
 
-              <section className={styles.toolOutputSection}>
-                <div className={styles.toolOutputSectionHeader}>
-                  <div className={styles.switchCopy}>
-                    <span className={styles.switchTitle}>
-                      {t("sourceSystemConfigPage.externalToolTruncationTitle", {
-                        defaultValue: "外部工具输出截断",
-                      })}
-                    </span>
-                    <span className={styles.switchDescription}>
-                      {t(
-                        "sourceSystemConfigPage.externalToolTruncationDescription",
-                        {
-                          defaultValue:
-                            "仅控制 SWE 接收到的外部工具文本块；缺少显式配置时不新增截断。",
-                        },
-                      )}
-                    </span>
-                  </div>
-                  <Tag
-                    color={
-                      externalToolOutputTruncationState.explicit
-                        ? "green"
-                        : "default"
-                    }
-                  >
-                    {externalToolOutputTruncationState.explicit
-                      ? externalToolOutputTruncationState.config.enabled
-                        ? t("sourceSystemConfigPage.externalToolEnabledState", {
-                            defaultValue: "显式启用",
-                          })
-                        : t(
-                            "sourceSystemConfigPage.externalToolDisabledState",
-                            {
-                              defaultValue: "显式关闭",
-                            },
-                          )
-                      : t("sourceSystemConfigPage.externalToolMissingState", {
-                          defaultValue: "未启用",
-                        })}
-                  </Tag>
-                </div>
-                {externalToolOutputTruncationState.explicit ? (
-                  <>
-                    <div className={styles.switchRow}>
-                      <div className={styles.switchCopy}>
-                        <span className={styles.switchTitle}>
-                          {t(
-                            "sourceSystemConfigPage.externalToolEnabledTitle",
-                            {
-                              defaultValue: "启用外部工具输出截断",
-                            },
-                          )}
-                        </span>
-                        <span className={styles.switchDescription}>
-                          {t(
-                            "sourceSystemConfigPage.externalToolEnabledDescription",
-                            {
-                              defaultValue:
-                                "关闭后 SWE 不截断已接收到的外部工具文本输出。",
-                            },
-                          )}
-                        </span>
-                      </div>
-                      <Switch
-                        checked={
-                          externalToolOutputTruncationState.config.enabled
-                        }
-                        disabled={formDisabled}
-                        onChange={(checked) =>
-                          handleImmediateTruncationEnabledChange(
-                            "external_tool_output_truncation",
-                            checked,
-                          )
-                        }
-                      />
-                    </div>
-                    <div className={styles.numberGrid}>
-                      <label className={styles.numberField}>
-                        <span className={styles.numberLabel}>
-                          {t(
-                            "sourceSystemConfigPage.externalToolMaxBytesLabel",
-                            {
-                              defaultValue: "文本片段字节数",
-                            },
-                          )}
-                        </span>
-                        <InputNumber
-                          min={1000}
-                          step={1000}
-                          value={
-                            externalToolOutputTruncationState.config.max_bytes
-                          }
-                          disabled={
-                            formDisabled ||
-                            !externalToolOutputTruncationState.config.enabled
-                          }
-                          onChange={(value) =>
-                            handleImmediateTruncationMaxBytesChange(
-                              "external_tool_output_truncation",
-                              value,
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-                    <Button
-                      disabled={formDisabled}
-                      onClick={() =>
-                        handleRestoreImmediateTruncationInheritance(
-                          "external_tool_output_truncation",
-                        )
-                      }
-                    >
-                      {t("sourceSystemConfigPage.restoreInheritance", {
-                        defaultValue: "恢复继承",
-                      })}
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    disabled={formDisabled}
-                    onClick={() =>
-                      handleEnableImmediateTruncation(
-                        "external_tool_output_truncation",
-                      )
-                    }
-                  >
-                    {t("sourceSystemConfigPage.enableExternalToolTruncation", {
-                      defaultValue: "启用截断",
-                    })}
-                  </Button>
-                )}
-              </section>
             </Card>
 
             <div className={styles.actionRow}>

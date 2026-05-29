@@ -22,8 +22,7 @@ export interface ImmediateTruncationConfig {
 }
 
 export type ImmediateTruncationConfigKey =
-  | "file_read_truncation"
-  | "external_tool_output_truncation";
+  | "file_read_truncation";
 
 export interface ImmediateTruncationState {
   explicit: boolean;
@@ -62,12 +61,6 @@ export const FILE_READ_TRUNCATION_DEFAULTS: ImmediateTruncationConfig = {
   enabled: true,
   max_bytes: 50000,
 };
-
-export const EXTERNAL_TOOL_OUTPUT_TRUNCATION_DEFAULTS: ImmediateTruncationConfig =
-  {
-    enabled: false,
-    max_bytes: 50000,
-  };
 
 export const IMMEDIATE_TRUNCATION_MIN_BYTES = 1000;
 
@@ -197,10 +190,7 @@ export function readImmediateTruncationConfig(
   config: SourceSystemConfig,
   key: ImmediateTruncationConfigKey,
 ): ImmediateTruncationState {
-  const defaults =
-    key === "file_read_truncation"
-      ? FILE_READ_TRUNCATION_DEFAULTS
-      : EXTERNAL_TOOL_OUTPUT_TRUNCATION_DEFAULTS;
+  const defaults = FILE_READ_TRUNCATION_DEFAULTS;
   const rawValue = config[key];
   if (!isPlainObject(rawValue)) {
     return {
@@ -231,10 +221,7 @@ export function writeImmediateTruncationValue<
   key: K,
   value: ImmediateTruncationConfig[K],
 ): SourceSystemConfig {
-  const defaults =
-    configKey === "file_read_truncation"
-      ? FILE_READ_TRUNCATION_DEFAULTS
-      : EXTERNAL_TOOL_OUTPUT_TRUNCATION_DEFAULTS;
+  const defaults = FILE_READ_TRUNCATION_DEFAULTS;
   const nextConfig = structuredClone(config);
   const rawValue = nextConfig[configKey];
   if (!isPlainObject(rawValue)) {
@@ -256,10 +243,7 @@ export function enableImmediateTruncationConfig(
   config: SourceSystemConfig,
   configKey: ImmediateTruncationConfigKey,
 ): SourceSystemConfig {
-  const defaults =
-    configKey === "file_read_truncation"
-      ? FILE_READ_TRUNCATION_DEFAULTS
-      : EXTERNAL_TOOL_OUTPUT_TRUNCATION_DEFAULTS;
+  const defaults = FILE_READ_TRUNCATION_DEFAULTS;
   const nextConfig = writeImmediateTruncationValue(
     config,
     configKey,
@@ -322,10 +306,6 @@ export function validateToolOutputConfigs(
     validateImmediateTruncationConfig(
       readImmediateTruncationConfig(config, "file_read_truncation"),
       "文件读取输出片段字节数",
-    ) ||
-    validateImmediateTruncationConfig(
-      readImmediateTruncationConfig(config, "external_tool_output_truncation"),
-      "外部工具输出文本片段字节数",
     )
   );
 }

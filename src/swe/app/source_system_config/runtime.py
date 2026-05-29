@@ -10,8 +10,6 @@ from typing import Any, Generator
 from swe.config.config import ToolResultCompactConfig
 
 from .registry import (
-    EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING,
-    EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING,
     FILE_READ_TRUNCATION_ENABLED_SETTING,
     FILE_READ_TRUNCATION_MAX_BYTES_SETTING,
     SourceSystemConfigSetting,
@@ -115,37 +113,6 @@ def resolve_file_read_truncation_config(
             _get_immediate_truncation_value(
                 source_payload,
                 FILE_READ_TRUNCATION_MAX_BYTES_SETTING,
-            ),
-        ),
-        explicit=True,
-    )
-
-
-def resolve_external_tool_output_truncation_config(
-    source_config: Any | None = None,
-) -> ImmediateTruncationConfig:
-    """解析外部工具文本输出截断配置，缺失时不新增 SWE 侧截断。"""
-    source_payload = _extract_immediate_truncation_override(
-        "external_tool_output_truncation",
-        source_config,
-    )
-    if source_payload is None:
-        return ImmediateTruncationConfig(
-            enabled=False,
-            max_bytes=EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING.default_value,
-            explicit=False,
-        )
-    return ImmediateTruncationConfig(
-        enabled=bool(
-            _get_immediate_truncation_value(
-                source_payload,
-                EXTERNAL_TOOL_OUTPUT_TRUNCATION_ENABLED_SETTING,
-            ),
-        ),
-        max_bytes=int(
-            _get_immediate_truncation_value(
-                source_payload,
-                EXTERNAL_TOOL_OUTPUT_TRUNCATION_MAX_BYTES_SETTING,
             ),
         ),
         explicit=True,

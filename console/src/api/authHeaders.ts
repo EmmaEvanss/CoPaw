@@ -6,6 +6,7 @@ import { getExternalToken, isExternalTokenEnabled } from "./externalToken";
 import { getUserId } from "../utils/identity";
 import { getIframeContext } from "../stores/iframeStore";
 import { DEFAULT_SOURCE_ID, DEFAULT_BBK_ID, DEFAULT_USER_NAME } from "../constants/identity";
+import { COOKIE_KEYS } from "../layouts/constants";
 // ==================== userId 统一整改结束 ====================
 
 /**
@@ -26,7 +27,7 @@ export function buildAuthHeaders(): Record<string, string> {
   if (isExternalTokenEnabled()) {
     const externalToken = getExternalToken();
     if (externalToken) {
-      headers.Authorization = `Bearer ${externalToken}`;
+      headers['X-Auth-Authorization'] = `Bearer ${externalToken}`;
     }
   } else {
     // 回退到原有 token 逻辑
@@ -62,13 +63,20 @@ export function buildAuthHeaders(): Record<string, string> {
   // 4. 自定义 headers 数组（父窗口通过 auth 字段传递）
   // 注意：排除 X-User-Id，因为已由 getUserId() 处理
   const iframeContext = getIframeContext();
+  if (iframeContext.isSuperManager) {
+    headers["X-User-Role"] = "admin";
+  } else if (iframeContext.manager) {
+    headers["X-User-Role"] = "manager";
+  }
+
   if (iframeContext.authHeaders?.length) {
     for (const item of iframeContext.authHeaders) {
       // 跳过 X-User-Id，避免覆盖上面设置的值
       if (
         item.headerName &&
         item.headerValue !== undefined &&
-        item.headerName !== "X-User-Id"
+        item.headerName !== "X-User-Id" &&
+        item.headerName !== "X-User-Role"
       ) {
         headers["x-header-" + item.headerName] = item.headerValue;
       }
@@ -77,7 +85,7 @@ export function buildAuthHeaders(): Record<string, string> {
   // ==================== userId 统一整改结束 ====================
 
   // 5. Source ID（来自 iframe context，用于数据隔离）
-  // 只有 iframe 模式下有值时才发送 X-Source-Id
+  // 独立访问时也必须携带默认 source，避免后端严格隔离校验直接拒绝请求
   const sourceId = iframeContext.source || DEFAULT_SOURCE_ID;
   if (sourceId) {
     headers["X-Source-Id"] = sourceId;
@@ -90,21 +98,65 @@ export function buildAuthHeaders(): Record<string, string> {
     headers["X-Bbk-Id"] = bbkId;
   }
 
-  // 7. Username
-  const userName = iframeContext.userName || DEFAULT_USER_NAME;
+  // 7. Scope ID（tenantId和sourceId拼接而成）
+  headers["X-Scope-Id"] = `${userId}-${sourceId}`
+
+  // 8. Username
+  const userName = iframeContext.userName || DEFAULT_USER_NAME
   if (userName) {
     headers["X-User-Name"] = encodeURIComponent(userName);
   }
 
-  // 8. Space（来自 iframe context）
+  // 反馈落库需要保留支行与岗位信息，随请求上下文一起透传给后端。
+  if (iframeContext.orgCode) {
+    headers["X-Org-Code"] = iframeContext.orgCode;
+  }
+  if (iframeContext.positionId) {
+    headers["X-Position-Id"] = iframeContext.positionId;
+  }
+
+  // 9. Space（来自 iframe context）
   if (iframeContext.space) {
     headers["space"] = iframeContext.space;
   }
 
-  // 9. Cookie（仅在用户变更时添加）
+  // 10. Cookie（优先使用 iframeContext 中 userChange=true 时的值，否则使用 document.cookie）
+  let cookieData;
+  // 定义需要替换的cookie key映射关系
+  const cookieKeyMap: Record<string, string> = {
+    'userId': COOKIE_KEYS.userId,
+    'sysId': COOKIE_KEYS.sysId,
+    'bbk': COOKIE_KEYS.bbk,
+    'orgCode': COOKIE_KEYS.orgCode,
+    'orgLvl': COOKIE_KEYS.orgLvl,
+    'token': COOKIE_KEYS.token,
+    'positionId': COOKIE_KEYS.positionId
+  };
+
   if (iframeContext.userChange) {
-    headers["x-header-cookie"] = document.cookie;
+    // 优先使用 iframeContext 中的值（从 fetchCustomerInfo 接口获取的最新cookie）
+    let cookieString = document.cookie;
+    Object.entries(iframeContext).forEach(([key, value]) => {
+      if (key in cookieKeyMap && value) {
+        const cookieKey = cookieKeyMap[key as keyof typeof cookieKeyMap];
+        const searchRegex = new RegExp(`${cookieKey}=[^;]*`, 'g');
+
+        if (cookieString.includes(cookieKey)) {
+          // 如果cookie中存在该key，替换其值
+          cookieString = cookieString.replace(searchRegex, `${cookieKey}=${encodeURIComponent(value)}`);
+        } else {
+          // 如果cookie中不存在该key，添加新的cookie
+          cookieString += `; ${cookieKey}=${encodeURIComponent(value)}`;
+        }
+      }
+    });
+    cookieData = cookieString;
+  } else {
+    // 未变更时，直接使用 document.cookie（浏览器会自动更新过期的cookie）
+    cookieData = document.cookie;
   }
+
+  headers["x-header-cookie"] = cookieData;
 
   return headers;
 }

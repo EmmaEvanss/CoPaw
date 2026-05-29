@@ -3,6 +3,7 @@
 
 from swe.tracing.sanitizer import (
     SENSITIVE_KEYS,
+    register_sensitive_values,
     sanitize_dict,
     sanitize_string,
     sanitize_user_message,
@@ -132,6 +133,15 @@ class TestSanitizeDict:
         assert len(result["items"][0]) == 103  # 100 + "..."
         assert result["items"][1] == "short"
 
+    def test_sanitize_list_string_values_by_registered_secret(self):
+        """列表中的字符串也应按登记的 secret 值脱敏。"""
+        register_sensitive_values(["tenant-secret"])
+        data = {"items": ["tenant-secret", "ok"]}
+
+        result = sanitize_dict(data)
+
+        assert result["items"] == ["[REDACTED]", "ok"]
+
     def test_sanitize_all_sensitive_keys(self):
         """Test that all SENSITIVE_KEYS are redacted."""
         data = {key: f"value_{key}" for key in SENSITIVE_KEYS}
@@ -179,6 +189,14 @@ class TestSanitizeString:
 
         assert len(result) == 103  # 100 + "..."
         assert result.endswith("...")
+
+    def test_redacts_registered_runtime_secret_value(self):
+        """运行时注入的 secret 值应按值脱敏。"""
+        register_sensitive_values(["tenant-secret"])
+
+        result = sanitize_string("token=tenant-secret", max_length=500)
+
+        assert result == "token=[REDACTED]"
 
 
 class TestSanitizeUserMessage:

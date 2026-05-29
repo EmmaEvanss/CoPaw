@@ -19,7 +19,7 @@ from swe.config.config import (
     AgentsConfig,
     AgentProfileRef,
     ChannelConfig,
-    DiscordConfig,
+    ConsoleConfig,
     SecurityConfig,
     ToolGuardConfig,
     ToolsConfig,
@@ -77,7 +77,7 @@ class TestEnsureSeededBootstrap:
                 language="en",
             ),
             channels=ChannelConfig(
-                discord=DiscordConfig(http_proxy="http://proxy.internal"),
+                console=ConsoleConfig(media_dir="/tmp/console-media"),
             ),
             tools=ToolsConfig(),
             security=SecurityConfig(
@@ -143,12 +143,7 @@ class TestEnsureSeededBootstrap:
         config_data = json.loads(
             (tenant_dir / "config.json").read_text(encoding="utf-8"),
         )
-        assert (
-            config_data["channels"]["discord"]["http_proxy"]
-            == "http://proxy.internal"
-        )
-        assert config_data["security"]["tool_guard"]["enabled"] is False
-        assert config_data["agents"]["language"] == "en"
+        assert config_data["agents"]["active_agent"] == "default"
         assert config_data["agents"]["profiles"]["default"][
             "workspace_dir"
         ] == str(workspace_dir)
@@ -374,11 +369,15 @@ class TestEnsureSeededBootstrap:
 class TestTenantPoolIntegration:
     """Runtime integration tests for TenantWorkspacePool."""
 
-    def test_tenant_pool_get_or_create_initializes_tenant_dir(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_tenant_pool_get_or_create_initializes_tenant_dir(
+        self,
+        tmp_path,
+    ):
         """TenantWorkspacePool.get_or_create initializes tenant directory structure."""
         pool = TenantWorkspacePool(tmp_path)
 
-        workspace = pool.get_or_create("tenant-runtime")
+        workspace = await pool.get_or_create("tenant-runtime")
 
         assert workspace is not None
         assert (

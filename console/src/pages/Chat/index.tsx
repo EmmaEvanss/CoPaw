@@ -29,6 +29,7 @@ import sessionApi from "./sessionApi";
 import defaultConfig, { getDefaultConfig } from "./OptionsPanel/defaultConfig";
 import { chatApi } from "../../api/modules/chat";
 import { cronJobApi } from "../../api/modules/cronjob";
+import { feedbackApi } from "../../api/modules/feedback";
 import { getApiUrl } from "../../api/config";
 import { buildAuthHeaders } from "../../api/authHeaders";
 import { providerApi } from "../../api/modules/provider";
@@ -37,9 +38,11 @@ import type {
   ModelInfo,
   CronJobSpecOutput,
 } from "../../api/types";
+import type { FeedbackRecord } from "../../api/types/feedback";
 import ModelSelector from "./ModelSelector";
 import { useTheme } from "../../contexts/ThemeContext";
 import { useAgentStore } from "../../stores/agentStore";
+import { useSourceSystemConfigStore } from "../../stores/sourceSystemConfigStore";
 // ==================== 组件引入方式变更 (Kun He) ====================
 import { useChatAnywhereInput } from "@/components/agentscope-chat";
 import DragUploadOverlay from "@/components/agentscope-chat/DragUploadOverlay";
@@ -92,10 +95,12 @@ import {
   shouldStopBackendForFetchAbort,
 } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Chat/hooks/abortReasons";
 import RuntimeResponseCard from "./components/RuntimeResponseCard";
+import { isResponseFeedbackUserAllowed } from "./components/ResponseFeedbackCard/whitelist";
 import ApprovalActionCard from "./components/ApprovalActionCard";
 import TaskRunGroupCard from "./components/TaskRunGroupCard";
 import TaskProgressFloatingCard from "./components/TaskProgressFloatingCard";
 import GeneratedFilesDrawer from "./components/GeneratedFilesDrawer";
+import { AutoPreviewHtmlProvider } from "@/components/agentscope-chat/AutoPreviewHtmlContext";
 import type {
   ChatApprovalActionCardData,
   ChatRuntimeRequestCardData,
@@ -103,12 +108,71 @@ import type {
   ChatTaskRunGroupCardData,
 } from "./messageMeta";
 import {
+  buildFeedbackLookup,
+  collectFeedbackResponsesFromMessages,
+  findFeedbackForResponse,
+  type FeedbackLookupMap,
+} from "./feedbackLookup";
+import {
+  ChatFeedbackRenderProvider,
+  useChatFeedbackRenderContext,
+  type ChatFeedbackRenderContextValue,
+} from "./feedbackRenderContext";
+import {
   CHAT_TASK_PROGRESS_UPDATE_EVENT,
+  isTaskProgressUpdateForActiveSession,
+  normalizeTaskProgressUpdateEventDetail,
   type ChatTaskProgressData,
+  type ChatTaskProgressUpdateDetail,
 } from "./taskProgressEvents";
+import { isChatTaskProgressEnabled } from "./taskProgressConfig";
 
 const CHAT_ATTACHMENT_MAX_MB = 10;
 const TASK_RUNNING_POLL_MS = 30_000;
+
+const chatCardRenderers = {
+  AgentScopeRuntimeRequestCard: (props: {
+    data: ChatRuntimeRequestCardData;
+  }) => <RuntimeRequestCard {...props} />,
+  AgentScopeRuntimeResponseCard: (props: {
+    data: ChatRuntimeResponseCardData;
+    isLast?: boolean;
+  }) => {
+    const feedback = useChatFeedbackRenderContext();
+    return (
+      <RuntimeResponseCard
+        {...props}
+        chatId={feedback.feedbackChatId}
+        existingFeedback={
+          feedback.feedbackLookupPending
+            ? null
+            : findFeedbackForResponse(feedback.feedbackLookup, props.data)
+        }
+        loadingFeedback={feedback.feedbackLookupPending}
+        onFeedbackSaved={feedback.onFeedbackSaved}
+        sessionId={feedback.feedbackSessionId}
+        task={feedback.feedbackTask}
+      />
+    );
+  },
+  ApprovalAction: (props: { data: ChatApprovalActionCardData }) => (
+    <ApprovalActionCard {...props} />
+  ),
+  TaskRunGroupCard: (props: { data: ChatTaskRunGroupCardData }) => {
+    const feedback = useChatFeedbackRenderContext();
+    return (
+      <TaskRunGroupCard
+        {...props}
+        chatId={feedback.feedbackChatId}
+        feedbackLookup={feedback.feedbackLookup}
+        loadingFeedback={feedback.feedbackLookupPending}
+        onFeedbackSaved={feedback.onFeedbackSaved}
+        sessionId={feedback.feedbackSessionId}
+        task={feedback.feedbackTask}
+      />
+    );
+  },
+};
 const TASK_PAGE_POLL_MS = 30_000;
 const TASK_PENDING_POLL_MS = 30_000;
 
@@ -421,11 +485,21 @@ export default function ChatPage() {
   );
   const { selectedAgent } = useAgentStore();
   const [refreshKey, setRefreshKey] = useState(0);
+  const [autoPreviewTriggerKey, setAutoPreviewTriggerKey] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounterRef = useRef(0);
   const runtimeLoadingBridgeRef = useRef<RuntimeLoadingBridgeApi | null>(null);
   const { message } = useAppMessage();
-  const { setSessionLoading, setSessions } = useChatAnywhereSessionsState();
+  const {
+    sessions,
+    setSessionLoading,
+    setSessions,
+    currentSessionId: activeSessionId,
+  } = useChatAnywhereSessionsState();
+  const sourceSystemConfig = useSourceSystemConfigStore(
+    (state) => state.config,
+  );
+  const taskProgressEnabled = isChatTaskProgressEnabled(sourceSystemConfig);
 
   // useTransition for non-urgent state updates (badge clearing)
   const [, startTransition] = useTransition();
@@ -448,7 +522,32 @@ export default function ChatPage() {
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<ChatTaskProgressData | null>).detail;
+      if (!taskProgressEnabled) {
+        setTaskProgress(null);
+        return;
+      }
+      const update = normalizeTaskProgressUpdateEventDetail(
+        (event as CustomEvent<ChatTaskProgressUpdateDetail>).detail,
+      );
+      if (
+        !isTaskProgressUpdateForActiveSession(update, [
+          chatId,
+          activeSessionId,
+          window.currentSessionId,
+          chatId ? sessionApi.getChatIdForSession(chatId) : null,
+          activeSessionId
+            ? sessionApi.getChatIdForSession(activeSessionId)
+            : null,
+          chatId ? sessionApi.getLogicalSessionId(chatId) : null,
+          activeSessionId
+            ? sessionApi.getLogicalSessionId(activeSessionId)
+            : null,
+        ])
+      ) {
+        return;
+      }
+
+      const detail = update.task_progress;
       if (!detail) {
         setTaskProgress(null);
         return;
@@ -468,7 +567,13 @@ export default function ChatPage() {
     document.addEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
     return () =>
       document.removeEventListener(CHAT_TASK_PROGRESS_UPDATE_EVENT, handler);
-  }, []);
+  }, [activeSessionId, chatId, taskProgressEnabled]);
+
+  useEffect(() => {
+    if (!taskProgressEnabled) {
+      setTaskProgress(null);
+    }
+  }, [taskProgressEnabled]);
 
   const isChatActive = useCallback(() => isChatActiveRef.current, []);
 
@@ -633,14 +738,10 @@ export default function ChatPage() {
     const chatId = task?.task?.chat_id;
 
     if (chatId) {
-      console.info("[Chat] Navigating from taskId to chatId:", {
-        taskId: taskIdRef.current,
-        chatId,
-      });
+      setAutoPreviewTriggerKey((prev) => prev + 1);
       navigate(`/chat/${chatId}`, { replace: true });
       taskIdRef.current = null;
     } else {
-      console.warn("[Chat] taskId not found or no chat_id:", taskIdRef.current);
       taskIdRef.current = null;
     }
   }, [jobs, navigate]);
@@ -675,10 +776,132 @@ export default function ChatPage() {
     () => deriveChatTaskState(jobs, chatId),
     [jobs, chatId],
   );
+  const feedbackTask = useMemo(
+    () =>
+      currentTask
+        ? {
+            cronTaskId: currentTask.id,
+            cronTaskName: currentTask.name || currentTask.id,
+          }
+        : null,
+    [currentTask],
+  );
+  const [feedbackItems, setFeedbackItems] = useState<FeedbackRecord[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const feedbackUserId = useIframeStore((state) => state.userId);
+  const feedbackAllowed = useMemo(
+    () => isResponseFeedbackUserAllowed(feedbackUserId),
+    [feedbackUserId],
+  );
+  const feedbackChatId = useMemo(() => {
+    const routeChatId = chatId
+      ? sessionApi.getChatIdForSession(chatId)
+      : null;
+    if (routeChatId) {
+      return routeChatId;
+    }
+
+    const fallbackSessionId = activeSessionId || window.currentSessionId || "";
+    return sessionApi.getChatIdForSession(fallbackSessionId);
+  }, [chatId, activeSessionId, refreshKey]);
+  const feedbackSessionId = useMemo(() => {
+    const activeSession = sessions.find(
+      (session) =>
+        session.id === activeSessionId ||
+        session.id === chatId ||
+        (session as { sessionId?: string }).sessionId === activeSessionId ||
+        (session as { sessionId?: string }).sessionId === chatId,
+    ) as unknown as { sessionId?: string; session_id?: string } | undefined;
+
+    return (
+      activeSession?.sessionId ||
+      activeSession?.session_id ||
+      sessionApi.getLogicalSessionId(activeSessionId || "") ||
+      window.currentSessionId ||
+      chatId ||
+      null
+    );
+  }, [activeSessionId, chatId, sessions]);
+  const activeFeedbackResponses = useMemo(() => {
+    const activeSession = sessions.find(
+      (session) =>
+        session.id === activeSessionId ||
+        session.id === chatId ||
+        (session as { sessionId?: string }).sessionId === activeSessionId ||
+        (session as { sessionId?: string }).sessionId === chatId,
+    );
+    return collectFeedbackResponsesFromMessages(activeSession?.messages || []);
+  }, [activeSessionId, chatId, sessions]);
+  const feedbackLookup = useMemo<FeedbackLookupMap>(
+    () => buildFeedbackLookup(feedbackItems, activeFeedbackResponses),
+    [activeFeedbackResponses, feedbackItems],
+  );
   const hasRunningTask = useMemo(
     () => tasks.some((task) => task.task?.is_running),
     [tasks],
   );
+  const lastFeedbackSessionIdRef = useRef<string | null>(null);
+  const feedbackLookupPending = Boolean(
+    feedbackAllowed &&
+    feedbackSessionId &&
+      (feedbackLoading ||
+        feedbackSessionId !== lastFeedbackSessionIdRef.current),
+  );
+
+  useEffect(() => {
+    if (!feedbackAllowed) {
+      setFeedbackItems([]);
+      setFeedbackLoading(false);
+      lastFeedbackSessionIdRef.current = null;
+      return;
+    }
+
+    const sessionId = feedbackSessionId;
+    if (!sessionId) {
+      setFeedbackLoading(false);
+      return;
+    }
+
+    const sessionChanged = sessionId !== lastFeedbackSessionIdRef.current;
+
+    // 会话确实切换时清空旧数据，避免显示上一个会话的反馈
+    if (sessionChanged) {
+      setFeedbackItems([]);
+    }
+    lastFeedbackSessionIdRef.current = sessionId;
+
+    let cancelled = false;
+    setFeedbackLoading(sessionChanged);
+    feedbackApi
+      .getSessionFeedbacks({
+        chatId: feedbackChatId,
+        sessionId,
+      })
+      .then((result) => {
+        if (cancelled) return;
+        setFeedbackItems(result.items || []);
+        setFeedbackLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          if (sessionChanged) {
+            setFeedbackItems([]);
+          }
+          setFeedbackLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [feedbackAllowed, feedbackChatId, feedbackSessionId, refreshKey]);
+
+  const handleFeedbackSaved = useCallback((feedback: FeedbackRecord) => {
+    setFeedbackItems((prev) => [
+      feedback,
+      ...prev.filter((item) => item.id !== feedback.id),
+    ]);
+  }, []);
 
   useEffect(() => {
     void refreshJobs();
@@ -765,12 +988,16 @@ export default function ChatPage() {
     (task: CronJobSpecOutput) => {
       const taskOpenTarget = getTaskOpenTarget(task);
       if (!taskOpenTarget) return;
+      const shouldAutoPreviewOnOpen = taskOpenTarget !== chatIdRef.current;
 
       // Force loading to render immediately before navigate triggers re-render
       flushSync(() => {
         setSessionLoading(true);
       });
 
+      if (shouldAutoPreviewOnOpen) {
+        setAutoPreviewTriggerKey((prev) => prev + 1);
+      }
       navigate(`/chat/${taskOpenTarget}`, { replace: true });
     },
     [navigate, setSessionLoading],
@@ -1199,6 +1426,26 @@ export default function ChatPage() {
   }, []);
   // ==================== Drag & drop end ====================
 
+  const feedbackRenderContextValue =
+    useMemo<ChatFeedbackRenderContextValue>(
+      () => ({
+        feedbackChatId,
+        feedbackLookup,
+        feedbackLookupPending,
+        feedbackSessionId,
+        feedbackTask,
+        onFeedbackSaved: handleFeedbackSaved,
+      }),
+      [
+        feedbackChatId,
+        feedbackLookup,
+        feedbackLookupPending,
+        feedbackSessionId,
+        feedbackTask,
+        handleFeedbackSaved,
+      ],
+    );
+
   const options = useMemo(() => {
     const i18nConfig = getDefaultConfig(
       t,
@@ -1279,7 +1526,9 @@ export default function ChatPage() {
       sender: {
         ...senderConfig,
         beforeSubmit: handleBeforeSubmit,
-        beforeUI: <TaskProgressFloatingCard progress={taskProgress} />,
+        beforeUI: taskProgressEnabled ? (
+          <TaskProgressFloatingCard progress={taskProgress} />
+        ) : null,
         allowSpeech: false,
         attachments: {
           trigger: function AttachmentTrigger(props: AttachmentTriggerProps) {
@@ -1312,21 +1561,7 @@ export default function ChatPage() {
         hideBuiltInSessionList: true,
         api: sessionApi,
       },
-      cards: {
-        AgentScopeRuntimeRequestCard: (props: {
-          data: ChatRuntimeRequestCardData;
-        }) => <RuntimeRequestCard {...props} />,
-        AgentScopeRuntimeResponseCard: (props: {
-          data: ChatRuntimeResponseCardData;
-          isLast?: boolean;
-        }) => <RuntimeResponseCard {...props} />,
-        ApprovalAction: (props: { data: ChatApprovalActionCardData }) => (
-          <ApprovalActionCard {...props} />
-        ),
-        TaskRunGroupCard: (props: { data: ChatTaskRunGroupCardData }) => (
-          <TaskRunGroupCard {...props} />
-        ),
-      },
+      cards: chatCardRenderers,
       api: {
         ...defaultConfig.api,
         fetch: customFetch,
@@ -1410,6 +1645,8 @@ export default function ChatPage() {
     brandTheme.brandName,
     customFetch,
     copyResponse,
+    chatId,
+    activeSessionId,
     handleFileUpload,
     isComposingRef,
     isDark,
@@ -1443,57 +1680,65 @@ export default function ChatPage() {
 
   return (
     <AgentScopeRuntimeWebUIComposedProvider options={options} cards={cards}>
-      <div
-        style={{
-          height: "100%",
-          width: "100%",
-          display: "flex",
-          flexDirection: "row",
+      <ChatFeedbackRenderProvider value={feedbackRenderContextValue}>
+        <AutoPreviewHtmlProvider
+          triggerKey={autoPreviewTriggerKey}
+          onConsumed={() => setAutoPreviewTriggerKey(0)}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: "100%",
+              display: "flex",
+              flexDirection: "row",
+            }}
+          >
+            {/* ==================== 首页改版 (Kun He) ==================== */}
+            {/* 聊天专用侧栏：支持折叠为64px工具条 */}
+            <ChatSidebar
+              tasks={tasks}
+              selectedTaskId={currentTask?.id}
+              onCreateSession={handleCreateSessionFromSidebar}
+              onTaskClick={handleTaskOpen}
+              onTaskPause={handleTaskPause}
+              onTaskRun={handleTaskRun}
+              onTaskResume={handleTaskResume}
+              onTaskDelete={handleTaskDelete}
+            />
+            {/* ==================== 首页改版结束 ==================== */}
+            <div
+              className={styles.chatMessagesArea}
+              style={{ flex: 1, minWidth: 0, position: "relative" }}
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+            >
+              <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
+              <DragUploadOverlay
+                visible={isDragging}
+                onClose={handleDragOverlayClose}
+              />
+              <ConversationQuickNav />
+            </div>
+          </div>
+        </AutoPreviewHtmlProvider>
+      </ChatFeedbackRenderProvider>
+
+      <Modal
+        open={showModelPrompt}
+        closable={false}
+        footer={null}
+        width={480}
+        styles={{
+          content: isDark
+            ? {
+                background: "#1f1f1f",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+              }
+            : undefined,
         }}
       >
-        {/* ==================== 首页改版 (Kun He) ==================== */}
-        {/* 聊天专用侧栏：支持折叠为64px工具条 */}
-        <ChatSidebar
-          tasks={tasks}
-          selectedTaskId={currentTask?.id}
-          onCreateSession={handleCreateSessionFromSidebar}
-          onTaskClick={handleTaskOpen}
-          onTaskPause={handleTaskPause}
-          onTaskRun={handleTaskRun}
-          onTaskResume={handleTaskResume}
-          onTaskDelete={handleTaskDelete}
-        />
-        {/* ==================== 首页改版结束 ==================== */}
-        <div
-          className={styles.chatMessagesArea}
-          style={{ flex: 1, minWidth: 0, position: "relative" }}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-        >
-          <AgentScopeRuntimeWebUILayout ref={chatRef} key={refreshKey} />
-          <DragUploadOverlay
-            visible={isDragging}
-            onClose={handleDragOverlayClose}
-          />
-          <ConversationQuickNav />
-        </div>
-
-        <Modal
-          open={showModelPrompt}
-          closable={false}
-          footer={null}
-          width={480}
-          styles={{
-            content: isDark
-              ? {
-                  background: "#1f1f1f",
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
-                }
-              : undefined,
-          }}
-        >
           <Result
             icon={<ExclamationCircleOutlined style={{ color: "#faad14" }} />}
             title={
@@ -1528,7 +1773,6 @@ export default function ChatPage() {
             ]}
           />
         </Modal>
-      </div>
     </AgentScopeRuntimeWebUIComposedProvider>
   );
 }

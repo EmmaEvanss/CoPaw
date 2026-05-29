@@ -142,7 +142,7 @@ DEFAULT_HOST = EnvVarLoader.get_str("MONITOR_HOST", "127.0.0.1")
 DB_HOST = EnvVarLoader.get_str("MONITOR_DB_HOST", "")
 DB_PORT = EnvVarLoader.get_int("MONITOR_DB_PORT", 3306, min_value=1)
 DB_USER = EnvVarLoader.get_str("MONITOR_DB_USER", "root")
-DB_ACCESS = EnvVarLoader.get_str("MONITOR_DB_ACCESS", "")
+DB_ACCESS = EnvVarLoader.get_str("MONITOR_DB_ACCESS", "").removeprefix("BEE_")
 DB_NAME = EnvVarLoader.get_str("MONITOR_DB_NAME", "monitor")
 DB_MIN_CONN = EnvVarLoader.get_int("MONITOR_DB_MIN_CONN", 2, min_value=1)
 DB_MAX_CONN = EnvVarLoader.get_int("MONITOR_DB_MAX_CONN", 10, min_value=1)
@@ -196,7 +196,7 @@ HEALTH_CHECK_TIMEOUT = EnvVarLoader.get_float(
 ES_HOST = EnvVarLoader.get_str("ES_HOST", "")
 ES_PORT = EnvVarLoader.get_int("ES_PORT", 9200, min_value=1)
 ES_USER = EnvVarLoader.get_str("ES_USER", "")
-ES_ACCESS = EnvVarLoader.get_str("ES_ACCESS", "")
+ES_ACCESS = EnvVarLoader.get_str("ES_ACCESS", "").removeprefix("BEE_")
 ES_INDEX = EnvVarLoader.get_str("ES_INDEX", "swe_model_outputs")
 # SWE 定时任务恢复预热配置
 # ============================================================
@@ -251,4 +251,19 @@ SWE_WARMUP_TIMEOUT_SECONDS = EnvVarLoader.get_float(
     "MONITOR_SWE_WARMUP_TIMEOUT_SECONDS",
     10.0,
     min_value=1.0,
+)
+
+# ============================================================
+# 用户信息 API 配置
+# ============================================================
+
+USER_INFO_API_URL = EnvVarLoader.get_str("MONITOR_USER_INFO_API_URL", "")
+
+# ============================================================
+# 客户姓名提取 API 配置
+# ============================================================
+
+EXTRACT_CUSTOMER_NAMES_URL = EnvVarLoader.get_str(
+    "MONITOR_EXTRACT_CUSTOMER_NAMES_URL",
+    "",
 )

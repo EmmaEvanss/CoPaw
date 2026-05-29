@@ -9,6 +9,8 @@ from typing import Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .context import canonicalize_scope_id, migrate_legacy_scope_dir_if_needed
+
 
 class AgentProfileRef(BaseModel):
     """root config 中记录的 agent 引用。"""
@@ -155,9 +157,57 @@ class AgentProfileConfig(BaseModel):
     mcp: MCPConfig | None = Field(default=None, description="MCP 配置")
 
 
+def _normalize_workspace_bound_paths(data: object) -> object:
+    """把残留的 legacy scope workspace 路径收敛成 canonical 目录。"""
+    if not isinstance(data, dict):
+        return data
+
+    legacy_scope_prefix = "scope.v1."
+
+    def _rewrite(value: object) -> object:
+        if not isinstance(value, str) or not value:
+            return value
+
+        path = Path(value).expanduser()
+        normalized_parts: list[str] = []
+        changed = False
+        for part in path.parts:
+            if not part.startswith(legacy_scope_prefix):
+                normalized_parts.append(part)
+                continue
+
+            try:
+                normalized_parts.append(canonicalize_scope_id(part))
+            except ValueError:
+                normalized_parts.append(part[len(legacy_scope_prefix) :])
+            else:
+                changed = True
+                continue
+
+            changed = True
+
+        if changed:
+            return str(Path(*normalized_parts))
+        return str(path)
+
+    def _walk(obj: object, key: str | None = None) -> object:
+        if isinstance(obj, dict):
+            return {k: _walk(v, str(k)) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_walk(item, key) for item in obj]
+        if key == "workspace_dir":
+            return _rewrite(obj)
+        return obj
+
+    return _walk(data)
+
+
 def get_tenant_working_dir(swe_root: Path, tenant_id: str) -> Path:
     """获取 tenant 根目录。"""
-    return Path(swe_root).expanduser() / tenant_id
+    return migrate_legacy_scope_dir_if_needed(
+        Path(swe_root).expanduser(),
+        tenant_id,
+    )
 
 
 def get_tenant_config_path(swe_root: Path, tenant_id: str) -> Path:
@@ -198,7 +248,7 @@ def load_root_config(swe_root: Path, tenant_id: str) -> AgentsRootConfig:
         return _build_default_root_config(swe_root, tenant_id)
 
     with open(config_path, "r", encoding="utf-8") as file:
-        data = json.load(file)
+        data = _normalize_workspace_bound_paths(json.load(file))
 
     config = AgentsRootConfig.model_validate(data)
     if not config.agents.profiles:
@@ -238,15 +288,9 @@ def load_agent_config(
     agent_config_path = workspace_dir / "agent.json"
 
     if not agent_config_path.exists():
-        fallback = AgentProfileConfig(
-            id=agent_id,
-            name=agent_id.title(),
-            description=f"{agent_id} agent",
-            workspace_dir=str(workspace_dir),
-            mcp=MCPConfig(clients={}),
+        raise FileNotFoundError(
+            f"Agent config not found: {agent_config_path}",
         )
-        save_agent_config(swe_root, tenant_id, agent_id, fallback)
-        return fallback
 
     with open(agent_config_path, "r", encoding="utf-8") as file:
         data = json.load(file)

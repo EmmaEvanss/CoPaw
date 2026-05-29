@@ -1,3 +1,17 @@
+export const COOKIE_KEYS = {
+  userId: "",
+  sysId: "",
+  bbk: "",
+  orgCode: "",
+  orgLvl: "",
+  token: "",
+  positionId: "",
+} as const;
+// ── LocalStorage Keys ─────────────────────────────────────────────────────
+export const STORAGE_KEYS = {
+  authToken: "copaw_auth_token"
+} as const;
+
 // ── URLs ──────────────────────────────────────────────────────────────────
 
 export const PYPI_URL = "https://pypi.org/pypi/copaw/json";
@@ -11,14 +25,11 @@ export const ONE_HOUR_MS = 60 * 60 * 1000;
 // ── Navigation ────────────────────────────────────────────────────────────
 
 export const DEFAULT_OPEN_KEYS = [
-  "chat-group",
-  "control-group",
-  "agent-group",
-  "settings-group",
-  "analytics-group",
-  "instance-group",
-  "harness-group",
-  "market-group",
+  "creation-center",
+  "run-center",
+  "system-settings",
+  "insight-center",
+  "quality-engineering",
 ];
 
 export const KEY_TO_PATH: Record<string, string> = {
@@ -39,6 +50,7 @@ export const KEY_TO_PATH: Record<string, string> = {
   models: "/models",
   environments: "/environments",
   "agent-config": "/agent-config",
+  "system-config-page": "/system-config-page",
   security: "/security",
   "token-usage": "/token-usage",
   "voice-transcription": "/voice-transcription",
@@ -69,6 +81,7 @@ export const KEY_TO_LABEL: Record<string, string> = {
   tools: "nav.tools",
   mcp: "nav.mcp",
   "agent-config": "nav.agentConfig",
+  "system-config-page": "nav.currentSourceConfig",
   workspace: "nav.workspace",
   models: "nav.models",
   environments: "nav.environments",

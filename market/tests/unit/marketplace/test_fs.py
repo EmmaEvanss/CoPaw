@@ -56,9 +56,55 @@ def test_get_skill_dir_in_marketplace(tmp_path):
 
 def test_get_user_skills_dir(tmp_path):
     from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
 
-    result = get_user_skills_dir(tmp_path, "user1", "agent1")
-    assert result == tmp_path / "user1" / "workspaces" / "agent1" / "skills"
+    result = get_user_skills_dir(tmp_path, "user1", "agent1", "source_a")
+    assert result == (
+        tmp_path
+        / encode_scope_id("user1", "source_a")
+        / "workspaces"
+        / "agent1"
+        / "skills"
+    )
+
+
+def test_get_user_skills_dir_allows_main_service_identity_values(tmp_path):
+    from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
+
+    result = get_user_skills_dir(
+        tmp_path,
+        "alice@example.com",
+        "agent1",
+        "skill:xlsx",
+    )
+
+    assert result == (
+        tmp_path
+        / encode_scope_id("alice@example.com", "skill:xlsx")
+        / "workspaces"
+        / "agent1"
+        / "skills"
+    )
+
+
+def test_get_user_skills_dir_keeps_legacy_scope_directory_untouched(tmp_path):
+    from market.marketplace.fs import get_user_skills_dir
+    from market.runtime.context import encode_scope_id
+
+    canonical_scope_id = encode_scope_id("user1", "source_a")
+    legacy_scope_dir = tmp_path / f"scope.v1.{canonical_scope_id}"
+    legacy_skills_dir = legacy_scope_dir / "workspaces" / "agent1" / "skills"
+    legacy_skills_dir.mkdir(parents=True)
+    (legacy_skills_dir / "legacy.txt").write_text("legacy", encoding="utf-8")
+
+    result = get_user_skills_dir(tmp_path, "user1", "agent1", "source_a")
+
+    assert result == (
+        tmp_path / canonical_scope_id / "workspaces" / "agent1" / "skills"
+    )
+    assert legacy_scope_dir.exists()
+    assert not (result / "legacy.txt").exists()
 
 
 def test_copy_skill_to_user_happy_path(tmp_path):
@@ -67,7 +113,6 @@ def test_copy_skill_to_user_happy_path(tmp_path):
         get_skill_dir,
         get_user_skills_dir,
     )
-    import json
 
     # Setup source skill
     src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-1")
@@ -78,24 +123,31 @@ def test_copy_skill_to_user_happy_path(tmp_path):
         encoding="utf-8",
     )
     # Copy
-    copy_skill_to_user(
+    result = copy_skill_to_user(
         tmp_path / "market",
         "src_a",
         "item-1",
         tmp_path / "swe",
         "user1",
         "my_skill",
-        "test_skill",  # original_name
-        "desc",  # description
-        "admin1",  # distributed_by
-        "1.0.0",  # version
+        "test_skill",
+        "desc",
+        "admin1",
+        "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill"
+    )
+    assert result["status"] == "distributed"
     assert (dst_dir / "SKILL.md").read_text() == "# Skill"
-    data = json.loads((dst_dir / "skill.json").read_text())
-    assert data["source"] == "marketplace:item-1"
-    assert data["distributed_by"] == "admin1"
-    assert data["received_version"] == "1.0.0"
+    assert not (dst_dir / "skill.json").exists()
+    assert result["metadata"] == {
+        "name": "test_skill",
+        "description": "desc",
+        "distributed_by": "admin1",
+        "received_version": "1.0.0",
+    }
 
 
 def test_copy_skill_to_user_missing_skill_md(tmp_path):
@@ -104,7 +156,6 @@ def test_copy_skill_to_user_missing_skill_md(tmp_path):
         get_skill_dir,
         get_user_skills_dir,
     )
-    import json
 
     src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-2")
     src_dir.mkdir(parents=True)
@@ -113,22 +164,31 @@ def test_copy_skill_to_user_missing_skill_md(tmp_path):
         json.dumps({"name": "test"}),
         encoding="utf-8",
     )
-    copy_skill_to_user(
+    result = copy_skill_to_user(
         tmp_path / "market",
         "src_a",
         "item-2",
         tmp_path / "swe",
         "user1",
         "my_skill2",
-        "test",  # original_name
-        "desc",  # description
-        "admin1",  # distributed_by
-        "1.0.0",  # version
+        "test",
+        "desc",
+        "admin1",
+        "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill2"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill2"
+    )
+    assert result["status"] == "distributed"
     assert not (dst_dir / "SKILL.md").exists()
-    data = json.loads((dst_dir / "skill.json").read_text())
-    assert data["source"] == "marketplace:item-2"
+    assert not (dst_dir / "skill.json").exists()
+    assert result["metadata"] == {
+        "name": "test",
+        "description": "desc",
+        "distributed_by": "admin1",
+        "received_version": "1.0.0",
+    }
 
 
 def test_copy_skill_to_user_missing_skill_json(tmp_path):
@@ -137,33 +197,40 @@ def test_copy_skill_to_user_missing_skill_json(tmp_path):
         get_skill_dir,
         get_user_skills_dir,
     )
-    import json
 
     src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-3")
     src_dir.mkdir(parents=True)
     (src_dir / "SKILL.md").write_text("# Skill", encoding="utf-8")
     # No skill.json
-    copy_skill_to_user(
+    result = copy_skill_to_user(
         tmp_path / "market",
         "src_a",
         "item-3",
         tmp_path / "swe",
         "user1",
         "my_skill3",
-        "test",  # original_name
-        "desc",  # description
-        "admin1",  # distributed_by
-        "2.0.0",  # version
+        "test",
+        "desc",
+        "admin1",
+        "2.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "my_skill3"
-    data = json.loads((dst_dir / "skill.json").read_text())
-    assert data["source"] == "marketplace:item-3"
-    assert data["received_version"] == "2.0.0"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill3"
+    )
+    assert result["status"] == "distributed"
+    assert (dst_dir / "SKILL.md").read_text() == "# Skill"
+    assert not (dst_dir / "skill.json").exists()
+    assert result["metadata"] == {
+        "name": "test",
+        "description": "desc",
+        "distributed_by": "admin1",
+        "received_version": "2.0.0",
+    }
 
 
 def test_validate_path_segment_rejects_traversal(tmp_path):
     from market.marketplace.fs import get_marketplace_dir
-    import pytest
 
     with pytest.raises(ValueError):
         get_marketplace_dir(tmp_path, "../../etc")
@@ -302,7 +369,7 @@ def test_copy_skill_to_user_with_chinese_name(tmp_path):
         encoding="utf-8",
     )
     # Copy 使用中文目录名
-    copy_skill_to_user(
+    result = copy_skill_to_user(
         tmp_path / "market",
         "src_a",
         "item-cn",
@@ -314,30 +381,37 @@ def test_copy_skill_to_user_with_chinese_name(tmp_path):
         "admin1",
         "1.0.0",
     )
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "user1") / "数据分析"
+    assert result["status"] == "distributed"
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "数据分析"
+    )
     assert dst_dir.exists()
     assert (dst_dir / "SKILL.md").read_text(
         encoding="utf-8",
     ) == "# 数据分析技能"
-    data = json.loads((dst_dir / "skill.json").read_text(encoding="utf-8"))
-    assert data["name"] == "数据分析"
-    assert data["source"] == "marketplace:item-cn"
+    assert not (dst_dir / "skill.json").exists()
+    assert result["metadata"] == {
+        "name": "数据分析",
+        "description": "测试技能",
+        "distributed_by": "admin1",
+        "received_version": "1.0.0",
+    }
 
 
 # ========== created_at 时间字段测试 ==========
 
 
 def test_copy_skill_to_user_preserves_created_at_on_redistribute(tmp_path):
-    """重复分发时应保留原有 created_at 时间戳."""
-    import time
-    from datetime import datetime, timezone
+    """重复分发时应通过返回 metadata 保留原有 created_at 时间戳."""
     from market.marketplace.fs import (
         copy_skill_to_user,
         get_skill_dir,
+        get_user_skill_manifest_path,
         get_user_skills_dir,
     )
 
-    # Setup: 创建市场技能和用户目录
+    # Setup: 创建市场技能、旧目录和已有 manifest
     src_dir = get_skill_dir(
         tmp_path / "marketplace",
         "test_source",
@@ -353,9 +427,37 @@ def test_copy_skill_to_user_preserves_created_at_on_redistribute(tmp_path):
 
     swe_root = tmp_path / "swe"
     user_id = "test_user"
+    dst_dir = (
+        get_user_skills_dir(swe_root, user_id, source_id="test_source")
+        / "test_skill"
+    )
+    dst_dir.mkdir(parents=True)
+    (dst_dir / "SKILL.md").write_text("# Old Skill", encoding="utf-8")
 
-    # 首次分发
-    copy_skill_to_user(
+    first_created_at = "2025-05-14T10:00:00+00:00"
+    manifest_path = get_user_skill_manifest_path(
+        swe_root,
+        user_id,
+        source_id="test_source",
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "workspace-skill-manifest.v1",
+                "version": 1,
+                "skills": {
+                    "test_skill": {
+                        "source": "marketplace:test_item",
+                        "created_at": first_created_at,
+                    },
+                },
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    result2 = copy_skill_to_user(
         marketplace_root=tmp_path / "marketplace",
         source_id="test_source",
         item_id="test_item",
@@ -367,39 +469,13 @@ def test_copy_skill_to_user_preserves_created_at_on_redistribute(tmp_path):
         distributed_by="admin",
         version="1.0.0",
     )
-
-    user_skill_json = (
-        get_user_skills_dir(swe_root, user_id) / "test_skill" / "skill.json"
-    )
-    first_data = json.loads(user_skill_json.read_text(encoding="utf-8"))
-    first_created_at = first_data["created_at"]
-
-    # 等待一小段时间确保时间戳不同
-    time.sleep(0.1)
-
-    # 重复分发
-    copy_skill_to_user(
-        marketplace_root=tmp_path / "marketplace",
-        source_id="test_source",
-        item_id="test_item",
-        swe_root=swe_root,
-        user_id=user_id,
-        skill_name="test_skill",
-        original_name="Test Skill",
-        description="A test skill",
-        distributed_by="admin",
-        version="1.0.0",
-    )
-
-    second_data = json.loads(user_skill_json.read_text(encoding="utf-8"))
-
-    # created_at 应保持不变
-    assert second_data["created_at"] == first_created_at
+    assert result2["status"] == "distributed"
+    assert (dst_dir / "SKILL.md").read_text() == "# Test Skill"
+    assert result2["metadata"]["created_at"] == first_created_at
 
 
-def test_copy_skill_to_user_writes_created_at(tmp_path):
-    """分发技能时应写入 created_at 时间字段."""
-    from datetime import datetime, timezone
+def test_copy_skill_to_user_returns_distribution_metadata(tmp_path):
+    """首次分发时应返回供 manifest 写入的分发元数据."""
     from market.marketplace.fs import (
         copy_skill_to_user,
         get_skill_dir,
@@ -416,7 +492,7 @@ def test_copy_skill_to_user_writes_created_at(tmp_path):
     )
 
     # 执行分发
-    copy_skill_to_user(
+    result = copy_skill_to_user(
         marketplace_root=tmp_path / "market",
         source_id="test_source",
         item_id="test_item",
@@ -428,19 +504,314 @@ def test_copy_skill_to_user_writes_created_at(tmp_path):
         distributed_by="admin",
         version="1.0.0",
     )
+    assert result["status"] == "distributed"
 
     # 验证用户技能文件
-    dst_dir = get_user_skills_dir(tmp_path / "swe", "test_user") / "test_skill"
-    user_skill_json = dst_dir / "skill.json"
-    assert user_skill_json.exists()
-
-    saved_data = json.loads(user_skill_json.read_text(encoding="utf-8"))
-    assert "created_at" in saved_data
-
-    # 验证时间格式（ISO 8601）
-    parsed_time = datetime.fromisoformat(
-        saved_data["created_at"].replace("Z", "+00:00"),
+    dst_dir = (
+        get_user_skills_dir(
+            tmp_path / "swe",
+            "test_user",
+            source_id="test_source",
+        )
+        / "test_skill"
     )
-    assert parsed_time.year == datetime.now(timezone.utc).year
-    # 验证是 UTC 时间
-    assert parsed_time.tzinfo is not None
+    assert (dst_dir / "SKILL.md").read_text() == "# Test Skill"
+    assert not (dst_dir / "skill.json").exists()
+    assert result["metadata"] == {
+        "name": "Test Skill",
+        "description": "A test skill",
+        "distributed_by": "admin",
+        "received_version": "1.0.0",
+    }
+
+
+# ========== 自建技能冲突保护测试 ==========
+
+
+def test_copy_skill_to_user_skips_customized_skill(tmp_path):
+    """目标用户有同名自建技能时，应跳过分发并返回冲突."""
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skill_manifest_path,
+        get_user_skills_dir,
+    )
+
+    # 创建市场技能
+    src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-1")
+    src_dir.mkdir(parents=True)
+    (src_dir / "SKILL.md").write_text("# Market Skill", encoding="utf-8")
+    (src_dir / "skill.json").write_text(
+        json.dumps({"name": "my_skill", "description": "from market"}),
+        encoding="utf-8",
+    )
+
+    # 目标用户已有同名自建技能
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill"
+    )
+    dst_dir.mkdir(parents=True)
+    (dst_dir / "SKILL.md").write_text("# My Own Skill", encoding="utf-8")
+    (dst_dir / "skill.json").write_text(
+        json.dumps(
+            {
+                "name": "my_skill",
+                "source": "customized",
+                "creator_id": "user1",
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    manifest_path = get_user_skill_manifest_path(
+        tmp_path / "swe",
+        "user1",
+        source_id="src_a",
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "workspace-skill-manifest.v1",
+                "version": 1,
+                "skills": {
+                    "my_skill": {
+                        "source": "customized",
+                        "metadata": {
+                            "name": "my_skill",
+                            "creator_id": "user1",
+                        },
+                    },
+                },
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    # 分发应跳过
+    result = copy_skill_to_user(
+        tmp_path / "market",
+        "src_a",
+        "item-1",
+        tmp_path / "swe",
+        "user1",
+        "my_skill",
+        "my_skill",
+        "from market",
+        "admin1",
+        "1.0.0",
+    )
+    assert result["status"] == "conflict"
+    assert result["reason"] == "customized"
+
+    # 原有文件不应被修改
+    assert (dst_dir / "SKILL.md").read_text() == "# My Own Skill"
+    data = json.loads((dst_dir / "skill.json").read_text())
+    assert data["source"] == "customized"
+
+
+def test_copy_skill_to_user_overwrites_customized_skill_without_creator_id(
+    tmp_path,
+):
+    """同名 customized 技能缺少 creator_id 时，应允许覆盖."""
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skill_manifest_path,
+        get_user_skills_dir,
+    )
+
+    # 创建市场技能
+    src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-1")
+    src_dir.mkdir(parents=True)
+    (src_dir / "SKILL.md").write_text("# Market Skill", encoding="utf-8")
+    (src_dir / "skill.json").write_text(
+        json.dumps({"name": "my_skill", "description": "from market"}),
+        encoding="utf-8",
+    )
+
+    # 目标用户已有同名 customized 技能，但 manifest 中缺少 creator_id
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill"
+    )
+    dst_dir.mkdir(parents=True)
+    (dst_dir / "SKILL.md").write_text("# Legacy Skill", encoding="utf-8")
+    (dst_dir / "skill.json").write_text(
+        json.dumps({"name": "my_skill", "source": "customized"}),
+        encoding="utf-8",
+    )
+
+    manifest_path = get_user_skill_manifest_path(
+        tmp_path / "swe",
+        "user1",
+        source_id="src_a",
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "workspace-skill-manifest.v1",
+                "version": 1,
+                "skills": {
+                    "my_skill": {
+                        "source": "customized",
+                        "metadata": {
+                            "name": "my_skill",
+                            "description": "legacy customized",
+                        },
+                    },
+                },
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    result = copy_skill_to_user(
+        tmp_path / "market",
+        "src_a",
+        "item-1",
+        tmp_path / "swe",
+        "user1",
+        "my_skill",
+        "my_skill",
+        "from market",
+        "admin1",
+        "1.0.0",
+    )
+
+    assert result["status"] == "distributed"
+    assert (dst_dir / "SKILL.md").read_text() == "# Market Skill"
+
+
+def test_copy_skill_to_user_overwrites_marketplace_skill(tmp_path):
+    """目标用户有同名接收技能时，应覆盖更新."""
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skill_manifest_path,
+        get_user_skills_dir,
+    )
+
+    # 创建市场技能（新版本）
+    src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-1")
+    src_dir.mkdir(parents=True)
+    (src_dir / "SKILL.md").write_text("# Market Skill v2", encoding="utf-8")
+    (src_dir / "skill.json").write_text(
+        json.dumps({"name": "my_skill", "description": "v2"}),
+        encoding="utf-8",
+    )
+
+    # 目标用户已有旧版接收技能
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "my_skill"
+    )
+    dst_dir.mkdir(parents=True)
+    (dst_dir / "SKILL.md").write_text("# Market Skill v1", encoding="utf-8")
+    (dst_dir / "skill.json").write_text(
+        json.dumps(
+            {
+                "name": "my_skill",
+                "source": "marketplace:old-item",
+                "received_version": "1.0.0",
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    manifest_path = get_user_skill_manifest_path(
+        tmp_path / "swe",
+        "user1",
+        source_id="src_a",
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "workspace-skill-manifest.v1",
+                "version": 1,
+                "skills": {
+                    "my_skill": {
+                        "source": "marketplace:old-item",
+                        "created_at": "2025-05-14T10:00:00+00:00",
+                    },
+                },
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    # 分发应覆盖
+    result = copy_skill_to_user(
+        tmp_path / "market",
+        "src_a",
+        "item-1",
+        tmp_path / "swe",
+        "user1",
+        "my_skill",
+        "my_skill",
+        "v2",
+        "admin1",
+        "2.0.0",
+    )
+    assert result["status"] == "distributed"
+
+    # 文件应被更新
+    assert (dst_dir / "SKILL.md").read_text() == "# Market Skill v2"
+    assert not (dst_dir / "skill.json").exists()
+    assert result["metadata"] == {
+        "name": "my_skill",
+        "description": "v2",
+        "distributed_by": "admin1",
+        "received_version": "2.0.0",
+        "created_at": "2025-05-14T10:00:00+00:00",
+    }
+
+
+def test_copy_skill_to_user_no_existing_skill(tmp_path):
+    """目标用户无同名技能时，正常分发."""
+    from market.marketplace.fs import (
+        copy_skill_to_user,
+        get_skill_dir,
+        get_user_skills_dir,
+    )
+
+    # 创建市场技能
+    src_dir = get_skill_dir(tmp_path / "market", "src_a", "item-1")
+    src_dir.mkdir(parents=True)
+    (src_dir / "SKILL.md").write_text("# New Skill", encoding="utf-8")
+    (src_dir / "skill.json").write_text(
+        json.dumps({"name": "new_skill"}),
+        encoding="utf-8",
+    )
+
+    # 目标用户无同名技能
+    result = copy_skill_to_user(
+        tmp_path / "market",
+        "src_a",
+        "item-1",
+        tmp_path / "swe",
+        "user1",
+        "new_skill",
+        "new_skill",
+        "a new skill",
+        "admin1",
+        "1.0.0",
+    )
+    assert result["status"] == "distributed"
+
+    dst_dir = (
+        get_user_skills_dir(tmp_path / "swe", "user1", source_id="src_a")
+        / "new_skill"
+    )
+    assert dst_dir.exists()
+    assert (dst_dir / "SKILL.md").read_text() == "# New Skill"
+    assert not (dst_dir / "skill.json").exists()
+    assert result["metadata"] == {
+        "name": "new_skill",
+        "description": "a new skill",
+        "distributed_by": "admin1",
+        "received_version": "1.0.0",
+    }

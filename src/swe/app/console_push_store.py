@@ -23,6 +23,54 @@ _MAX_AGE_SECONDS = 60
 _MAX_MESSAGES = 500
 
 
+def _resolve_store_key(tenant_id: Optional[str] = None) -> str:
+    """Resolve the isolation key for transient console messages."""
+    try:
+        from swe.config.context import (
+            get_current_scope_id,
+            resolve_scope_preferred_tenant_id,
+        )
+
+        store_key = resolve_scope_preferred_tenant_id(
+            tenant_id,
+            None,
+            get_current_scope_id(),
+        )
+        if store_key is not None:
+            return store_key
+    except Exception:
+        pass
+    return tenant_id or "default"
+
+
+def _iter_matching_store_keys(tenant_id: Optional[str]) -> List[str]:
+    """Return store keys that belong to the requested tenant/scope."""
+    if tenant_id is None:
+        return ["default"]
+
+    try:
+        from swe.config.context import resolve_runtime_tenant_id
+
+        canonical_tenant_id = resolve_runtime_tenant_id(tenant_id, None)
+    except Exception:
+        canonical_tenant_id = tenant_id
+
+    keys = {canonical_tenant_id or tenant_id}
+    try:
+        from swe.config.context import decode_scope_id
+
+        for store_key in _tenant_messages:
+            try:
+                logical_tenant_id, _source_id = decode_scope_id(store_key)
+            except ValueError:
+                continue
+            if logical_tenant_id == tenant_id:
+                keys.add(store_key)
+    except Exception:
+        pass
+    return list(keys)
+
+
 def _get_tenant_store(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Get or create message store for tenant.
 
@@ -32,8 +80,7 @@ def _get_tenant_store(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
     Returns:
         Message list for the tenant.
     """
-    if tenant_id is None:
-        tenant_id = "default"
+    tenant_id = _resolve_store_key(tenant_id)
 
     if tenant_id not in _tenant_messages:
         _tenant_messages[tenant_id] = []
@@ -60,7 +107,8 @@ async def append(
         return
 
     async with _lock:
-        msg_list = _get_tenant_store(tenant_id)
+        store_key = _resolve_store_key(tenant_id)
+        msg_list = _get_tenant_store(store_key)
 
         msg_list.append(
             {
@@ -69,7 +117,7 @@ async def append(
                 "sticky": sticky,
                 "ts": time.time(),
                 "session_id": session_id,
-                "tenant_id": tenant_id or "default",
+                "tenant_id": store_key,
             },
         )
 
@@ -96,7 +144,8 @@ async def take(
         return []
 
     async with _lock:
-        msg_list = _get_tenant_store(tenant_id)
+        store_key = _resolve_store_key(tenant_id)
+        msg_list = _get_tenant_store(store_key)
         _prune_expired_locked(msg_list, _MAX_AGE_SECONDS)
 
         out = []
@@ -108,9 +157,7 @@ async def take(
                 remaining.append(msg)
 
         # Update the tenant store with remaining messages
-        if tenant_id is None:
-            tenant_id = "default"
-        _tenant_messages[tenant_id] = remaining
+        _tenant_messages[store_key] = remaining
 
         return _strip_ts(out)
 
@@ -183,12 +230,10 @@ async def clear_tenant(tenant_id: Optional[str] = None) -> None:
     Args:
         tenant_id: Tenant identifier. If None, clears "default" tenant.
     """
-    if tenant_id is None:
-        tenant_id = "default"
-
     async with _lock:
-        if tenant_id in _tenant_messages:
-            del _tenant_messages[tenant_id]
+        for store_key in _iter_matching_store_keys(tenant_id):
+            if store_key in _tenant_messages:
+                del _tenant_messages[store_key]
 
 
 def get_stats() -> Dict[str, Any]:

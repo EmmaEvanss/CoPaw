@@ -17,7 +17,7 @@ from agentscope.mcp._client_base import MCPClientBase
 from agentscope.mcp._mcp_function import MCPToolFunction
 from agentscope.tool import ToolResponse
 from mcp import ClientSession as _CS
-from ...config.context import get_current_tenant_id
+from ...config.context import get_current_effective_tenant_id
 from ...constant import MCP_MAX_TOTAL_TIMEOUT, MCP_PER_NOTIFICATION_TIMEOUT
 
 from .manager import MCPClientManager
@@ -200,8 +200,8 @@ _original_mcp_call = MCPToolFunction.__call__
 async def _patched_mcp_call(self: MCPToolFunction, **kwargs: Any):  # type: ignore[override]
     kwargs.pop("_meta", None)
 
-    tenant_id = get_current_tenant_id() or "default"
-    progress_token = f"{tenant_id}@{uuid.uuid4()}"
+    scope_id = get_current_effective_tenant_id() or "default"
+    progress_token = f"{scope_id}@{uuid.uuid4()}"
     meta = {"progressToken": progress_token}
 
     progress_event = asyncio.Event()

@@ -24,17 +24,20 @@ from swe.app.workspace.tenant_init_source_store import (  # noqa: E402
     is_tenant_source,
 )
 from swe.config.context import (  # noqa: E402
+    encode_scope_id,
     set_current_source_id,
     get_current_source_id,
     reset_current_source_id,
 )
 from swe.config.config import (  # noqa: E402
+    AgentProfileConfig,
     Config,
     AgentsConfig,
     AgentProfileRef,
     SecurityConfig,
     ToolGuardConfig,
     ToolsConfig,
+    load_agent_config,
 )
 from swe.config.utils import save_config  # noqa: E402
 
@@ -66,6 +69,7 @@ class TestTenantInitializerSourceId:
         template_dir = tmp_path / "default_ruice"
         template_dir.mkdir()
         (template_dir / "config.json").write_text("{}", encoding="utf-8")
+        scope_id = encode_scope_id("tenant-1", "ruice")
 
         initializer = TenantInitializer(
             tmp_path,
@@ -73,8 +77,8 @@ class TestTenantInitializerSourceId:
             source_id="ruice",
         )
         assert initializer.template_name == "default_ruice"
-        # Non-default tenant: effective_tenant_id is unchanged
-        assert initializer.effective_tenant_id == "tenant-1"
+        assert initializer.effective_tenant_id == scope_id
+        assert initializer.tenant_dir == tmp_path / scope_id
 
     def test_default_user_with_source_uses_source_directory(self, tmp_path):
         """Default user with source_id accesses default_{source_id} directory."""
@@ -84,6 +88,7 @@ class TestTenantInitializerSourceId:
             '{"agents": {}}',
             encoding="utf-8",
         )
+        scope_id = encode_scope_id("default", "ruice")
 
         initializer = TenantInitializer(
             tmp_path,
@@ -92,16 +97,18 @@ class TestTenantInitializerSourceId:
         )
         # Template is created from default
         assert initializer.template_name == "default_ruice"
-        # Effective tenant ID is also default_ruice
-        assert initializer.effective_tenant_id == "default_ruice"
-        # Tenant dir points to source-specific directory
-        assert initializer.tenant_dir == tmp_path / "default_ruice"
+        assert initializer.effective_tenant_id == scope_id
+        assert initializer.tenant_dir == tmp_path / scope_id
 
-    def test_non_default_user_with_source_keeps_own_directory(self, tmp_path):
-        """Non-default user with source_id still uses their own directory."""
+    def test_non_default_user_with_source_uses_scope_directory(
+        self,
+        tmp_path,
+    ):
+        """Non-default tenant with source_id uses its runtime scope directory."""
         default_dir = tmp_path / "default"
         default_dir.mkdir()
         (default_dir / "config.json").write_text("{}", encoding="utf-8")
+        scope_id = encode_scope_id("user-001", "ruice")
 
         initializer = TenantInitializer(
             tmp_path,
@@ -110,10 +117,47 @@ class TestTenantInitializerSourceId:
         )
         # Template is created from default
         assert initializer.template_name == "default_ruice"
-        # Effective tenant ID remains as user-001
-        assert initializer.effective_tenant_id == "user-001"
-        # Tenant dir points to user's own directory
-        assert initializer.tenant_dir == tmp_path / "user-001"
+        assert initializer.effective_tenant_id == scope_id
+        assert initializer.tenant_dir == tmp_path / scope_id
+
+    def test_explicit_scope_with_source_keeps_scope_directory(self, tmp_path):
+        """显式 scope 进入初始化器时不能再次编码成嵌套 scope。"""
+        default_dir = tmp_path / "default"
+        default_dir.mkdir()
+        (default_dir / "config.json").write_text("{}", encoding="utf-8")
+        scope_id = encode_scope_id("user-001", "ruice")
+
+        initializer = TenantInitializer(
+            tmp_path,
+            "user-001",
+            source_id="ruice",
+            scope_id=scope_id,
+        )
+
+        assert initializer.template_name == "default_ruice"
+        assert initializer.effective_tenant_id == scope_id
+        assert initializer.tenant_dir == tmp_path / scope_id
+
+    def test_legacy_scope_directory_is_not_touched_by_workspace_init(
+        self,
+        tmp_path,
+    ):
+        """工作区初始化只解析 canonical 目录，不负责迁移旧 scope 目录。"""
+        canonical_scope_id = encode_scope_id("user-001", "ruice")
+        legacy_scope_id = f"scope.v1.{canonical_scope_id}"
+        legacy_dir = tmp_path / legacy_scope_id
+        legacy_dir.mkdir()
+        (legacy_dir / "legacy.txt").write_text("legacy", encoding="utf-8")
+
+        initializer = TenantInitializer(
+            tmp_path,
+            "user-001",
+            source_id="ruice",
+        )
+
+        assert initializer.tenant_dir == tmp_path / canonical_scope_id
+        assert legacy_dir.exists()
+        assert not (initializer.tenant_dir / "legacy.txt").exists()
 
     def test_source_id_creates_template_from_default_when_missing(
         self,
@@ -156,8 +200,35 @@ class TestTenantInitializerSourceId:
         initializer = TenantInitializer(tmp_path, "tenant-1", source_id="")
         assert initializer.template_name == "default"
 
-    def test_seeded_bootstrap_uses_source_template_config(self, tmp_path):
+    def test_seeded_bootstrap_uses_source_template_config(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
         """Config is seeded from the source-specific template directory."""
+        monkeypatch.setattr(
+            "swe.constant.SECRET_DIR",
+            tmp_path / ".swe.secret",
+        )
+        monkeypatch.setattr(
+            "swe.config.config.AgentProfileConfig",
+            AgentProfileConfig,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "swe.config.config.load_agent_config",
+            load_agent_config,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            TenantInitializer,
+            "ensure_default_workspace_scaffold",
+            lambda self: {
+                "agent_json": True,
+                "copied_files": [],
+                "token_usage": True,
+            },
+        )
         # Setup default_ruice template
         ruice_dir = tmp_path / "default_ruice"
         ruice_workspace = ruice_dir / "workspaces" / "default"
@@ -212,15 +283,42 @@ class TestTenantInitializerSourceId:
         new_init.ensure_seeded_bootstrap()
 
         # Verify config was seeded from ruice template
-        tenant_dir = tmp_path / "tenant-ruice-user"
+        tenant_dir = tmp_path / encode_scope_id("tenant-ruice-user", "ruice")
         config_data = json.loads(
             (tenant_dir / "config.json").read_text(encoding="utf-8"),
         )
         assert config_data["security"]["tool_guard"]["enabled"] is True
         assert config_data["agents"]["language"] == "zh"
 
-    def test_seeded_bootstrap_uses_source_template(self, tmp_path):
+    def test_seeded_bootstrap_uses_source_template(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
         """With source_id, config is seeded from source template for default tenant."""
+        monkeypatch.setattr(
+            "swe.constant.SECRET_DIR",
+            tmp_path / ".swe.secret",
+        )
+        monkeypatch.setattr(
+            "swe.config.config.AgentProfileConfig",
+            AgentProfileConfig,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "swe.config.config.load_agent_config",
+            load_agent_config,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            TenantInitializer,
+            "ensure_default_workspace_scaffold",
+            lambda self: {
+                "agent_json": True,
+                "copied_files": [],
+                "token_usage": True,
+            },
+        )
         # Setup default template (as source template base)
         default_dir = tmp_path / "default"
         default_workspace = default_dir / "workspaces" / "default"
@@ -265,11 +363,11 @@ class TestTenantInitializerSourceId:
                 encoding="utf-8",
             )
 
-        # Initialize default tenant with source_id (creates default_ruice)
+        # Initialize default tenant with source_id and seed runtime scope dir
         new_init = TenantInitializer(tmp_path, "default", source_id="ruice")
         new_init.ensure_seeded_bootstrap()
 
-        tenant_dir = tmp_path / "default_ruice"
+        tenant_dir = tmp_path / encode_scope_id("default", "ruice")
         config_data = json.loads(
             (tenant_dir / "config.json").read_text(encoding="utf-8"),
         )
@@ -278,8 +376,32 @@ class TestTenantInitializerSourceId:
     def test_config_workspace_dir_replacement_with_source_template(
         self,
         tmp_path,
+        monkeypatch,
     ):
         """Workspace paths in config are replaced from template to tenant."""
+        monkeypatch.setattr(
+            "swe.constant.SECRET_DIR",
+            tmp_path / ".swe.secret",
+        )
+        monkeypatch.setattr(
+            "swe.config.config.AgentProfileConfig",
+            AgentProfileConfig,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "swe.config.config.load_agent_config",
+            load_agent_config,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            TenantInitializer,
+            "ensure_default_workspace_scaffold",
+            lambda self: {
+                "agent_json": True,
+                "copied_files": [],
+                "token_usage": True,
+            },
+        )
         ruice_dir = tmp_path / "default_ruice"
         ruice_workspace = ruice_dir / "workspaces" / "default"
         ruice_workspace.mkdir(parents=True)
@@ -330,7 +452,7 @@ class TestTenantInitializerSourceId:
         )
         new_init.ensure_seeded_bootstrap()
 
-        tenant_dir = tmp_path / "user-001"
+        tenant_dir = tmp_path / encode_scope_id("user-001", "ruice")
         config_data = json.loads(
             (tenant_dir / "config.json").read_text(encoding="utf-8"),
         )
@@ -338,7 +460,7 @@ class TestTenantInitializerSourceId:
             "workspace_dir"
         ]
         assert "default_ruice" not in actual_workspace
-        assert "user-001" in actual_workspace
+        assert encode_scope_id("user-001", "ruice") in actual_workspace
 
 
 # ==================== TenantInitSourceStore tests ====================
@@ -571,18 +693,26 @@ class TestResolveEffectiveTenantId:
         assert resolve_effective_tenant_id("default", None) == "default"
 
     def test_default_with_source_returns_source_tenant(self):
-        """default + source_id → default_{source_id}."""
-        from swe.config.context import resolve_effective_tenant_id
+        """default + source_id 应返回统一编码后的 scope_id。"""
+        from swe.config.context import (
+            encode_scope_id,
+            resolve_effective_tenant_id,
+        )
 
-        assert (
-            resolve_effective_tenant_id("default", "ruice") == "default_ruice"
+        assert resolve_effective_tenant_id("default", "ruice") == (
+            encode_scope_id("default", "ruice")
         )
 
     def test_non_default_with_source_returns_original(self):
-        """Non-default tenant with source_id → original tenant_id."""
-        from swe.config.context import resolve_effective_tenant_id
+        """非 default tenant 也应返回统一编码后的 scope_id。"""
+        from swe.config.context import (
+            encode_scope_id,
+            resolve_effective_tenant_id,
+        )
 
-        assert resolve_effective_tenant_id("user-001", "ruice") == "user-001"
+        assert resolve_effective_tenant_id("user-001", "ruice") == (
+            encode_scope_id("user-001", "ruice")
+        )
 
     def test_non_default_without_source_returns_original(self):
         """Non-default tenant without source_id → original tenant_id."""

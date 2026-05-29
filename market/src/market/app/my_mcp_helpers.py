@@ -21,11 +21,15 @@ class MyMCPRequestContext:
     """MyMCP 本地配置操作所需的请求上下文。"""
 
     user_id: str
-    user_name: str
     tenant_id: str
     source_id: str
     effective_tenant_id: str
     agent_id: str
+    user_name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.user_name:
+            object.__setattr__(self, "user_name", self.user_id)
 
 
 def resolve_my_mcp_request_context(request: Request) -> MyMCPRequestContext:
@@ -49,6 +53,11 @@ def resolve_my_mcp_request_context(request: Request) -> MyMCPRequestContext:
         raise HTTPException(
             status_code=400,
             detail="X-Tenant-Id header is required",
+        )
+    if not source_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Source-Id header is required",
         )
     effective_tenant_id = resolve_effective_tenant_id(tenant_id, source_id)
     root_config = load_root_config(swe_root, effective_tenant_id)

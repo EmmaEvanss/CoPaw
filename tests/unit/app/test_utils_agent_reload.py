@@ -36,3 +36,37 @@ def test_schedule_agent_reload_passes_tenant_id(monkeypatch) -> None:
         "default",
         tenant_id="tenant-a",
     )
+
+
+def test_schedule_agent_reload_prefers_request_scope_id(monkeypatch) -> None:
+    manager = SimpleNamespace(reload_agent=AsyncMock(return_value=True))
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(multi_agent_manager=manager),
+        ),
+        state=SimpleNamespace(
+            tenant_id="tenant-a",
+            source_id="source-a",
+            scope_id="scope.v1.dGVuYW50LWE.c291cmNlLWE",
+        ),
+    )
+    scheduled: list[Coroutine[Any, Any, Any]] = []
+
+    def fake_create_task(coro):
+        scheduled.append(coro)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(app_utils.asyncio, "create_task", fake_create_task)
+
+    app_utils.schedule_agent_reload(
+        request,
+        "default",
+        tenant_id="tenant-a",
+    )
+
+    assert len(scheduled) == 1
+    asyncio.run(scheduled[0])
+    manager.reload_agent.assert_awaited_once_with(
+        "default",
+        tenant_id="dGVuYW50LWE.c291cmNlLWE",
+    )

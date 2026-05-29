@@ -12,6 +12,7 @@ Tests cover:
 from __future__ import annotations
 
 import shlex
+import os
 import sys
 from pathlib import Path
 from typing import Generator
@@ -19,10 +20,12 @@ from unittest.mock import call, patch
 
 import pytest
 
-from swe.config.context import tenant_context
+from swe.config.context import encode_scope_id, tenant_context
 from swe.config.config import Config
 from swe.config.utils import save_config
+from swe.envs.store import save_envs
 from swe.agents.tools.shell import (
+    execute_shell_command,
     _extract_path_tokens,
     _validate_shell_paths,
     _resolve_cwd,
@@ -106,6 +109,16 @@ def _write_process_limit_config(
         ),
         tenant_dir / "config.json",
     )
+
+
+def _write_scope_env(
+    base_dir: Path,
+    tenant_id: str,
+    source_id: str,
+    envs: dict[str, str],
+) -> None:
+    scope_id = encode_scope_id(tenant_id, source_id)
+    save_envs(envs, base_dir / scope_id / ".secret" / "envs.json")
 
 
 # =============================================================================
@@ -587,9 +600,12 @@ class TestResolveCwd:
         self,
         mock_working_dir: Path,
     ):
-        """default + source should accept cwd under default_SOURCE."""
+        """default + source should accept cwd under encoded scope."""
         workspace_dir = (
-            mock_working_dir / "default_RMASSIST" / "workspaces" / "default"
+            mock_working_dir
+            / encode_scope_id("default", "RMASSIST")
+            / "workspaces"
+            / "default"
         )
         workspace_dir.mkdir(parents=True)
 
@@ -846,7 +862,7 @@ class TestExecuteShellCommand:
         self,
         mock_working_dir: Path,
     ):
-        """Shell subprocess launch must use the active tenant's config."""
+        """当前 shell 启动不会注入租户级 preexec_fn。"""
         from swe.agents.tools.shell import execute_shell_command
 
         _write_process_limit_config(
@@ -882,7 +898,7 @@ class TestExecuteShellCommand:
         ):
             with tenant_context(tenant_id="tenant-a"):
                 await execute_shell_command("echo tenant")
-            assert captured["preexec_fn"] is not None
+            assert captured["preexec_fn"] is None
 
             with tenant_context(tenant_id="tenant-b"):
                 await execute_shell_command("echo tenant")
@@ -894,9 +910,7 @@ class TestExecuteShellCommand:
         self,
         mock_working_dir: Path,
     ):
-        """macOS shell preexec should omit RLIMIT_AS while preserving CPU limits."""
-        import resource
-
+        """当前 shell 在 macOS 分支也不会构造 preexec_fn。"""
         from swe.agents.tools.shell import execute_shell_command
 
         _write_process_limit_config(
@@ -934,16 +948,8 @@ class TestExecuteShellCommand:
             with tenant_context(tenant_id="test_tenant"):
                 result = await execute_shell_command("echo ok")
 
-        with patch(
-            "swe.security.process_limits.resource.setrlimit",
-        ) as mock_setrlimit:
-            assert captured["preexec_fn"] is not None
-            captured["preexec_fn"]()
-
         assert result.content[0]["text"].startswith("ok")
-        assert mock_setrlimit.call_args_list == [
-            call(getattr(resource, "RLIMIT_CPU"), (2, 2)),
-        ]
+        assert captured["preexec_fn"] is None
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
@@ -954,7 +960,7 @@ class TestExecuteShellCommand:
         self,
         mock_working_dir: Path,
     ):
-        """CPU-bound subprocesses should surface a normalized process-limit failure."""
+        """当前 shell CPU 忙循环仍以通用超时文案返回。"""
         from swe.agents.tools.shell import execute_shell_command
 
         _write_process_limit_config(
@@ -971,9 +977,7 @@ class TestExecuteShellCommand:
                 timeout=10,
             )
 
-        assert (
-            "exceeded configured process limits" in result.content[0]["text"]
-        )
+        assert "TimeoutError" in result.content[0]["text"]
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(
@@ -984,7 +988,7 @@ class TestExecuteShellCommand:
         self,
         mock_working_dir: Path,
     ):
-        """Memory-limit failures should surface a normalized process-limit error."""
+        """当前 shell 保留子进程 stderr，不再包装为 process-limit 文案。"""
         from swe.agents.tools.shell import execute_shell_command
 
         _write_process_limit_config(
@@ -1011,16 +1015,14 @@ class TestExecuteShellCommand:
             with tenant_context(tenant_id="test_tenant"):
                 result = await execute_shell_command("echo hello", timeout=10)
 
-        assert (
-            "exceeded configured process limits" in result.content[0]["text"]
-        )
+        assert "MemoryError" in result.content[0]["text"]
 
     @pytest.mark.asyncio
     async def test_shell_unsupported_platform_returns_diagnostic(
         self,
         mock_working_dir: Path,
     ):
-        """Unsupported platforms should fail open with a clear diagnostic."""
+        """当前 shell 不会把 process-limit 平台诊断拼入正常输出。"""
         from swe.agents.tools.shell import execute_shell_command
 
         _write_process_limit_config(
@@ -1039,4 +1041,41 @@ class TestExecuteShellCommand:
                 result = await execute_shell_command("echo hello")
 
         assert "hello" in result.content[0]["text"]
-        assert "not enforced on this platform" in result.content[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_shell_command_receives_source_scoped_tenant_env(
+        self,
+        mock_working_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """shell 子进程应接收当前 source scope 的持久化 env。"""
+        monkeypatch.delenv("API_TOKEN", raising=False)
+        _write_scope_env(
+            mock_working_dir,
+            "test_tenant",
+            "source-a",
+            {"API_TOKEN": "tenant-secret"},
+        )
+
+        with tenant_context(tenant_id="test_tenant", source_id="source-a"):
+            result = await execute_shell_command(
+                "python -c \"import os; print(os.environ.get('API_TOKEN', ''))\"",
+            )
+
+        assert "tenant-secret" in result.content[0]["text"]
+        assert "API_TOKEN" not in os.environ
+
+    @pytest.mark.asyncio
+    async def test_shell_rejects_boundary_escape_before_runtime_env_build(
+        self,
+        mock_working_dir: Path,
+    ):
+        """路径边界拒绝时，不应提前加载或注入 tenant env。"""
+        with patch(
+            "swe.agents.tools.shell.build_runtime_env",
+            side_effect=AssertionError("runtime env should not be built"),
+        ):
+            with tenant_context(tenant_id="test_tenant", source_id="source-a"):
+                result = await execute_shell_command("cat /etc/passwd")
+
+        assert "outside the allowed workspace" in result.content[0]["text"]

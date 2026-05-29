@@ -303,7 +303,18 @@ def _get_workspace_dir(request: Request) -> Path:
 
 
 def _get_tenant_id(request: Request) -> str:
-    """Get tenant_id from request header or default."""
+    """Get runtime tenant identity from request scope or tenant header."""
+    request_state = getattr(request, "state", None)
+    if request_state is not None:
+        from ...config.context import resolve_scope_preferred_tenant_id
+
+        tenant_id = resolve_scope_preferred_tenant_id(
+            getattr(request_state, "tenant_id", None),
+            getattr(request_state, "source_id", None),
+            getattr(request_state, "scope_id", None),
+        )
+        if tenant_id:
+            return tenant_id
     return request.headers.get("X-Tenant-Id", "default")
 
 
@@ -398,7 +409,6 @@ async def list_dream_logs(
     Returns:
         DreamLogsResponse with records and stats.
     """
-    tenant_id = _get_tenant_id(request)
     workspace_dir = _get_workspace_dir(request)
 
     data = _load_dream_logs(workspace_dir)
@@ -465,7 +475,6 @@ async def get_dream_logs_stats(request: Request) -> DreamLogsStats:
     Returns:
         DreamLogsStats with aggregate stats.
     """
-    tenant_id = _get_tenant_id(request)
     workspace_dir = _get_workspace_dir(request)
 
     data = _load_dream_logs(workspace_dir)
@@ -498,7 +507,6 @@ async def get_file_diff(
     Returns:
         DiffResponse with before/after content.
     """
-    tenant_id = _get_tenant_id(request)
     workspace_dir = _get_workspace_dir(request)
 
     data = _load_dream_logs(workspace_dir)
@@ -563,7 +571,6 @@ async def rollback_dream_optimization(
     Returns:
         RollbackResponse with rollback status.
     """
-    tenant_id = _get_tenant_id(request)
     workspace_dir = _get_workspace_dir(request)
 
     data = _load_dream_logs(workspace_dir)
@@ -724,7 +731,6 @@ async def get_governance_status(request: Request) -> DreamStatusResponse:
 @router.get("/backups", response_model=BackupListResponse)
 async def list_backup_files(request: Request) -> BackupListResponse:
     """List all backup files in the backup directory."""
-    tenant_id = _get_tenant_id(request)
     workspace_dir = _get_workspace_dir(request)
     backup_dir = workspace_dir / BACKUP_DIR
 
@@ -785,7 +791,6 @@ async def list_backup_files(request: Request) -> BackupListResponse:
 @router.delete("/backups", response_model=DeleteBackupResponse)
 async def delete_all_backups(request: Request) -> DeleteBackupResponse:
     """Delete all backup files."""
-    tenant_id = _get_tenant_id(request)
     workspace_dir = _get_workspace_dir(request)
     backup_dir = workspace_dir / BACKUP_DIR
 
@@ -818,7 +823,6 @@ async def delete_single_backup(
     filename: str,
 ) -> DeleteBackupResponse:
     """Delete a specific backup file."""
-    tenant_id = _get_tenant_id(request)
     workspace_dir = _get_workspace_dir(request)
     backup_file = workspace_dir / BACKUP_DIR / filename
 

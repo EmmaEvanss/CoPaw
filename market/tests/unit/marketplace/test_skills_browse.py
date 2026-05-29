@@ -47,7 +47,7 @@ def test_list_skills_returns_active_items(tmp_path):
     _publish(app.state.marketplace, "src_a", "skill_2")
     client = TestClient(app)
     resp = client.get(
-        "/api/marketplace/skills",
+        "/api/market/skills",
         headers={"X-Source-Id": "src_a", "X-Bbk-Id": "100"},
     )
     assert resp.status_code == 200
@@ -57,7 +57,7 @@ def test_list_skills_returns_active_items(tmp_path):
 def test_list_skills_missing_source_id_returns_400(tmp_path):
     app = _make_app(tmp_path)
     client = TestClient(app)
-    resp = client.get("/api/marketplace/skills", headers={"X-Bbk-Id": "100"})
+    resp = client.get("/api/market/skills", headers={"X-Bbk-Id": "100"})
     assert resp.status_code == 400
 
 
@@ -88,7 +88,7 @@ def test_list_skills_filters_by_category(tmp_path):
     asyncio.run(svc.publish_skill("src_a", req2))
     client = TestClient(app)
     resp = client.get(
-        "/api/marketplace/skills?category_id=1",
+        "/api/market/skills?category_id=1",
         headers={"X-Source-Id": "src_a", "X-Bbk-Id": "100"},
     )
     assert resp.status_code == 200
@@ -102,7 +102,7 @@ def test_get_skill_detail_returns_200(tmp_path):
     item = _publish(app.state.marketplace, "src_a", "skill_d")
     client = TestClient(app)
     resp = client.get(
-        f"/api/marketplace/skills/{item.item_id}",
+        f"/api/market/skills/{item.item_id}",
         headers={"X-Source-Id": "src_a", "X-Bbk-Id": "100"},
     )
     assert resp.status_code == 200
@@ -113,7 +113,7 @@ def test_get_skill_detail_not_found_returns_404(tmp_path):
     app = _make_app(tmp_path)
     client = TestClient(app)
     resp = client.get(
-        "/api/marketplace/skills/no-such-id",
+        "/api/market/skills/no-such-id",
         headers={"X-Source-Id": "src_a", "X-Bbk-Id": "100"},
     )
     assert resp.status_code == 404
@@ -122,7 +122,11 @@ def test_get_skill_detail_not_found_returns_404(tmp_path):
 def test_get_my_skills_returns_list(tmp_path):
     from market.marketplace.fs import get_user_skills_dir
 
-    skills_dir = get_user_skills_dir(tmp_path / "swe", "user1")
+    skills_dir = get_user_skills_dir(
+        tmp_path / "swe",
+        "user1",
+        source_id="src_a",
+    )
     skill_dir = skills_dir / "my_skill"
     skill_dir.mkdir(parents=True)
     (skill_dir / "skill.json").write_text(
@@ -132,7 +136,7 @@ def test_get_my_skills_returns_list(tmp_path):
     app = _make_app(tmp_path)
     client = TestClient(app)
     resp = client.get(
-        "/api/skills/mine",
+        "/api/market/skills/mine",
         headers={"X-Source-Id": "src_a", "X-User-Id": "user1"},
     )
     assert resp.status_code == 200
@@ -145,7 +149,11 @@ def test_get_my_skills_returns_list(tmp_path):
 def test_get_received_skills_returns_only_received(tmp_path):
     from market.marketplace.fs import get_user_skills_dir
 
-    skills_dir = get_user_skills_dir(tmp_path / "swe", "user2")
+    skills_dir = get_user_skills_dir(
+        tmp_path / "swe",
+        "user2",
+        source_id="src_a",
+    )
     d1 = skills_dir / "created_skill"
     d1.mkdir(parents=True)
     (d1 / "skill.json").write_text(
@@ -163,7 +171,7 @@ def test_get_received_skills_returns_only_received(tmp_path):
     app = _make_app(tmp_path)
     client = TestClient(app)
     resp = client.get(
-        "/api/skills/received",
+        "/api/market/skills/received",
         headers={"X-Source-Id": "src_a", "X-User-Id": "user2"},
     )
     assert resp.status_code == 200
@@ -234,3 +242,153 @@ def test_extract_zip_with_chinese_filename(tmp_path):
     import shutil
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_log_skill_operation_returns_200(tmp_path):
+    """测试操作日志上报端点返回成功。"""
+    from fastapi import FastAPI
+    from market.app.routers.skills_browse import router
+    from market.marketplace.service import MarketplaceService
+    from market.database.connection import DatabaseConnection
+
+    mock_db = AsyncMock(spec=DatabaseConnection)
+    mock_db.is_connected = True
+    mock_db.execute = AsyncMock()
+
+    svc = MarketplaceService(
+        db=mock_db,
+        marketplace_root=tmp_path / "market",
+        swe_root=tmp_path / "swe",
+    )
+    app = FastAPI()
+    app.state.marketplace = svc
+    app.include_router(router, prefix="/api")
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/market/skills/operation-log",
+        headers={
+            "X-Source-Id": "console",
+            "X-User-Id": "user123",
+        },
+        json={
+            "operation": "create",
+            "item_type": "skill",
+            "item_name": "my_new_skill",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True}
+    mock_db.execute.assert_called_once()
+
+
+def test_log_skill_operation_with_url_encoded_user_name(tmp_path):
+    """测试 URL 编码的 user_name 能被正确解码。"""
+    from fastapi import FastAPI
+    from market.app.routers.skills_browse import router
+    from market.marketplace.service import MarketplaceService
+    from market.database.connection import DatabaseConnection
+
+    mock_db = AsyncMock(spec=DatabaseConnection)
+    mock_db.is_connected = True
+    mock_db.execute = AsyncMock()
+
+    svc = MarketplaceService(
+        db=mock_db,
+        marketplace_root=tmp_path / "market",
+        swe_root=tmp_path / "swe",
+    )
+    app = FastAPI()
+    app.state.marketplace = svc
+    app.include_router(router, prefix="/api")
+
+    client = TestClient(app)
+    # 模拟 Agent 发送 URL 编码的中文名
+    resp = client.post(
+        "/api/market/skills/operation-log",
+        headers={
+            "X-Source-Id": "console",
+            "X-User-Id": "user123",
+        },
+        json={
+            "operation": "create",
+            "item_type": "skill",
+            "item_name": "my_skill",
+            "user_name": "%E5%BC%A0%E4%B8%89",  # "张三" 的 URL 编码
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True}
+    # 验证解码后的 user_name 是 "张三"
+    call_args = mock_db.execute.call_args
+    assert call_args[0][1][2] == "张三"  # user_name 是第三个参数
+
+
+def test_log_skill_operation_missing_user_id_returns_400(tmp_path):
+    """测试缺少 X-User-Id 返回 400。"""
+    from fastapi import FastAPI
+    from market.app.routers.skills_browse import router
+    from market.marketplace.service import MarketplaceService
+    from market.database.connection import DatabaseConnection
+
+    mock_db = AsyncMock(spec=DatabaseConnection)
+    mock_db.is_connected = False
+
+    svc = MarketplaceService(
+        db=mock_db,
+        marketplace_root=tmp_path / "market",
+        swe_root=tmp_path / "swe",
+    )
+    app = FastAPI()
+    app.state.marketplace = svc
+    app.include_router(router, prefix="/api")
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/market/skills/operation-log",
+        headers={"X-Source-Id": "console"},
+        json={
+            "operation": "create",
+            "item_type": "skill",
+            "item_name": "my_new_skill",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_log_skill_operation_db_failure_returns_success(tmp_path):
+    """测试数据库写入失败仍返回成功（失败忽略策略）。"""
+    from fastapi import FastAPI
+    from market.app.routers.skills_browse import router
+    from market.marketplace.service import MarketplaceService
+    from market.database.connection import DatabaseConnection
+
+    mock_db = AsyncMock(spec=DatabaseConnection)
+    mock_db.is_connected = True
+    mock_db.execute = AsyncMock(side_effect=Exception("DB error"))
+
+    svc = MarketplaceService(
+        db=mock_db,
+        marketplace_root=tmp_path / "market",
+        swe_root=tmp_path / "swe",
+    )
+    app = FastAPI()
+    app.state.marketplace = svc
+    app.include_router(router, prefix="/api")
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/market/skills/operation-log",
+        headers={
+            "X-Source-Id": "console",
+            "X-User-Id": "user123",
+        },
+        json={
+            "operation": "create",
+            "item_type": "skill",
+            "item_name": "my_new_skill",
+        },
+    )
+    # 失败忽略：即使 DB 写入失败，仍返回成功
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True}

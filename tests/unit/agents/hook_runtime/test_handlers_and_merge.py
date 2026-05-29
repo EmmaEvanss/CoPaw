@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import httpx
 import pytest
 
+from swe.config.context import encode_scope_id
+from swe.envs.store import save_envs
 from swe.agents.hook_runtime.executor import execute_handler
 from swe.agents.hook_runtime.merge import merge_hook_results
 from swe.agents.hook_runtime.models import (
@@ -39,6 +42,7 @@ def _context(event: HookEventName = HookEventName.PRE_TOOL_USE) -> HookContext:
         hook_event_name=event,
         tenant_id="tenant-a",
         effective_tenant_id="tenant-a",
+        source_id="source-a",
         user_id="user-1",
         agent_id="agent-1",
         channel="console",
@@ -47,6 +51,16 @@ def _context(event: HookEventName = HookEventName.PRE_TOOL_USE) -> HookContext:
         tool_input={"cmd": "echo old"},
         tool_use_id="tool-1",
     )
+
+
+def _write_scope_env(
+    root: Path,
+    tenant_id: str,
+    source_id: str,
+    envs: dict[str, str],
+) -> None:
+    scope_id = encode_scope_id(tenant_id, source_id)
+    save_envs(envs, root / scope_id / ".secret" / "envs.json")
 
 
 def _plan(*handlers) -> EffectiveHookPlan:
@@ -249,6 +263,97 @@ async def test_command_shell_field_selects_requested_shell(
 
     assert result.failed is False
     assert observed["kwargs"]["executable"] == "/tenant/bin/bash"
+
+
+@pytest.mark.asyncio
+async def test_command_handler_receives_tenant_runtime_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("swe.config.utils.WORKING_DIR", tmp_path)
+    monkeypatch.delenv("HOOK_TOKEN", raising=False)
+    _write_scope_env(
+        tmp_path,
+        "tenant-a",
+        "source-a",
+        {"HOOK_TOKEN": "tenant-secret"},
+    )
+    script = tmp_path / "hook_env.py"
+    script.write_text(
+        "import json, os\n"
+        "print(json.dumps({'hookSpecificOutput': {'additionalContext': os.environ.get('HOOK_TOKEN', '')}}))\n",
+        encoding="utf-8",
+    )
+    handler = CommandHookHandlerConfig(id="env", argv=["python", str(script)])
+
+    with tenant_context(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        workspace_dir=tmp_path,
+    ):
+        result = await execute_handler(
+            handler,
+            _context(),
+            workspace_dir=tmp_path,
+        )
+
+    assert result.failed is False
+    assert (
+        result.output.hook_specific_output["additionalContext"]
+        == "tenant-secret"
+    )
+    assert "HOOK_TOKEN" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_command_handler_env_overrides_tenant_runtime_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("swe.config.utils.WORKING_DIR", tmp_path)
+    _write_scope_env(
+        tmp_path,
+        "tenant-a",
+        "source-a",
+        {"HOOK_TOKEN": "tenant-secret"},
+    )
+    observed = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self, payload):
+            del payload
+            return b"{}", b""
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        observed.update(kwargs.get("env") or {})
+        return FakeProcess()
+
+    monkeypatch.setattr(
+        "swe.agents.hook_runtime.executor.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    handler = CommandHookHandlerConfig(
+        id="env",
+        argv=["python", str(tmp_path / "noop.py")],
+        env={"HOOK_TOKEN": "handler-secret"},
+    )
+    (tmp_path / "noop.py").write_text("print('{}')\n", encoding="utf-8")
+
+    with tenant_context(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        workspace_dir=tmp_path,
+    ):
+        result = await execute_handler(
+            handler,
+            _context(),
+            workspace_dir=tmp_path,
+        )
+
+    assert result.failed is False
+    assert observed["HOOK_TOKEN"] == "handler-secret"
 
 
 @pytest.mark.asyncio

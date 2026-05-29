@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Collection
@@ -21,12 +21,14 @@ from agentscope_runtime.engine.runner import Runner
 from agentscope_runtime.engine.schemas.agent_schemas import (
     AgentRequest,
     Event,
+    Message,
 )
 from agentscope_runtime.engine.schemas.exception import AgentException
 from dotenv import load_dotenv
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
+from ..mcp.http_headers import resolve_mcp_http_headers
 from ..mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
 from .command_dispatch import (
     _get_last_user_text,
@@ -79,12 +81,8 @@ from ...tracing.models import TraceStatus
 from ...config.context import (
     get_current_passthrough_headers,
 )
-from ..post_turn_continuation_store import (
-    consume_pending_continuation,
-    store_pending_continuation,
-)
-from ..post_turn_validation import validate_task_completion
-from ..suggestions import generate_suggestions, store_suggestions
+from ..source_system_config import is_chat_task_progress_enabled
+from ..source_system_config.runtime import get_current_source_system_config
 
 if TYPE_CHECKING:
     from ...agents.memory import BaseMemoryManager
@@ -163,31 +161,18 @@ class _RuntimeStartResult:
 
 @dataclass
 class _TurnPlan:
-    """保存本轮 agent 调用及后置校验需要的输入。"""
+    """保存本轮 agent 调用需要的输入。"""
 
     original_user_message: str
-    confirmed_turn_index: int
     turn_msgs: list[Any]
-    validation_config: Any | None
-
-
-@dataclass
-class _TurnPlanResult:
-    """描述续跑状态是否可用，以及可执行的 turn 计划。"""
-
-    plan: _TurnPlan | None = None
-    response: Msg | None = None
 
 
 @dataclass
 class _QueryTurnOutcome:
-    """记录 agent 输出和 post-turn validation 的最终状态。"""
+    """记录 agent 输出与完成态。"""
 
     task_completed: bool = True
     assistant_response: str = ""
-    last_validation_result: Any | None = None
-    auto_follow_up_turns: int = 0
-    max_auto_turns: int = 0
     before_stop_follow_up_turns: int = 0
     max_before_stop_turns: int = 0
     automatic_follow_up_turns: int = 0
@@ -481,6 +466,7 @@ def _create_session_skill_detector(
         session_id=session_id,
         channel=channel,
         source_id=source_id,
+        workspace_dir=workspace_dir,
         skill_hook_loader=_load_skill_hooks,
     )
     detector.set_enabled_skills(enabled_skills)
@@ -708,7 +694,7 @@ async def _create_mcp_client_with_headers(
     # HTTP transport (streamable_http or sse)
     headers = client_config.headers
     if headers:
-        headers = {k: os.path.expandvars(v) for k, v in headers.items()}
+        headers = resolve_mcp_http_headers(headers)
 
     # Merge passthrough headers for HTTP transport
     merged_headers = dict(headers or {})
@@ -848,26 +834,6 @@ def _build_before_stop_incomplete_msg(reason: str) -> Msg:
             reason=(reason or "BeforeStop blocked completion").strip(),
         ),
     )
-
-
-def _resolve_max_confirmed_turns(validation_config: Any) -> int:
-    """Resolve the post-turn confirmation limit with backward compatibility."""
-    confirmed_turns = getattr(validation_config, "max_confirmed_turns", None)
-    if confirmed_turns is None:
-        confirmed_turns = 2
-    try:
-        return max(int(confirmed_turns), 0)
-    except (TypeError, ValueError):
-        return 2
-
-
-def _resolve_max_auto_turns(validation_config: Any) -> int:
-    """Resolve the automatic continuation limit."""
-    auto_turns = getattr(validation_config, "max_auto_turns", 2)
-    try:
-        return max(int(auto_turns), 0)
-    except (TypeError, ValueError):
-        return 2
 
 
 def _resolve_max_before_stop_turns(agent_config: Any) -> int:
@@ -1011,46 +977,6 @@ async def _index_model_output_to_monitor(
         )
 
 
-async def _generate_and_store_suggestions(
-    session_id: str,
-    user_message: str,
-    assistant_response: str,
-    config,  # SuggestionConfig
-) -> None:
-    """异步生成并存储建议（后台任务）."""
-    logger.info(
-        "Generating suggestions for session %s: user_msg=%s chars, "
-        "assistant_msg=%s chars",
-        session_id,
-        len(user_message),
-        len(assistant_response),
-    )
-    try:
-        suggestions = await generate_suggestions(
-            user_message=user_message,
-            assistant_response=assistant_response,
-            max_suggestions=config.max_suggestions,
-            timeout_seconds=config.timeout_seconds,
-            user_message_max_length=config.user_message_max_length,
-            assistant_response_max_length=config.assistant_response_max_length,
-        )
-        logger.info(
-            "Generated %d suggestions for session %s",
-            len(suggestions),
-            session_id,
-        )
-        if suggestions:
-            await store_suggestions(session_id, suggestions)
-            logger.info(
-                "Stored %d suggestions for session %s: %s",
-                len(suggestions),
-                session_id,
-                suggestions,
-            )
-    except Exception as e:
-        logger.warning("Suggestion generation task failed: %s", e)
-
-
 def _with_hook_context(
     env_context: str,
     hook_context: str,
@@ -1108,33 +1034,6 @@ def _session_name_from_messages(msgs: list[Any]) -> str | None:
     if not content:
         return None
     return content[:10]
-
-
-def _validation_enabled(
-    validation_config: Any | None,
-    assistant_response: str,
-    original_user_message: str,
-) -> bool:
-    """集中判断本轮是否需要执行 post-turn validation。"""
-    return bool(
-        assistant_response
-        and original_user_message
-        and validation_config is not None
-        and getattr(validation_config, "enabled", False),
-    )
-
-
-def _should_auto_follow_up(
-    validation_result: Any,
-    auto_follow_up_turns: int,
-    max_auto_turns: int,
-) -> bool:
-    """判断校验失败时是否仍允许自动续跑。"""
-    return bool(
-        not validation_result.completed
-        and validation_result.follow_up_prompt
-        and auto_follow_up_turns < max_auto_turns,
-    )
 
 
 def _has_automatic_follow_up_budget(outcome: _QueryTurnOutcome) -> bool:
@@ -1219,6 +1118,28 @@ class _RetryState:
     task_completed: bool = False
 
 
+@dataclass
+class _QueryAttemptState:
+    """记录当前 query 尝试的运行时对象与退出原因。"""
+
+    runtime: _QueryRuntime | None = None
+    runtime_start: _RuntimeStartResult | None = None
+    session_state_loaded: bool = False
+    should_return: bool = False
+    succeeded: bool = False
+
+
+@dataclass(frozen=True)
+class _QueryAttemptInput:
+    """封装单次 query 尝试不随执行过程变化的输入。"""
+
+    request: AgentRequest
+    msgs: list[Any]
+    query: str | None
+    preflight: _QueryPreflight
+    trace_id: str | None
+
+
 class AgentRunner(Runner):
     def __init__(
         self,
@@ -1227,13 +1148,19 @@ class AgentRunner(Runner):
         task_tracker: Any | None = None,
         tenant_id: str | None = None,
     ) -> None:
+        from ...config.context import resolve_runtime_tenant_id
+
         super().__init__()
         self.framework_type = "agentscope"
         self.agent_id = agent_id  # Store agent_id for config loading
         self.workspace_dir = (
             workspace_dir  # Store workspace_dir for prompt building
         )
-        self.tenant_id = tenant_id  # Store tenant_id for config loading
+        self.tenant_id = (
+            resolve_runtime_tenant_id(tenant_id, None)
+            if tenant_id is not None
+            else None
+        )  # Store tenant_id for config loading
         self._chat_manager = None  # Store chat_manager reference
         self._workspace: Any = None  # Workspace instance for control commands
         self.memory_manager: BaseMemoryManager | None = None
@@ -1467,7 +1394,7 @@ class AgentRunner(Runner):
                 return None
             # 检查是否已有外部传入的 trace_id
             existing_trace_id = getattr(request, "trace_id", None)
-            return await trace_mgr.start_trace(
+            trace_id = await trace_mgr.start_trace(
                 user_id=getattr(request, "user_id", "") or "",
                 session_id=getattr(request, "session_id", "") or "",
                 channel=getattr(request, "channel", DEFAULT_CHANNEL),
@@ -1480,9 +1407,43 @@ class AgentRunner(Runner):
                 attach_existing=existing_trace_id
                 is not None,  # 如果有传入 trace_id，仅 attach
             )
+            if trace_id:
+                # 通道层负责把事件发给前端，这里写回 request 让 SSE 能透传 trace_id。
+                setattr(request, "trace_id", trace_id)
+            return trace_id
         except Exception as e:
             logger.warning("Failed to start trace: %s", e)
             return None
+
+    @staticmethod
+    def _attach_trace_id_to_event(event: Any, trace_id: str | None) -> Any:
+        """把当前轮次 trace_id 附加到消息元数据，便于前端关联反馈。"""
+        if not trace_id or not isinstance(event, Message):
+            return event
+
+        metadata = event.metadata
+        if isinstance(metadata, dict):
+            if metadata.get("trace_id"):
+                return event
+            event.metadata = {**metadata, "trace_id": trace_id}
+        else:
+            event.metadata = {"trace_id": trace_id}
+        return event
+
+    @staticmethod
+    def _attach_trace_id_to_msg(msg: Any, trace_id: str | None) -> Any:
+        """在适配 Runtime Message 前，把 trace_id 写入 AgentScope 消息。"""
+        if not trace_id or not isinstance(msg, Msg):
+            return msg
+
+        metadata = getattr(msg, "metadata", None)
+        if isinstance(metadata, dict):
+            if metadata.get("trace_id"):
+                return msg
+            msg.metadata = {**metadata, "trace_id": trace_id}
+        else:
+            msg.metadata = {"trace_id": trace_id}
+        return msg
 
     async def _get_or_create_chat(
         self,
@@ -1728,6 +1689,8 @@ class AgentRunner(Runner):
                 if self.workspace_dir
                 else str(WORKING_DIR)
             ),
+            source_id=_request_source_id(request),
+            user_name=_request_user_name(request),
         )
         env_context = _with_hook_context(
             env_context,
@@ -1842,90 +1805,13 @@ class AgentRunner(Runner):
         request: AgentRequest,
         msgs: list[Any],
         query: str | None,
-    ) -> _TurnPlanResult:
-        """根据普通请求或 validation 续跑请求构建本轮输入。"""
-        channel_meta = getattr(request, "channel_meta", {}) or {}
-        resume_id = channel_meta.get("post_turn_validation_resume_id")
+    ) -> _TurnPlan:
+        """根据普通请求构建本轮输入。"""
+        del runtime, request
         original_user_message = query or _get_last_user_text(msgs) or ""
-        validation_config = getattr(
-            runtime.agent_config.running,
-            "post_turn_validation",
-            None,
-        )
-        if not resume_id:
-            return _TurnPlanResult(
-                plan=_TurnPlan(
-                    original_user_message=original_user_message,
-                    confirmed_turn_index=0,
-                    turn_msgs=list(msgs),
-                    validation_config=validation_config,
-                ),
-            )
-
-        pending_continuation = await consume_pending_continuation(
-            validation_id=resume_id,
-            session_id=runtime.session_id,
-            tenant_id=self.tenant_id,
-        )
-        if pending_continuation is None:
-            return _TurnPlanResult(
-                response=Msg(
-                    name="Friday",
-                    role="assistant",
-                    content="续跑请求已过期或不存在，请重新发起任务。",
-                ),
-            )
-
-        return _TurnPlanResult(
-            plan=_TurnPlan(
-                original_user_message=(
-                    pending_continuation.user_message or original_user_message
-                ),
-                confirmed_turn_index=(
-                    pending_continuation.confirmed_turn_index + 1
-                ),
-                turn_msgs=[
-                    _build_internal_follow_up_msg(
-                        pending_continuation.follow_up_prompt,
-                    ),
-                ],
-                validation_config=validation_config,
-            ),
-        )
-
-    async def _validate_turn_if_needed(
-        self,
-        *,
-        plan: _TurnPlan,
-        assistant_response: str,
-    ) -> Any | None:
-        """按配置执行 post-turn validation，未启用时返回 None。"""
-        if not _validation_enabled(
-            plan.validation_config,
-            assistant_response,
-            plan.original_user_message,
-        ):
-            return None
-
-        return await validate_task_completion(
-            user_message=plan.original_user_message,
-            assistant_response=assistant_response,
-            agent_id=self.agent_id,
-            timeout_seconds=getattr(
-                plan.validation_config,
-                "timeout_seconds",
-                8.0,
-            ),
-            user_message_max_length=getattr(
-                plan.validation_config,
-                "user_message_max_length",
-                300,
-            ),
-            assistant_response_max_length=getattr(
-                plan.validation_config,
-                "assistant_response_max_length",
-                1200,
-            ),
+        return _TurnPlan(
+            original_user_message=original_user_message,
+            turn_msgs=list(msgs),
         )
 
     async def _stream_agent_turns(
@@ -1935,74 +1821,33 @@ class AgentRunner(Runner):
         plan: _TurnPlan,
         outcome: _QueryTurnOutcome,
     ):
-        """流式执行 agent，并在 validation 需要时自动续跑。"""
+        """流式执行当前 agent turn。"""
         turn_msgs = plan.turn_msgs
-        validation_auto_turns = (
-            _resolve_max_auto_turns(plan.validation_config)
-            if plan.validation_config is not None
-            else 0
-        )
         before_stop_turns = _resolve_max_before_stop_turns(
             runtime.agent_config,
         )
         outcome.max_before_stop_turns = before_stop_turns
-        outcome.max_auto_turns = validation_auto_turns
         outcome.max_automatic_follow_up_turns = (
             _resolve_max_automatic_follow_up_turns(
                 runtime.agent_config,
-                validation_auto_turns + before_stop_turns,
+                before_stop_turns,
             )
         )
-        while True:
-            async for msg, last in self._enforce_query_timeout(
-                stream_printing_messages(
-                    agents=[runtime.agent],
-                    coroutine_task=runtime.agent(turn_msgs),
-                ),
-                session_id=runtime.session_id,
-                agent=runtime.agent,
-                run_key=(
-                    runtime.chat.id if runtime.chat is not None else None
-                ),
-            ):
-                yield msg, last
+        async for msg, last in self._enforce_query_timeout(
+            stream_printing_messages(
+                agents=[runtime.agent],
+                coroutine_task=runtime.agent(turn_msgs),
+            ),
+            session_id=runtime.session_id,
+            agent=runtime.agent,
+            run_key=(runtime.chat.id if runtime.chat is not None else None),
+        ):
+            yield msg, last
 
-            outcome.assistant_response = _extract_assistant_response(
-                runtime.agent,
-            )
-            outcome.task_completed = True
-            outcome.last_validation_result = (
-                await self._validate_turn_if_needed(
-                    plan=plan,
-                    assistant_response=outcome.assistant_response,
-                )
-            )
-            if outcome.last_validation_result is None:
-                break
-
-            outcome.task_completed = outcome.last_validation_result.completed
-            if not _should_auto_follow_up(
-                outcome.last_validation_result,
-                outcome.auto_follow_up_turns,
-                outcome.max_auto_turns,
-            ) or not _has_automatic_follow_up_budget(outcome):
-                break
-
-            outcome.auto_follow_up_turns += 1
-            outcome.automatic_follow_up_turns += 1
-            turn_msgs = [
-                _build_internal_follow_up_msg(
-                    outcome.last_validation_result.follow_up_prompt,
-                ),
-            ]
-            logger.info(
-                "Post-turn validation scheduled automatic "
-                "follow-up turn %d/%d for session %s: %s",
-                outcome.auto_follow_up_turns,
-                outcome.max_auto_turns,
-                runtime.session_id,
-                outcome.last_validation_result.reason or "continue",
-            )
+        outcome.assistant_response = _extract_assistant_response(
+            runtime.agent,
+        )
+        outcome.task_completed = True
 
     async def _emit_before_stop_hook_if_needed(
         self,
@@ -2167,55 +2012,6 @@ class AgentRunner(Runner):
             return _hook_block_message(stop_hook_result)
         return None
 
-    async def _store_pending_validation_if_needed(
-        self,
-        *,
-        runtime: _QueryRuntime,
-        plan: _TurnPlan,
-        outcome: _QueryTurnOutcome,
-    ) -> None:
-        """保存需要用户确认的 post-turn validation 续跑请求。"""
-        validation_result = outcome.last_validation_result
-        if (
-            outcome.task_completed
-            or validation_result is None
-            or not validation_result.follow_up_prompt
-        ):
-            return
-
-        max_confirmed_turns = _resolve_max_confirmed_turns(
-            plan.validation_config,
-        )
-        if plan.confirmed_turn_index >= max_confirmed_turns:
-            logger.info(
-                "Post-turn validation reached confirmed turn "
-                "limit %d for session %s",
-                max_confirmed_turns,
-                runtime.session_id,
-            )
-            return
-
-        await store_pending_continuation(
-            session_id=runtime.session_id,
-            user_message=plan.original_user_message,
-            assistant_response=_extract_assistant_response(runtime.agent),
-            reason=validation_result.reason,
-            follow_up_prompt=validation_result.follow_up_prompt,
-            tenant_id=self.tenant_id,
-            confirmed_turn_index=plan.confirmed_turn_index,
-        )
-        logger.info(
-            "Post-turn validation pending confirmation after "
-            "automatic turns %d/%d; confirmed turn %d/%d for "
-            "session %s: %s",
-            outcome.auto_follow_up_turns,
-            outcome.max_auto_turns,
-            plan.confirmed_turn_index + 1,
-            max_confirmed_turns,
-            runtime.session_id,
-            validation_result.reason or "continue",
-        )
-
     async def _generate_backend_suggestions_if_needed(
         self,
         *,
@@ -2272,7 +2068,7 @@ class AgentRunner(Runner):
             return
 
         # 检查是否是 attach 的 trace，如果是则跳过结束
-        from ..tracing import get_current_trace
+        from ...tracing import get_current_trace
 
         ctx = get_current_trace()
         if ctx and ctx.attached:
@@ -2721,6 +2517,240 @@ class AgentRunner(Runner):
                 save_err,
             )
 
+    def _load_query_retry_settings(self) -> tuple[int, int, float, float]:
+        """读取 query 重试配置，配置不可用时回退为单次执行。"""
+        agent_config_for_retry = None
+        try:
+            agent_config_for_retry = load_agent_config(
+                self.agent_id,
+                tenant_id=self.tenant_id,
+            )
+        except Exception:
+            pass
+
+        retry_enabled, max_retries, backoff_base, backoff_cap = (
+            self._extract_retry_config(agent_config_for_retry)
+        )
+        max_retry_attempts = max_retries + 1 if retry_enabled else 1
+        return max_retry_attempts, max_retries, backoff_base, backoff_cap
+
+    async def _add_retry_notice_to_memory(
+        self,
+        agent: Any,
+        retry_msg: Msg,
+    ) -> None:
+        """把重试状态写入 memory，失败时不影响主重试流程。"""
+        if agent is None:
+            return
+        try:
+            await agent.memory.add(retry_msg)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _build_retry_status_msg(text: str) -> Msg:
+        """构造面向用户展示的 query 重试状态消息。"""
+        return Msg(
+            name="Friday",
+            role="assistant",
+            content=[
+                TextBlock(
+                    type="text",
+                    text=text,
+                ),
+            ],
+            metadata={"retry_status": True},
+        )
+
+    async def _stream_retry_backoff_notice(
+        self,
+        *,
+        retry_attempt: int,
+        max_retries: int,
+        backoff_base: float,
+        backoff_cap: float,
+        session_id: str,
+        retry_state: _RetryState,
+    ):
+        """重试下一轮前通知用户并等待退避时间。"""
+        if retry_attempt <= 0:
+            return
+
+        backoff = self._compute_retry_backoff(
+            retry_attempt,
+            backoff_cap,
+            backoff_base,
+        )
+        logger.info(
+            "Query retry attempt %d/%d, backoff=%.1fs (session=%s)",
+            retry_attempt,
+            max_retries,
+            backoff,
+            session_id,
+        )
+        retry_msg = self._build_retry_status_msg(
+            f"正在重试 ({retry_attempt}/{max_retries})...",
+        )
+        yield retry_msg, False
+        await self._add_retry_notice_to_memory(
+            retry_state.prev_agent,
+            retry_msg,
+        )
+        await asyncio.sleep(backoff)
+
+    async def _stream_retryable_query_error(
+        self,
+        *,
+        exc: BaseException,
+        retry_attempt: int,
+        max_retry_attempts: int,
+        max_retries: int,
+        retry_state: _RetryState,
+        runtime: _QueryRuntime | None,
+        session_id: str,
+    ):
+        """处理可重试异常，保持先提示用户再保存状态的顺序。"""
+        error_summary = self._summarize_retry_error(exc)
+        logger.warning(
+            "Query failed with retryable error (attempt %d/%d): %s "
+            "(summary: %s)",
+            retry_attempt + 1,
+            max_retry_attempts,
+            exc,
+            error_summary,
+        )
+        retry_msg = self._build_retry_status_msg(
+            f"{error_summary}，"
+            f"正在重试 ({retry_attempt + 1}/{max_retries})...",
+        )
+        yield retry_msg, False
+        await self._add_retry_notice_to_memory(retry_state.agent, retry_msg)
+        await self._save_state_before_retry(
+            retry_state.agent,
+            retry_state.session_state_loaded,
+            session_id,
+            runtime.skip_history if runtime is not None else False,
+            runtime.user_id if runtime is not None else "",
+        )
+
+    async def _complete_successful_query_attempt(
+        self,
+        *,
+        runtime: _QueryRuntime,
+        plan: _TurnPlan,
+        outcome: _QueryTurnOutcome,
+        trace_id: str | None,
+    ) -> None:
+        """执行 agent 输出后的持久化、suggestion 与 trace 收尾。"""
+        await self._generate_backend_suggestions_if_needed(
+            runtime=runtime,
+            plan=plan,
+            outcome=outcome,
+        )
+        await self._index_model_output_if_needed(
+            trace_id=trace_id,
+            agent=runtime.agent,
+        )
+        await self._end_trace_if_needed(
+            trace_id,
+            TraceStatus.COMPLETED,
+        )
+
+    async def _finish_blocked_query_attempt(
+        self,
+        *,
+        runtime: _QueryRuntime,
+        outcome: _QueryTurnOutcome,
+        trace_id: str | None,
+    ) -> None:
+        """BeforeStop 耗尽预算时仍需写入最终输出并结束 trace。"""
+        if not outcome.completion_marked_incomplete:
+            return
+        await self._index_model_output_if_needed(
+            trace_id=trace_id,
+            agent=runtime.agent,
+        )
+        await self._end_trace_if_needed(
+            trace_id,
+            TraceStatus.COMPLETED,
+        )
+
+    async def _stream_single_query_attempt(
+        self,
+        *,
+        attempt_input: _QueryAttemptInput,
+        outcome: _QueryTurnOutcome,
+        retry_state: _RetryState,
+        attempt_state: _QueryAttemptState,
+    ):
+        """执行一次 query 尝试，调用方负责重试和 finally 清理。"""
+        attempt_state.runtime_start = await self._prepare_query_runtime(
+            request=attempt_input.request,
+            msgs=attempt_input.msgs,
+            query=attempt_input.query,
+            preflight=attempt_input.preflight,
+        )
+        if attempt_state.runtime_start.block_response is not None:
+            yield attempt_state.runtime_start.block_response, True
+            attempt_state.should_return = True
+            return
+
+        runtime = attempt_state.runtime_start.runtime
+        attempt_state.runtime = runtime
+        if runtime is None:
+            attempt_state.should_return = True
+            return
+
+        if attempt_input.trace_id:
+            await runtime.agent.setup_skill_detector(attempt_input.trace_id)
+
+        logger.debug(f"Agent Query msgs {attempt_input.msgs}")
+        attempt_state.session_state_loaded = await self.get_state_loaded(
+            runtime.agent,
+            runtime.session_id,
+            attempt_state.session_state_loaded,
+            runtime.skip_history,
+            runtime.user_id,
+        )
+        retry_state.agent = runtime.agent
+        retry_state.session_state_loaded = attempt_state.session_state_loaded
+
+        # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
+        runtime.agent.rebuild_sys_prompt()
+
+        plan = await self._build_turn_plan(
+            runtime=runtime,
+            request=attempt_input.request,
+            msgs=attempt_input.msgs,
+            query=attempt_input.query,
+        )
+
+        async for msg, last in self._stream_completion_lifecycle(
+            request=attempt_input.request,
+            runtime=runtime,
+            plan=plan,
+            outcome=outcome,
+        ):
+            yield msg, last
+
+        if outcome.completion_blocked:
+            await self._finish_blocked_query_attempt(
+                runtime=runtime,
+                outcome=outcome,
+                trace_id=attempt_input.trace_id,
+            )
+            attempt_state.should_return = True
+            return
+
+        await self._complete_successful_query_attempt(
+            runtime=runtime,
+            plan=plan,
+            outcome=outcome,
+            trace_id=attempt_input.trace_id,
+        )
+        retry_state.task_completed = outcome.task_completed
+        attempt_state.succeeded = True
+
     async def _stream_query_after_preflight(
         self,
         msgs,
@@ -2740,240 +2770,116 @@ class AgentRunner(Runner):
 
         set_current_agent_id(self.agent_id)
 
-        runtime: _QueryRuntime | None = None
-        runtime_start: _RuntimeStartResult | None = None
-        session_state_loaded = False
         trace_id = await self._start_query_trace(request, msgs)
         outcome = _QueryTurnOutcome()
 
         # ── Query 级别重试循环 ──
         retry_state = _RetryState()
-        agent_config_for_retry = None
-        try:
-            agent_config_for_retry = load_agent_config(
-                self.agent_id,
-                tenant_id=self.tenant_id,
-            )
-        except Exception:
-            pass
-        retry_enabled, max_retries, backoff_base, backoff_cap = (
-            self._extract_retry_config(agent_config_for_retry)
+        max_retry_attempts, max_retries, backoff_base, backoff_cap = (
+            self._load_query_retry_settings()
         )
-        max_retry_attempts = max_retries + 1 if retry_enabled else 1
+        attempt_input = _QueryAttemptInput(
+            request=request,
+            msgs=msgs,
+            query=query,
+            preflight=preflight,
+            trace_id=trace_id,
+        )
+        attempt_state = _QueryAttemptState()
 
-        for retry_attempt in range(max_retry_attempts):
-            retry_state.prev_agent = retry_state.agent
-            retry_state.prev_session_state_loaded = (
-                retry_state.session_state_loaded
-            )
-            retry_state.agent = None
-            retry_state.session_state_loaded = False
-            runtime = None
-            runtime_start = None
-            session_state_loaded = False
-
-            if retry_attempt > 0:
-                backoff = self._compute_retry_backoff(
-                    retry_attempt,
-                    backoff_cap,
-                    backoff_base,
+        try:
+            for retry_attempt in range(max_retry_attempts):
+                retry_state.prev_agent = retry_state.agent
+                retry_state.prev_session_state_loaded = (
+                    retry_state.session_state_loaded
                 )
-                logger.info(
-                    "Query retry attempt %d/%d, backoff=%.1fs (session=%s)",
-                    retry_attempt,
-                    max_retries,
-                    backoff,
-                    session_id,
-                )
-                retry_msg = Msg(
-                    name="Friday",
-                    role="assistant",
-                    content=[
-                        TextBlock(
-                            type="text",
-                            text=(
-                                f"正在重试 ({retry_attempt}/{max_retries})..."
-                            ),
-                        ),
-                    ],
-                    metadata={"retry_status": True},
-                )
-                yield retry_msg, False
-                if retry_state.prev_agent is not None:
-                    try:
-                        await retry_state.prev_agent.memory.add(retry_msg)
-                    except Exception:
-                        pass
-                await asyncio.sleep(backoff)
+                retry_state.agent = None
+                retry_state.session_state_loaded = False
+                attempt_state = _QueryAttemptState()
 
-            try:
-                runtime_start = await self._prepare_query_runtime(
-                    request=request,
-                    msgs=msgs,
-                    query=query,
-                    preflight=preflight,
-                )
-                if runtime_start.block_response is not None:
-                    yield runtime_start.block_response, True
-                    return
-                runtime = runtime_start.runtime
-                if runtime is None:
-                    return
-
-                if trace_id:
-                    await runtime.agent.setup_skill_detector(trace_id)
-
-                logger.debug(f"Agent Query msgs {msgs}")
-
-                session_state_loaded = await self.get_state_loaded(
-                    runtime.agent,
-                    runtime.session_id,
-                    session_state_loaded,
-                    runtime.skip_history,
-                    runtime.user_id,
-                )
-                retry_state.agent = runtime.agent
-                retry_state.session_state_loaded = session_state_loaded
-
-                # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
-                runtime.agent.rebuild_sys_prompt()
-
-                plan_result = await self._build_turn_plan(
-                    runtime=runtime,
-                    request=request,
-                    msgs=msgs,
-                    query=query,
-                )
-                if plan_result.response is not None:
-                    outcome.task_completed = False
-                    yield plan_result.response, True
-                    return
-                plan = plan_result.plan
-                if plan is None:
-                    return
-
-                async for msg, last in self._stream_completion_lifecycle(
-                    request=request,
-                    runtime=runtime,
-                    plan=plan,
-                    outcome=outcome,
+                async for msg, last in self._stream_retry_backoff_notice(
+                    retry_attempt=retry_attempt,
+                    max_retries=max_retries,
+                    backoff_base=backoff_base,
+                    backoff_cap=backoff_cap,
+                    session_id=session_id,
+                    retry_state=retry_state,
                 ):
                     yield msg, last
 
-                if outcome.completion_blocked:
-                    if outcome.completion_marked_incomplete:
-                        await self._index_model_output_if_needed(
-                            trace_id=trace_id,
-                            agent=runtime.agent,
-                        )
-                        await self._end_trace_if_needed(
-                            trace_id,
-                            TraceStatus.COMPLETED,
-                        )
-                    return
+                try:
+                    async for msg, last in self._stream_single_query_attempt(
+                        attempt_input=attempt_input,
+                        outcome=outcome,
+                        retry_state=retry_state,
+                        attempt_state=attempt_state,
+                    ):
+                        yield msg, last
 
-                await self._store_pending_validation_if_needed(
-                    runtime=runtime,
-                    plan=plan,
-                    outcome=outcome,
-                )
-                await self._generate_backend_suggestions_if_needed(
-                    runtime=runtime,
-                    plan=plan,
-                    outcome=outcome,
-                )
-                await self._index_model_output_if_needed(
-                    trace_id=trace_id,
-                    agent=runtime.agent,
-                )
-                await self._end_trace_if_needed(
-                    trace_id,
-                    TraceStatus.COMPLETED,
-                )
+                    if attempt_state.should_return:
+                        return
+                    if attempt_state.succeeded:
+                        break
 
-                retry_state.task_completed = outcome.task_completed
-                break  # 成功，跳出重试循环
-
-            except asyncio.CancelledError as exc:
-                await self._handle_query_cancelled(
-                    trace_id=trace_id,
-                    session_id=session_id,
-                    agent=runtime.agent if runtime is not None else None,
-                    exc=exc,
-                )
-                return
-            except Exception as e:
-                if not self._should_retry(
-                    retry_attempt,
-                    max_retry_attempts,
-                    e,
-                ):
-                    await self._handle_query_error(
-                        request=request,
-                        exc=e,
+                except asyncio.CancelledError as exc:
+                    await self._handle_query_cancelled(
                         trace_id=trace_id,
-                        locals_snapshot=locals(),
-                    )
-                    raise
-                # 可重试错误：发送重试消息、保存状态、继续循环
-                error_summary = self._summarize_retry_error(e)
-                logger.warning(
-                    "Query failed with retryable error (attempt %d/%d): %s "
-                    "(summary: %s)",
-                    retry_attempt + 1,
-                    max_retry_attempts,
-                    e,
-                    error_summary,
-                )
-                retry_msg = Msg(
-                    name="Friday",
-                    role="assistant",
-                    content=[
-                        TextBlock(
-                            type="text",
-                            text=(
-                                f"{error_summary}，"
-                                f"正在重试 ({retry_attempt + 1}/{max_retries})..."
-                            ),
+                        session_id=session_id,
+                        agent=(
+                            attempt_state.runtime.agent
+                            if attempt_state.runtime is not None
+                            else None
                         ),
-                    ],
-                    metadata={"retry_status": True},
-                )
-                yield retry_msg, False
-                if retry_state.agent is not None:
-                    try:
-                        await retry_state.agent.memory.add(retry_msg)
-                    except Exception:
-                        pass
-                await self._save_state_before_retry(
-                    retry_state.agent,
-                    retry_state.session_state_loaded,
-                    session_id,
-                    runtime.skip_history if runtime is not None else False,
-                    runtime.user_id if runtime is not None else "",
-                )
+                        exc=exc,
+                    )
+                    return
+                except Exception as e:
+                    if not self._should_retry(
+                        retry_attempt,
+                        max_retry_attempts,
+                        e,
+                    ):
+                        await self._handle_query_error(
+                            request=request,
+                            exc=e,
+                            trace_id=trace_id,
+                            locals_snapshot=locals(),
+                        )
+                        raise
 
-        # finally 清理：使用 retry_state 确保取消场景下也能正确清理
-        cleanup_runtime = runtime
-        cleanup_state_loaded = session_state_loaded
-        if cleanup_runtime is None and retry_state.prev_agent is not None:
-            # 重试循环中被取消时 runtime 可能为 None，
-            # 但仍需保存 prev_agent 的状态
-            cleanup_state_loaded = (
-                retry_state.session_state_loaded
-                or retry_state.prev_session_state_loaded
+                    async for msg, last in self._stream_retryable_query_error(
+                        exc=e,
+                        retry_attempt=retry_attempt,
+                        max_retry_attempts=max_retry_attempts,
+                        max_retries=max_retries,
+                        retry_state=retry_state,
+                        runtime=attempt_state.runtime,
+                        session_id=session_id,
+                    ):
+                        yield msg, last
+        finally:
+            cleanup_runtime = attempt_state.runtime
+            cleanup_state_loaded = attempt_state.session_state_loaded
+            if cleanup_runtime is None and retry_state.prev_agent is not None:
+                # 重试循环中被取消时 runtime 可能为 None，
+                # 但仍需保存 prev_agent 的状态
+                cleanup_state_loaded = (
+                    retry_state.session_state_loaded
+                    or retry_state.prev_session_state_loaded
+                )
+            await self._cleanup_query_resources(
+                runtime=cleanup_runtime,
+                session_state_loaded=cleanup_state_loaded,
+                session_id=session_id,
             )
-        await self._cleanup_query_resources(
-            runtime=cleanup_runtime,
-            session_state_loaded=cleanup_state_loaded,
-            session_id=session_id,
-        )
-        await self._cleanup_blocked_runtime_start(runtime_start)
-        await self._store_qa_content_if_needed(
-            runtime=cleanup_runtime,
-            query=query,
-            outcome=outcome,
-        )
+            await self._cleanup_blocked_runtime_start(
+                attempt_state.runtime_start,
+            )
+            await self._store_qa_content_if_needed(
+                runtime=cleanup_runtime,
+                query=query,
+                outcome=outcome,
+            )
 
     async def _stream_query_entry(
         self,
@@ -3038,6 +2944,8 @@ class AgentRunner(Runner):
             session_id=session_id,
             user_id=user_id,
         ):
+            trace_id = getattr(request, "trace_id", None)
+            msg = self._attach_trace_id_to_msg(msg, trace_id)
             yield msg, last
 
     async def get_state_loaded(
@@ -3408,20 +3316,32 @@ class AgentRunner(Runner):
         **kwargs,
     ) -> AsyncGenerator[Event, None]:
         """Wrap base streaming to normalize reasoning end boundaries."""
+        task_progress_enabled = is_chat_task_progress_enabled(
+            get_current_source_system_config(),
+        )
         async for event in normalize_reasoning_boundary_stream(
             super().stream_query(request, **kwargs),
         ):
+            trace_id = getattr(request, "trace_id", None)
+            event = self._attach_trace_id_to_event(event, trace_id)
             progress = None
-            channel_meta = getattr(request, "channel_meta", None) or {}
-            chat_id = channel_meta.get("chat_id")
-            if not chat_id and self._chat_manager is not None:
-                chat_id = await self._chat_manager.get_chat_id_by_session(
-                    getattr(request, "session_id", "") or "",
-                    getattr(request, "channel", DEFAULT_CHANNEL),
-                )
-            if chat_id and self._task_tracker is not None:
-                progress = await self._task_tracker.get_task_progress(chat_id)
-            yield attach_task_progress(event, progress)
+            if task_progress_enabled:
+                channel_meta = getattr(request, "channel_meta", None) or {}
+                chat_id = channel_meta.get("chat_id")
+                if not chat_id and self._chat_manager is not None:
+                    chat_id = await self._chat_manager.get_chat_id_by_session(
+                        getattr(request, "session_id", "") or "",
+                        getattr(request, "channel", DEFAULT_CHANNEL),
+                    )
+                if chat_id and self._task_tracker is not None:
+                    progress = await self._task_tracker.get_task_progress(
+                        chat_id,
+                    )
+            yield attach_task_progress(
+                event,
+                progress,
+                enabled=task_progress_enabled,
+            )
 
     async def init_handler(self, *args, **kwargs):
         """

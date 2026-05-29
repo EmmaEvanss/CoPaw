@@ -58,7 +58,7 @@ def test_shared_tenant_picker_supports_discovered_and_manual_selection() -> (
 def test_skill_broadcast_modal_reuses_shared_tenant_picker() -> None:
     content = SKILL_BROADCAST_MODAL.read_text(encoding="utf-8")
 
-    assert 'from "../../../../../components/TenantTargetPicker"' in content
+    assert 'from "../../../../components/TenantTargetPicker"' in content
     assert "<TenantTargetPicker" in content
     assert "tenantIds={tenantIds}" in content
     assert "selectedTenantIds={selectedTenantIds}" in content

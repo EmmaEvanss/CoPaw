@@ -1,0 +1,29 @@
+{
+  "enabled": true,
+  "events": {
+    "PreToolUse": [
+      {
+        "id": "shell-policy",
+        "matcher": {
+          "tools": [
+            "execute_shell_command"
+          ]
+        },
+        "hooks": [
+          {
+            "id": "check-shell-command",
+            "type": "command",
+            "argv": [
+              "python",
+              "scripts/check_shell_command.py"
+            ],
+            "timeout": 5,
+            "statusMessage": "正在检查 shell 命令策略",
+            "once": true,
+            "failPolicy": "block"
+          }
+        ]
+      }
+    ]
+  }
+}

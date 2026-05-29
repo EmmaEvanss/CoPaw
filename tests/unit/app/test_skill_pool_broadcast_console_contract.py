@@ -32,7 +32,7 @@ def test_broadcast_modal_supports_discovered_and_manual_tenant_selection() -> (
     content = BROADCAST_MODAL.read_text(encoding="utf-8")
 
     assert "tenantIds: string[];" in content
-    assert 'from "../../../../../components/TenantTargetPicker"' in content
+    assert 'from "../../../../components/TenantTargetPicker"' in content
     assert "<TenantTargetPicker" in content
     assert "selectedTenantIds={selectedTenantIds}" in content
     assert "onChange={setSelectedTenantIds}" in content

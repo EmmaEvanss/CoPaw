@@ -18,6 +18,7 @@ from .http import client, print_json, resolve_base_url
 def _build_headers(
     agent_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    source_id: Optional[str] = None,
 ) -> Dict[str, str]:
     """Build API headers for agent CLI commands."""
     headers: Dict[str, str] = {}
@@ -25,6 +26,8 @@ def _build_headers(
         headers["X-Agent-Id"] = agent_id
     if tenant_id:
         headers["X-Tenant-Id"] = tenant_id
+    if source_id:
+        headers["X-Source-Id"] = source_id
     return headers
 
 
@@ -289,10 +292,11 @@ def _check_task_status(
     json_output: bool,
     to_agent: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    source_id: Optional[str] = None,
 ) -> None:
     """Check background task status and display result."""
     with client(base_url) as c:
-        headers = _build_headers(to_agent, tenant_id)
+        headers = _build_headers(to_agent, tenant_id, source_id)
 
         try:
             r = c.get(
@@ -416,11 +420,17 @@ def agents_group() -> None:
     default=None,
     help="Tenant ID forwarded as X-Tenant-Id header.",
 )
+@click.option(
+    "--source-id",
+    default=None,
+    help="Source ID forwarded as X-Source-Id header.",
+)
 @click.pass_context
 def list_agents(
     ctx: click.Context,
     base_url: Optional[str],
     tenant_id: Optional[str],
+    source_id: Optional[str],
 ) -> None:
     """List all configured agents.
 
@@ -447,7 +457,13 @@ def list_agents(
     """
     base_url = resolve_base_url(ctx, base_url)
     with client(base_url) as c:
-        r = c.get("/agents", headers=_build_headers(tenant_id=tenant_id))
+        r = c.get(
+            "/agents",
+            headers=_build_headers(
+                tenant_id=tenant_id,
+                source_id=source_id,
+            ),
+        )
         r.raise_for_status()
         print_json(r.json())
 
@@ -536,6 +552,11 @@ def list_agents(
     default=None,
     help="Tenant ID forwarded as X-Tenant-Id header.",
 )
+@click.option(
+    "--source-id",
+    default=None,
+    help="Source ID forwarded as X-Source-Id header.",
+)
 @click.pass_context
 def chat_cmd(
     ctx: click.Context,
@@ -551,6 +572,7 @@ def chat_cmd(
     json_output: bool,
     base_url: Optional[str],
     tenant_id: Optional[str],
+    source_id: Optional[str],
 ) -> None:
     """Chat with another agent (inter-agent communication).
 
@@ -655,6 +677,7 @@ def chat_cmd(
             json_output,
             to_agent,
             tenant_id,
+            source_id,
         )
         return
 
@@ -686,7 +709,7 @@ def chat_cmd(
     }
 
     with client(resolved_base_url) as c:
-        headers = _build_headers(to_agent, tenant_id)
+        headers = _build_headers(to_agent, tenant_id, source_id)
 
         if background:
             _submit_background_task(

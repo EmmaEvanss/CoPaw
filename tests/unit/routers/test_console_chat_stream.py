@@ -93,7 +93,12 @@ def test_console_chat_stream_emits_keepalive_and_disables_proxy_buffering(
         "channel": "console",
     }
 
-    with client.stream("POST", "/console/chat", json=payload) as response:
+    with client.stream(
+        "POST",
+        "/console/chat",
+        headers={"X-Source-Id": "src-a"},
+        json=payload,
+    ) as response:
         assert response.status_code == 200
         assert response.headers["x-accel-buffering"] == "no"
 

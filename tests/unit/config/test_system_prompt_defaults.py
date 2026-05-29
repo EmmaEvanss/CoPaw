@@ -61,9 +61,10 @@ def test_agents_config_preserves_explicit_empty_prompt_files():
 
 
 def test_load_agent_config_upgrades_legacy_default_prompt_files(tmp_path):
-    """Legacy default prompt files should pick up MEMORY.md on fallback."""
+    """旧默认 prompt 集合在读取 agent.json 时应补齐 MEMORY.md。"""
     tenant_dir = tmp_path / "tenant-a"
     workspace_dir = tenant_dir / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
     save_config(
         Config(
             agents=AgentsConfig(
@@ -84,6 +85,21 @@ def test_load_agent_config_upgrades_legacy_default_prompt_files(tmp_path):
         ),
         tenant_dir / "config.json",
     )
+    (workspace_dir / "agent.json").write_text(
+        json.dumps(
+            {
+                "id": "default",
+                "name": "Default Agent",
+                "workspace_dir": str(workspace_dir),
+                "system_prompt_files": [
+                    "AGENTS.md",
+                    "SOUL.md",
+                    "PROFILE.md",
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
 
     agent_config = load_agent_config(
         "default",
@@ -102,6 +118,7 @@ def test_load_agent_config_preserves_custom_prompt_files(tmp_path):
     """Custom prompt file selections should stay unchanged."""
     tenant_dir = tmp_path / "tenant-b"
     workspace_dir = tenant_dir / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
     save_config(
         Config(
             agents=AgentsConfig(
@@ -121,6 +138,20 @@ def test_load_agent_config_preserves_custom_prompt_files(tmp_path):
         ),
         tenant_dir / "config.json",
     )
+    (workspace_dir / "agent.json").write_text(
+        json.dumps(
+            {
+                "id": "default",
+                "name": "Default Agent",
+                "workspace_dir": str(workspace_dir),
+                "system_prompt_files": [
+                    "AGENTS.md",
+                    "PROFILE.md",
+                ],
+            },
+        ),
+        encoding="utf-8",
+    )
 
     agent_config = load_agent_config(
         "default",
@@ -134,9 +165,10 @@ def test_load_agent_config_preserves_custom_prompt_files(tmp_path):
 
 
 def test_load_agent_config_preserves_empty_prompt_files(tmp_path):
-    """Empty prompt file selections should stay empty when loading fallback."""
+    """Empty prompt file selections should stay empty when loading agent.json."""
     tenant_dir = tmp_path / "tenant-c"
     workspace_dir = tenant_dir / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
     save_config(
         Config(
             agents=AgentsConfig(
@@ -152,6 +184,17 @@ def test_load_agent_config_preserves_empty_prompt_files(tmp_path):
             ),
         ),
         tenant_dir / "config.json",
+    )
+    (workspace_dir / "agent.json").write_text(
+        json.dumps(
+            {
+                "id": "default",
+                "name": "Default Agent",
+                "workspace_dir": str(workspace_dir),
+                "system_prompt_files": [],
+            },
+        ),
+        encoding="utf-8",
     )
 
     agent_config = load_agent_config(

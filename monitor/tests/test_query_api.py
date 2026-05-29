@@ -19,7 +19,7 @@ class TestQueryParams:
         """Test default values for CronJobQueryParams."""
         params = CronJobQueryParams()
         assert params.page == 1
-        assert params.page_size == 20
+        assert params.page_size == 10
         assert params.tenant_id is None
         assert params.status is None
 
@@ -42,7 +42,7 @@ class TestQueryParams:
         """Test default values for ExecutionQueryParams."""
         params = ExecutionQueryParams()
         assert params.page == 1
-        assert params.page_size == 20
+        assert params.page_size == 10
         assert params.job_id is None
 
     def test_execution_query_params_page_size_limit(self):
@@ -72,7 +72,7 @@ class TestPaginatedResponse:
         assert response.items == []
         assert response.total == 0
         assert response.page == 1
-        assert response.page_size == 20
+        assert response.page_size == 10
 
     def test_paginated_response_with_data(self):
         """Test PaginatedResponse with data."""

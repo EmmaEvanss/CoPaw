@@ -112,3 +112,111 @@ describe("ExpandablePanel history", () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+describe("ExpandablePanel tasks", () => {
+  beforeEach(() => {
+    mocks.navigate.mockReset();
+    mocks.setSessionLoading.mockReset();
+  });
+
+  it("shows completed status instead of scheduled result preview", () => {
+    render(
+      <ExpandablePanel
+        visible
+        type="tasks"
+        onClose={vi.fn()}
+        tasks={[
+          {
+            id: "job-1",
+            name: "daily task",
+            enabled: true,
+            schedule: {
+              type: "cron",
+              cron: "0 9 * * *",
+              timezone: "Asia/Shanghai",
+            },
+            task_type: "agent",
+            request: {
+              input: [{ role: "user", content: "ping" }],
+            },
+            dispatch: {
+              type: "channel",
+              channel: "console",
+              target: {
+                user_id: "user-1",
+                session_id: "session-1",
+              },
+            },
+            task: {
+              visible_in_my_tasks: true,
+              has_scheduled_result: true,
+              latest_scheduled_preview: "scheduled result preview",
+              unread_execution_count: 0,
+              is_running: false,
+              is_paused: false,
+              pause_reason: null,
+              last_scheduled_run_at: "2026-05-21T08:00:00Z" as any,
+            },
+          } as any,
+        ]}
+        sessions={[]}
+        onTaskClick={vi.fn()}
+        toolbarRef={{ current: document.createElement("div") }}
+      />,
+    );
+
+    expect(screen.getByText("已完成")).toBeInTheDocument();
+    expect(screen.queryByText("scheduled result preview")).toBeNull();
+  });
+
+  it("shows unread badge without hiding task actions", () => {
+    const { container } = render(
+      <ExpandablePanel
+        visible
+        type="tasks"
+        onClose={vi.fn()}
+        tasks={[
+          {
+            id: "job-1",
+            name: "daily task",
+            enabled: true,
+            schedule: {
+              type: "cron",
+              cron: "0 9 * * *",
+              timezone: "Asia/Shanghai",
+            },
+            task_type: "agent",
+            request: {
+              input: [{ role: "user", content: "ping" }],
+            },
+            dispatch: {
+              type: "channel",
+              channel: "console",
+              target: {
+                user_id: "user-1",
+                session_id: "session-1",
+              },
+            },
+            task: {
+              visible_in_my_tasks: true,
+              has_scheduled_result: true,
+              latest_scheduled_preview: "",
+              unread_execution_count: 3,
+              is_running: false,
+              is_paused: false,
+              pause_reason: null,
+            },
+          } as any,
+        ]}
+        sessions={[]}
+        onTaskClick={vi.fn()}
+        toolbarRef={{ current: document.createElement("div") }}
+      />,
+    );
+
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(
+      container.querySelector(".expandable-panel-task-action-trigger"),
+    ).toBeInTheDocument();
+  });
+});

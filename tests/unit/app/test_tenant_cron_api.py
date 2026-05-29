@@ -8,9 +8,21 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from swe.config.context import encode_scope_id
 
 SRC_ROOT = Path(__file__).parent.parent.parent.parent / "src"
 sys.path.insert(0, str(SRC_ROOT))
+
+_ORIGINAL_MODULES = {
+    name: sys.modules.get(name)
+    for name in [
+        "swe.app.crons",
+        "swe.app.channels.schema",
+        "swe.app.crons.models",
+        "swe.app.crons.manager",
+        "swe.app.crons.api",
+    ]
+}
 
 if "swe.app.crons" not in sys.modules:
     pkg = types.ModuleType("swe.app.crons")
@@ -18,6 +30,7 @@ if "swe.app.crons" not in sys.modules:
     sys.modules["swe.app.crons"] = pkg
 
 channels_schema_module = types.ModuleType("swe.app.channels.schema")
+channels_schema_module.ChannelType = str
 channels_schema_module.DEFAULT_CHANNEL = "console"
 sys.modules["swe.app.channels.schema"] = channels_schema_module
 
@@ -43,16 +56,39 @@ api_module = importlib.util.module_from_spec(api_spec)
 sys.modules["swe.app.crons.api"] = api_module
 api_spec.loader.exec_module(api_module)
 
+for _name, _module in _ORIGINAL_MODULES.items():
+    if _module is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _module
+
 
 class _TenantStateMiddleware:
-    def __init__(self, app, tenant_id: str):
+    def __init__(
+        self,
+        app,
+        tenant_id: str,
+        source_id: str,
+        user_name: str,
+        bbk_id: str,
+    ):
         self.app = app
         self.tenant_id = tenant_id
+        self.source_id = source_id
+        self.user_name = user_name
+        self.bbk_id = bbk_id
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             scope.setdefault("state", {})
             scope["state"]["tenant_id"] = self.tenant_id
+            scope["state"]["source_id"] = self.source_id
+            scope["state"]["scope_id"] = encode_scope_id(
+                self.tenant_id,
+                self.source_id,
+            )
+            scope["state"]["user_name"] = self.user_name
+            scope["state"]["bbk_id"] = self.bbk_id
         await self.app(scope, receive, send)
 
 
@@ -104,7 +140,13 @@ def _job_spec(job_id: str = ""):
 
 def _build_client(manager: _Manager) -> TestClient:
     app = FastAPI()
-    app.add_middleware(_TenantStateMiddleware, tenant_id="tenant-a")
+    app.add_middleware(
+        _TenantStateMiddleware,
+        tenant_id="tenant-a",
+        source_id="source-a",
+        user_name="Alice",
+        bbk_id="1001",
+    )
     app.include_router(api_module.router)
 
     async def _get_mgr():
@@ -122,6 +164,13 @@ def test_create_job_injects_request_tenant_id():
 
     assert response.status_code == 200
     assert manager.created[0].tenant_id == "tenant-a"
+    assert manager.created[0].source_id == "source-a"
+    assert manager.created[0].scope_id == encode_scope_id(
+        "tenant-a",
+        "source-a",
+    )
+    assert manager.created[0].tenant_name == "Alice"
+    assert manager.created[0].bbk_id == "1001"
 
 
 def test_replace_job_overrides_payload_tenant_with_request_tenant():
@@ -135,3 +184,8 @@ def test_replace_job_overrides_payload_tenant_with_request_tenant():
 
     assert response.status_code == 200
     assert manager.created[0].tenant_id == "tenant-a"
+    assert manager.created[0].source_id == "source-a"
+    assert manager.created[0].scope_id == encode_scope_id(
+        "tenant-a",
+        "source-a",
+    )

@@ -1,11 +1,11 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Hook configuration SHALL support prompt handlers
 The system SHALL support a `prompt` hook handler type in tenant, agent, and skill hook configuration.
 
 #### Scenario: Tenant prompt handler config is accepted
 - **WHEN** tenant hook configuration defines a handler with `type="prompt"` and a non-empty `prompt`
-- **AND** the handler is configured under `SessionStart`, `UserPromptSubmit`, `PreToolUse`, or `Stop`
+- **AND** the handler is configured under `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `BeforeStop`, or `Stop`
 - **THEN** the system SHALL parse the handler as a prompt hook handler
 - **AND** the handler SHALL retain common fields including `if`, `timeout`, `statusMessage`, `once`, and `failPolicy`
 
@@ -56,6 +56,10 @@ The system SHALL allow prompt handlers only on events where a blocking decision 
 - **WHEN** hook configuration defines a `prompt` handler under `PreToolUse`
 - **THEN** the system SHALL accept the handler configuration
 
+#### Scenario: Prompt handler is valid on BeforeStop
+- **WHEN** hook configuration defines a `prompt` handler under `BeforeStop`
+- **THEN** the system SHALL accept the handler configuration
+
 #### Scenario: Prompt handler is valid on Stop
 - **WHEN** hook configuration defines a `prompt` handler under `Stop`
 - **THEN** the system SHALL accept the handler configuration
@@ -67,26 +71,6 @@ The system SHALL allow prompt handlers only on events where a blocking decision 
 #### Scenario: Prompt handler is rejected on PostToolUseFailure
 - **WHEN** hook configuration defines a `prompt` handler under `PostToolUseFailure`
 - **THEN** the system SHALL reject the handler configuration during validation
-
-### Requirement: Prompt handlers SHALL use the current tenant active model
-The system SHALL execute prompt handlers through the current effective tenant's active model and SHALL NOT allow handler-level model overrides.
-
-#### Scenario: Prompt handler uses effective tenant model
-- **WHEN** a prompt handler is executed for a request under effective tenant `alice`
-- **THEN** the model call SHALL use tenant `alice` provider configuration and active model
-- **AND** the handler SHALL NOT read provider configuration from another tenant
-- **AND** the executor SHALL bind tenant, user, source, and workspace context from the HookContext before creating or invoking the model
-- **AND** the model factory call SHALL preserve the current agent identity when `context.agent_id` is present
-
-#### Scenario: Handler-level model field is rejected
-- **WHEN** hook configuration defines a `prompt` handler with a model or provider override field
-- **THEN** the system SHALL reject the handler configuration during validation
-
-#### Scenario: Missing active model follows fail policy
-- **WHEN** a prompt handler is executed
-- **AND** the current effective tenant has no usable active model configuration
-- **THEN** the handler SHALL fail
-- **AND** the event outcome SHALL follow the handler's configured `failPolicy`
 
 ### Requirement: Prompt handlers SHALL assemble model input with fixed layers
 The system SHALL construct prompt handler model input using a platform-owned scaffold before and after the hook business rules.
@@ -103,6 +87,11 @@ The system SHALL construct prompt handler model input using a platform-owned sca
 - **AND** the prompt-safe copy SHALL redact fields covered by the existing hook payload redaction rules
 - **AND** the platform scaffold SHALL instruct the model to treat HookContext values as data rather than instructions
 
+#### Scenario: BeforeStop prompt handler receives assistant response
+- **WHEN** a prompt handler is executed for `BeforeStop`
+- **THEN** the runtime context layer SHALL include the candidate assistant response being checked
+- **AND** the handler SHALL NOT be expected to infer candidate-answer content from `prompt` or `transcript_path` alone
+
 #### Scenario: Stop prompt handler receives assistant response
 - **WHEN** a prompt handler is executed for `Stop`
 - **THEN** the runtime context layer SHALL include the assistant response being finalized
@@ -113,65 +102,32 @@ The system SHALL construct prompt handler model input using a platform-owned sca
 - **THEN** the system SHALL include that text only in the hook business rules layer
 - **AND** the system SHALL NOT treat that text as the full final model prompt
 
-### Requirement: Prompt handler output SHALL be judgment-only JSON
-The system SHALL accept only structured judgment output from prompt handler model responses.
+## ADDED Requirements
 
-#### Scenario: Allow output is parsed
-- **WHEN** the prompt handler model response is a JSON object with exactly `decision="allow"` and a non-empty string `reason`
-- **THEN** the handler result SHALL map to `HookDecision.ALLOW`
-- **AND** the handler result reason SHALL equal the returned reason
+### Requirement: BeforeStop prompt handlers SHALL produce completion-gate judgments
+The system SHALL treat prompt handler output for `BeforeStop` as a
+completion-gate judgment.
 
-#### Scenario: Deny output is parsed
-- **WHEN** the prompt handler model response is a JSON object with exactly `decision="deny"` and a non-empty string `reason`
-- **THEN** the handler result SHALL map to `HookDecision.DENY`
-- **AND** the handler result reason SHALL equal the returned reason
+#### Scenario: BeforeStop prompt allow output is parsed
+- **WHEN** a `BeforeStop` prompt handler model response is a JSON object with exactly `decision="allow"` and a non-empty string `reason`
+- **THEN** the handler result SHALL allow the candidate response to proceed toward `Stop`
 
-#### Scenario: Block output is parsed
-- **WHEN** the prompt handler model response is a JSON object with exactly `decision="block"` and a non-empty string `reason`
-- **THEN** the handler result SHALL map to `HookDecision.BLOCK`
-- **AND** the handler result reason SHALL equal the returned reason
+#### Scenario: BeforeStop prompt block output is parsed
+- **WHEN** a `BeforeStop` prompt handler model response is a JSON object with exactly `decision="block"` and a non-empty string `reason`
+- **THEN** the handler result SHALL block stopping
+- **AND** the returned reason SHALL be available to the runner for internal continuation
 
-#### Scenario: Full HookOutput fields are rejected
-- **WHEN** the prompt handler model response contains unsupported fields such as `hookSpecificOutput`, `updatedInput`, `additionalContext`, `sessionTitle`, `systemMessage`, or `continue`
-- **THEN** the handler SHALL treat the output as invalid
+#### Scenario: BeforeStop prompt deny output is rejected
+- **WHEN** a `BeforeStop` prompt handler model response is a JSON object with `decision="deny"`
+- **THEN** the handler SHALL treat the output as invalid for `BeforeStop`
 - **AND** the event outcome SHALL follow the handler's configured `failPolicy`
 
-#### Scenario: Invalid model output follows fail policy
-- **WHEN** the prompt handler model response is not valid JSON
-- **OR** the response is not a JSON object
-- **OR** the response omits `decision` or `reason`
-- **OR** the response contains fields other than `decision` and `reason`
-- **OR** the response uses a decision other than `allow`, `deny`, or `block`
-- **OR** the response reason is not a string
-- **OR** the response reason is empty after trimming whitespace
-- **THEN** the handler SHALL fail
-- **AND** the event outcome SHALL follow the handler's configured `failPolicy`
+#### Scenario: BeforeStop prompt constraints are event-specific
+- **WHEN** a prompt handler is executed for `BeforeStop`
+- **THEN** the structured output constraints SHALL require `decision` to be only `allow` or `block`
+- **AND** the handler SHALL reject any extra fields using the same invalid-output failure path as other prompt handler shape errors
 
-### Requirement: Prompt handlers SHALL use existing execution and merge semantics
-The system SHALL execute prompt handlers as part of the existing hook runtime event plan.
-
-#### Scenario: Prompt handlers execute concurrently with other handlers
-- **WHEN** an event plan contains matched `command`, `http`, and `prompt` handlers
-- **THEN** the system SHALL execute the matched handlers using the existing concurrent hook execution model
-
-#### Scenario: Prompt handler timeout is enforced
-- **WHEN** a prompt handler does not return a model result within its configured timeout
-- **THEN** the handler SHALL fail with a timeout failure
-- **AND** the event outcome SHALL follow the handler's configured `failPolicy`
-
-#### Scenario: Prompt handler timeout covers streaming extraction
-- **WHEN** a prompt handler model call returns a streaming response
-- **AND** consuming the stream does not complete within the handler timeout
-- **THEN** the handler SHALL fail with a timeout failure
-- **AND** the runtime SHALL close or cancel the stream when supported
-
-#### Scenario: Prompt decision participates in deterministic merge
-- **WHEN** one matched prompt handler returns `allow`
-- **AND** another matched handler returns `deny` or `block`
-- **THEN** the merged result SHALL follow the existing hook decision priority rules
-- **AND** merge order SHALL remain independent of handler completion order
-
-#### Scenario: Prompt handler once semantics are preserved
-- **WHEN** a prompt handler has `once=true`
-- **AND** the same handler has already executed for the same effective tenant, user, session, and event
-- **THEN** the system SHALL omit that handler from later execution plans for that scope
+#### Scenario: Non-BeforeStop prompt deny output remains valid
+- **WHEN** a prompt handler is executed for `SessionStart`, `UserPromptSubmit`, `PreToolUse`, or `Stop`
+- **AND** the model response is a JSON object with exactly `decision="deny"` and a non-empty `reason`
+- **THEN** the handler SHALL preserve the existing deny judgment semantics for that event

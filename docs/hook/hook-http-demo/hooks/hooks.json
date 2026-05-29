@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "events": {
+    "PostToolUse": [
+      {
+        "id": "mcp-posttool-http-demo",
+        "matcher": {
+          "tools": ["execute_shell_command"]
+        },
+        "hooks": [
+          {
+            "id": "mcp-posttool-http-receiver",
+            "type": "http",
+            "url": "http://127.0.0.1:9000/hooks/mcp-posttool",
+            "timeout": 5,
+            "failPolicy": "allow"
+          }
+        ]
+      }
+    ]
+  }
+}

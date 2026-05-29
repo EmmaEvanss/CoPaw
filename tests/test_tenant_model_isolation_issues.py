@@ -92,6 +92,10 @@ async def reset_singleton():
 class TestModelSelectionFallbackIssue:
     """Verify Issue 1: Model selection falls back to global active_model."""
 
+    @pytest.mark.xfail(
+        reason="历史问题验证：当前实现已移除全局 active_model 回退路径",
+        strict=True,
+    )
     async def test_fallback_to_global_when_tenant_config_missing(
         self,
         temp_swe_root: Path,
@@ -161,66 +165,58 @@ class TestModelSelectionFallbackIssue:
         reset_singleton,
     ):
         """Test: When tenant HAS model config, it should be isolated."""
-        with patch("swe.constant.WORKING_DIR", temp_swe_root):
-            with patch(
-                "swe.constant.SECRET_DIR",
+        with (
+            patch("swe.constant.WORKING_DIR", temp_swe_root),
+            patch("swe.constant.SECRET_DIR", temp_swe_root / ".secret"),
+            patch(
+                "swe.tenant_models.manager.SECRET_DIR",
                 temp_swe_root / ".secret",
-            ):
-                tenant_id = "tenant_a"
+            ),
+        ):
+            tenant_id = "tenant_a"
 
-                # Create tenant-specific model config
-                tenant_config = TenantModelConfig(
-                    providers=[
-                        TenantProviderConfig(
-                            id="custom",
-                            type="openai",
-                            models=["custom-model"],
-                        ),
-                    ],
-                    routing=RoutingConfig(
-                        mode="local_first",
-                        slots={
-                            "local": ModelSlot(
-                                provider_id="custom",
-                                model="custom-model",
-                            ),
-                            "cloud": ModelSlot(
-                                provider_id="custom",
-                                model="custom-model",
-                            ),
-                        },
+            # Create tenant-specific model config
+            tenant_config = TenantModelConfig(
+                providers=[
+                    TenantProviderConfig(
+                        id="custom",
+                        type="openai",
+                        models=["custom-model"],
                     ),
+                ],
+                routing=RoutingConfig(
+                    mode="local_first",
+                    slots={
+                        "local": ModelSlot(
+                            provider_id="custom",
+                            model="custom-model",
+                        ),
+                        "cloud": ModelSlot(
+                            provider_id="custom",
+                            model="custom-model",
+                        ),
+                    },
+                ),
+            )
+
+            # Save tenant config
+            TenantModelManager.save(tenant_id, tenant_config)
+
+            with tenant_context(tenant_id=tenant_id, user_id=tenant_id):
+                # Load tenant config
+                loaded_config = TenantModelManager.load(tenant_id)
+
+                # Verify tenant config is isolated
+                assert loaded_config is not None
+                assert loaded_config.get_active_slot().provider_id == "custom"
+                assert loaded_config.get_active_slot().model == "custom-model"
+                assert (
+                    TenantModelManager.get_config_path(tenant_id)
+                    == temp_swe_root
+                    / ".secret"
+                    / tenant_id
+                    / "tenant_models.json"
                 )
-
-                # Save tenant config
-                TenantModelManager.save(tenant_id, tenant_config)
-
-                with tenant_context(tenant_id=tenant_id, user_id=tenant_id):
-                    # Load tenant config
-                    loaded_config = TenantModelManager.load(tenant_id)
-
-                    # Verify tenant config is isolated
-                    assert loaded_config is not None
-                    assert (
-                        loaded_config.get_active_slot().provider_id == "custom"
-                    )
-                    assert (
-                        loaded_config.get_active_slot().model == "custom-model"
-                    )
-
-                    # Verify different from global
-                    pm = ProviderManager.get_instance()
-                    global_model = pm.get_active_model()
-
-                    # This shows the isolation works when configured
-                    assert (
-                        loaded_config.get_active_slot().provider_id
-                        != global_model.provider_id
-                    )
-                    print(
-                        f"\n[ISOLATION WORKS] Tenant config: {loaded_config.get_active_slot()}",
-                    )
-                    print(f"[ISOLATION WORKS] Global model: {global_model}")
 
 
 # =============================================================================
@@ -281,6 +277,10 @@ class TestProviderManagerGlobalStorageIssue:
                 actual_path.name == "providers"
             ), f"ProviderManager path should end with 'providers', got: {actual_path.name}"
 
+    @pytest.mark.xfail(
+        reason="历史问题验证：当前实现已使用 tenant/source-scoped providers 目录",
+        strict=True,
+    )
     async def test_active_model_storage_location(
         self,
         temp_swe_root: Path,
@@ -324,6 +324,10 @@ class TestProviderManagerGlobalStorageIssue:
 class TestActiveModelRaceConditionIssue:
     """Verify Issue 3: Potential race condition in active_model access."""
 
+    @pytest.mark.xfail(
+        reason="历史问题验证：当前实现不再让多个 tenant 共享全局 active_model",
+        strict=True,
+    )
     async def test_concurrent_active_model_modification(
         self,
         temp_swe_root: Path,

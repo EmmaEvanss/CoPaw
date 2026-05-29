@@ -19,6 +19,7 @@ from ..constant import (
     LOG_LEVEL_ENV,
     CORS_ORIGINS,
     WORKING_DIR,
+    FILE_LOG_ENABLED,
 )
 from ..__version__ import __version__
 from ..utils.my_logging import setup_logger, add_swe_file_handler
@@ -26,11 +27,10 @@ from .auth import AuthMiddleware
 from .middleware.tenant_identity import TenantIdentityMiddleware
 from .middleware.tenant_workspace import TenantWorkspaceMiddleware
 from .middleware.header_passthrough import HeaderPassthroughMiddleware
+from .source_system_config.middleware import SourceSystemConfigMiddleware
 from .routers import router as api_router, create_agent_scoped_router
 from .routers.agent_scoped import AgentContextMiddleware
 from .routers.voice import voice_router
-from ..envs import load_envs_into_environ
-from ..config.envs import load_env_defaults
 from .multi_agent_manager import MultiAgentManager
 from .workspace.tenant_pool import TenantWorkspacePool
 from .migration import (
@@ -53,11 +53,6 @@ mimetypes.add_type("application/javascript", ".js")
 mimetypes.add_type("application/javascript", ".mjs")
 mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/wasm", ".wasm")
-
-# Load environment defaults (dev.json/prd.json based on SWE_ENV)
-# then load persisted env vars (envs.json) which can override defaults.
-load_env_defaults()
-load_envs_into_environ()
 
 
 # Dynamic runner that selects the correct workspace runner based on request
@@ -160,7 +155,7 @@ class DynamicMultiAgentRunner:
         """
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """No-op context manager exit (workspaces manage their own runners)."""
         return None
 
@@ -178,12 +173,39 @@ agent_app = AgentApp(
 )
 
 
+async def _reset_scope_sensitive_runtime_state(app: FastAPI) -> None:
+    """在开始提供 source-scoped 流量前清空长期运行态缓存。"""
+    existing_manager = getattr(app.state, "multi_agent_manager", None)
+    if existing_manager is not None:
+        logger.info(
+            "Resetting existing MultiAgentManager before scope cutover...",
+        )
+        await existing_manager.stop_all()
+        app.state.multi_agent_manager = None
+
+    from ..providers.provider_manager import ProviderManager
+    from ..providers.rate_limiter import reset_rate_limiter
+    from ..tenant_models.manager import TenantModelManager
+
+    ProviderManager.reset_instance_cache()
+    TenantModelManager.invalidate_cache()
+    reset_rate_limiter()
+    runner.set_multi_agent_manager(None)
+    logger.info("Scope-sensitive runtime caches reset")
+
+
 @asynccontextmanager
 async def lifespan(
     app: FastAPI,
 ):  # pylint: disable=too-many-statements,too-many-branches
     startup_start_time = time.time()
-    add_swe_file_handler(WORKING_DIR / "swe.log")
+    if FILE_LOG_ENABLED:
+        add_swe_file_handler(WORKING_DIR / "swe.log")
+    else:
+        logger.info(
+            "File logging disabled via SWE_FILE_LOG_ENABLED=false; "
+            "stdout/stderr logging remains enabled.",
+        )
 
     # Auto-register admin from env vars (for automated deployments)
     from .auth import auto_register_from_env
@@ -193,6 +215,10 @@ async def lifespan(
     # --- Minimal startup: only ensure default agent declaration exists ---
     logger.info("Performing minimal startup...")
     ensure_default_agent_exists()
+
+    # source-scoped cutover 需要在开始接流量前清空旧的进程级缓存，
+    # 避免同一进程继续复用 tenant-only 运行态。
+    await _reset_scope_sensitive_runtime_state(app)
 
     # --- Tenant workspace pool initialization (registry only, no runtime) ---
     logger.info("Initializing TenantWorkspacePool (registry only)...")
@@ -323,15 +349,31 @@ async def lifespan(
     # init_instance_module(db_connection)
     logger.info("Instance module initialized")
 
+    # --- 初始化 source 系统配置模块 ---
+    try:
+        from .source_system_config.service import SourceSystemConfigService
+        from .source_system_config.store import SourceSystemConfigStore
+
+        app.state.source_system_config_service = SourceSystemConfigService(
+            SourceSystemConfigStore(db_connection),
+        )
+        logger.info("SourceSystemConfig module initialized")
+    except Exception as e:
+        logger.warning("Failed to initialize source system config: %s", e)
+
     # --- Initialize greeting and featured_case modules ---
     if db_connection is not None:
         try:
             from .greeting.router import init_greeting_module
             from .featured_case.router import init_featured_case_module
+            from .feedback.router import init_feedback_module
 
             init_greeting_module(db_connection)
             init_featured_case_module(db_connection)
-            logger.info("Greeting and FeaturedCase modules initialized")
+            init_feedback_module(db_connection)
+            logger.info(
+                "Greeting, FeaturedCase and Feedback modules initialized",
+            )
 
             from .workspace.tenant_init_source_store import (
                 init_tenant_init_source_module,
@@ -434,6 +476,9 @@ app.add_middleware(AgentContextMiddleware)
 # Must execute after TenantIdentityMiddleware sets tenant_id
 app.add_middleware(TenantWorkspaceMiddleware)
 
+# 在身份解析后绑定 source 系统配置
+app.add_middleware(SourceSystemConfigMiddleware)
+
 # Add tenant identity middleware last so it executes FIRST
 # This must set tenant_id before TenantWorkspaceMiddleware needs it
 app.add_middleware(TenantIdentityMiddleware, default_tenant_id=None)
@@ -531,33 +576,33 @@ app.include_router(voice_router, tags=["voice"])
 register_custom_channel_routes(app)
 
 
-# User-specific static files: /static/{user_id}/{path}
-# This route dynamically resolves the user directory per-request.
-# The directory is created on-demand if it doesn't exist.
-@app.get("/static/{user_id}/{agent_id}/{file_name:path}")
+# 按运行时静态作用域提供文件：/static/{scope_id}/{agent_id}/{path}
+# 这里的第一段路径是运行时 scope_id，不一定等于逻辑 user_id。
+@app.get("/static/{scope_id}/{agent_id}/{file_name:path}")
 async def serve_user_static(
-    user_id: str,
+    scope_id: str,
     agent_id: str,
     file_name: str,
 ):
-    """Serve static files from user's static directory.
+    """从运行时静态作用域目录返回公开文件。
+
     Args:
-        agent_id: multi agent id
-        user_id: User identifier (used to determine static directory)
-        file_name: Relative path within user's static directory
+        scope_id: 运行时静态作用域标识，用于定位租户或 source-scoped 目录
+        agent_id: Agent 标识
+        file_name: 静态目录下的相对文件路径
+
     Returns:
-        FileResponse if file exists, 404 otherwise
+        文件存在时返回 ``FileResponse``，否则返回 404
     """
     from ..constant import WORKING_DIR
 
-    # Set tenant ID in context
-    logger.info(f"Serving static files from user {user_id}")
+    logger.info(f"Serving static files from scope {scope_id}")
 
     static_dir = (
-        WORKING_DIR / user_id / "workspaces" / agent_id / "static"
+        WORKING_DIR / scope_id / "workspaces" / agent_id / "static"
     ).resolve()
 
-    # Security: ensure resolved path is still within user's static dir
+    # 防止通过 file_name 逃逸出当前 scope 的静态目录。
     try:
         target = (static_dir / file_name).resolve()
     except ValueError as exc:
@@ -570,8 +615,9 @@ async def serve_user_static(
         raise HTTPException(status_code=404, detail="File not found")
 
     # Guess MIME type
-    _, _ = mimetypes.guess_type(str(target))
-    media_type = "application/octet-stream"
+    media_type, _ = mimetypes.guess_type(str(target))
+    if media_type is None:
+        media_type = "application/octet-stream"
     return FileResponse(Path(target), media_type=media_type)
 
 

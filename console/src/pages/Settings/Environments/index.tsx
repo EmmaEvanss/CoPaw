@@ -7,6 +7,7 @@ import { useEnvVars } from "./useEnvVars";
 import { EmptyState, AddButton, Toolbar, EnvRow, type Row } from "./components";
 import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import type { EnvPatchRequest, EnvVar } from "../../../api/types";
 import styles from "./index.module.less";
 
 /* ------------------------------------------------------------------ */
@@ -21,6 +22,44 @@ function shiftIndices(prev: Set<number>, removedIdx: number): Set<number> {
     else if (i > removedIdx) next.add(i - 1);
   });
   return next;
+}
+
+function buildInitialRows(envVars: EnvVar[]): Row[] {
+  return envVars.map((envVar) => ({
+    key: envVar.key,
+    value: envVar.value,
+    originalKey: envVar.key,
+    originalValue: envVar.value,
+    valueEdited: false,
+  }));
+}
+
+function buildPatchRequest(rows: Row[]): EnvPatchRequest {
+  const values: Record<string, string> = {};
+  const deleteKeys: string[] = [];
+
+  for (const row of rows) {
+    const key = row.key.trim();
+    const isUnchangedPersistedRow =
+      !row.isNew &&
+      row.originalKey === key &&
+      row.originalValue === row.value &&
+      !row.valueEdited;
+
+    if (isUnchangedPersistedRow) {
+      continue;
+    }
+
+    if (!row.isNew && row.originalKey && row.originalKey !== key) {
+      deleteKeys.push(row.originalKey);
+    }
+    values[key] = row.value;
+  }
+
+  return {
+    values,
+    delete: deleteKeys,
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -39,7 +78,7 @@ function EnvironmentsPage() {
   /* ---- derived state ---- */
 
   const workingRows: Row[] = useMemo(
-    () => rows ?? envVars.map((e) => ({ key: e.key, value: e.value })),
+    () => rows ?? buildInitialRows(envVars),
     [rows, envVars],
   );
 
@@ -52,7 +91,7 @@ function EnvironmentsPage() {
 
   const ensureLocal = useCallback((): Row[] => {
     if (rows) return [...rows];
-    return envVars.map((e) => ({ key: e.key, value: e.value }));
+    return buildInitialRows(envVars);
   }, [rows, envVars]);
 
   /* ---- selection ---- */
@@ -79,7 +118,12 @@ function EnvironmentsPage() {
   const updateRow = useCallback(
     (idx: number, field: "key" | "value", val: string) => {
       const next = ensureLocal();
-      next[idx] = { ...next[idx], [field]: val };
+      next[idx] = {
+        ...next[idx],
+        [field]: val,
+        valueEdited:
+          field === "value" ? !next[idx].isNew : next[idx].valueEdited,
+      };
       setRows(next);
       if (field === "key") {
         setKeyErrors((prev) => {
@@ -229,13 +273,10 @@ function EnvironmentsPage() {
 
   const handleSave = useCallback(async () => {
     if (!validate()) return;
-    const dict: Record<string, string> = {};
-    for (const r of workingRows) {
-      dict[r.key.trim()] = r.value;
-    }
+    const patchRequest = buildPatchRequest(workingRows);
     setSaving(true);
     try {
-      await api.saveEnvs(dict);
+      await api.patchEnvs(patchRequest);
       message.success(t("environments.saveSuccess"));
       setRows(null);
       setKeyErrors({});
@@ -262,7 +303,7 @@ function EnvironmentsPage() {
     <div className={styles.environmentsPage}>
       {/* ---- Page header ---- */}
       <PageHeader
-        parent={t("environments.parent")}
+        parent={t("nav.systemSettings")}
         current={t("environments.environments")}
       />
 

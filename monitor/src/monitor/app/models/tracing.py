@@ -79,6 +79,10 @@ class Span(BaseModel):
         default=None,
         description="Skill name for skill events",
     )
+    skill_description: Optional[str] = Field(
+        default=None,
+        description="Skill description from SKILL.md",
+    )
     mcp_server: Optional[str] = Field(
         default=None,
         description="MCP server name if this tool is from MCP",
@@ -186,6 +190,10 @@ class SkillUsage(BaseModel):
     """Skill usage statistics with weighted attribution."""
 
     skill_name: str
+    skill_description: Optional[str] = Field(
+        default=None,
+        description="技能描述",
+    )
     count: int = 0
     weighted_count: float = 0.0
     avg_duration_ms: int = 0
@@ -259,7 +267,7 @@ class OverviewStats(BaseModel):
     mcp_servers: list[MCPServerUsage] = Field(default_factory=list)
     daily_trend: list[DailyStats] = Field(default_factory=list)
     branch_breakdown: "OverviewBranchBreakdown" = Field(
-        default_factory=lambda: OverviewBranchBreakdown(),
+        default_factory=lambda: OverviewBranchBreakdown(),  # pylint: disable=unnecessary-lambda
     )
 
 
@@ -335,6 +343,28 @@ class ToolCall(BaseModel):
     error: Optional[str] = None
 
 
+class TraceFeedback(BaseModel):
+    """终端用户提交的对话反馈。"""
+
+    id: int
+    source_id: Optional[str] = None
+    feedback_user_name: Optional[str] = None
+    feedback_user_sap: Optional[str] = None
+    feedback_branch: Optional[str] = None
+    feedback_sub_branch: Optional[str] = None
+    feedback_position: Optional[str] = None
+    cron_task_name: Optional[str] = None
+    cron_task_id: Optional[str] = None
+    response_id: Optional[str] = None
+    trace_id: Optional[str] = None
+    chat_id: Optional[str] = None
+    session_id: Optional[str] = None
+    feedback_options: list[str] = Field(default_factory=list)
+    feedback_content: str = ""
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class TraceDetail(BaseModel):
     """Detailed trace with spans."""
 
@@ -343,6 +373,7 @@ class TraceDetail(BaseModel):
     llm_duration_ms: int = 0
     tool_duration_ms: int = 0
     tools_called: list[dict[str, Any]] = Field(default_factory=list)
+    feedback: Optional[TraceFeedback] = None
 
 
 # Timeline models for hierarchical display
@@ -424,6 +455,7 @@ class TraceDetailWithTimeline(BaseModel):
     """
 
     trace: Trace
+    feedback: Optional[TraceFeedback] = None
 
     # Flat list (backward compatible)
     spans: list[Span] = Field(default_factory=list)
@@ -474,6 +506,7 @@ class TraceListItem(BaseModel):
     model_name: Optional[str] = None
     status: str
     skills_count: int = 0
+    feedback: Optional[TraceFeedback] = None
 
 
 class SessionListItem(BaseModel):
@@ -535,3 +568,47 @@ class ModelOutputRequest(BaseModel):
 
     trace_id: str = Field(description="追踪 ID")
     model_output: str = Field(description="模型输出文本")
+
+
+class ExtractCustomerNamesRequest(BaseModel):
+    """提取客户姓名请求."""
+
+    skill_names: list[str] = Field(
+        ...,
+        description="技能名称列表",
+        min_length=1,
+    )
+    user_ids: Optional[list[str]] = Field(
+        default=None,
+        description="用户 ID 列表筛选",
+    )
+    bbk_id: Optional[str] = Field(
+        default=None,
+        description="分行 ID 筛选",
+    )
+    start_date: Optional[str] = Field(
+        default=None,
+        description="开始日期 (YYYY-MM-DD)",
+    )
+    end_date: Optional[str] = Field(
+        default=None,
+        description="结束日期 (YYYY-MM-DD)",
+    )
+
+
+class ExtractCustomerNamesResponse(BaseModel):
+    """提取客户姓名响应."""
+
+    total_traces: int = Field(default=0, description="处理的 trace 总数")
+    names_extracted: int = Field(
+        default=0,
+        description="提取的姓名总数",
+    )
+    user_message_names: int = Field(
+        default=0,
+        description="用户消息中提取的姓名数",
+    )
+    model_output_names: int = Field(
+        default=0,
+        description="模型输出中提取的姓名数",
+    )

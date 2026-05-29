@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
+from swe.config.context import encode_scope_id
 
 SRC_ROOT = Path(__file__).parent.parent.parent.parent / "src"
 _AGENT_CONTEXT_FILE = SRC_ROOT / "swe" / "app" / "agent_context.py"
@@ -106,6 +107,34 @@ def _load_module(module_name: str, file_path: Path, package_name: str):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _restore_runtime_config_module(monkeypatch) -> None:
+    config_module = sys.modules["swe.config.config"]
+    monkeypatch.setattr(
+        config_module,
+        "ChannelConfig",
+        ChannelConfig,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "MCPConfig",
+        MCPConfig,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "HeartbeatConfig",
+        HeartbeatConfig,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        config_module,
+        "ToolsConfig",
+        ToolsConfig,
+        raising=False,
+    )
 
 
 skills_manager = _load_module(
@@ -259,6 +288,7 @@ def test_get_tenant_aware_config_uses_effective_default_for_source(
 ):
     expected_config = SimpleNamespace(name="source-config")
     observed = {}
+    scope_id = encode_scope_id("default", "ruice")
 
     def fake_get_tenant_config_path(tenant_id=None):
         observed["tenant_id"] = tenant_id
@@ -282,8 +312,8 @@ def test_get_tenant_aware_config_uses_effective_default_for_source(
     )
 
     assert resolved is expected_config
-    assert observed["tenant_id"] == "default_ruice"
-    assert observed["path"] == Path("/tmp/default_ruice/config.json")
+    assert observed["tenant_id"] == scope_id
+    assert observed["path"] == Path(f"/tmp/{scope_id}/config.json")
 
 
 def test_agents_router_uses_effective_default_tenant_for_source(
@@ -291,6 +321,7 @@ def test_agents_router_uses_effective_default_tenant_for_source(
 ):
     expected_config = SimpleNamespace(name="source-config")
     observed = {}
+    scope_id = encode_scope_id("default", "ruice")
 
     def fake_get_tenant_config_path_strict(tenant_id=None):
         observed["tenant_id"] = tenant_id
@@ -314,12 +345,27 @@ def test_agents_router_uses_effective_default_tenant_for_source(
     resolved = agents_router._get_tenant_config(request)
 
     assert resolved is expected_config
-    assert observed["tenant_id"] == "default_ruice"
-    assert observed["path"] == Path("/tmp/default_ruice/config.json")
+    assert observed["tenant_id"] == scope_id
+    assert observed["path"] == Path(f"/tmp/{scope_id}/config.json")
+
+
+def test_agents_router_prefers_request_scope_id_over_logical_tenant() -> None:
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            tenant_id="tenant-a",
+            source_id="ruice",
+            scope_id="scope.v1.dGVuYW50LWE.cnVpY2U",
+        ),
+    )
+
+    resolved = agents_router._request_effective_tenant_id(request)
+
+    assert resolved == "dGVuYW50LWE.cnVpY2U"
 
 
 def test_update_agent_schedules_reload_for_effective_tenant(monkeypatch):
     observed: dict[str, object] = {}
+    scope_id = encode_scope_id("default", "ruice")
     config = SimpleNamespace(
         agents=SimpleNamespace(
             profiles={"default": SimpleNamespace(enabled=True)},
@@ -333,13 +379,13 @@ def test_update_agent_schedules_reload_for_effective_tenant(monkeypatch):
         id="default",
         name="updated",
         description="updated description",
-        workspace_dir="/tmp/default_ruice/workspaces/default",
+        workspace_dir=f"/tmp/{scope_id}/workspaces/default",
     )
     existing = AgentProfileConfig(
         id="default",
         name="before",
         description="before",
-        workspace_dir="/tmp/default_ruice/workspaces/default",
+        workspace_dir=f"/tmp/{scope_id}/workspaces/default",
     )
 
     monkeypatch.setattr(agents_router, "_get_tenant_config", lambda _: config)
@@ -387,7 +433,7 @@ def test_update_agent_schedules_reload_for_effective_tenant(monkeypatch):
     assert observed["reload"] == (
         request,
         "default",
-        "default_ruice",
+        scope_id,
     )
 
 
@@ -432,7 +478,7 @@ def test_get_agent_for_request_explicit_agent_id_overrides_request_workspace(
     monkeypatch.setattr(
         agent_context,
         "_get_tenant_aware_config",
-        lambda tenant_id=None, source_id=None: config,
+        lambda tenant_id=None, source_id=None, scope_id=None: config,
     )
 
     resolved = asyncio.run(
@@ -484,6 +530,7 @@ def test_get_agent_for_request_uses_effective_tenant_for_source_scoped_default(
     monkeypatch,
 ):
     observed: dict[str, object] = {}
+    scope_id = encode_scope_id("default", "ruice")
     config = SimpleNamespace(
         agents=SimpleNamespace(
             profiles={"default": SimpleNamespace(enabled=True)},
@@ -498,7 +545,7 @@ def test_get_agent_for_request_uses_effective_tenant_for_source_scoped_default(
             return SimpleNamespace(
                 agent_id=agent_id,
                 tenant_id=tenant_id,
-                workspace_dir="/tmp/default_ruice/workspaces/default",
+                workspace_dir=f"/tmp/{scope_id}/workspaces/default",
             )
 
     request = SimpleNamespace(
@@ -512,9 +559,11 @@ def test_get_agent_for_request_uses_effective_tenant_for_source_scoped_default(
     def fake_get_tenant_aware_config(
         tenant_id=None,
         source_id=None,
+        scope_id=None,
     ):
         observed["config_tenant_id"] = tenant_id
         observed["config_source_id"] = source_id
+        observed["config_scope_id"] = scope_id
         return config
 
     monkeypatch.setattr(
@@ -527,9 +576,10 @@ def test_get_agent_for_request_uses_effective_tenant_for_source_scoped_default(
 
     assert observed["config_tenant_id"] == "default"
     assert observed["config_source_id"] == "ruice"
+    assert observed["config_scope_id"] is None
     assert observed["manager_agent_id"] == "default"
-    assert observed["manager_tenant_id"] == "default_ruice"
-    assert resolved.workspace_dir == "/tmp/default_ruice/workspaces/default"
+    assert observed["manager_tenant_id"] == scope_id
+    assert resolved.workspace_dir == f"/tmp/{scope_id}/workspaces/default"
     assert request.state.tenant_id == "default"
 
 
@@ -589,6 +639,7 @@ def test_multi_agent_manager_uses_global_config(monkeypatch):
 
 
 def test_create_agent_uses_tenant_config_path(tmp_path, monkeypatch):
+    _restore_runtime_config_module(monkeypatch)
     config = SimpleNamespace(agents=SimpleNamespace(profiles={}))
     request = SimpleNamespace(
         state=SimpleNamespace(tenant_id="tenant-a"),
@@ -647,6 +698,7 @@ def test_create_agent_uses_tenant_config_path(tmp_path, monkeypatch):
 
 
 def test_create_agent_defaults_to_tenant_workspace(tmp_path, monkeypatch):
+    _restore_runtime_config_module(monkeypatch)
     config = SimpleNamespace(agents=SimpleNamespace(profiles={}))
     request = SimpleNamespace(
         state=SimpleNamespace(tenant_id="tenant-a"),
@@ -715,6 +767,7 @@ def test_get_agent_uses_tenant_request_scope(monkeypatch):
 
 
 def test_create_agent_requires_tenant_context_for_workspace_path(monkeypatch):
+    _restore_runtime_config_module(monkeypatch)
     request = SimpleNamespace(
         state=SimpleNamespace(),
         app=SimpleNamespace(state=SimpleNamespace()),
@@ -751,6 +804,7 @@ def test_create_agent_omitted_skill_names_seed_all_tenant_pool_skills(
     tmp_path,
     monkeypatch,
 ):
+    _restore_runtime_config_module(monkeypatch)
     tenant_dir = tmp_path / "tenant-a"
     request = SimpleNamespace(
         state=SimpleNamespace(tenant_id="tenant-a"),
@@ -822,6 +876,7 @@ def test_create_agent_after_pool_update_inherits_latest_tenant_baseline(
     tmp_path,
     monkeypatch,
 ):
+    _restore_runtime_config_module(monkeypatch)
     tenant_dir = tmp_path / "tenant-a"
     request = SimpleNamespace(
         state=SimpleNamespace(tenant_id="tenant-a"),
@@ -917,6 +972,7 @@ def test_create_agent_explicit_skill_names_stay_selective(
     tmp_path,
     monkeypatch,
 ):
+    _restore_runtime_config_module(monkeypatch)
     tenant_dir = tmp_path / "tenant-a"
     request = SimpleNamespace(
         state=SimpleNamespace(tenant_id="tenant-a"),
@@ -991,6 +1047,7 @@ def test_create_agent_explicit_empty_skill_names_create_empty_workspace_skills(
     tmp_path,
     monkeypatch,
 ):
+    _restore_runtime_config_module(monkeypatch)
     tenant_dir = tmp_path / "tenant-a"
     request = SimpleNamespace(
         state=SimpleNamespace(tenant_id="tenant-a"),

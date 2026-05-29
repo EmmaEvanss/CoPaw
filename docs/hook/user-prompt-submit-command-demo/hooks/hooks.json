@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "events": {
+    "UserPromptSubmit": [
+      {
+        "id": "user-prompt-preflight",
+        "hooks": [
+          {
+            "id": "check-user-prompt",
+            "type": "command",
+            "argv": [
+              "python",
+              "scripts/check_user_prompt.py"
+            ],
+            "timeout": 5,
+            "failPolicy": "allow"
+          }
+        ]
+      }
+    ]
+  }
+}

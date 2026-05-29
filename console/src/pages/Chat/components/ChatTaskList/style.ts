@@ -85,7 +85,7 @@ export default createGlobalStyle`
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 6px;
+    margin-bottom: 2px;
   }
 
   &-item-title {
@@ -111,6 +111,14 @@ export default createGlobalStyle`
     font-size: 10px;
     line-height: 14px;
     text-align: center;
+  }
+
+  &-item-trailing {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
   }
 
   &-item-actions {

@@ -1,10 +1,18 @@
 import { Layout } from "antd";
-import { Routes, Route, useLocation, Navigate } from "react-router-dom";
+import {
+  Routes,
+  Route,
+  useLocation,
+  Navigate,
+} from "react-router-dom";
+import { useEffect } from "react";
 
 // ==================== iframe 集成 (Kun He) ====================
 // useIframeStore: 获取父窗口传递的 hideMenu 参数
 import { useIframeStore } from "../../stores/iframeStore";
 // ==================== iframe 集成结束 ====================
+import { useSourceSystemConfigStore } from "../../stores/sourceSystemConfigStore";
+import { DEFAULT_SOURCE_ID } from "../../constants/identity";
 
 import Sidebar from "../Sidebar";
 import Header from "../Header";
@@ -18,6 +26,7 @@ import FeaturedCasesPage from "../../pages/Control/FeaturedCases";
 import GreetingPage from "../../pages/Control/Greeting";
 import HeartbeatPage from "../../pages/Control/Heartbeat";
 import AgentConfigPage from "../../pages/Agent/Config";
+import SystemConfigPage from "../../pages/SystemConfigPage";
 import SkillsPage from "../../pages/Agent/Skills";
 import SkillPoolPage from "../../pages/Agent/SkillPool";
 import ToolsPage from "../../pages/Agent/Tools";
@@ -60,6 +69,7 @@ const pathToKey: Record<string, string> = {
   "/models": "models",
   "/environments": "environments",
   "/agent-config": "agent-config",
+  "/system-config-page": "system-config-page",
   "/security": "security",
   "/token-usage": "token-usage",
   "/voice-transcription": "voice-transcription",
@@ -88,8 +98,17 @@ export default function MainLayout() {
   // iframe 传递的 hideMenu === true 时隐藏 Sidebar
   // URL 参数 origin=Y 会自动设置 hideMenu=true（见 iframeMessage.ts）
   const hideMenu = useIframeStore((state) => state.hideMenu);
+  const activeSourceId =
+    useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
+  const loadEffectiveConfig = useSourceSystemConfigStore(
+    (state) => state.loadEffectiveConfig,
+  );
   const shouldHideSidebar = hideMenu;
   // ==================== iframe 集成结束 ====================
+
+  useEffect(() => {
+    loadEffectiveConfig(activeSourceId);
+  }, [activeSourceId, loadEffectiveConfig]);
 
   return (
     <Layout className={styles.mainLayout}>
@@ -129,6 +148,7 @@ export default function MainLayout() {
               <Route path="/models" element={<ModelsPage />} />
               <Route path="/environments" element={<EnvironmentsPage />} />
               <Route path="/agent-config" element={<AgentConfigPage />} />
+              <Route path="/system-config-page" element={<SystemConfigPage />} />
               <Route path="/security" element={<SecurityPage />} />
               <Route path="/token-usage" element={<TokenUsagePage />} />
               <Route

@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS swe_cron_jobs (
     creator_user_id VARCHAR(64) DEFAULT '' COMMENT '创建者用户ID',
     task_chat_id    VARCHAR(64) DEFAULT '' COMMENT '关联聊天ID',
     task_session_id VARCHAR(64) DEFAULT '' COMMENT '关联会话ID',
+    job_origin      VARCHAR(32) NOT NULL DEFAULT 'manual' COMMENT '任务来源: manual/subscription/system',
+    subscription_key VARCHAR(255) DEFAULT '' COMMENT '订阅任务稳定分组ID',
     meta            VARCHAR(4096) DEFAULT '' COMMENT '扩展元数据',
 
     -- 状态追踪
@@ -61,6 +63,9 @@ CREATE TABLE IF NOT EXISTS swe_cron_jobs (
     INDEX idx_bbk_id (bbk_id),
     INDEX idx_source_id (source_id),
     INDEX idx_creator_user_id (creator_user_id),
+    INDEX idx_swe_cron_jobs_origin (job_origin),
+    INDEX idx_swe_cron_jobs_subscription (job_origin, subscription_key),
+    INDEX idx_swe_cron_jobs_subscription_user (job_origin, subscription_key, creator_user_id),
     INDEX idx_status (status),
     INDEX idx_enabled (enabled),
     INDEX idx_created_at (created_at)
@@ -73,6 +78,36 @@ ALTER TABLE swe_cron_jobs
 ADD COLUMN tenant_name VARCHAR(255) DEFAULT '' COMMENT '租户姓名 (X-User-Name header)'
 AFTER tenant_id;
 """
+
+CRON_JOBS_EXTRA_COLUMNS: dict[str, str] = {
+    "job_origin": (
+        "ALTER TABLE swe_cron_jobs "
+        "ADD COLUMN job_origin VARCHAR(32) NOT NULL DEFAULT 'manual' "
+        "COMMENT '任务来源: manual/subscription/system' "
+        "AFTER task_session_id"
+    ),
+    "subscription_key": (
+        "ALTER TABLE swe_cron_jobs "
+        "ADD COLUMN subscription_key VARCHAR(255) DEFAULT '' "
+        "COMMENT '订阅任务稳定分组ID' "
+        "AFTER job_origin"
+    ),
+}
+
+CRON_JOBS_EXTRA_INDEXES: dict[str, str] = {
+    "idx_swe_cron_jobs_origin": (
+        "CREATE INDEX idx_swe_cron_jobs_origin "
+        "ON swe_cron_jobs (job_origin)"
+    ),
+    "idx_swe_cron_jobs_subscription": (
+        "CREATE INDEX idx_swe_cron_jobs_subscription "
+        "ON swe_cron_jobs (job_origin, subscription_key)"
+    ),
+    "idx_swe_cron_jobs_subscription_user": (
+        "CREATE INDEX idx_swe_cron_jobs_subscription_user "
+        "ON swe_cron_jobs (job_origin, subscription_key, creator_user_id)"
+    ),
+}
 
 # SQL for creating cron_executions table
 CREATE_CRON_EXECUTIONS_TABLE = """
@@ -123,10 +158,33 @@ CREATE TABLE IF NOT EXISTS swe_cron_executions (
 """
 
 
+# SQL for creating extracted customer names table
+CREATE_EXTRACTED_CUSTOMER_NAMES_TABLE = """
+CREATE TABLE IF NOT EXISTS swe_extracted_customer_names (
+    id              BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    trace_id        VARCHAR(64) NOT NULL COMMENT '关联的 trace ID',
+    skill_name      VARCHAR(255) NOT NULL COMMENT '技能名称',
+    user_message_names JSON NOT NULL COMMENT '用户消息中提取的姓名列表',
+    model_output_names JSON NOT NULL COMMENT '模型输出中提取的姓名列表',
+    user_id         VARCHAR(64) DEFAULT '' COMMENT '用户 ID',
+    bbk_id          VARCHAR(64) DEFAULT '' COMMENT '分行 ID',
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    UNIQUE INDEX uk_trace_skill (trace_id, skill_name),
+    INDEX idx_skill_name (skill_name),
+    INDEX idx_user_id (user_id),
+    INDEX idx_bbk_id (bbk_id),
+    INDEX idx_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提取客户姓名记录表';
+"""
+
+
 async def init_database_tables() -> None:
     """Initialize database tables for cron monitoring.
 
-    Creates the cron_jobs and cron_executions tables if they don't exist.
+    Creates the cron_jobs, cron_executions, and extracted_customer_names
+    tables if they don't exist.
     """
     db = get_db_connection()
 
@@ -137,6 +195,53 @@ async def init_database_tables() -> None:
         await db.execute(CREATE_CRON_EXECUTIONS_TABLE)
         logger.info("Created cron_executions table (or already exists)")
 
+        await db.execute(CREATE_EXTRACTED_CUSTOMER_NAMES_TABLE)
+        logger.info(
+            "Created extracted_customer_names table (or already exists)",
+        )
+
+        await _ensure_cron_jobs_extra_schema()
+
     except Exception as e:
         logger.error("Failed to initialize database tables: %s", e)
         raise
+
+
+async def _ensure_cron_jobs_extra_schema() -> None:
+    """Ensure newly added cron job columns and indexes exist."""
+    db = get_db_connection()
+    database_row = await db.fetch_one("SELECT DATABASE() AS db_name")
+    database_name = database_row.get("db_name") if database_row else None
+    if not database_name:
+        logger.warning("Skip cron job schema migration: database unknown")
+        return
+
+    for column_name, alter_sql in CRON_JOBS_EXTRA_COLUMNS.items():
+        row = await db.fetch_one(
+            """
+            SELECT COUNT(*) AS count
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = 'swe_cron_jobs'
+              AND COLUMN_NAME = %s
+            """,
+            (database_name, column_name),
+        )
+        if not row or int(row.get("count", 0)) == 0:
+            await db.execute(alter_sql)
+            logger.info("Added swe_cron_jobs.%s", column_name)
+
+    for index_name, create_sql in CRON_JOBS_EXTRA_INDEXES.items():
+        row = await db.fetch_one(
+            """
+            SELECT COUNT(*) AS count
+            FROM INFORMATION_SCHEMA.STATISTICS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = 'swe_cron_jobs'
+              AND INDEX_NAME = %s
+            """,
+            (database_name, index_name),
+        )
+        if not row or int(row.get("count", 0)) == 0:
+            await db.execute(create_sql)
+            logger.info("Added swe_cron_jobs index %s", index_name)

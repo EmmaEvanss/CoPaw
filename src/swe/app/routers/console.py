@@ -20,17 +20,13 @@ from fastapi import (
     Query,
     Request,
     UploadFile,
-    Body,
 )
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from agentscope_runtime.engine.schemas.agent_schemas import AgentRequest
 from ..agent_context import get_agent_for_request
-from ..post_turn_continuation_store import (
-    claim_pending_continuation,
-    peek_latest_pending_continuation,
-)
+from ...config.context import resolve_scope_preferred_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +116,17 @@ _PREVIEW_TYPE_BY_MIME: dict[str, PreviewType] = {
     "text/html": "html",
     "application/xhtml+xml": "html",
 }
+
+
+def _request_runtime_tenant_id(request: Request) -> str | None:
+    """优先返回请求已解析的 runtime scope，避免回退到逻辑 tenant。"""
+    return resolve_scope_preferred_tenant_id(
+        getattr(request.state, "tenant_id", None),
+        getattr(request.state, "source_id", None),
+        getattr(request.state, "scope_id", None),
+    )
+
+
 _PREVIEW_MIME_PREFIXES: tuple[tuple[str, PreviewType], ...] = (
     ("image/", "image"),
     ("video/", "video"),
@@ -340,7 +347,6 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
 
     run_key must be ChatSpec.id (chat_id) so it matches list_chats/get_chat.
     """
-    resume_id = None
     if isinstance(request_data, AgentRequest):
         channel_id = getattr(request_data, "channel", None) or "console"
         sender_id = request_data.user_id or "default"
@@ -348,15 +354,12 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
         content_parts = (
             list(request_data.input[0].content) if request_data.input else []
         )
-        resume_id = getattr(request_data, "post_turn_validation_resume_id", None)
 
     else:
         channel_id = request_data.get("channel", "console")
         sender_id = request_data.get("user_id", "default")
         session_id = request_data.get("session_id", "default")
         input_data = request_data.get("input", [])
-        resume_id = request_data.get("post_turn_validation_resume_id")
-
 
         content_parts = []
         for content_part in input_data:
@@ -366,7 +369,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
             elif isinstance(content_part, dict) and "content" in content_part:
                 content_parts.extend(content_part.get("content") or [])
 
-    native_payload = {
+    native_payload: dict[str, Any] = {
         "channel_id": channel_id,
         "sender_id": sender_id,
         "content_parts": content_parts,
@@ -375,15 +378,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
             "user_id": sender_id,
         },
     }
-    if resume_id:
-        native_payload["meta"]["post_turn_validation_resume_id"] = resume_id
     return native_payload
-
-
-class PostTurnValidationConsumeRequest(BaseModel):
-    """Request body for confirming a pending post-turn continuation."""
-
-    session_id: str = Field(..., description="Session id for validation scope")
 
 
 def _derive_chat_name(native_payload: dict) -> str:
@@ -459,8 +454,19 @@ async def post_console_chat(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Inject source_id from header for data isolation
-    source_id = request.headers.get("X-Source-Id", "default")
+    # Inject source_id from resolved request state for data isolation
+    source_id = getattr(
+        request.state,
+        "source_id",
+        None,
+    ) or request.headers.get(
+        "X-Source-Id",
+    )
+    if not source_id:
+        raise HTTPException(
+            status_code=400,
+            detail="X-Source-Id header is required",
+        )
     native_payload["meta"]["source_id"] = source_id
 
     # 从 request.state 获取 user_name 和 bbk_id（由 TenantIdentityMiddleware 设置）
@@ -661,7 +667,7 @@ async def get_push_messages(
     """
     from ..console_push_store import take, take_all
 
-    tenant_id = getattr(request.state, "tenant_id", None)
+    tenant_id = _request_runtime_tenant_id(request)
 
     if session_id:
         messages = await take(session_id, tenant_id=tenant_id)
@@ -686,47 +692,9 @@ async def get_suggestions(
     """
     from ..suggestions import take_suggestions
 
-    tenant_id = getattr(request.state, "tenant_id", None)
+    tenant_id = _request_runtime_tenant_id(request)
     suggestions = await take_suggestions(session_id, tenant_id=tenant_id)
     return {"suggestions": suggestions}
-
-
-@router.get("/post-turn-validation")
-async def get_post_turn_validation(
-    request: Request,
-    session_id: str = Query(
-        ...,
-        description="Session id to get pending post-turn validation result",
-    ),
-) -> dict:
-    """Return the latest pending continuation confirmation for a session."""
-    tenant_id = getattr(request.state, "tenant_id", None)
-    result = await peek_latest_pending_continuation(
-        session_id=session_id,
-        tenant_id=tenant_id,
-    )
-    return {"result": result}
-
-
-@router.post("/post-turn-validation/{validation_id}/consume")
-async def consume_post_turn_validation(
-    validation_id: str,
-    body: PostTurnValidationConsumeRequest,
-    request: Request,
-) -> dict:
-    """Confirm a pending continuation without exposing the internal prompt."""
-    tenant_id = getattr(request.state, "tenant_id", None)
-    result = await claim_pending_continuation(
-        validation_id=validation_id,
-        session_id=body.session_id,
-        tenant_id=tenant_id,
-    )
-    if result is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Post-turn validation result not found or expired",
-        )
-    return {"result": result}
 
 
 class QAContentRequest(BaseModel):
@@ -766,7 +734,7 @@ async def get_suggestions_qa_content(
     """
     from ..suggestions import get_qa_content
 
-    tenant_id = getattr(request.state, "tenant_id", None)
+    tenant_id = _request_runtime_tenant_id(request)
 
     entry = await get_qa_content(
         chat_id=body.chat_id,

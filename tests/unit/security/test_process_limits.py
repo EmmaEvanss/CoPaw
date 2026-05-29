@@ -44,19 +44,21 @@ def _write_tenant_config(
     )
 
 
-def test_process_limits_config_rejects_enabled_policy_without_limits() -> None:
-    with pytest.raises(ValidationError):
-        Config.model_validate(
-            {
-                "security": {
-                    "process_limits": {
-                        "enabled": True,
-                        "shell": True,
-                        "mcp_stdio": True,
-                    },
+def test_process_limits_config_uses_current_default_limits() -> None:
+    config = Config.model_validate(
+        {
+            "security": {
+                "process_limits": {
+                    "enabled": True,
+                    "shell": True,
+                    "mcp_stdio": True,
                 },
             },
-        )
+        },
+    )
+
+    assert config.security.process_limits.cpu_time_limit_seconds == 30
+    assert config.security.process_limits.memory_max_mb == 150
 
 
 def test_process_limits_config_rejects_enabled_policy_without_scope() -> None:
@@ -78,11 +80,11 @@ def test_process_limits_config_rejects_enabled_policy_without_scope() -> None:
 def test_process_limits_config_defaults_to_disabled() -> None:
     config = Config()
 
-    assert config.security.process_limits.enabled is False
+    assert config.security.process_limits.enabled is True
     assert config.security.process_limits.shell is True
-    assert config.security.process_limits.mcp_stdio is True
-    assert config.security.process_limits.cpu_time_limit_seconds is None
-    assert config.security.process_limits.memory_max_mb is None
+    assert config.security.process_limits.mcp_stdio is False
+    assert config.security.process_limits.cpu_time_limit_seconds == 30
+    assert config.security.process_limits.memory_max_mb == 150
 
 
 def test_resolve_current_process_limit_policy_uses_current_tenant_config(

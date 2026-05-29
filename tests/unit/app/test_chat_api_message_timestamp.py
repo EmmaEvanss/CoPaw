@@ -29,14 +29,16 @@ class _FakeMemory:
     def load_state_dict(
         self,
         state_dict: dict,
-        _strict: bool = False,
+        strict: bool = False,
     ) -> None:
+        _ = strict
         self.state_dict = state_dict
 
     async def get_memory(
         self,
-        _prepend_summary: bool = False,
+        prepend_summary: bool = False,
     ) -> list[Msg]:
+        _ = prepend_summary
         return [
             Msg(
                 name="tester",

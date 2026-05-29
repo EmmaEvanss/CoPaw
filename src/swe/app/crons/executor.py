@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -15,6 +15,7 @@ from .models import CronJobSpec
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
+from ...config.context import canonicalize_scope_id, resolve_scope_id
 from ...tracing import has_trace_manager, get_trace_manager
 from ...tracing.models import TraceStatus
 
@@ -34,6 +35,21 @@ class ExecutionResult:
     output_preview: str = ""
     input_snapshot: Optional[Dict[str, Any]] = None  # 执行时的输入快照
     executor_leader: str = ""  # 执行者 leader ID
+
+
+@dataclass
+class AgentStreamState:
+    """记录 Agent 流式执行边界，用于区分真实取消和完成后取消。"""
+
+    event_count: int = 0
+    completed_message_seen: bool = False
+    completed_message_sent: bool = False
+    stream_returned: bool = False
+    output_parts: list[str] = field(default_factory=list)
+
+    @property
+    def output_len(self) -> int:
+        return len("\n".join(self.output_parts))
 
 
 async def _index_model_output_to_monitor(
@@ -116,8 +132,19 @@ class CronExecutor:
 
         # Extract tenant_id from job spec (added for tenant isolation)
         tenant_id = getattr(job, "tenant_id", None)
+        source_id = getattr(job, "source_id", None)
+        job_scope_id = getattr(job, "scope_id", None)
+        scope_id = (
+            canonicalize_scope_id(job_scope_id)
+            if job_scope_id is not None
+            else resolve_scope_id(tenant_id, source_id)
+        )
         if tenant_id:
             dispatch_meta["tenant_id"] = tenant_id
+        if source_id:
+            dispatch_meta["source_id"] = source_id
+        if scope_id:
+            dispatch_meta["scope_id"] = scope_id
 
         logger.info(
             "cron execute: job_id=%s channel=%s task_type=%s "
@@ -136,6 +163,8 @@ class CronExecutor:
                 tenant_id=tenant_id,
                 user_id=target_user_id,
                 workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
         ):
@@ -145,12 +174,14 @@ class CronExecutor:
                 target_session_id,
                 dispatch_meta,
             )
+        result = result or {}
+        output_preview = str(result.get("output_preview") or "")
 
         return ExecutionResult(
-            trace_id=result["trace_id"],
-            output_preview=result["output_preview"][:100],
+            trace_id=str(result.get("trace_id") or ""),
+            output_preview=output_preview[:100],
             input_snapshot=result.get("input_snapshot"),
-            executor_leader=result.get("executor_leader", ""),
+            executor_leader=str(result.get("executor_leader") or ""),
         )
 
     async def _execute_job(
@@ -192,7 +223,11 @@ class CronExecutor:
         Returns:
             Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
-        tenant_id = dispatch_meta.get("tenant_id") or "default"
+        runtime_tenant_id = (
+            dispatch_meta.get("scope_id")
+            or dispatch_meta.get("tenant_id")
+            or "default"
+        )
         logger.info(
             "cron send_text: job_id=%s channel=%s len=%s",
             job.id,
@@ -200,7 +235,7 @@ class CronExecutor:
             len(job.text or ""),
         )
 
-        # 创建 trace 记录
+        # 保留抽出的 helper，同时继续传递 scope 级租户标识。
         trace_id = await self._create_trace_for_text_job(
             job,
             target_user_id,
@@ -213,7 +248,7 @@ class CronExecutor:
                 target_user_id,
                 target_session_id,
                 dispatch_meta,
-                tenant_id,
+                runtime_tenant_id,
             )
         finally:
             await self._end_trace_for_text_job(trace_id)
@@ -282,7 +317,7 @@ class CronExecutor:
         target_user_id: str,
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
-        tenant_id: str,
+        runtime_tenant_id: str,
     ) -> None:
         """发送 text 到 channel 并推送到 console。
 
@@ -291,7 +326,7 @@ class CronExecutor:
             target_user_id: 目标用户 ID
             target_session_id: 目标会话 ID
             dispatch_meta: dispatch 元数据
-            tenant_id: 租户 ID
+            runtime_tenant_id: 运行时 scope/tenant 标识
         """
         await self._channel_manager.send_text(
             channel=job.dispatch.channel,
@@ -305,7 +340,7 @@ class CronExecutor:
             await self._push_to_console(
                 task_chat_id,
                 job.text.strip(),
-                tenant_id,
+                runtime_tenant_id,
             )
 
     async def _end_trace_for_text_job(self, trace_id: Optional[str]) -> None:
@@ -404,18 +439,25 @@ class CronExecutor:
         if not trace_id or not has_trace_manager():
             return
 
+        trace_mgr = get_trace_manager()
+        task = asyncio.create_task(
+            trace_mgr.end_trace(trace_id, TraceStatus.COMPLETED),
+        )
+
         try:
-            trace_mgr = get_trace_manager()
-            await asyncio.shield(
-                trace_mgr.end_trace(trace_id, TraceStatus.COMPLETED),
-            )
+            await asyncio.shield(task)
         except asyncio.CancelledError:
+            # 外部取消信号到达，但 shield 已阻止其传播到 end_trace
+            # 显式等待 task 完成，确保 trace 状态正确写入
             logger.info(
-                "Trace ended as COMPLETED (shielded) for job_id=%s, "
-                "propagating CancelledError",
+                "Trace ending was cancelled after successful cron execution; "
+                "waiting for end_trace to finish: job_id=%s",
                 job_id,
             )
-            raise
+            try:
+                await task
+            except Exception as e:
+                logger.warning("Failed to end trace for success: %s", e)
         except Exception as e:
             logger.warning("Failed to end trace for success: %s", e)
 
@@ -458,7 +500,11 @@ class CronExecutor:
         Returns:
             Dict with trace_id, output_preview, input_snapshot, executor_leader
         """
-        tenant_id = dispatch_meta.get("tenant_id") or "default"
+        runtime_tenant_id = (
+            dispatch_meta.get("scope_id")
+            or dispatch_meta.get("tenant_id")
+            or "default"
+        )
         logger.info(
             "cron agent: job_id=%s channel=%s timeout=%ss",
             job.id,
@@ -480,9 +526,18 @@ class CronExecutor:
 
         # 用于标记 trace 是否已被结束（防止重复结束）
         trace_ended = False
-        console_text_parts: list[str] = []
+        stream_state = AgentStreamState()
         result: Optional[Dict[str, Any]] = None
         try:
+            logger.info(
+                "cron agent stream start: job_id=%s channel=%s "
+                "session_id=%s trace_id=%s timeout=%ss",
+                job.id,
+                job.dispatch.channel,
+                target_session_id[:40] if target_session_id else "",
+                trace_id[:20] if trace_id else "(empty)",
+                job.runtime.timeout_seconds,
+            )
             # Wrap the entire agent execution in a timeout
             # asyncio.timeout 是 Python 3.11+ 的特性，低版本使用 wait_for
             if hasattr(asyncio, "timeout"):
@@ -493,7 +548,7 @@ class CronExecutor:
                         target_session_id,
                         dispatch_meta,
                         req,
-                        console_text_parts,
+                        stream_state,
                     )
             else:
                 await asyncio.wait_for(
@@ -503,7 +558,7 @@ class CronExecutor:
                         target_session_id,
                         dispatch_meta,
                         req,
-                        console_text_parts,
+                        stream_state,
                     ),
                     timeout=job.runtime.timeout_seconds,
                 )
@@ -511,18 +566,18 @@ class CronExecutor:
             task_chat_id: Optional[str] = (job.meta or {}).get("task_chat_id")
             if (
                 job.dispatch.channel != CONSOLE_CHANNEL
-                and console_text_parts
+                and stream_state.output_parts
                 and task_chat_id
             ):
                 await self._push_to_console(
                     task_chat_id,
-                    "\n".join(console_text_parts),
-                    tenant_id,
+                    "\n".join(stream_state.output_parts),
+                    runtime_tenant_id,
                 )
             # 正常完成，构建执行结果
             result = self._build_agent_execution_result(
                 trace_id,
-                console_text_parts,
+                stream_state.output_parts,
                 req,
             )
         except asyncio.TimeoutError:
@@ -532,7 +587,7 @@ class CronExecutor:
                 job.id,
                 job.runtime.timeout_seconds,
             )
-            await self._notify_timeout(job, tenant_id)
+            await self._notify_timeout(job, runtime_tenant_id)
             await self._end_trace_on_exception(
                 trace_id,
                 TraceStatus.ERROR,
@@ -540,8 +595,45 @@ class CronExecutor:
             )
             raise
         except asyncio.CancelledError:
+            if self._has_agent_completed_output(stream_state):
+                trace_ended = True
+                cancelling_count = self._current_task_cancelling_count()
+                uncancelled = self._uncancel_current_task()
+                logger.info(
+                    "cron agent cancellation after completed output; "
+                    "treating as success: job_id=%s phase=%s "
+                    "event_count=%s completed_seen=%s completed_sent=%s "
+                    "stream_returned=%s output_len=%s cancelling_count=%s "
+                    "uncancelled=%s",
+                    job.id,
+                    self._agent_stream_phase(stream_state),
+                    stream_state.event_count,
+                    stream_state.completed_message_seen,
+                    stream_state.completed_message_sent,
+                    stream_state.stream_returned,
+                    stream_state.output_len,
+                    cancelling_count,
+                    uncancelled,
+                )
+                await self._end_trace_on_success(trace_id, job.id)
+                return self._build_agent_execution_result(
+                    trace_id,
+                    stream_state.output_parts,
+                    req,
+                )
             trace_ended = True
-            logger.info("cron execute: job_id=%s cancelled", job.id)
+            logger.info(
+                "cron agent cancelled before completion: job_id=%s "
+                "phase=%s event_count=%s completed_seen=%s "
+                "completed_sent=%s stream_returned=%s cancelling_count=%s",
+                job.id,
+                self._agent_stream_phase(stream_state),
+                stream_state.event_count,
+                stream_state.completed_message_seen,
+                stream_state.completed_message_sent,
+                stream_state.stream_returned,
+                self._current_task_cancelling_count(),
+            )
             await self._end_trace_on_exception(trace_id, TraceStatus.CANCELLED)
             raise
         except Exception as e:  # pylint: disable=broad-except
@@ -582,6 +674,16 @@ class CronExecutor:
         # 传递 source_id 用于 tracing 数据隔离
         if job.source_id:
             req["source_id"] = job.source_id
+        scope_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                job.source_id,
+            )
+        )
+        if scope_id:
+            req["scope_id"] = scope_id
         # 传递 bbk_id 用于 tracing 用户标识
         if job.bbk_id:
             req["bbk_id"] = job.bbk_id
@@ -597,9 +699,17 @@ class CronExecutor:
         req: Dict[str, Any],
     ) -> None:
         """Resolve and apply auth token to request."""
+        runtime_tenant_id = (
+            canonicalize_scope_id(job.scope_id)
+            if job.scope_id is not None
+            else resolve_scope_id(
+                getattr(job, "tenant_id", None),
+                getattr(job, "source_id", None),
+            )
+        )
         try:
             resolved = resolve_auth_token_for_execution(
-                tenant_id=getattr(job, "tenant_id", None),
+                tenant_id=runtime_tenant_id,
                 workspace_dir=dispatch_meta.get("workspace_dir"),
             )
         except ValueError as exc:
@@ -624,10 +734,24 @@ class CronExecutor:
         target_session_id: str,
         dispatch_meta: Dict[str, Any],
         req: Dict[str, Any],
-        console_text_parts: list[str],
+        stream_state: AgentStreamState,
     ) -> None:
         """Run agent stream query and send events to channel."""
         async for event in self._runner.stream_query(req):
+            stream_state.event_count += 1
+            is_completed_message = self._is_completed_message_event(event)
+            text = self._extract_text_from_event(event)
+            if text:
+                stream_state.output_parts.append(text)
+            if is_completed_message:
+                stream_state.completed_message_seen = True
+                logger.info(
+                    "cron agent completed message received: job_id=%s "
+                    "event_count=%s output_len=%s",
+                    job.id,
+                    stream_state.event_count,
+                    len(text),
+                )
             await self._channel_manager.send_event(
                 channel=job.dispatch.channel,
                 user_id=target_user_id,
@@ -635,9 +759,25 @@ class CronExecutor:
                 event=event,
                 meta=dispatch_meta,
             )
-            text = self._extract_text_from_event(event)
-            if text:
-                console_text_parts.append(text)
+            if is_completed_message:
+                stream_state.completed_message_sent = True
+                logger.info(
+                    "cron agent completed message sent: job_id=%s "
+                    "event_count=%s output_len=%s",
+                    job.id,
+                    stream_state.event_count,
+                    len(text),
+                )
+        stream_state.stream_returned = True
+        logger.info(
+            "cron agent stream returned: job_id=%s event_count=%s "
+            "completed_seen=%s completed_sent=%s output_len=%s",
+            job.id,
+            stream_state.event_count,
+            stream_state.completed_message_seen,
+            stream_state.completed_message_sent,
+            stream_state.output_len,
+        )
 
     async def _notify_timeout(self, job: CronJobSpec, tenant_id: str) -> None:
         """Push a timeout notification to the console so the user is aware.
@@ -719,3 +859,51 @@ class CronExecutor:
                     text_parts.append(refusal)
 
         return "\n".join(text_parts) if text_parts else ""
+
+    @staticmethod
+    def _is_completed_message_event(event: Any) -> bool:
+        from agentscope_runtime.engine.schemas.agent_schemas import RunStatus
+
+        return (
+            getattr(event, "object", None) == "message"
+            and getattr(event, "status", None) == RunStatus.Completed
+        )
+
+    @staticmethod
+    def _has_agent_completed_output(stream_state: AgentStreamState) -> bool:
+        return (
+            stream_state.completed_message_seen or stream_state.stream_returned
+        )
+
+    @staticmethod
+    def _agent_stream_phase(stream_state: AgentStreamState) -> str:
+        if stream_state.stream_returned:
+            return "stream_returned"
+        if stream_state.completed_message_seen:
+            return "completed_message_sent"
+        return "before_completed_message"
+
+    @staticmethod
+    def _current_task_cancelling_count() -> int:
+        task = asyncio.current_task()
+        if task is None:
+            return 0
+        cancelling = getattr(task, "cancelling", None)
+        if not callable(cancelling):
+            return 0
+        return int(cancelling())
+
+    @staticmethod
+    def _uncancel_current_task() -> int:
+        task = asyncio.current_task()
+        if task is None:
+            return 0
+        uncancel = getattr(task, "uncancel", None)
+        cancelling = getattr(task, "cancelling", None)
+        if not callable(uncancel) or not callable(cancelling):
+            return 0
+        uncancelled = 0
+        while int(cancelling()) > 0:
+            uncancel()
+            uncancelled += 1
+        return uncancelled

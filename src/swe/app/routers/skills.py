@@ -56,7 +56,7 @@ from ...config.utils import (
     get_tenant_working_dir_strict,
     list_logical_tenant_ids,
 )
-from ...config.context import resolve_effective_tenant_id
+from ...config.context import resolve_scope_preferred_tenant_id
 from ...security.skill_scanner import SkillScanError
 from ..utils import schedule_agent_reload
 
@@ -269,10 +269,11 @@ def _request_tenant_id(request: Request) -> str | None:
 
 
 def _request_effective_tenant_id(request: Request) -> str | None:
-    tenant_id = _request_tenant_id(request)
-    if tenant_id is None:
-        return None
-    return resolve_effective_tenant_id(tenant_id, _request_source_id(request))
+    return resolve_scope_preferred_tenant_id(
+        _request_tenant_id(request),
+        _request_source_id(request),
+        getattr(request.state, "scope_id", None),
+    )
 
 
 def _request_tenant_working_dir(request: Request) -> Path:

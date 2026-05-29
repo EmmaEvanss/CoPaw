@@ -40,3 +40,43 @@ async def test_write_and_append_file_default_to_workspace_dir(tmp_path: Path):
     assert (workspace_dir / "note.txt").read_text().lstrip(
         "\ufeff",
     ) == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_write_file_creates_missing_parent_dirs_within_workspace(
+    tmp_path: Path,
+):
+    tenant_dir = tmp_path / "tenant_a"
+    workspace_dir = tenant_dir / "workspaces" / "agent_a"
+    workspace_dir.mkdir(parents=True)
+
+    with patch("swe.security.tenant_path_boundary.WORKING_DIR", tmp_path):
+        with tenant_context(tenant_id="tenant_a", workspace_dir=workspace_dir):
+            result = await write_file("nested/child/note.txt", "hello")
+
+    assert "Wrote 5 bytes" in result.content[0].get("text", "")
+    assert (
+        workspace_dir / "nested" / "child" / "note.txt"
+    ).read_text().lstrip(
+        "\ufeff",
+    ) == "hello"
+
+
+@pytest.mark.asyncio
+async def test_append_file_creates_missing_parent_dirs_within_workspace(
+    tmp_path: Path,
+):
+    tenant_dir = tmp_path / "tenant_a"
+    workspace_dir = tenant_dir / "workspaces" / "agent_a"
+    workspace_dir.mkdir(parents=True)
+
+    with patch("swe.security.tenant_path_boundary.WORKING_DIR", tmp_path):
+        with tenant_context(tenant_id="tenant_a", workspace_dir=workspace_dir):
+            result = await append_file("nested/child/note.txt", "hello")
+
+    assert "Appended 5 bytes" in result.content[0].get("text", "")
+    assert (
+        workspace_dir / "nested" / "child" / "note.txt"
+    ).read_text().lstrip(
+        "\ufeff",
+    ) == "hello"

@@ -1,0 +1,36 @@
+{
+  "enabled": true,
+  "events": {
+    "BeforeStop": [
+      {
+        "id": "mcp-response-consistency-check",
+        "hooks": [
+          {
+            "id": "mcp-response-consistency-judge",
+            "type": "prompt",
+            "timeout": 8,
+            "failPolicy": "allow",
+            "prompt": "请只基于 HookContext JSON 做结束前校验。重点检查 assistant_response 是否把失败的工具调用说成已经确认成功，或把没有上下文支撑的数据写成确定事实。若存在这类风险，返回 block，并说明需要如何改写；若当前回复只是在说明失败、降级方案或不确定性，则返回 allow。为避免误判，请把 HookContext JSON 中可见的 error、assistant_response 作为主要依据。"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "id": "mcp-failure-fallback",
+        "hooks": [
+          {
+            "id": "mcp-failure-context",
+            "type": "command",
+            "argv": [
+              "python",
+              "scripts/mcp_failure_fallback.py"
+            ],
+            "timeout": 5,
+            "failPolicy": "allow"
+          }
+        ]
+      }
+    ]
+  }
+}

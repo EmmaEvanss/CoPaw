@@ -18,9 +18,14 @@ from swe.providers.models import ModelSlotConfig
 def _request(
     tenant_id: str = "tenant-source",
     source_id: str | None = None,
+    scope_id: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
-        state=SimpleNamespace(tenant_id=tenant_id, source_id=source_id),
+        state=SimpleNamespace(
+            tenant_id=tenant_id,
+            source_id=source_id,
+            scope_id=scope_id,
+        ),
     )
 
 
@@ -133,8 +138,9 @@ def test_list_active_model_distribution_tenants_returns_discovered_ids(
     async def fake_list_logical_tenant_ids(
         _source_id=None,
         *,
-        _source_filter=False,
+        source_filter=False,
     ):
+        del source_filter
         return ["default", "tenant-a", "tenant-b"]
 
     monkeypatch.setattr(
@@ -158,8 +164,9 @@ def test_list_active_model_distribution_tenants_maps_source_default(
     async def fake_list_logical_tenant_ids(
         source_id: str | None = None,
         *,
-        _source_filter: bool = False,
+        source_filter: bool = False,
     ) -> list[str]:
+        del source_filter
         observed.append(source_id)
         return ["default", "tenant-a"]
 
@@ -330,6 +337,86 @@ def test_distribute_active_model_bootstraps_missing_tenant(
     assert bootstrap_calls == ["tenant-new"]
     assert result.results[0].success is True
     assert result.results[0].bootstrapped is True
+
+
+def test_distribute_active_model_uses_request_scope_for_source_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_manager = FakeManager(
+        active_model=ModelSlotConfig(provider_id="openai", model="gpt-5.4"),
+        providers={
+            "openai": FakeProvider(
+                id="openai",
+                models=[{"id": "gpt-5.4", "name": "GPT-5.4"}],
+            ),
+        },
+    )
+    target_manager = FakeManager()
+    scope_id = "scope.v1.dGVuYW50LXNvdXJjZQ.cnVpY2U"
+    canonical_scope_id = "dGVuYW50LXNvdXJjZQ.cnVpY2U"
+    observed: dict[str, str | None] = {}
+
+    def fake_get_tenant_working_dir_strict(
+        tenant_id: str | None,
+    ) -> Path:
+        observed["tenant_id"] = tenant_id
+        return tmp_path / str(tenant_id)
+
+    monkeypatch.setattr(
+        providers_router,
+        "get_tenant_working_dir_strict",
+        fake_get_tenant_working_dir_strict,
+    )
+    monkeypatch.setattr(
+        providers_router.ProviderManager,
+        "ensure_tenant_provider_storage",
+        staticmethod(lambda tenant_id: None),
+    )
+    monkeypatch.setattr(
+        providers_router.ProviderManager,
+        "get_instance",
+        staticmethod(lambda tenant_id=None: target_manager),
+    )
+
+    class FakeInitializer:
+        def __init__(
+            self,
+            _base_working_dir: Path,
+            tenant_id: str,
+            source_id: str | None = None,
+        ):
+            self.tenant_id = tenant_id
+            self.source_id = source_id
+
+        def has_seeded_bootstrap(self) -> bool:
+            return True
+
+        def ensure_seeded_bootstrap(self) -> dict[str, object]:
+            return {"minimal": True}
+
+    monkeypatch.setattr(providers_router, "TenantInitializer", FakeInitializer)
+
+    result = asyncio.run(
+        providers_router.distribute_active_model(
+            _request(
+                tenant_id="tenant-source",
+                source_id="ruice",
+                scope_id=scope_id,
+            ),
+            providers_router.ActiveModelDistributionRequest(
+                target_tenant_ids=["tenant-target"],
+                overwrite=True,
+            ),
+            manager=source_manager,
+        ),
+    )
+
+    assert observed["tenant_id"] == canonical_scope_id
+    assert result.source_active_llm == ModelSlotConfig(
+        provider_id="openai",
+        model="gpt-5.4",
+    )
 
 
 def test_distribute_active_model_overwrites_builtin_provider_and_switches_active_slot(

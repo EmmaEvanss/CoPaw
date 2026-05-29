@@ -281,6 +281,7 @@ class TestLazyRuntimeStartup:
                         "swe.app.multi_agent_manager.Workspace",
                     ) as mock_ws:
                         mock_ws_instance = AsyncMock()
+                        mock_ws_instance.set_manager = Mock()
                         mock_ws.return_value = mock_ws_instance
 
                         await manager.get_agent("default")
@@ -298,6 +299,7 @@ class TestLazyRuntimeStartup:
         # Mock the workspace creation
         with patch("swe.app.multi_agent_manager.Workspace") as mock_ws:
             mock_ws_instance = AsyncMock()
+            mock_ws_instance.set_manager = Mock()
             mock_ws.return_value = mock_ws_instance
 
             with patch.object(
@@ -407,48 +409,56 @@ class TestMiddlewareIntegration:
 
         middleware = TenantWorkspaceMiddleware(Mock())
 
-        with patch.object(
-            middleware,
-            "_ensure_tenant_provider_config",
-            AsyncMock(),
-        ):
-            # Mock request
-            mock_request = Mock()
-            mock_request.state.tenant_id = "tenant-1"
-            mock_request.app.state.tenant_workspace_pool = Mock()
+        # Mock request
+        mock_request = Mock()
+        mock_request.state.tenant_id = "tenant-1"
+        mock_request.state.source_id = None
+        mock_request.state.user_name = None
+        mock_request.state.bbk_id = None
+        mock_request.app.state.tenant_workspace_pool = Mock()
 
-            pool = mock_request.app.state.tenant_workspace_pool
-            pool.ensure_bootstrap = AsyncMock()
-            pool.get_or_create = AsyncMock()
+        pool = mock_request.app.state.tenant_workspace_pool
+        pool.ensure_bootstrap = AsyncMock()
+        pool.get_or_create = AsyncMock()
+        pool.get_tenant_workspace_dir.return_value = Path("/tmp/tenant-1")
 
-            # Call the _get_workspace method
-            await middleware._get_workspace(mock_request, "tenant-1")
+        # Call the _get_workspace method
+        await middleware._get_workspace(mock_request, "tenant-1")
 
-            # Should call ensure_bootstrap, not get_or_create
-            assert pool.ensure_bootstrap.called
-            assert not pool.get_or_create.called
+        # Should call ensure_bootstrap, not get_or_create
+        pool.ensure_bootstrap.assert_awaited_once_with(
+            "tenant-1",
+            source_id=None,
+            scope_id=None,
+            tenant_name=None,
+            bbk_id=None,
+        )
+        assert not pool.get_or_create.called
 
     async def test_middleware_returns_none_for_workspace(self):
-        """Middleware returns None since runtime is not started."""
+        """Middleware returns lightweight context without starting runtime."""
         from swe.app.middleware.tenant_workspace import (
+            TenantWorkspaceContext,
             TenantWorkspaceMiddleware,
         )
 
         middleware = TenantWorkspaceMiddleware(Mock())
 
-        with patch.object(
-            middleware,
-            "_ensure_tenant_provider_config",
-            AsyncMock(),
-        ):
-            mock_request = Mock()
-            mock_request.state.tenant_id = "tenant-1"
-            mock_request.app.state.tenant_workspace_pool = Mock()
-            mock_request.app.state.tenant_workspace_pool.ensure_bootstrap = (
-                AsyncMock()
-            )
+        mock_request = Mock()
+        mock_request.state.tenant_id = "tenant-1"
+        mock_request.state.source_id = None
+        mock_request.state.user_name = None
+        mock_request.state.bbk_id = None
+        mock_request.app.state.tenant_workspace_pool = Mock()
+        mock_request.app.state.tenant_workspace_pool.ensure_bootstrap = (
+            AsyncMock()
+        )
+        mock_request.app.state.tenant_workspace_pool.get_tenant_workspace_dir.return_value = Path(  # noqa: E501
+            "/tmp/tenant-1",
+        )
 
-            result = await middleware._get_workspace(mock_request, "tenant-1")
+        result = await middleware._get_workspace(mock_request, "tenant-1")
 
-            # Should return None since runtime is deferred
-            assert result is None
+        assert isinstance(result, TenantWorkspaceContext)
+        assert result.tenant_id == "tenant-1"
+        assert result.workspace_dir == Path("/tmp/tenant-1").resolve()

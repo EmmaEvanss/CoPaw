@@ -13,6 +13,7 @@ type CronJob = CronJobSpecOutput;
 interface ColumnHandlers {
   onToggleEnabled: (job: CronJob) => void;
   onExecuteNow: (job: CronJob) => void;
+  onBroadcast: (job: CronJob) => void;
   onEdit: (job: CronJob) => void;
   onDelete: (jobId: string) => void;
   onCopySuccess: () => void;
@@ -310,6 +311,11 @@ export const createColumns = (
       fixed: "right",
       render: (_: unknown, record: CronJob) => {
         const menuItems: MenuProps["items"] = [
+          {
+            key: "broadcast",
+            label: "广播到租户",
+            onClick: () => handlers.onBroadcast(record),
+          },
           {
             key: "edit",
             label: handlers.t("cronJobs.edit"),

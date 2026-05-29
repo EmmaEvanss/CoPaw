@@ -6,8 +6,9 @@ for the frontend overview page.
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from typing import List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from ...database import get_db_connection
 from ...models.cron import (
@@ -16,58 +17,44 @@ from ...models.cron import (
     ExecutionModel,
     ExecutionQueryParams,
     PaginatedResponse,
+    SubscriptionDetailItem,
+    SubscriptionOverviewItem,
 )
 
-# 北京时间 (东八区 UTC+8)
-BEIJING_TZ = timezone(timedelta(hours=8))
+# 东八区时区（北京时间）
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+# 注意：数据库存储的时间已经是东八区时间（北京时间），无需再转换
+# monitor_sync_client.py 在写入时已将 UTC 转为东八区，直接读取即可
 
 logger = logging.getLogger(__name__)
 
 
-def convert_utc_to_beijing(dt: Optional[datetime]) -> Optional[datetime]:
-    """将 UTC 时间转换为北京时间。
-
-    数据库存储的是 UTC 时间，需要转换为北京时间 (UTC+8) 显示给用户。
-
-    Args:
-        dt: UTC 时间 (naive datetime，无时区信息)
-
-    Returns:
-        北京时间 (naive datetime，已加8小时)
-    """
-    if dt is None:
-        return None
-    # 假设数据库存储的是 UTC 时间，直接加8小时
-    return dt + timedelta(hours=8)
-
-
-def convert_row_times_to_beijing(row: dict, time_fields: List[str]) -> dict:
-    """将字典中的时间字段从 UTC 转换为北京时间。
-
-    Args:
-        row: 数据库返回的行字典
-        time_fields: 需要转换的时间字段名列表
-
-    Returns:
-        转换后的行字典
-    """
-    result = row.copy()
-    for field in time_fields:
-        if field in result and result[field] is not None:
-            result[field] = convert_utc_to_beijing(result[field])
-    return result
-
-
-# 任务定义表的时间字段
+# 任务定义表的时间字段（无需转换，直接读取）
 JOB_TIME_FIELDS = ["created_at", "updated_at", "deleted_at"]
 
-# 执行历史表的时间字段
+# 执行历史表的时间字段（无需转换，直接读取）
 EXECUTION_TIME_FIELDS = [
     "scheduled_time",
     "actual_time",
     "end_time",
     "created_at",
 ]
+
+
+def convert_row_times_direct(row: dict, time_fields: List[str]) -> dict:
+    """直接读取时间字段，不做时区转换。
+
+    数据库存储的已经是东八区时间，无需转换。
+
+    Args:
+        row: 数据库返回的行字典
+        time_fields: 时间字段名列表
+
+    Returns:
+        原始行字典（时间字段不变）
+    """
+    return row
 
 
 class QueryService:
@@ -111,6 +98,10 @@ class QueryService:
             conditions.append("creator_user_id = %s")
             sql_params.append(params.creator_user_id)
 
+        if params.job_origin:
+            conditions.append("job_origin = %s")
+            sql_params.append(params.job_origin)
+
         if params.status:
             conditions.append("status = %s")
             sql_params.append(params.status)
@@ -140,10 +131,10 @@ class QueryService:
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        # 转换 UTC 时间为北京时间
+        # 直接读取，不做时区转换（数据库已是东八区时间）
         items = [
             CronJobModel.model_validate(
-                convert_row_times_to_beijing(row, JOB_TIME_FIELDS),
+                convert_row_times_direct(row, JOB_TIME_FIELDS),
             )
             for row in rows
         ]
@@ -165,14 +156,17 @@ class QueryService:
             }
 
             # 查询今日最新执行状态（北京时间今日）
-            today_start_beijing = datetime.now(BEIJING_TZ).replace(
-                hour=0,
-                minute=0,
-                second=0,
-                microsecond=0,
-            )
-            # 转换为 UTC 时间查询数据库（北京时间 - 8小时 = UTC）
-            today_start_utc = today_start_beijing - timedelta(hours=8)
+            # 数据库存储的已是东八区时间，直接用北京时间凌晨查询
+            today_start = (
+                datetime.now(BEIJING_TZ)
+                .replace(
+                    hour=0,
+                    minute=0,
+                    second=0,
+                    microsecond=0,
+                )
+                .replace(tzinfo=None)
+            )  # 去掉时区信息，因为数据库存的是 naive datetime
             today_sql = f"""
                 SELECT job_id, status
                 FROM swe_cron_executions
@@ -182,7 +176,7 @@ class QueryService:
             """
             today_rows = await db.fetch_all(
                 today_sql,
-                tuple(job_ids) + (today_start_utc,),
+                tuple(job_ids) + (today_start,),
             )
             # 取每个 job_id 的第一条记录（最新的执行状态）
             today_status_map = {}
@@ -221,9 +215,9 @@ class QueryService:
         if not row:
             return None
 
-        # 转换 UTC 时间为北京时间
+        # 直接读取，不做时区转换（数据库已是东八区时间）
         return CronJobModel.model_validate(
-            convert_row_times_to_beijing(row, JOB_TIME_FIELDS),
+            convert_row_times_direct(row, JOB_TIME_FIELDS),
         )
 
     async def list_executions(
@@ -252,6 +246,11 @@ class QueryService:
             conditions.append("e.tenant_id = %s")
             sql_params.append(params.tenant_id)
 
+        # source_id 需要通过 JOIN jobs 表筛选
+        if params.source_id:
+            conditions.append("j.source_id = %s")
+            sql_params.append(params.source_id)
+
         if params.status:
             conditions.append("e.status = %s")
             sql_params.append(params.status)
@@ -266,8 +265,13 @@ class QueryService:
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-        # Count total
-        count_sql = f"SELECT COUNT(*) as count FROM swe_cron_executions e WHERE {where_clause}"
+        # Count total - 需要 JOIN jobs 表来支持 source_id 筛选
+        count_sql = f"""
+            SELECT COUNT(*) as count
+            FROM swe_cron_executions e
+            LEFT JOIN swe_cron_jobs j ON e.job_id = j.id
+            WHERE {where_clause}
+        """
         count_result = await db.fetch_one(count_sql, tuple(sql_params))
         total = count_result.get("count", 0) if count_result else 0
 
@@ -285,10 +289,10 @@ class QueryService:
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        # 转换 UTC 时间为北京时间
+        # 直接读取，不做时区转换（数据库已是东八区时间）
         items = [
             ExecutionModel.model_validate(
-                convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS),
+                convert_row_times_direct(row, EXECUTION_TIME_FIELDS),
             )
             for row in rows
         ]
@@ -322,15 +326,16 @@ class QueryService:
         if not row:
             return None
 
-        # 转换 UTC 时间为北京时间
+        # 直接读取，不做时区转换（数据库已是东八区时间）
         return ExecutionModel.model_validate(
-            convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS),
+            convert_row_times_direct(row, EXECUTION_TIME_FIELDS),
         )
 
     async def get_executions_for_export(
         self,
         job_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        source_id: Optional[str] = None,
         status: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
@@ -341,6 +346,7 @@ class QueryService:
         Args:
             job_id: Job ID filter
             tenant_id: Tenant ID filter
+            source_id: Source ID filter (来源标识)
             status: Status filter
             start_time: Start time filter
             end_time: End time filter
@@ -351,46 +357,54 @@ class QueryService:
         """
         db = get_db_connection()
 
-        # Build WHERE clause
+        # Build WHERE clause - 需要 JOIN jobs 表来支持 source_id 筛选
         conditions: List[str] = []
         sql_params: List = []
 
         if job_id:
-            conditions.append("job_id = %s")
+            conditions.append("e.job_id = %s")
             sql_params.append(job_id)
 
         if tenant_id:
-            conditions.append("tenant_id = %s")
+            conditions.append("e.tenant_id = %s")
             sql_params.append(tenant_id)
 
+        # source_id 需要通过 JOIN jobs 表筛选
+        if source_id:
+            conditions.append("j.source_id = %s")
+            sql_params.append(source_id)
+
         if status:
-            conditions.append("status = %s")
+            conditions.append("e.status = %s")
             sql_params.append(status)
 
         if start_time:
-            conditions.append("actual_time >= %s")
+            conditions.append("e.actual_time >= %s")
             sql_params.append(start_time)
 
         if end_time:
-            conditions.append("actual_time <= %s")
+            conditions.append("e.actual_time <= %s")
             sql_params.append(end_time)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
+        # 需要 JOIN jobs 表来支持 source_id 筛选
         query_sql = f"""
-            SELECT * FROM swe_cron_executions
+            SELECT e.*
+            FROM swe_cron_executions e
+            LEFT JOIN swe_cron_jobs j ON e.job_id = j.id
             WHERE {where_clause}
-            ORDER BY actual_time DESC
+            ORDER BY e.actual_time DESC
             LIMIT %s
         """
         query_params = tuple(sql_params) + (limit,)
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        # 转换 UTC 时间为北京时间
+        # 直接读取，不做时区转换（数据库已是东八区时间）
         return [
             ExecutionModel.model_validate(
-                convert_row_times_to_beijing(row, EXECUTION_TIME_FIELDS),
+                convert_row_times_direct(row, EXECUTION_TIME_FIELDS),
             )
             for row in rows
         ]
@@ -455,10 +469,10 @@ class QueryService:
 
         rows = await db.fetch_all(query_sql, query_params)
 
-        # 转换 UTC 时间为北京时间
+        # 直接读取，不做时区转换（数据库已是东八区时间）
         items = [
             CronJobModel.model_validate(
-                convert_row_times_to_beijing(row, JOB_TIME_FIELDS),
+                convert_row_times_direct(row, JOB_TIME_FIELDS),
             )
             for row in rows
         ]
@@ -582,6 +596,267 @@ class QueryService:
             "job_ids": job_ids,
         }
 
+    async def get_subscription_overview(
+        self,
+        *,
+        keyword: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        bbk_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> PaginatedResponse[SubscriptionOverviewItem]:
+        """按订阅任务分组统计当天概览数据。"""
+        db = get_db_connection()
+        start_time, end_time = self._resolve_today_range(start_time, end_time)
+        conditions, sql_params = self._build_subscription_conditions(
+            keyword=keyword,
+            tenant_id=tenant_id,
+            bbk_id=bbk_id,
+            source_id=source_id,
+        )
+        where_clause = " AND ".join(conditions)
+        group_key = "COALESCE(NULLIF(j.subscription_key, ''), CONCAT('job:', j.id))"
+
+        count_sql = f"""
+            SELECT COUNT(*) as count
+            FROM (
+                SELECT {group_key} AS subscription_group
+                FROM swe_cron_jobs j
+                WHERE {where_clause}
+                GROUP BY subscription_group
+            ) grouped
+        """
+        count_result = await db.fetch_one(count_sql, tuple(sql_params))
+        total = count_result.get("count", 0) if count_result else 0
+
+        offset = (page - 1) * page_size
+        latest_execution_sql = """
+            SELECT e.*
+            FROM swe_cron_executions e
+            INNER JOIN (
+                SELECT job_id, MAX(actual_time) AS latest_actual_time
+                FROM swe_cron_executions
+                WHERE actual_time >= %s AND actual_time <= %s
+                GROUP BY job_id
+            ) latest
+                ON latest.job_id = e.job_id
+                AND latest.latest_actual_time = e.actual_time
+        """
+        query_sql = f"""
+            SELECT
+                {group_key} AS subscription_key,
+                MAX(j.name) AS task_name,
+                COUNT(*) AS total_task_count,
+                COUNT(DISTINCT NULLIF(j.creator_user_id, '')) AS subscriber_count,
+                SUM(CASE WHEN le.status = 'running' THEN 1 ELSE 0 END)
+                    AS running_task_count,
+                SUM(
+                    CASE
+                        WHEN le.job_id IS NULL
+                            AND j.enabled = 1
+                            AND j.status = 'active'
+                        THEN 1 ELSE 0
+                    END
+                ) AS pending_task_count,
+                SUM(CASE WHEN le.status = 'success' THEN 1 ELSE 0 END)
+                    AS executed_task_count,
+                SUM(
+                    CASE
+                        WHEN le.status IN ('error', 'timeout', 'cancelled')
+                        THEN 1 ELSE 0
+                    END
+                ) AS failed_task_count,
+                COALESCE(
+                    AVG(CASE WHEN le.status = 'success' THEN le.duration_ms END),
+                    0
+                ) AS avg_duration_ms,
+                SUM(CASE WHEN le.status = 'success' THEN 1 ELSE 0 END)
+                    AS success_count,
+                SUM(
+                    CASE
+                        WHEN le.status IN ('success', 'error', 'timeout', 'cancelled')
+                        THEN 1 ELSE 0
+                    END
+                ) AS completed_count
+            FROM swe_cron_jobs j
+            LEFT JOIN ({latest_execution_sql}) le ON le.job_id = j.id
+            WHERE {where_clause}
+            GROUP BY subscription_key
+            ORDER BY total_task_count DESC, task_name ASC
+            LIMIT %s OFFSET %s
+        """
+        rows = await db.fetch_all(
+            query_sql,
+            (start_time, end_time, *sql_params, page_size, offset),
+        )
+
+        items = []
+        for row in rows:
+            completed_count = int(row.get("completed_count") or 0)
+            success_count = int(row.get("success_count") or 0)
+            success_rate = (
+                success_count / completed_count if completed_count else 0.0
+            )
+            items.append(
+                SubscriptionOverviewItem(
+                    subscription_key=row.get("subscription_key") or "",
+                    task_name=row.get("task_name") or "",
+                    subscriber_count=int(row.get("subscriber_count") or 0),
+                    total_task_count=int(row.get("total_task_count") or 0),
+                    running_task_count=int(row.get("running_task_count") or 0),
+                    pending_task_count=int(row.get("pending_task_count") or 0),
+                    executed_task_count=int(row.get("executed_task_count") or 0),
+                    failed_task_count=int(row.get("failed_task_count") or 0),
+                    avg_duration_ms=float(row.get("avg_duration_ms") or 0),
+                    success_rate=success_rate,
+                ),
+            )
+
+        return PaginatedResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    async def get_subscription_details(
+        self,
+        subscription_key: str,
+        *,
+        tenant_id: Optional[str] = None,
+        bbk_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> PaginatedResponse[SubscriptionDetailItem]:
+        """查询订阅任务详情弹窗数据。"""
+        db = get_db_connection()
+        start_time, end_time = self._resolve_today_range(start_time, end_time)
+        conditions, sql_params = self._build_subscription_conditions(
+            tenant_id=tenant_id,
+            bbk_id=bbk_id,
+            source_id=source_id,
+        )
+        conditions.append("j.subscription_key = %s")
+        sql_params.append(subscription_key)
+        where_clause = " AND ".join(conditions)
+
+        count_sql = f"""
+            SELECT COUNT(*) as count
+            FROM swe_cron_jobs j
+            WHERE {where_clause}
+        """
+        count_result = await db.fetch_one(count_sql, tuple(sql_params))
+        total = count_result.get("count", 0) if count_result else 0
+
+        offset = (page - 1) * page_size
+        latest_execution_sql = """
+            SELECT e.*
+            FROM swe_cron_executions e
+            INNER JOIN (
+                SELECT job_id, MAX(actual_time) AS latest_actual_time
+                FROM swe_cron_executions
+                WHERE actual_time >= %s AND actual_time <= %s
+                GROUP BY job_id
+            ) latest
+                ON latest.job_id = e.job_id
+                AND latest.latest_actual_time = e.actual_time
+        """
+        query_sql = f"""
+            SELECT
+                j.id AS job_id,
+                j.creator_user_id AS subscriber_id,
+                j.tenant_name AS subscriber_name,
+                j.bbk_id,
+                j.enabled,
+                CASE WHEN le.job_id IS NULL THEN 'pending' ELSE 'executed' END
+                    AS execution_status,
+                le.actual_time AS execution_time
+            FROM swe_cron_jobs j
+            LEFT JOIN ({latest_execution_sql}) le ON le.job_id = j.id
+            WHERE {where_clause}
+            ORDER BY j.created_at DESC
+            LIMIT %s OFFSET %s
+        """
+        rows = await db.fetch_all(
+            query_sql,
+            (start_time, end_time, *sql_params, page_size, offset),
+        )
+        items = [
+            SubscriptionDetailItem(
+                job_id=row.get("job_id") or "",
+                subscriber_id=row.get("subscriber_id") or "",
+                subscriber_name=row.get("subscriber_name") or "",
+                bbk_id=row.get("bbk_id") or "",
+                enabled=bool(row.get("enabled")),
+                execution_status=row.get("execution_status") or "pending",
+                execution_time=convert_utc_to_beijing(row.get("execution_time")),
+            )
+            for row in rows
+        ]
+
+        return PaginatedResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    def _resolve_today_range(
+        self,
+        start_time: Optional[datetime],
+        end_time: Optional[datetime],
+    ) -> Tuple[datetime, datetime]:
+        """未传时间范围时默认使用北京时间当天。"""
+        if start_time and end_time:
+            return start_time, end_time
+        today_start = datetime.now(BEIJING_TZ).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        today_end = today_start.replace(
+            hour=23,
+            minute=59,
+            second=59,
+            microsecond=999999,
+        )
+        return today_start - timedelta(hours=8), today_end - timedelta(hours=8)
+
+    def _build_subscription_conditions(
+        self,
+        *,
+        keyword: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        bbk_id: Optional[str] = None,
+        source_id: Optional[str] = None,
+    ) -> Tuple[List[str], List]:
+        """构建订阅任务查询条件。"""
+        conditions = ["j.deleted_at IS NULL", "j.job_origin = 'subscription'"]
+        sql_params: List = []
+        if keyword:
+            conditions.append(
+                "j.name LIKE %s",
+            )
+            keyword_like = f"%{keyword}%"
+            sql_params.append(keyword_like)
+        if tenant_id:
+            conditions.append("j.tenant_id = %s")
+            sql_params.append(tenant_id)
+        if bbk_id:
+            conditions.append("j.bbk_id = %s")
+            sql_params.append(bbk_id)
+        if source_id:
+            conditions.append("j.source_id = %s")
+            sql_params.append(source_id)
+        return conditions, sql_params
+
     async def mark_job_as_read(self, job_id: str) -> int:
         """标记任务及其历史执行记录为已读。
 
@@ -595,7 +870,8 @@ class QueryService:
             更新的记录数量
         """
         db = get_db_connection()
-        now = datetime.now(BEIJING_TZ)
+        # 数据库存储的是 naive datetime（东八区时间），去掉时区信息
+        now = datetime.now(BEIJING_TZ).replace(tzinfo=None)
 
         # 更新该任务所有成功的未读执行记录
         update_sql = """

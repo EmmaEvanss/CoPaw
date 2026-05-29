@@ -24,6 +24,7 @@ from anyio import ClosedResourceError
 from pydantic import BaseModel
 
 from ..app.mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
+from ..app.mcp.http_headers import resolve_mcp_http_headers
 from .command_handler import CommandHandler
 from ..app.mcp import HttpStatefulClient, StdIOStatefulClient
 from .hooks import BootstrapHook, MemoryCompactionHook
@@ -433,9 +434,11 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 return
 
             # Setup detector with effective skills
+            workspace_dir = Path(self._workspace_dir or WORKING_DIR)
             await trace_mgr.setup_skill_detector(
                 trace_id=trace_id,
                 enabled_skills=self._effective_skills,
+                workspace_dir=workspace_dir,
             )
         except Exception as e:
             logger.debug("Failed to setup skill detector: %s", e)
@@ -486,28 +489,36 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
         if self._env_context is not None:
             sys_prompt = sys_prompt + "\n\n" + self._env_context
 
-        # 任务进度要求
-        sys_prompt += (
-            "\n\n[Task Progress Requirement]\n"
-            "You MUST call the update_task_progress tool for every non-trivial "
-            "user request. This is mandatory, not optional.\n\n"
-            "Each item in the items array has these fields:\n"
-            "- label: short Chinese step title (required)\n"
-            '- status: "todo" | "running" | "done" (required)\n'
-            "- id: unique step identifier (optional, auto-generated)\n\n"
-            "CRITICAL RULES:\n"
-            "- Call update_task_progress BEFORE your first tool call or substantive "
-            "action, with 3-6 short Chinese step titles.\n"
-            "- After finishing each step, call update_task_progress again to "
-            "mark it done and advance the next step to running.\n"
-            "- Always keep EXACTLY ONE step in 'running' status.\n"
-            '- When fully done, call with phase_status="completed" and all steps '
-            'marked "done".\n\n'
-            'SKIP ONLY for: pure chitchat ("hello"), simple knowledge questions '
-            '("what is Python"), or single-command requests ("run npm install").\n'
-            "For analysis, coding, debugging, refactoring, optimization, or any "
-            "multi-step request — ALWAYS use the tool. When in doubt, use it."
+        from ..app.source_system_config import (
+            is_chat_task_progress_enabled,
         )
+        from ..app.source_system_config.runtime import (
+            get_current_source_system_config,
+        )
+
+        if is_chat_task_progress_enabled(get_current_source_system_config()):
+            # 这里按 source 开关注入要求，避免关闭后仍提示模型强制调用。
+            sys_prompt += (
+                "\n\n[Task Progress Requirement]\n"
+                "You MUST call the update_task_progress tool for every non-trivial "
+                "user request. This is mandatory, not optional.\n\n"
+                "Each item in the items array has these fields:\n"
+                "- label: short Chinese step title (required)\n"
+                '- status: "todo" | "running" | "done" (required)\n'
+                "- id: unique step identifier (optional, auto-generated)\n\n"
+                "CRITICAL RULES:\n"
+                "- Call update_task_progress BEFORE your first tool call or substantive "
+                "action, with 3-6 short Chinese step titles.\n"
+                "- After finishing each step, call update_task_progress again to "
+                "mark it done and advance the next step to running.\n"
+                "- Always keep EXACTLY ONE step in 'running' status.\n"
+                '- When fully done, call with phase_status="completed" and all steps '
+                'marked "done".\n\n'
+                'SKIP ONLY for: pure chitchat ("hello"), simple knowledge questions '
+                '("what is Python"), or single-command requests ("run npm install").\n'
+                "For analysis, coding, debugging, refactoring, optimization, or any "
+                "multi-step request — ALWAYS use the tool. When in doubt, use it."
+            )
 
         return sys_prompt
 
@@ -813,11 +824,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 return rebuilt_client
 
             raw_headers = rebuild_info.get("headers") or {}
-            headers = (
-                {k: os.path.expandvars(v) for k, v in raw_headers.items()}
-                if raw_headers
-                else None
-            )
+            headers = resolve_mcp_http_headers(raw_headers)
             rebuilt_client = HttpStatefulClient(
                 name=name,
                 transport=transport,
@@ -1350,11 +1357,15 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             set_current_workspace_dir,
             set_current_recent_max_bytes,
         )
+        from ..app.source_system_config import (
+            resolve_tool_result_compact_config,
+        )
 
         set_current_workspace_dir(self._workspace_dir)
-        set_current_recent_max_bytes(
-            self._agent_config.running.tool_result_compact.recent_max_bytes,
+        tool_result_compact = resolve_tool_result_compact_config(
+            self._agent_config.running.tool_result_compact,
         )
+        set_current_recent_max_bytes(tool_result_compact.recent_max_bytes)
         set_current_task_progress_tracker(self._task_tracker)
         set_current_task_progress_chat_id(
             self._request_context.get("chat_id"),

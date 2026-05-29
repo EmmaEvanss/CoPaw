@@ -442,6 +442,148 @@ describe("SessionApi identity mapping", () => {
     });
   });
 
+  it("collapses historical scheduled text task results in task sessions", async () => {
+    const sessionApi = new SessionApi();
+
+    apiMocks.listChats.mockResolvedValue([
+      {
+        id: "task-chat-1",
+        name: "daily text task",
+        session_id: "task-session-1",
+        user_id: "user-1",
+        channel: "console",
+        meta: { session_kind: "task" },
+        status: "idle",
+        created_at: "2026-05-21T00:00:00Z",
+      },
+    ]);
+    apiMocks.getChat.mockResolvedValue({
+      id: "task-chat-1",
+      status: "idle",
+      messages: [
+        {
+          id: "task-result-old",
+          role: "assistant",
+          type: "message",
+          content: [{ type: "text", text: "old result" }],
+          timestamp: "2026-05-21T08:00:00Z",
+          metadata: { cron_task: true },
+        },
+        {
+          id: "task-result-new",
+          role: "assistant",
+          type: "message",
+          content: [{ type: "text", text: "new result" }],
+          timestamp: "2026-05-21T09:00:00Z",
+          metadata: { cron_task: true },
+        },
+      ],
+    });
+
+    await sessionApi.getSessionList();
+    const session = await sessionApi.getSession("task-chat-1");
+    const oldCard = session.messages[0]?.cards?.[0];
+    const newCard = session.messages[1]?.cards?.[0];
+    const oldData = oldCard?.data as any;
+    const newData = newCard?.data as any;
+
+    expect(session.messages).toHaveLength(2);
+    expect(oldCard?.code).toBe("TaskRunGroupCard");
+    expect(newCard?.code).toBe("TaskRunGroupCard");
+    expect(oldData.collapsedByDefault).toBe(true);
+    expect(newData.collapsedByDefault).toBe(false);
+    expect(JSON.stringify(oldData)).toContain("old result");
+    expect(JSON.stringify(newData)).toContain("new result");
+  });
+
+  it("collapses historical scheduled agent task runs in task sessions", async () => {
+    const sessionApi = new SessionApi();
+
+    apiMocks.listChats.mockResolvedValue([
+      {
+        id: "task-chat-1",
+        name: "daily agent task",
+        session_id: "task-session-1",
+        user_id: "user-1",
+        channel: "console",
+        meta: { session_kind: "task" },
+        status: "idle",
+        created_at: "2026-05-21T00:00:00Z",
+      },
+    ]);
+    apiMocks.getChat.mockResolvedValue({
+      id: "task-chat-1",
+      status: "idle",
+      messages: [
+        {
+          id: "run-1-step",
+          role: "assistant",
+          type: "message",
+          content: [{ type: "text", text: "old step" }],
+          timestamp: "2026-05-21T08:00:00Z",
+          metadata: {
+            task_run_id: "run-1",
+            task_run_index: 0,
+            task_run_section: "step",
+          },
+        },
+        {
+          id: "run-1-final",
+          role: "assistant",
+          type: "message",
+          content: [{ type: "text", text: "old final" }],
+          timestamp: "2026-05-21T08:01:00Z",
+          metadata: {
+            task_run_id: "run-1",
+            task_run_index: 0,
+            task_run_section: "final",
+          },
+        },
+        {
+          id: "run-2-step",
+          role: "assistant",
+          type: "message",
+          content: [{ type: "text", text: "new step" }],
+          timestamp: "2026-05-21T09:00:00Z",
+          metadata: {
+            task_run_id: "run-2",
+            task_run_index: 1,
+            task_run_section: "step",
+          },
+        },
+        {
+          id: "run-2-final",
+          role: "assistant",
+          type: "message",
+          content: [{ type: "text", text: "new final" }],
+          timestamp: "2026-05-21T09:01:00Z",
+          metadata: {
+            task_run_id: "run-2",
+            task_run_index: 1,
+            task_run_section: "final",
+          },
+        },
+      ],
+    });
+
+    await sessionApi.getSessionList();
+    const session = await sessionApi.getSession("task-chat-1");
+    const card = session.messages[0]?.cards?.[0];
+    const oldData = card?.data as any;
+    const newCard = session.messages[1]?.cards?.[0];
+    const newData = newCard?.data as any;
+
+    expect(session.messages).toHaveLength(2);
+    expect(card?.code).toBe("TaskRunGroupCard");
+    expect(newCard?.code).toBe("TaskRunGroupCard");
+    expect(oldData.runId).toBe("run-1");
+    expect(newData.runId).toBe("run-2");
+    expect(oldData.collapsedByDefault).toBe(true);
+    expect(newData.collapsedByDefault).toBe(false);
+    expect(JSON.stringify(oldData)).toContain("old final");
+    expect(JSON.stringify(newData)).toContain("new final");
+  });
+
   it("does not treat a persisted logical session id as a unique backend chat id", async () => {
     const sessionApi = new SessionApi();
 

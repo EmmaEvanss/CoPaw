@@ -483,13 +483,13 @@ class SuggestionConfig(BaseModel):
 
 
 class PostTurnValidationConfig(BaseModel):
-    """回答后校验配置 - 判断任务是否完成并在必要时提示续跑."""
+    """已退役的回答后校验配置，仅为兼容旧配置保留。"""
 
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = Field(
-        default=True,
-        description="是否启用回答后的任务完成校验",
+        default=False,
+        description="已废弃：回答后校验功能已下线，此配置不再生效",
     )
     max_confirmed_turns: Optional[int] = Field(
         default=None,
@@ -850,7 +850,7 @@ class AgentsRunningConfig(BaseModel):
 
     post_turn_validation: PostTurnValidationConfig = Field(
         default_factory=PostTurnValidationConfig,
-        description="回答后的任务完成校验与自动续跑配置",
+        description="已废弃：回答后校验与自动续跑功能已下线",
     )
 
     @property
@@ -1711,54 +1711,9 @@ def load_agent_config(
     agent_config_path = workspace_dir / "agent.json"
 
     if not agent_config_path.exists():
-        # Fallback: Try to use root config fields for backward compatibility
-        # This allows downgrade scenarios where agent.json doesn't exist yet
-        fallback_config = AgentProfileConfig(
-            id=agent_id,
-            name=agent_id.title(),
-            description=f"{agent_id} agent",
-            workspace_dir=str(workspace_dir),
-            # Inherit from root config if available (for backward compat)
-            channels=(
-                config.channels
-                if hasattr(config, "channels") and config.channels
-                else None
-            ),
-            mcp=config.mcp if hasattr(config, "mcp") and config.mcp else None,
-            tools=(
-                config.tools
-                if hasattr(config, "tools") and config.tools
-                else None
-            ),
-            security=(
-                config.security
-                if hasattr(config, "security") and config.security
-                else None
-            ),
-            # Use agent-specific configs with proper defaults
-            running=(
-                config.agents.running
-                if hasattr(config.agents, "running") and config.agents.running
-                else AgentsRunningConfig()
-            ),
-            llm_routing=(
-                config.agents.llm_routing
-                if hasattr(config.agents, "llm_routing")
-                and config.agents.llm_routing
-                else AgentsLLMRoutingConfig()
-            ),
-            system_prompt_files=normalize_system_prompt_files(
-                getattr(config.agents, "system_prompt_files", None),
-            ),
+        raise FileNotFoundError(
+            f"Agent config not found: {agent_config_path}",
         )
-        # Save for future use
-        save_agent_config(
-            agent_id,
-            fallback_config,
-            config_path=resolved_config_path,
-            tenant_id=tenant_id,
-        )
-        return fallback_config
 
     with open(agent_config_path, "r", encoding="utf-8") as f:
         data = json.load(f)

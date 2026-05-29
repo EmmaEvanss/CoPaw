@@ -2,7 +2,11 @@ import React, { useState, useCallback } from "react";
 import type { CronJobSpecOutput } from "@/api/types";
 import Style from "./style";
 import { DESIGN_TOKENS } from "@/config/designTokens";
-import { getTaskNextRunText, getTaskSidebarMeta } from "../../taskJobs";
+import {
+  getTaskNextRunText,
+  getTaskSidebarMeta,
+  TASK_COMPLETED_STATUS_TEXT,
+} from "../../taskJobs";
 import { formatListTime } from "../../listTimeFormat";
 import TaskActionMenu from "../TaskActionMenu";
 
@@ -125,34 +129,36 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                     tabIndex={0}
                   >
                     <div className="chat-task-list-item-header">
+                      {sidebarMeta.unreadCount > 0 && (
+                        <span className="chat-task-list-item-badge">
+                          {sidebarMeta.unreadCount > 99
+                            ? "99+"
+                            : sidebarMeta.unreadCount}
+                        </span>
+                      )}
                       <span className="chat-task-list-item-title">
                         {task.name || task.id}
                       </span>
-                      {sidebarMeta.canPause ||
-                      sidebarMeta.canRun ||
-                      sidebarMeta.canResume ||
-                      sidebarMeta.canDelete ? (
-                        <div className="chat-task-list-item-actions">
-                          <TaskActionMenu
-                            task={task}
-                            sidebarMeta={sidebarMeta}
-                            classNamePrefix="chat-task-list-item"
-                            onTaskPause={onTaskPause}
-                            onTaskRun={onTaskRun}
-                            onTaskResume={onTaskResume}
-                            onTaskDelete={onTaskDelete}
-                          />
+                      {(sidebarMeta.canPause ||
+                          sidebarMeta.canRun ||
+                          sidebarMeta.canResume ||
+                          sidebarMeta.canDelete) && (
+                        <div className="chat-task-list-item-trailing">
+                          <div className="chat-task-list-item-actions">
+                            <TaskActionMenu
+                              task={task}
+                              sidebarMeta={sidebarMeta}
+                              classNamePrefix="chat-task-list-item"
+                              onTaskPause={onTaskPause}
+                              onTaskRun={onTaskRun}
+                              onTaskResume={onTaskResume}
+                              onTaskDelete={onTaskDelete}
+                            />
+                          </div>
                         </div>
-                      ) : (
-                        sidebarMeta.unreadCount > 0 && (
-                          <span className="chat-task-list-item-badge">
-                            {sidebarMeta.unreadCount > 99
-                              ? "99+"
-                              : sidebarMeta.unreadCount}
-                          </span>
-                        )
                       )}
                     </div>
+
                     {sidebarMeta.state !== "active" &&
                       sidebarMeta.state !== "running" && (
                         <div
@@ -175,7 +181,7 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                             {formatListTime(task.task.last_scheduled_run_at)}
                           </span>
                         )}
-                        {task.task?.latest_scheduled_preview}
+                        {TASK_COMPLETED_STATUS_TEXT}
                       </div>
                     )}
                     {nextRunText && (

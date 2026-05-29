@@ -147,6 +147,7 @@ def test_console_chat_reconnect_accepts_chat_id_without_creating_new_chat(
     with client.stream(
         "POST",
         "/console/chat",
+        headers={"X-Source-Id": "src-a"},
         json={
             "reconnect": True,
             "session_id": "chat-existing",
@@ -192,6 +193,7 @@ def test_console_chat_reconnect_accepts_logical_session_id(
     with client.stream(
         "POST",
         "/console/chat",
+        headers={"X-Source-Id": "src-a"},
         json={
             "reconnect": True,
             "session_id": "session-existing",

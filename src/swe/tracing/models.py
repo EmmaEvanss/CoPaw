@@ -79,6 +79,10 @@ class Span(BaseModel):
         default=None,
         description="Skill name for skill events",
     )
+    skill_description: Optional[str] = Field(
+        default=None,
+        description="Skill description from SKILL.md",
+    )
     mcp_server: Optional[str] = Field(
         default=None,
         description="MCP server name if this tool is from MCP",
@@ -233,6 +237,7 @@ class DailyStats(BaseModel):
     session_count: int = 0
     conversation_count: int = 0
     avg_duration_ms: int = 0
+
 
 class OverviewStats(BaseModel):
     """Overview dashboard statistics."""
@@ -418,6 +423,8 @@ class TraceListItem(BaseModel):
     model_name: Optional[str] = None
     status: str
     skills_count: int = 0
+    feedback_content: Optional[str] = None
+    feedback_updated_at: Optional[datetime] = None
 
 
 class SessionListItem(BaseModel):

@@ -7,7 +7,6 @@ including lazy loading, lifecycle management, and hot reloading.
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Dict, Set, Optional
 
 from .workspace import Workspace

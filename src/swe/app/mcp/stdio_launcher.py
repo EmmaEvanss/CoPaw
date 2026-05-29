@@ -9,6 +9,7 @@ import os
 import sys
 from typing import Sequence
 
+from swe.envs.runtime import build_runtime_env
 from swe.security.process_limits import resolve_current_process_limit_policy
 
 try:
@@ -61,7 +62,7 @@ def build_tenant_aware_stdio_launch_config(
     return TenantAwareStdioLaunchConfig(
         command=command,
         args=original_args,
-        env=dict(env or {}),
+        env=build_runtime_env(call_env=env or {}),
         cwd=cwd,
         launch_command=launch_command,
         launch_args=launch_args,

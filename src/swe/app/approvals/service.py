@@ -39,6 +39,7 @@ class PendingApproval:
 
     request_id: str
     session_id: str
+    scope_id: str
     user_id: str
     channel: str
     tool_name: str
@@ -75,6 +76,27 @@ class ApprovalService:
         """Store a reference to the channel manager for push notifications."""
         self._channel_manager = channel_manager
 
+    def _get_current_scope_id(self) -> str | None:
+        """Resolve the current runtime scope for approval isolation."""
+        try:
+            from ...config.context import (
+                canonicalize_scope_id,
+                get_current_effective_tenant_id,
+                get_current_scope_id,
+            )
+
+            scope_id = get_current_scope_id()
+            if scope_id is not None:
+                return canonicalize_scope_id(scope_id)
+            return get_current_effective_tenant_id()
+        except Exception:
+            return None
+
+    def _matches_scope(self, pending: PendingApproval) -> bool:
+        """Check whether a pending/completed record is visible in scope."""
+        scope_id = self._get_current_scope_id()
+        return scope_id is not None and pending.scope_id == scope_id
+
     # ------------------------------------------------------------------
     # Core approval lifecycle
     # ------------------------------------------------------------------
@@ -94,10 +116,12 @@ class ApprovalService:
 
         request_id = str(uuid.uuid4())
         loop = asyncio.get_running_loop()
+        scope_id = self._get_current_scope_id() or "default"
 
         pending = PendingApproval(
             request_id=request_id,
             session_id=session_id,
+            scope_id=scope_id,
             user_id=user_id,
             channel=channel,
             tool_name=tool_name,
@@ -122,7 +146,14 @@ class ApprovalService:
     ) -> PendingApproval | None:
         """Resolve one pending approval request."""
         async with self._lock:
-            pending = self._pending.pop(request_id, None)
+            pending = self._pending.get(request_id)
+            if pending is None or not self._matches_scope(pending):
+                completed = self._completed.get(request_id)
+                if completed is None or not self._matches_scope(completed):
+                    return None
+                return completed
+
+            pending = self._pending.pop(request_id)
             if pending is None:
                 return self._completed.get(request_id)
 
@@ -137,11 +168,14 @@ class ApprovalService:
         return pending
 
     async def get_request(self, request_id: str) -> PendingApproval | None:
-        """Get a request by id whether pending or already resolved."""
+        """按当前 scope 获取 pending 或已完成的审批请求。"""
         async with self._lock:
-            return self._pending.get(request_id) or self._completed.get(
+            pending = self._pending.get(request_id) or self._completed.get(
                 request_id,
             )
+            if pending is None or not self._matches_scope(pending):
+                return None
+            return pending
 
     async def get_pending_by_session(
         self,
@@ -157,6 +191,7 @@ class ApprovalService:
                 if (
                     pending.session_id == session_id
                     and pending.status == "pending"
+                    and self._matches_scope(pending)
                 ):
                     return pending
         return None
@@ -170,7 +205,11 @@ class ApprovalService:
             return [
                 p
                 for p in self._pending.values()
-                if p.session_id == session_id and p.status == "pending"
+                if (
+                    p.session_id == session_id
+                    and p.status == "pending"
+                    and self._matches_scope(p)
+                )
             ]
 
     async def cancel_stale_pending_for_tool_call(
@@ -195,6 +234,7 @@ class ApprovalService:
                 for k, p in self._pending.items()
                 if p.session_id == session_id
                 and p.status == "pending"
+                and self._matches_scope(p)
                 and isinstance(p.extra.get("tool_call"), dict)
                 and p.extra["tool_call"].get("id") == tool_call_id
             ]
@@ -236,13 +276,11 @@ class ApprovalService:
         """
         async with self._lock:
             for key, completed in list(self._completed.items()):
-                if (
-                    completed.session_id == session_id
-                    and completed.tool_name == tool_name
-                    and completed.status == "approved"
-                    and not completed.consumed
-                    and completed.extra.get("approval_kind", "tool_guard")
-                    == approval_kind
+                if self._is_completed_approval_match(
+                    completed,
+                    session_id=session_id,
+                    tool_name=tool_name,
+                    approval_kind=approval_kind,
                 ):
                     if tool_params is not None:
                         approved_call = completed.extra.get(
@@ -267,6 +305,27 @@ class ApprovalService:
                     self._completed[key] = completed
                     return True
         return False
+
+    def _is_completed_approval_match(
+        self,
+        completed: PendingApproval,
+        *,
+        session_id: str,
+        tool_name: str,
+        approval_kind: str,
+    ) -> bool:
+        """判断已完成审批是否匹配当前运行范围与工具调用。"""
+        if completed.session_id != session_id:
+            return False
+        if completed.tool_name != tool_name:
+            return False
+        if completed.status != "approved" or completed.consumed:
+            return False
+        if not self._matches_scope(completed):
+            return False
+        return (
+            completed.extra.get("approval_kind", "tool_guard") == approval_kind
+        )
 
     # ------------------------------------------------------------------
     # Garbage collection

@@ -19,6 +19,7 @@ sys.modules.setdefault("fcntl", fcntl_stub)
 import swe.providers.provider_manager as provider_manager_module
 import swe.tenant_models.manager as tenant_models_manager_module
 from swe.providers.anthropic_provider import AnthropicProvider
+from swe.config.context import encode_scope_id, tenant_context
 from swe.providers.models import ModelSlotConfig
 from swe.providers.openai_provider import OpenAIProvider
 from swe.providers.provider import ModelInfo
@@ -244,6 +245,61 @@ def test_provider_manager_no_longer_exposes_local_model_restore() -> None:
 
     assert not hasattr(manager, "start_local_model_resume")
     assert not hasattr(manager, "_resume_local_model")
+
+
+def test_get_instance_isolated_by_source_for_non_default_tenant(
+    isolated_secret_dir,
+) -> None:
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        manager_a = ProviderManager.get_instance("tenant-a")
+    with tenant_context(tenant_id="tenant-a", source_id="source-b"):
+        manager_b = ProviderManager.get_instance("tenant-a")
+
+    assert manager_a is not manager_b
+    assert manager_a.tenant_id != manager_b.tenant_id
+
+
+def test_get_instance_uses_requested_tenant_with_current_source(
+    isolated_secret_dir,
+) -> None:
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        manager = ProviderManager.get_instance("tenant-b")
+
+    assert manager.tenant_id == encode_scope_id("tenant-b", "source-a")
+
+
+def test_ensure_storage_uses_requested_tenant_with_current_source(
+    isolated_secret_dir,
+) -> None:
+    with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+        ProviderManager.ensure_tenant_provider_storage("tenant-b")
+
+    target_scope_id = encode_scope_id("tenant-b", "source-a")
+    current_scope_id = encode_scope_id("tenant-a", "source-a")
+    assert (isolated_secret_dir / target_scope_id / "providers").exists()
+    assert not (isolated_secret_dir / current_scope_id / "providers").exists()
+
+
+def test_provider_storage_keeps_legacy_scope_directory_untouched(
+    isolated_secret_dir,
+) -> None:
+    canonical_scope_id = encode_scope_id("tenant-a", "source-a")
+    legacy_scope_id = f"scope.v1.{canonical_scope_id}"
+    legacy_provider_dir = isolated_secret_dir / legacy_scope_id / "providers"
+    legacy_provider_dir.mkdir(parents=True)
+    (legacy_provider_dir / "active_model.json").write_text(
+        '{"provider_id": "openai", "model": "gpt-5"}',
+        encoding="utf-8",
+    )
+
+    ProviderManager.ensure_tenant_provider_storage(legacy_scope_id)
+
+    canonical_provider_dir = (
+        isolated_secret_dir / canonical_scope_id / "providers"
+    )
+    assert canonical_provider_dir.exists()
+    assert legacy_provider_dir.parent.exists()
+    assert not (canonical_provider_dir / "active_model.json").exists()
 
 
 async def test_remove_custom_provider_missing_file_is_safe(

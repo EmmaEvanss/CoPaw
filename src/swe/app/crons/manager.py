@@ -18,6 +18,11 @@ from typing import Any, Callable, Dict, Optional, TypeVar
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
+from ...config.context import (
+    canonicalize_scope_id,
+    resolve_runtime_identity,
+    resolve_scope_id,
+)
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
 from .auth_state import prefetch_auth_token
 from .cron_utils import compute_next_run_at
@@ -465,6 +470,32 @@ class CronManager:  # pylint: disable=too-many-public-methods
         # 外部调度归属必须跟当前运行时租户一致，避免旧任务里的 tenant_id 污染回调路由。
         return self._tenant_id or spec.tenant_id or ""
 
+    def _get_external_scheduler_business_identity(
+        self,
+        spec: Optional[CronJobSpec] = None,
+    ) -> tuple[str, str]:
+        """解析写入调度平台展示字段和 jobParam 的业务身份。"""
+        if spec is not None:
+            tenant_id = spec.tenant_id or ""
+            source_id = spec.source_id or ""
+            if tenant_id:
+                tenant_id, source_id, _ = resolve_runtime_identity(
+                    tenant_id,
+                    source_id or None,
+                )
+                return tenant_id or spec.tenant_id or "", source_id or ""
+        tenant_id, source_id, _ = resolve_runtime_identity(self._tenant_id)
+        return tenant_id or self._tenant_id or "", source_id or ""
+
+    @staticmethod
+    def _get_job_runtime_tenant_id(spec: CronJobSpec) -> str | None:
+        """解析任务执行时实际使用的租户隔离键。"""
+        if spec.scope_id is not None:
+            return canonicalize_scope_id(spec.scope_id)
+        return (
+            resolve_scope_id(spec.tenant_id, spec.source_id) or spec.tenant_id
+        )
+
     async def _sync_job_to_external_scheduler(
         self,
         spec: CronJobSpec,
@@ -476,11 +507,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         callback_url = self._build_callback_url("job", spec.id)
         ext_id = self._get_existing_external_job_id(spec, existing)
-        tenant_id = self._get_external_scheduler_tenant_id(spec)
+        tenant_id, source_id = self._get_external_scheduler_business_identity(
+            spec,
+        )
         if ext_id:
             await self._scheduler_adapter.update_job(
                 external_id=ext_id,
                 tenant_id=tenant_id,
+                source_id=source_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -491,6 +525,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         else:
             ext_id = await self._scheduler_adapter.register_job(
                 tenant_id=tenant_id,
+                source_id=source_id,
                 agent_id=self._agent_id or "",
                 task_type="job",
                 job_id=spec.id,
@@ -530,9 +565,6 @@ class CronManager:  # pylint: disable=too-many-public-methods
         for job in await self._repo.list_jobs():
             result["total"] += 1
             if self._get_existing_external_job_id(job):
-                if await self._repair_external_scheduler_tenant(job):
-                    result["updated"] += 1
-                    continue
                 result["skipped"] += 1
                 continue
             try:
@@ -541,7 +573,6 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 await self._persist_external_job_binding(
                     job.id,
                     ext_id,
-                    self._tenant_id,
                 )
                 st = self._states.get(job.id, CronJobState())
                 st.external_job_id = ext_id
@@ -558,6 +589,55 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 )
                 logger.warning(
                     "Failed to register missing external job %s",
+                    job.id,
+                    exc_info=True,
+                )
+        return result
+
+    async def refresh_external_jobs(self) -> dict[str, Any]:
+        """按当前代码规则刷新当前 Agent 的外部调度平台任务。"""
+        if isinstance(self._scheduler_adapter, NoopSchedulerAdapter):
+            raise RuntimeError("External scheduler is not configured")
+
+        result: dict[str, Any] = {
+            "tenant_id": self._tenant_id,
+            "agent_id": self._agent_id,
+            "total": 0,
+            "registered": 0,
+            "updated": 0,
+            "skipped": 0,
+            "failed": 0,
+            "errors": [],
+        }
+        for job in await self._repo.list_jobs():
+            result["total"] += 1
+            had_external_id = bool(self._get_existing_external_job_id(job))
+            try:
+                synced = await self._sync_job_to_external_scheduler(
+                    job,
+                    existing=job,
+                )
+                ext_id = (synced.meta or {}).get("external_job_id", "")
+                if ext_id:
+                    await self._persist_external_job_binding(job.id, ext_id)
+                    st = self._states.get(job.id, CronJobState())
+                    st.external_job_id = ext_id
+                    self._states[job.id] = st
+                if had_external_id:
+                    result["updated"] += 1
+                else:
+                    result["registered"] += 1
+            except Exception as exc:  # pylint: disable=broad-except
+                result["failed"] += 1
+                result["errors"].append(
+                    {
+                        "job_id": job.id,
+                        "job_name": job.name,
+                        "error": str(exc),
+                    },
+                )
+                logger.warning(
+                    "Failed to refresh external job %s",
                     job.id,
                     exc_info=True,
                 )
@@ -1613,6 +1693,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
     def _handle_cancelled_after_success(
         self,
+        job_id: str,
         st: CronJobState,
         actual_time: datetime,
         end_time: Optional[datetime],
@@ -1632,7 +1713,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         logger.info(
             "cron _execute_once: job_id=%s CancelledError after success, "
             "keeping success status",
-            st.last_run_at,
+            job_id,
         )
         exec_status = "success"
         end_time = end_time or datetime.now(timezone.utc)
@@ -1643,6 +1724,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
     def _handle_execution_cancelled(
         self,
+        job_id: str,
         st: CronJobState,
         actual_time: datetime,
     ) -> tuple[str, str, datetime, int]:
@@ -1657,7 +1739,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         """
         logger.info(
             "cron _execute_once: job_id=%s status=cancelled",
-            st.last_run_at,
+            job_id,
         )
         end_time, duration_ms = self._record_failure_timing(
             st,
@@ -1687,6 +1769,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             "cron _execute_once: job_id=%s status=error error=%s",
             st.last_run_at,
             repr(error),
+            exc_info=(type(error), error, error.__traceback__),
         )
         end_time, duration_ms = self._record_failure_timing(
             st,
@@ -1743,6 +1826,16 @@ class CronManager:  # pylint: disable=too-many-public-methods
             input_snapshot=input_snapshot,
             executor_leader=executor_leader,
         )
+        logger.info(
+            "cron execution finalized: job_id=%s exec_status=%s "
+            "last_status=%s trace_id=%s duration_ms=%s output_preview_len=%s",
+            job.id,
+            exec_status,
+            st.last_status,
+            trace_id[:20] if trace_id else "(empty)",
+            duration_ms,
+            len(output_preview or ""),
+        )
 
     async def _execute_once(
         self,
@@ -1797,6 +1890,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 if st.last_status == "success":
                     exec_status, error_message, end_time, duration_ms = (
                         self._handle_cancelled_after_success(
+                            job.id,
                             st,
                             actual_time,
                             end_time,
@@ -1805,7 +1899,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     )
                 else:
                     exec_status, error_message, end_time, duration_ms = (
-                        self._handle_execution_cancelled(st, actual_time)
+                        self._handle_execution_cancelled(
+                            job.id,
+                            st,
+                            actual_time,
+                        )
                     )
                 raise
             except Exception as e:  # pylint: disable=broad-except
@@ -1833,35 +1931,70 @@ class CronManager:  # pylint: disable=too-many-public-methods
         """执行一次心跳任务（供外部调度平台调用）。"""
         from .heartbeat import run_heartbeat_once
 
-        workspace_dir = (
-            Path(self._runner.workspace_dir)
-            if self._runner.workspace_dir
-            else None
+        workspace_dir, tenant_id, source_id, scope_id, runtime_tenant_id = (
+            self._resolve_runtime_context()
         )
-        await run_heartbeat_once(
-            runner=self._runner,
-            channel_manager=self._channel_manager,
-            agent_id=self._agent_id,
-            tenant_id=self._tenant_id,
-            workspace_dir=workspace_dir,
-        )
+        with (
+            bind_tenant_context(
+                tenant_id=tenant_id,
+                workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
+            ),
+            bind_llm_workload(LLM_WORKLOAD_CRON),
+        ):
+            await run_heartbeat_once(
+                runner=self._runner,
+                channel_manager=self._channel_manager,
+                agent_id=self._agent_id,
+                tenant_id=runtime_tenant_id,
+                workspace_dir=workspace_dir,
+            )
 
     async def run_dream(self) -> None:
         """执行一次梦境任务（供外部调度平台调用）。"""
-        workspace_dir = (
-            Path(self._runner.workspace_dir)
-            if self._runner.workspace_dir
-            else None
+        workspace_dir, tenant_id, source_id, scope_id, runtime_tenant_id = (
+            self._resolve_runtime_context()
         )
-        with bind_tenant_context(
-            tenant_id=self._tenant_id,
-            workspace_dir=workspace_dir,
+        with (
+            bind_tenant_context(
+                tenant_id=tenant_id,
+                workspace_dir=workspace_dir,
+                source_id=source_id,
+                scope_id=scope_id,
+            ),
+            bind_llm_workload(LLM_WORKLOAD_CRON),
         ):
             await self._runner.memory_manager.dream_memory(
-                tenant_id=self._tenant_id,
+                tenant_id=runtime_tenant_id,
                 trigger="cron",
             )
         logger.debug("Dream task executed successfully")
+
+    def _resolve_runtime_context(
+        self,
+    ) -> tuple[Path | None, str | None, str | None, str | None, str | None]:
+        """从工作区 runtime tenant 还原 logical tenant/source/scope。"""
+        workspace_dir_value = getattr(self._runner, "workspace_dir", None)
+        workspace_dir = (
+            Path(workspace_dir_value) if workspace_dir_value else None
+        )
+        runtime_tenant_id = self._tenant_id
+        workspace = getattr(self._runner, "_workspace", None)
+        workspace_tenant_id = getattr(workspace, "tenant_id", None)
+        if workspace_tenant_id:
+            runtime_tenant_id = workspace_tenant_id
+
+        tenant_id, source_id, scope_id = resolve_runtime_identity(
+            runtime_tenant_id,
+        )
+        return (
+            workspace_dir,
+            tenant_id,
+            source_id,
+            scope_id,
+            scope_id or tenant_id,
+        )
 
     # ── 系统任务（heartbeat / dream）调度平台注册 ──
 
@@ -1908,9 +2041,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     if job.schedule and job.schedule.cron
                     else "0 0 1 1 *"
                 )
+                tenant_id, source_id = (
+                    self._get_external_scheduler_business_identity(job)
+                )
+                runtime_tenant_id = self._get_external_scheduler_tenant_id(job)
                 try:
                     ext_id = await self._scheduler_adapter.register_job(
-                        tenant_id=job.tenant_id or self._tenant_id or "",
+                        tenant_id=tenant_id,
+                        source_id=source_id,
                         agent_id=self._agent_id or "",
                         task_type="job",
                         job_id=job.id,
@@ -1922,7 +2060,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         st = self._states.get(job.id, CronJobState())
                         st.external_job_id = ext_id
                         self._states[job.id] = st
-                        await self._persist_external_job_id(job.id, ext_id)
+                        await self._persist_external_job_id(
+                            job.id,
+                            ext_id,
+                            runtime_tenant_id,
+                        )
                         if not job.enabled:
                             await self._scheduler_adapter.pause_job(
                                 ext_id,
@@ -1945,9 +2087,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self,
         job_id: str,
         ext_id: str,
+        tenant_id: Optional[str] = None,
     ) -> None:
         """将 external_job_id 写入 jobs.json 中对应任务的 meta 字段。"""
-        await self._persist_external_job_binding(job_id, ext_id)
+        await self._persist_external_job_binding(job_id, ext_id, tenant_id)
 
     async def _persist_external_job_binding(
         self,
@@ -2080,11 +2223,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return
 
         callback_url = self._build_callback_url("heartbeat")
+        tenant_id, source_id = self._get_external_scheduler_business_identity()
         try:
             if ext_id:
                 await self._scheduler_adapter.update_job(
                     external_id=ext_id,
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="heartbeat",
                     job_id=job_id,
@@ -2095,7 +2240,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 await self._scheduler_adapter.resume_job(ext_id)
             else:
                 ext_id = await self._scheduler_adapter.register_job(
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="heartbeat",
                     job_id=job_id,
@@ -2135,11 +2281,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return
 
         callback_url = self._build_callback_url("dream")
+        tenant_id, source_id = self._get_external_scheduler_business_identity()
         try:
             if ext_id:
                 await self._scheduler_adapter.update_job(
                     external_id=ext_id,
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="dream",
                     job_id=job_id,
@@ -2150,7 +2298,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 await self._scheduler_adapter.resume_job(ext_id)
             else:
                 ext_id = await self._scheduler_adapter.register_job(
-                    tenant_id=self._tenant_id or "",
+                    tenant_id=tenant_id,
+                    source_id=source_id,
                     agent_id=self._agent_id or "",
                     task_type="dream",
                     job_id=job_id,
@@ -2218,16 +2367,67 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     workspaces.add(ws)
         return workspaces
 
+    async def _collect_prefetch_targets(
+        self,
+    ) -> set[
+        tuple[str | None, str | None, str | None, str | None, str | None]
+    ]:
+        """收集 auth token 预热所需的租户上下文。"""
+        targets = set()
+        try:
+            jobs = await self._repo.list_jobs()
+        except Exception:
+            return targets
+        for job in jobs:
+            if job.task_type != "agent":
+                continue
+            workspace_dir = None
+            if job.dispatch and job.dispatch.meta:
+                workspace_dir = job.dispatch.meta.get("workspace_dir")
+            runtime_tenant_id = self._get_job_runtime_tenant_id(job)
+            tenant_id, source_id, scope_id = resolve_runtime_identity(
+                runtime_tenant_id,
+                job.source_id,
+            )
+            targets.add(
+                (
+                    runtime_tenant_id,
+                    workspace_dir,
+                    job.dispatch.target.user_id,
+                    source_id,
+                    scope_id,
+                ),
+            )
+        return targets
+
     async def _prefetch_loop(self) -> None:
         """后台循环：每30~60分钟随机间隔，预热所有已知 workspace 的 auth token。"""
-        from .auth_state import prefetch_auth_token
-
         while True:
             try:
                 await asyncio.sleep(random.randint(1800, 3600))
-                for ws_dir in await self._collect_prefetch_workspaces():
+                for (
+                    runtime_tenant_id,
+                    workspace_dir,
+                    user_id,
+                    source_id,
+                    scope_id,
+                ) in await self._collect_prefetch_targets():
                     try:
-                        prefetch_auth_token(workspace_dir=ws_dir)
+                        tenant_id, _, _ = resolve_runtime_identity(
+                            runtime_tenant_id,
+                            source_id,
+                        )
+                        with bind_tenant_context(
+                            tenant_id=tenant_id,
+                            user_id=user_id,
+                            workspace_dir=workspace_dir,
+                            source_id=source_id,
+                            scope_id=scope_id,
+                        ):
+                            prefetch_auth_token(
+                                tenant_id=runtime_tenant_id,
+                                workspace_dir=workspace_dir,
+                            )
                     except Exception:
                         pass
             except asyncio.CancelledError:

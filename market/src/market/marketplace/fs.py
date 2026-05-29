@@ -7,7 +7,7 @@
   <marketplace_root>/<source_id>/skills/<item_id>/SKILL.md
 
 用户技能目录：
-  <swe_root>/<user_id>/workspaces/<agent_id>/skills/<skill_name>/
+  <swe_root>/<scope_id>/workspaces/<agent_id>/skills/<skill_name>/
 """
 
 from __future__ import annotations
@@ -22,10 +22,106 @@ from pathlib import Path
 from typing import Optional
 
 from .models import MarketItem
+from ..runtime.context import (
+    encode_scope_id,
+    migrate_legacy_scope_dir_if_needed,
+)
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_ID = "default"
+
+
+# === MCP 配置归一化函数 ===
+
+
+def _normalize_transport_value(raw_transport: str) -> str | None:
+    """将 transport 字符串标准化为标准值."""
+    lowered = raw_transport.strip().lower()
+    if lowered == "streamable-http":
+        return "streamable_http"
+    if lowered in {"stdio", "sse", "streamable_http"}:
+        return lowered
+    return None
+
+
+def _extract_first_mcp_server(config_data: dict) -> dict:
+    """从嵌套的 mcpServers 结构中提取第一个 MCP server 配置."""
+    mcp_servers = config_data.get("mcpServers")
+    if not isinstance(mcp_servers, dict) or not mcp_servers:
+        return dict(config_data)
+
+    _, first_value = next(iter(mcp_servers.items()))
+    if isinstance(first_value, dict):
+        return dict(first_value)
+    return dict(config_data)
+
+
+def _apply_advanced_fields(normalized: dict) -> None:
+    """将嵌套的 'advanced' 字段提升到顶层配置."""
+    advanced = normalized.get("advanced")
+    if not isinstance(advanced, dict):
+        return
+
+    if "headers" not in normalized and isinstance(
+        advanced.get("headers"),
+        dict,
+    ):
+        normalized["headers"] = advanced.get("headers", {})
+
+    if "transport" not in normalized and isinstance(
+        advanced.get("transport"),
+        str,
+    ):
+        transport = _normalize_transport_value(advanced["transport"])
+        if transport:
+            normalized["transport"] = transport
+
+
+def _infer_transport_from_config(normalized: dict) -> None:
+    """从 command 或 url 字段推断 transport 类型."""
+    if "transport" in normalized:
+        return
+
+    command = normalized.get("command")
+    if isinstance(command, str) and command.strip():
+        normalized["transport"] = "stdio"
+        return
+
+    url = normalized.get("url")
+    if isinstance(url, str) and url.strip():
+        normalized["transport"] = "streamable_http"
+
+
+def normalize_mcp_config_data(config_data: dict) -> dict:
+    """兼容旧市场条目中的原始 MCP 上传结构.
+
+    历史上部分市场条目直接把上传 JSON 原样保存到了 config 中，
+    例如 {"mcpServers": {...}}。分发时需要先把这类旧结构归一化
+    成 MCPClientConfig 可识别的扁平字段。
+
+    主要处理：
+    - 将 mcpServers 嵌套结构提取到顶层
+    - 将 advanced.headers 提升到顶层 headers
+    - 将 advanced.transport 提升到顶层 transport
+    - 统一 transport 字段的命名（type -> transport, streamable-http -> streamable_http）
+    """
+    if not isinstance(config_data, dict):
+        return {}
+
+    normalized = _extract_first_mcp_server(config_data)
+    _apply_advanced_fields(normalized)
+
+    # Normalize top-level transport/type field
+    raw_transport = normalized.get("transport") or normalized.get("type")
+    if isinstance(raw_transport, str):
+        transport = _normalize_transport_value(raw_transport)
+        if transport:
+            normalized["transport"] = transport
+
+    _infer_transport_from_config(normalized)
+    return normalized
+
 
 # 系统标识符 (source_id, item_id, user_id, agent_id)：仅允许 ASCII 安全字符
 _SAFE_SYSTEM_SEGMENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
@@ -101,6 +197,19 @@ def _validate_skill_name_segment(value: str) -> None:
         )
 
 
+def _has_existing_creator_id(entry: dict) -> bool:
+    """判断 manifest 条目是否带有有效的 creator_id。"""
+    metadata = entry.get("metadata")
+    creator_id = None
+    if isinstance(metadata, dict):
+        creator_id = metadata.get("creator_id")
+    if not creator_id:
+        creator_id = entry.get("creator_id")
+    if isinstance(creator_id, str):
+        return bool(creator_id.strip())
+    return creator_id is not None
+
+
 def get_marketplace_dir(marketplace_root: Path, source_id: str) -> Path:
     _validate_path_segment(source_id, "source_id")
     return marketplace_root / source_id
@@ -127,17 +236,10 @@ def resolve_effective_user_id(
     user_id: str,
     source_id: str | None = None,
 ) -> str:
-    """解析 effective user_id，default 用户需拼接 source_id.
-
-    - default 用户 + source_id: effective = ``default_{source_id}``
-    - default 用户 + 无 source_id: effective = ``default``
-    - 非 default 用户: effective = user_id (保持不变)
-    """
-    if user_id != "default" or not source_id:
+    """解析用户本地状态使用的运行时 scope 标识。"""
+    if not source_id:
         return user_id
-    # 验证 source_id 只包含安全字符
-    _validate_path_segment(source_id, "source_id")
-    return f"default_{source_id}"
+    return encode_scope_id(user_id, source_id)
 
 
 def get_user_skills_dir(
@@ -149,7 +251,8 @@ def get_user_skills_dir(
     effective_user_id = resolve_effective_user_id(user_id, source_id)
     _validate_path_segment(effective_user_id, "user_id")
     _validate_path_segment(agent_id, "agent_id")
-    return swe_root / effective_user_id / "workspaces" / agent_id / "skills"
+    user_root = migrate_legacy_scope_dir_if_needed(swe_root, effective_user_id)
+    return user_root / "workspaces" / agent_id / "skills"
 
 
 def load_index(marketplace_root: Path, source_id: str) -> list[MarketItem]:
@@ -206,69 +309,100 @@ def copy_skill_to_user(
     distributed_by: str,
     version: str,
     agent_id: str = DEFAULT_AGENT_ID,
-) -> None:
-    """将市场技能复制到用户工作目录，并写入分发元数据.
+) -> dict:
+    """将市场技能复制到用户工作目录，返回分发元数据供 manifest 使用.
+
+    分发前检查目标目录是否已有同名技能：
+    - 自建技能（source=customized）：跳过，保护用户自建内容
+    - 接收的技能（source=marketplace:...）：覆盖更新
+    - 不存在：正常分发
+
+    注意：不再写入技能目录内的 skill.json，分发元数据由调用方写入 workspace manifest。
 
     Args:
         skill_name: 规范的目录名（normalize 后，保留中文等 Unicode 字符）
         original_name: 原始技能名称（用于前端展示）
         description: 技能描述（用于前端展示）
+        distributed_by: 分发者标识
+        version: 技能版本
+
+    Returns:
+        {"status": "distributed", "metadata": {...}} 或 {"status": "conflict", "reason": "customized"}
     """
+    import shutil
+
     _validate_skill_name_segment(skill_name)
     src_dir = get_skill_dir(marketplace_root, source_id, item_id)
     dst_dir = (
         get_user_skills_dir(swe_root, user_id, agent_id, source_id)
         / skill_name
     )
-    dst_dir.mkdir(parents=True, exist_ok=True)
 
-    src_skill_md = src_dir / "SKILL.md"
-    if src_skill_md.exists():
-        (dst_dir / "SKILL.md").write_bytes(src_skill_md.read_bytes())
-
-    src_skill_json = src_dir / "skill.json"
-    skill_data: dict = {}
-    if src_skill_json.exists():
+    # 检查目标目录是否已有同名技能（通过 workspace manifest 判断）
+    manifest_path = get_user_skill_manifest_path(
+        swe_root,
+        user_id,
+        agent_id,
+        source_id,
+    )
+    existing_created_at = None
+    if manifest_path.exists():
         try:
-            skill_data = json.loads(src_skill_json.read_text(encoding="utf-8"))
+            manifest_data = json.loads(
+                manifest_path.read_text(encoding="utf-8"),
+            )
+            existing_entry = manifest_data.get("skills", {}).get(skill_name)
+
+            # 技能不存在于 manifest 中，可以正常分发
+            if existing_entry is None:
+                pass  # 不存在，正常分发
+            else:
+                existing_source = existing_entry.get("source", "customized")
+                existing_created_at = existing_entry.get("created_at")
+
+                # 仅当自建技能明确绑定 creator_id 时才保护，兼容历史脏数据覆盖
+                if (
+                    existing_source == "customized"
+                    and _has_existing_creator_id(
+                        existing_entry,
+                    )
+                ):
+                    return {"status": "conflict", "reason": "customized"}
+
+                # 接收的技能：继续覆盖更新
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(
-                "Failed to read source skill.json %s: %s",
-                src_skill_json,
+                "Failed to read manifest %s: %s",
+                manifest_path,
                 e,
             )
 
-    # 重复分发时保留目标目录已有的 created_at
+    # 先删除旧目录，再整体复制（确保与市场源一致）
+    if dst_dir.exists():
+        shutil.rmtree(dst_dir)
+    shutil.copytree(src_dir, dst_dir)
+
+    # 删除复制过来的 skill.json（不再需要）
     dst_skill_json = dst_dir / "skill.json"
     if dst_skill_json.exists():
         try:
-            existing_data = json.loads(
-                dst_skill_json.read_text(encoding="utf-8"),
-            )
-            if "created_at" in existing_data:
-                skill_data["created_at"] = existing_data["created_at"]
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(
-                "Failed to read existing skill.json %s: %s",
-                dst_skill_json,
-                e,
-            )
+            dst_skill_json.unlink()
+        except OSError:
+            pass
 
-    # 确保 name 字段存在（用于前端展示）
-    if "name" not in skill_data:
-        skill_data["name"] = original_name
+    # 构建分发元数据，供调用方写入 workspace manifest
+    metadata = {
+        "name": original_name,
+        "description": description,
+        "distributed_by": distributed_by,
+        "received_version": version,
+    }
 
-    # 确保 description 字段存在（用于前端展示）
-    if not skill_data.get("description"):
-        skill_data["description"] = description
-
-    skill_data["source"] = f"marketplace:{item_id}"
-    skill_data["distributed_by"] = distributed_by
-    skill_data["received_version"] = version
     # 保留原有 created_at（重复分发时不覆盖首次创建时间）
-    skill_data.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+    if existing_created_at:
+        metadata["created_at"] = existing_created_at
 
-    _atomic_write_json(dst_dir / "skill.json", skill_data)
+    return {"status": "distributed", "metadata": metadata}
 
 
 def get_user_skill_manifest_path(
@@ -277,10 +411,17 @@ def get_user_skill_manifest_path(
     agent_id: str = DEFAULT_AGENT_ID,
     source_id: str | None = None,
 ) -> Path:
-    """获取用户工作空间的 skill.json 路径."""
+    """获取用户 workspace 的运行时 manifest 路径（skill.json）.
+
+    该文件存储技能的运行时状态（enabled、channels、config 等），
+    与技能目录内的 skill.json（存储展示元数据）职责不同。
+    路径与 src/swe 的 get_workspace_skill_manifest_path 保持一致。
+    """
     effective_user_id = resolve_effective_user_id(user_id, source_id)
-    workspace_dir = swe_root / effective_user_id / "workspaces" / agent_id
-    return workspace_dir / "skill.json"
+    _validate_path_segment(effective_user_id, "user_id")
+    _validate_path_segment(agent_id, "agent_id")
+    user_root = migrate_legacy_scope_dir_if_needed(swe_root, effective_user_id)
+    return user_root / "workspaces" / agent_id / "skill.json"
 
 
 def read_user_skill_manifest(
@@ -472,10 +613,10 @@ def copy_mcp_to_user(
     if mcp_config is None:
         raise ValueError(f"MCP config not found for item {item_id}")
 
-    # 加载用户 agent.json
-    user_config_path = (
-        swe_root / user_id / "workspaces" / agent_id / "agent.json"
-    )
+    # 解析运行时 scope 目录，并处理 legacy 目录迁移
+    effective_user_id = resolve_effective_user_id(user_id, source_id)
+    user_root = migrate_legacy_scope_dir_if_needed(swe_root, effective_user_id)
+    user_config_path = user_root / "workspaces" / agent_id / "agent.json"
     user_config_path.parent.mkdir(parents=True, exist_ok=True)
 
     user_config: dict = {}
@@ -495,6 +636,8 @@ def copy_mcp_to_user(
 
     # 合并 MCP 配置
     config_data = mcp_config.get("config", {})
+    # 归一化配置数据，将 advanced.headers 等字段提升到顶层
+    config_data = normalize_mcp_config_data(config_data)
     config_data["source"] = f"marketplace:{item_id}"
     config_data["market_client_key"] = client_key
     config_data["distributed_by"] = distributed_by

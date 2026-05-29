@@ -22,6 +22,7 @@ def clean_env(monkeypatch):
         "SWE_ENV",
         "SWE_LOG_LEVEL",
         "SWE_OPENAPI_DOCS",
+        "SWE_FILE_LOG_ENABLED",
         "SWE_CORS_ORIGINS",
         "SWE_LLM_MAX_CONCURRENT",
         "SWE_LLM_MAX_QPM",
@@ -41,14 +42,14 @@ class TestEnvDefaultsLoader:
         assert "dev" in VALID_ENVS
         assert "prd" in VALID_ENVS
 
-    def test_default_env_is_prd(self):
-        """Default environment should be prd."""
-        assert DEFAULT_ENV == "prd"
+    def test_default_env_is_dev(self):
+        """默认环境应为 dev。"""
+        assert DEFAULT_ENV == "dev"
 
-    def test_get_current_env_defaults_to_prd(self, monkeypatch):
-        """get_current_env should return prd when SWE_ENV not set."""
+    def test_get_current_env_defaults_to_dev(self, monkeypatch):
+        """未设置 SWE_ENV 时应返回 dev。"""
         monkeypatch.delenv("SWE_ENV", raising=False)
-        assert get_current_env() == "prd"
+        assert get_current_env() == "dev"
 
     def test_get_current_env_respects_swe_env(self, monkeypatch):
         """get_current_env should return value of SWE_ENV."""
@@ -62,6 +63,7 @@ class TestEnvDefaultsLoader:
         assert "SWE_LOG_LEVEL" in result
         assert os.environ.get("SWE_LOG_LEVEL") == "debug"
         assert os.environ.get("SWE_OPENAPI_DOCS") == "true"
+        assert os.environ.get("SWE_FILE_LOG_ENABLED") == "false"
         assert os.environ.get("SWE_AUTH_ENABLED") == "false"
 
     def test_load_prd_defaults(self, monkeypatch):
@@ -71,6 +73,7 @@ class TestEnvDefaultsLoader:
         assert "SWE_LOG_LEVEL" in result
         assert os.environ.get("SWE_LOG_LEVEL") == "info"
         assert os.environ.get("SWE_OPENAPI_DOCS") == "false"
+        assert os.environ.get("SWE_FILE_LOG_ENABLED") == "false"
 
     def test_does_not_override_existing_env(self, monkeypatch):
         """load_env_defaults should not override existing env vars."""
@@ -82,19 +85,19 @@ class TestEnvDefaultsLoader:
         assert "SWE_LOG_LEVEL" not in result
         assert os.environ.get("SWE_LOG_LEVEL") == "warning"
 
-    def test_invalid_env_falls_back_to_prd(self, monkeypatch):
-        """load_env_defaults should fall back to prd for invalid env."""
+    def test_invalid_env_falls_back_to_dev(self, monkeypatch):
+        """非法 SWE_ENV 应回退到 dev。"""
         result = load_env_defaults("invalid")
 
-        # Should still load prd defaults after warning
-        assert os.environ.get("SWE_LOG_LEVEL") == "info"
-        assert os.environ.get("SWE_OPENAPI_DOCS") == "false"
+        assert os.environ.get("SWE_LOG_LEVEL") == "debug"
+        assert os.environ.get("SWE_OPENAPI_DOCS") == "true"
 
     def test_returns_empty_dict_when_all_vars_exist(self, monkeypatch):
         """load_env_defaults should return empty dict when all vars exist."""
         # Set all dev vars
         monkeypatch.setenv("SWE_LOG_LEVEL", "test")
         monkeypatch.setenv("SWE_OPENAPI_DOCS", "test")
+        monkeypatch.setenv("SWE_FILE_LOG_ENABLED", "test")
         monkeypatch.setenv("SWE_CORS_ORIGINS", "test")
         monkeypatch.setenv("SWE_LLM_MAX_CONCURRENT", "test")
         monkeypatch.setenv("SWE_LLM_MAX_QPM", "test")

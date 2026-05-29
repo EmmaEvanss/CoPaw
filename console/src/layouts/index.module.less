@@ -246,7 +246,16 @@
     }
 
     .swe-menu-submenu .swe-menu-item {
-      padding-left: 30px !important;
+      padding-left: 33px !important;
+
+      // 二级菜单只保留文字层级，避免图标和一级菜单抢视觉焦点。
+      .swe-menu-item-icon {
+        display: none !important;
+      }
+
+      .swe-menu-title-content {
+        margin-inline-start: 0 !important;
+      }
     }
 
     .swe-menu-item-selected {

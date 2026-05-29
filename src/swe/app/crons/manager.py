@@ -8,13 +8,13 @@ import logging
 import os
 import random
 import re
-from contextlib import nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar, cast
 
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
@@ -25,7 +25,11 @@ from ...config.context import (
     resolve_scope_id,
 )
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
-from ..source_system_config.runtime import bind_source_system_config
+from ..source_system_config.runtime import (
+    bind_source_system_config,
+    reset_current_source_system_config,
+    set_current_source_system_config,
+)
 from .auth_state import prefetch_auth_token
 from .cron_utils import compute_next_run_at
 from .executor import CronExecutor
@@ -546,6 +550,23 @@ class CronManager:  # pylint: disable=too-many-public-methods
         return await self._source_system_config_service.resolve_config(
             resolved_source_id,
         )
+
+    @contextmanager
+    def _bind_scheduled_run_source_system_config(
+        self,
+        source_system_config: Any | None,
+    ):
+        """Bind resolved source config, or explicitly clear inherited request config."""
+        if source_system_config is not None:
+            with bind_source_system_config(source_system_config):
+                yield
+            return
+
+        token = set_current_source_system_config(cast(Any, None))
+        try:
+            yield
+        finally:
+            reset_current_source_system_config(token)
 
     async def _sync_job_to_external_scheduler(
         self,
@@ -1932,12 +1953,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                         boundary_name=f"job:{job.id}",
                     )
                 )
-                with (
-                    (
-                        bind_source_system_config(source_system_config)
-                        if source_system_config is not None
-                        else nullcontext()
-                    ),
+                with self._bind_scheduled_run_source_system_config(
+                    source_system_config,
                 ):
                     # 执行任务并获取执行结果
                     exec_result = await self._executor.execute(job)
@@ -1997,12 +2014,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 )
                 raise
             finally:
-                with (
-                    (
-                        bind_source_system_config(source_system_config)
-                        if source_system_config is not None
-                        else nullcontext()
-                    ),
+                with self._bind_scheduled_run_source_system_config(
+                    source_system_config,
                 ):
                     await self._finalize_execution_state(
                         job=job,
@@ -2042,10 +2055,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
-            (
-                bind_source_system_config(source_system_config)
-                if source_system_config is not None
-                else nullcontext()
+            self._bind_scheduled_run_source_system_config(
+                source_system_config,
             ),
         ):
             await run_heartbeat_once(
@@ -2076,10 +2087,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
-            (
-                bind_source_system_config(source_system_config)
-                if source_system_config is not None
-                else nullcontext()
+            self._bind_scheduled_run_source_system_config(
+                source_system_config,
             ),
         ):
             await self._runner.memory_manager.dream_memory(

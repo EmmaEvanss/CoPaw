@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -24,6 +25,7 @@ from swe.app.source_system_config.models import (
     SourceSystemConfig,
 )
 from swe.app.source_system_config.runtime import (
+    bind_source_system_config,
     get_current_source_system_config,
 )
 from swe.app.source_system_config.service import (
@@ -253,6 +255,60 @@ async def test_execute_once_keeps_legacy_source_less_run_unbound(
 
 
 @pytest.mark.asyncio
+async def test_execute_once_clears_inherited_request_source_when_unbound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _RecordingSourceConfigService()
+    manager = CronManager(
+        repo=object(),
+        runner=object(),
+        channel_manager=object(),
+        source_system_config_service=service,
+    )
+    observed: dict[str, str | None] = {}
+
+    async def fake_execute(_job):
+        current = get_current_source_system_config()
+        observed["execute"] = None if current is None else current.source_id
+        return SimpleNamespace(
+            trace_id="",
+            output_preview="",
+            input_snapshot=None,
+            executor_leader="",
+            execution_meta=None,
+        )
+
+    async def fake_success(_job):
+        current = get_current_source_system_config()
+        observed["success"] = None if current is None else current.source_id
+
+    async def fake_finalize(**_kwargs):
+        current = get_current_source_system_config()
+        observed["finalize"] = None if current is None else current.source_id
+
+    monkeypatch.setattr(
+        manager,
+        "_executor",
+        SimpleNamespace(execute=fake_execute),
+    )
+    monkeypatch.setattr(manager, "_handle_success_notifications", fake_success)
+    monkeypatch.setattr(manager, "_finalize_execution_state", fake_finalize)
+
+    with bind_source_system_config(_build_effective_config("request-source")):
+        await manager._execute_once(  # pylint: disable=protected-access
+            _build_agent_job(source_id=None, scope_id=None),
+        )
+
+    assert service.calls == []
+    assert observed == {
+        "execute": None,
+        "success": None,
+        "finalize": None,
+    }
+    assert get_current_source_system_config() is None
+
+
+@pytest.mark.asyncio
 async def test_execute_once_keeps_sourced_run_unbound_when_service_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -293,6 +349,72 @@ async def test_execute_once_keeps_sourced_run_unbound_when_service_missing(
     )  # pylint: disable=protected-access
 
     assert observed["execute"] is None
+    assert get_current_source_system_config() is None
+
+
+@pytest.mark.asyncio
+async def test_run_job_manual_clears_request_source_for_legacy_unbound_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _build_agent_job(source_id=None, scope_id=None)
+    manager = CronManager(
+        repo=SimpleNamespace(get_job=AsyncMock(return_value=job)),
+        runner=object(),
+        channel_manager=object(),
+    )
+    observed: dict[str, str | None] = {}
+    created_tasks: list[asyncio.Task[None]] = []
+    original_create_task = asyncio.create_task
+
+    async def fake_execute(_job):
+        current = get_current_source_system_config()
+        observed["execute"] = None if current is None else current.source_id
+        return SimpleNamespace(
+            trace_id="",
+            output_preview="",
+            input_snapshot=None,
+            executor_leader="",
+            execution_meta=None,
+        )
+
+    async def fake_success(_job):
+        current = get_current_source_system_config()
+        observed["success"] = None if current is None else current.source_id
+
+    async def fake_finalize(**_kwargs):
+        current = get_current_source_system_config()
+        observed["finalize"] = None if current is None else current.source_id
+
+    def capture_create_task(coro, *, name=None):
+        task = original_create_task(coro, name=name)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(
+        manager,
+        "_executor",
+        SimpleNamespace(execute=fake_execute),
+    )
+    monkeypatch.setattr(manager, "_handle_success_notifications", fake_success)
+    monkeypatch.setattr(manager, "_finalize_execution_state", fake_finalize)
+    monkeypatch.setattr(
+        manager,
+        "_ensure_persisted_task_binding",
+        AsyncMock(return_value=job),
+    )
+    monkeypatch.setattr(asyncio, "create_task", capture_create_task)
+
+    with bind_source_system_config(_build_effective_config("request-source")):
+        await manager.run_job(job.id)
+
+    assert len(created_tasks) == 1
+    await created_tasks[0]
+
+    assert observed == {
+        "execute": None,
+        "success": None,
+        "finalize": None,
+    }
     assert get_current_source_system_config() is None
 
 

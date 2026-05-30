@@ -80,6 +80,10 @@ _Avoid_: cron config, timer task
 A single execution of a **Scheduled Job**, whether triggered by schedule or manually.
 _Avoid_: cron call, job instance
 
+**Scheduled Run Boundary**:
+A runtime boundary that starts scheduled work outside an incoming user HTTP request. It includes **Scheduled Job**, heartbeat, and dream execution, but not cron management API requests.
+_Avoid_: cron entry, cron API, scheduler callback
+
 **Execution Model Slot**:
 An optional model selection pinned to a **Scheduled Job**. If absent, each **Scheduled Run** uses the **Tenant Default Model** at execution time.
 _Avoid_: model params, cron model
@@ -104,17 +108,9 @@ _Avoid_: tool output truncation, file read truncation, live tool truncation
 A source-scoped limit on text returned by file-reading tools during the same turn that reads the file. It is separate from **Historical Tool Result Compaction**.
 _Avoid_: file compaction, historical tool result compaction
 
-**External Tool Output Truncation**:
-A source-scoped limit on textual output returned by externally integrated tools before it is kept in the conversation. It is separate from **File Read Truncation** and **Historical Tool Result Compaction**.
-_Avoid_: tool interface call truncation, all tool truncation, MCP-only truncation
-
 **Tool Output Controls**:
-The user-facing grouping for source-scoped controls over historical tool-result compaction, file-read output truncation, and external textual tool-output truncation.
+The user-facing grouping for source-scoped controls over historical tool-result compaction and file-read output truncation.
 _Avoid_: tool result compression configuration
-
-**Recoverable Immediate Truncation**:
-An immediate truncation behavior where the complete original text remains available for continuation after the shortened excerpt is returned. It applies when Swe truncates external textual tool output.
-_Avoid_: lossy truncation, preview-only truncation
 
 ## Flagged Ambiguities
 
@@ -185,34 +181,22 @@ Resolved as no **Execution Model Slot**. Text **Scheduled Jobs** do not perform 
 Resolved as **Source System Configuration** in this context. The configuration is scoped by source, not by tenant or user.
 
 **"Tool Result Compression Switch"**:
-Resolved as controlling **Historical Tool Result Compaction** only. **File Read Truncation** and **External Tool Output Truncation** need independent switches.
+Resolved as controlling **Historical Tool Result Compaction** only. **File Read Truncation** needs an independent switch.
 
 **"Immediate Truncation Configuration Placement"**:
 Resolved as sibling configuration under **Source System Configuration**, not nested inside the **Historical Tool Result Compaction** configuration.
 
 **"Immediate Truncation Defaults"**:
-Resolved as preserving existing runtime behavior when a source has no explicit override. File reads keep their current default limit, and external tool outputs do not gain a new default SWE-side truncation layer.
+Resolved as preserving existing runtime behavior when a source has no explicit override. File reads keep their current default limit.
 
 **"Disable Immediate Truncation"**:
 Resolved as preserving the full immediate output for that output category. It does not mean falling back to an Agent default threshold.
-
-**"Tool Interface Call Truncation"**:
-Resolved as **External Tool Output Truncation**. It covers MCP and other externally integrated textual tool outputs, not every built-in tool result.
-
-**"External Tool Output Content Types"**:
-Resolved as text-only for **External Tool Output Truncation**. Media, file, and other non-text blocks keep their original tool-specific behavior.
-
-**"External Tool Output Recovery"**:
-Resolved as **Recoverable Immediate Truncation**. When Swe truncates external textual output, the full text must remain available through a continuation path.
-
-**"Tool Result File Retention"**:
-Resolved as shared by **Historical Tool Result Compaction** and recoverable **External Tool Output Truncation**. External textual output recovery does not introduce its own retention period in the first version.
 
 **"Immediate Truncation Limit Name"**:
 Resolved as `max_bytes` for immediate truncation concepts. `old_max_bytes` and `recent_max_bytes` remain specific to **Historical Tool Result Compaction**.
 
 **"Immediate Truncation Limit Bounds"**:
-Resolved as integer byte limits with a default of 50000 and a minimum of 1000 for both **File Read Truncation** and **External Tool Output Truncation**. No source-level maximum is defined.
+Resolved as integer byte limits with a default of 50000 and a minimum of 1000 for **File Read Truncation**. No source-level maximum is defined.
 
 **"File Read Truncation Limit Scope"**:
 Resolved as output-only. **File Read Truncation** uses `max_bytes` to limit the text returned to the model and conversation, and does not introduce a source-level limit for how much data is read from storage.
@@ -226,20 +210,17 @@ Resolved as no separate non-configurable hard limit for file-read immediate outp
 **"File Read Internal Protection"**:
 Resolved as outside **Source System Configuration**. Swe may keep an internal storage-read protection limit, but hitting it must be visible rather than silently treated as a complete file read.
 
-**"External Tool Output Truncation Migration"**:
-Resolved as opt-in only. External textual tool output does not inherit historical tool-result limits and gains no new Swe-side truncation unless explicitly configured.
-
-**"External Tool-Owned Truncation"**:
-Resolved as outside Swe's **External Tool Output Truncation** switch. Swe can only control truncation after it receives external tool output; truncation performed inside the external tool remains that tool's responsibility.
-
 **"Tool Output Controls UI"**:
-Resolved as one user-facing group with three sections: **Historical Tool Result Compaction**, **File Read Truncation**, and **External Tool Output Truncation**.
+Resolved as one user-facing group with two sections: **Historical Tool Result Compaction** and **File Read Truncation**.
 
 **"Immediate Truncation Explicit Ownership"**:
-Resolved as represented by retaining the immediate truncation configuration object, at least with its `enabled` field. Default-value pruning must not erase explicit ownership of **File Read Truncation** or **External Tool Output Truncation**.
+Resolved as represented by retaining the immediate truncation configuration object, at least with its `enabled` field. Default-value pruning must not erase explicit ownership of **File Read Truncation**.
+
+**"Cron Entry"**:
+Resolved as **Scheduled Run Boundary** when discussing runtime behavior. Cron management API requests remain normal HTTP requests and are outside this term.
 
 **"Immediate Truncation Raw Configuration Display"**:
-Resolved as exposing absence differently per category. Missing **File Read Truncation** is shown as inheriting the historical recent tool-result limit until independently configured; missing **External Tool Output Truncation** is shown as not enabled.
+Resolved as exposing absence for **File Read Truncation** as inheriting the historical recent tool-result limit until independently configured.
 
 **"Tool Output Controls Scope"**:
 Resolved as limited to the Source System Configuration page and runtime resolution for this change. The Agent configuration page keeps the existing historical tool-result compaction controls for now.

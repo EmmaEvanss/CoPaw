@@ -1,6 +1,13 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import BusinessOverviewPage, { buildTrendSvgData } from "./index";
+
+vi.mock("echarts-for-react", () => ({
+  default: (props: { style?: Record<string, unknown> }) => (
+    <div data-testid="echarts" style={props.style} />
+  ),
+}));
 
 const tracingApiMock = vi.hoisted(() => ({
   getOverview: vi.fn(),
@@ -12,11 +19,19 @@ const tracingApiMock = vi.hoisted(() => ({
   getMCPSummary: vi.fn(),
   getTaskStatusSummary: vi.fn(),
   getDepthSummary: vi.fn(),
+  getErrorSummary: vi.fn(),
   getSources: vi.fn(),
+}));
+const htmlPreviewEventsApiMock = vi.hoisted(() => ({
+  getSummary: vi.fn(),
 }));
 
 vi.mock("../../../api/modules/tracing", () => ({
   tracingApi: tracingApiMock,
+}));
+
+vi.mock("../../../api/modules/htmlPreviewEvents", () => ({
+  htmlPreviewEventsApi: htmlPreviewEventsApiMock,
 }));
 
 vi.mock("../../../stores/iframeStore", () => ({
@@ -37,6 +52,10 @@ vi.mock("./components/SkillDetailModal", () => ({
 }));
 
 describe("BusinessOverview trend chart", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     tracingApiMock.getOverview.mockResolvedValue({
       total_users: 120,
@@ -61,7 +80,7 @@ describe("BusinessOverview trend chart", () => {
       cronGrowth: 2,
       avgRoundsGrowth: 4,
       multiRoundRatioGrowth: 1,
-      avgStayGrowth: 6,
+      avgDurationGrowth: 6,
       avgSessionsPerUserGrowth: 7,
     });
     tracingApiMock.getHourlyTrend.mockResolvedValue({
@@ -87,11 +106,37 @@ describe("BusinessOverview trend chart", () => {
     tracingApiMock.getDepthSummary.mockResolvedValue({
       avg_rounds: 2,
       multi_round_ratio: 10,
-      avg_stay_seconds: 30,
+      avg_duration_seconds: 30,
       avg_sessions_per_user: 1.5,
     });
+    tracingApiMock.getErrorSummary.mockResolvedValue({
+      total_errors: 0,
+      model_errors: 0,
+      tool_errors: 0,
+      other_errors: 0,
+    });
     tracingApiMock.getSources.mockResolvedValue({ sources: ["CMSJY"] });
+    htmlPreviewEventsApiMock.getSummary.mockResolvedValue({
+      items: [
+        {
+          button_label: "立即跟进",
+          button_id: "follow",
+          button_name: "立即跟进",
+          file_name: "到期客户名单[auto-preview].html",
+          click_count: 12,
+          last_clicked_at: "2026-05-19T10:30:00",
+        },
+      ],
+    });
   });
+
+  function renderBusinessOverview() {
+    return render(
+      <MemoryRouter>
+        <BusinessOverviewPage />
+      </MemoryRouter>,
+    );
+  }
 
   it("builds dynamic y-axis ticks from actual trend maxima", () => {
     const trendSvg = buildTrendSvgData([
@@ -118,7 +163,7 @@ describe("BusinessOverview trend chart", () => {
   });
 
   it("shows the real values when hovering a trend column", async () => {
-    render(<BusinessOverviewPage />);
+    renderBusinessOverview();
 
     await waitFor(() => {
       expect(screen.getByTestId("trend-hover-zone-0")).toBeInTheDocument();
@@ -132,8 +177,8 @@ describe("BusinessOverview trend chart", () => {
     expect(within(tooltip).getByText("15,800")).toBeInTheDocument();
   });
 
-  it("maps avgStayGrowth into the average duration growth card", async () => {
-    render(<BusinessOverviewPage />);
+  it("maps avgDurationGrowth into the average duration growth card", async () => {
+    renderBusinessOverview();
 
     expect(await screen.findByText("30s")).toBeInTheDocument();
     expect(
@@ -143,5 +188,14 @@ describe("BusinessOverview trend chart", () => {
         (element.textContent || "").includes("环比+6.0%"),
       ),
     ).toBeInTheDocument();
+  });
+
+  it("renders HTML preview click statistics inside business overview", async () => {
+    renderBusinessOverview();
+
+    expect(await screen.findByText("HTML 预览点击统计")).toBeInTheDocument();
+    expect(await screen.findByText("点击总数")).toBeInTheDocument();
+    expect(await screen.findByText("立即跟进")).toBeInTheDocument();
+    expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
   });
 });

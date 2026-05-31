@@ -28,6 +28,8 @@ import ReactECharts from "echarts-for-react";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
+import { htmlPreviewEventsApi } from "../../../api/modules/htmlPreviewEvents";
+import type { HtmlPreviewClickSummaryItem } from "../../../api/types/htmlPreviewEvents";
 import {
   tracingApi,
   type BranchMetricItem,
@@ -67,6 +69,14 @@ const METRIC_ACCENT_COLORS = [
 ];
 
 const DONUT_COLORS = ["#18b368", "#ef4444", "#94a3b8"];
+const HTML_PREVIEW_COLORS = [
+  "#2563eb",
+  "#16a34a",
+  "#0891b2",
+  "#f97316",
+  "#7c3aed",
+  "#db2777",
+];
 
 const safeNumber = (value: unknown): number =>
   typeof value === "number" && !Number.isNaN(value) ? value : 0;
@@ -110,7 +120,6 @@ function buildMetricCards(
     skillGrowth: number | null;
     cronGrowth: number | null;
   },
-  skills: SkillUsage[],
 ): OverviewMetricCard[] {
   return [
     {
@@ -263,6 +272,83 @@ function buildErrorSummary(summary: ErrorSummary | null): SummaryLegendItem[] {
       color: "#ef4444",
     },
   ];
+}
+
+function getHtmlPreviewButtonLabel(item: HtmlPreviewClickSummaryItem): string {
+  return (
+    item.button_name ||
+    item.button_text ||
+    item.button_id ||
+    item.button_label ||
+    "未知按钮"
+  );
+}
+
+function buildHtmlPreviewClickOption(items: HtmlPreviewClickSummaryItem[]) {
+  const chartItems = items.slice(0, 10).reverse();
+  return {
+    grid: {
+      left: 110,
+      right: 36,
+      top: 12,
+      bottom: 18,
+    },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow" },
+      formatter: (params: Array<{ name: string; value: number }>) => {
+        const first = params[0];
+        return first
+          ? `${first.name}<br/>点击次数：${formatNumber(first.value)}`
+          : "";
+      },
+    },
+    xAxis: {
+      type: "value",
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: "#edf2f8" } },
+      axisLabel: {
+        color: "#94a3b8",
+        fontSize: 12,
+        formatter: (value: number) => formatNumber(value),
+      },
+    },
+    yAxis: {
+      type: "category",
+      data: chartItems.map((item) =>
+        truncateName(getHtmlPreviewButtonLabel(item), 12),
+      ),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: {
+        color: "#475569",
+        fontSize: 12,
+        fontWeight: 600,
+      },
+    },
+    series: [
+      {
+        type: "bar",
+        data: chartItems.map((item, index) => ({
+          value: item.click_count,
+          itemStyle: {
+            color: HTML_PREVIEW_COLORS[index % HTML_PREVIEW_COLORS.length],
+            borderRadius: [0, 8, 8, 0],
+          },
+        })),
+        barWidth: 14,
+        label: {
+          show: true,
+          position: "right",
+          color: "#111827",
+          fontSize: 12,
+          fontWeight: 700,
+          formatter: (params: { value: number }) => formatNumber(params.value),
+        },
+      },
+    ],
+  };
 }
 
 function buildDonutSegments(items: SummaryLegendItem[]) {
@@ -685,6 +771,10 @@ export default function BusinessOverviewPage() {
   const [taskStatusSummary, setTaskStatusSummary] =
     useState<TaskStatusSummary | null>(null);
   const [depthSummary, setDepthSummary] = useState<DepthSummary | null>(null);
+  const [htmlPreviewClicks, setHtmlPreviewClicks] = useState<
+    HtmlPreviewClickSummaryItem[]
+  >([]);
+  const [htmlPreviewLoading, setHtmlPreviewLoading] = useState(false);
   const [errorLoading, setErrorLoading] = useState(false);
   const errorLoadingRef = useRef(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -892,17 +982,37 @@ export default function BusinessOverviewPage() {
     }
   }, [effectiveBbkIds, endDateText, startDateText]);
 
+  const fetchHtmlPreviewClicks = useCallback(async () => {
+    setHtmlPreviewLoading(true);
+    try {
+      const result = await htmlPreviewEventsApi.getSummary({
+        startTime: dateRange[0].startOf("day").toISOString(),
+        endTime: dateRange[1].endOf("day").toISOString(),
+        bbkIds: effectiveBbkIds?.join(","),
+        limit: 100,
+      });
+      setHtmlPreviewClicks(result.items || []);
+    } catch (error) {
+      console.error("Failed to fetch HTML preview click summary:", error);
+      setHtmlPreviewClicks([]);
+    } finally {
+      setHtmlPreviewLoading(false);
+    }
+  }, [dateRange, effectiveBbkIds]);
+
   useEffect(() => {
     fetchDashboard();
     fetchSkills();
     fetchErrorSummary();
     fetchTaskStatusSummary();
     fetchDepthSummary();
+    fetchHtmlPreviewClicks();
     // 活跃用户请求由独立的 useEffect 处理
   }, [
     fetchDashboard,
     fetchDepthSummary,
     fetchErrorSummary,
+    fetchHtmlPreviewClicks,
     fetchSkills,
     fetchTaskStatusSummary,
   ]);
@@ -996,8 +1106,8 @@ export default function BusinessOverviewPage() {
     !!current && current.isAfter(dayjs().startOf("day"), "day");
 
   const metricCards = useMemo(
-    () => buildMetricCards(overviewStats, taskStatusSummary, growthStats, skills),
-    [growthStats, overviewStats, skills, taskStatusSummary],
+    () => buildMetricCards(overviewStats, taskStatusSummary, growthStats),
+    [growthStats, overviewStats, taskStatusSummary],
   );
   const depthCards = useMemo(
     () => buildDepthCards(depthSummary, growthStats),
@@ -1011,6 +1121,36 @@ export default function BusinessOverviewPage() {
     () => buildErrorSummary(errorSummaryData),
     [errorSummaryData],
   );
+  const htmlPreviewChartOption = useMemo(
+    () => buildHtmlPreviewClickOption(htmlPreviewClicks),
+    [htmlPreviewClicks],
+  );
+  const htmlPreviewTotalClicks = useMemo(
+    () =>
+      htmlPreviewClicks.reduce(
+        (sum, item) => sum + safeNumber(item.click_count),
+        0,
+      ),
+    [htmlPreviewClicks],
+  );
+  const htmlPreviewButtonCount = htmlPreviewClicks.length;
+  const htmlPreviewFileCount = useMemo(
+    () =>
+      new Set(
+        htmlPreviewClicks
+          .map((item) => item.file_name || item.file_url)
+          .filter(Boolean),
+      ).size,
+    [htmlPreviewClicks],
+  );
+  const htmlPreviewLatestClick = useMemo(() => {
+    const latest = htmlPreviewClicks
+      .map((item) => item.last_clicked_at)
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+    return latest ? dayjs(latest).format("YYYY-MM-DD HH:mm") : "-";
+  }, [htmlPreviewClicks]);
   const trendSvg = useMemo(() => buildTrendSvgData(trendData), [trendData]);
   const activeTrendZone =
     activeTrendIndex === null ? null : trendSvg.hoverZones[activeTrendIndex] ?? null;
@@ -1112,6 +1252,7 @@ export default function BusinessOverviewPage() {
                 fetchErrorSummary();
                 fetchTaskStatusSummary();
                 fetchDepthSummary();
+                fetchHtmlPreviewClicks();
               }}
             >
               <RotateCw size={16} />
@@ -1624,13 +1765,6 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelLarge}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>报错分析</h3>
-            {/* TODO: 后续补充点击查看功能 */}
-            {false && (
-              <button type="button" className={styles.detailLink}>
-                查看详情
-                <ChevronRight size={14} />
-              </button>
-            )}
           </div>
           <div className={styles.donutLayoutCompact}>
             <div className={styles.donutCompact}>
@@ -1685,6 +1819,81 @@ export default function BusinessOverviewPage() {
               )}
             </div>
           </div>
+        </article>
+      </section>
+
+      <section
+        className={styles.htmlPreviewSection}
+        data-testid="html-preview-click-section"
+      >
+        <article className={styles.panelLarge}>
+          <div className={styles.panelHeader}>
+            <h3 className={styles.panelTitle}>HTML 预览点击统计</h3>
+            <span className={styles.panelMeta}>
+              最近点击：{htmlPreviewLatestClick}
+            </span>
+          </div>
+          {htmlPreviewClicks.length === 0 ? (
+            <div className={styles.emptyChartState}>
+              <Database className={styles.emptyBreakdownIcon} />
+              <span>
+                {htmlPreviewLoading ? "加载中..." : "暂无 HTML 预览点击数据"}
+              </span>
+            </div>
+          ) : (
+            <div className={styles.htmlPreviewDashboard}>
+              <div className={styles.htmlPreviewChart}>
+                <ReactECharts
+                  option={htmlPreviewChartOption}
+                  style={{ height: 276 }}
+                />
+              </div>
+              <div className={styles.htmlPreviewStats}>
+                <div className={styles.htmlPreviewStatCard}>
+                  <span>点击总数</span>
+                  <strong>{formatNumber(htmlPreviewTotalClicks)}</strong>
+                </div>
+                <div className={styles.htmlPreviewStatCard}>
+                  <span>按钮数量</span>
+                  <strong>{formatNumber(htmlPreviewButtonCount)}</strong>
+                </div>
+                <div className={styles.htmlPreviewStatCard}>
+                  <span>HTML 文件数</span>
+                  <strong>{formatNumber(htmlPreviewFileCount)}</strong>
+                </div>
+                <div className={styles.htmlPreviewTopList}>
+                  <div className={styles.htmlPreviewTopTitle}>点击最高</div>
+                  {htmlPreviewClicks.slice(0, 3).map((item, index) => (
+                    <div
+                      key={`${item.button_id || item.button_label}-${index}`}
+                      className={styles.htmlPreviewTopRow}
+                    >
+                      <span
+                        className={styles.htmlPreviewTopDot}
+                        style={{
+                          background:
+                            HTML_PREVIEW_COLORS[
+                              index % HTML_PREVIEW_COLORS.length
+                            ],
+                        }}
+                      />
+                      <Tooltip
+                        title={`${getHtmlPreviewButtonLabel(item)} / ${
+                          item.file_name || item.file_url || "-"
+                        }`}
+                        placement="top"
+                      >
+                        <span className={styles.htmlPreviewTopName}>
+                          {getHtmlPreviewButtonLabel(item)}
+                        </span>
+                      </Tooltip>
+                      <strong>{formatNumber(item.click_count)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </article>
       </section>
 

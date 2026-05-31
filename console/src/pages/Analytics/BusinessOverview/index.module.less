@@ -316,6 +316,7 @@
   display: grid;
   grid-template-columns: 2.2fr 2.1fr 1.72fr;
   gap: 16px;
+  margin-bottom: 16px;
 }
 
 .panelLarge,
@@ -337,6 +338,13 @@
   color: #111827;
   font-size: 18px;
   font-weight: 700;
+}
+
+.panelMeta {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .detailLink {
@@ -899,6 +907,131 @@
   text-align: center;
 }
 
+.htmlPreviewSection {
+  margin-bottom: 16px;
+}
+
+.htmlPreviewDashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.htmlPreviewChart {
+  min-width: 0;
+  min-height: 276px;
+}
+
+.htmlPreviewStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.htmlPreviewStatCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 76px;
+  padding: 12px;
+  background: #f8fbff;
+  border: 1px solid #edf2f8;
+  border-radius: 12px;
+}
+
+.htmlPreviewStatCard span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.htmlPreviewStatCard strong {
+  color: #111827;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.htmlPreviewTopList {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: #ffffff;
+  border: 1px solid #edf2f8;
+  border-radius: 12px;
+}
+
+.htmlPreviewTopTitle {
+  color: #25324b;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.htmlPreviewTopRow {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.htmlPreviewTopDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.htmlPreviewTopName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htmlPreviewTopRow strong {
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.emptyChartState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 276px;
+  color: #94a3b8;
+  font-size: 14px;
+  gap: 8px;
+}
+
+@media (max-width: 1180px) {
+  .htmlPreviewDashboard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .htmlPreviewSection .panelHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .htmlPreviewSection .panelMeta {
+    white-space: normal;
+  }
+
+  .htmlPreviewStats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 :global(.ant-picker) {
   border: 0;
   box-shadow: none;
@@ -950,4 +1083,3 @@
 .funnelWrap {
   min-height: 0;
 }
-

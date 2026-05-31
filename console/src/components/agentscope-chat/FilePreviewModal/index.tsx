@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, message, Tooltip, Spin } from "antd";
 import { FullscreenOutlined } from "@ant-design/icons";
 import {
@@ -9,24 +9,36 @@ import {
 } from "@agentscope-ai/icons";
 import { IconButton } from "@agentscope-ai/design";
 import { getFileIcon, getFileType, getContentType } from "./fileUtils";
+import { htmlPreviewEventsApi } from "@/api/modules/htmlPreviewEvents";
+import { useHtmlPreviewTracking } from "../HtmlPreviewTrackingContext";
+import { attachHtmlPreviewClickTracker } from "./htmlPreviewClickTracking";
 
 export interface FilePreviewModalProps {
   open: boolean;
   onClose: () => void;
   fileUrl: string;
   fileName: string;
+  enableClickTracking?: boolean;
 }
 
 function FilePreviewModal(props: FilePreviewModalProps) {
-  const { open, onClose, fileUrl, fileName } = props;
+  const { open, onClose, fileUrl, fileName, enableClickTracking = false } =
+    props;
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const cleanupClickTrackingRef = useRef<(() => void) | null>(null);
+  const trackingContext = useHtmlPreviewTracking();
 
   const fileType = useMemo(() => getFileType(fileName), [fileName]);
   const { icon, color } = useMemo(() => getFileIcon(fileName, 48), [fileName]);
+  const isHtmlPreview = useMemo(
+    () => fileType === "previewable" && getContentType(fileName) === "text/html",
+    [fileName, fileType],
+  );
 
   // fetch 文件数据并创建 Blob URL
   useEffect(() => {
@@ -64,6 +76,20 @@ function FilePreviewModal(props: FilePreviewModalProps) {
     };
   }, [blobUrl]);
 
+  useEffect(() => {
+    if (!open) {
+      cleanupClickTrackingRef.current?.();
+      cleanupClickTrackingRef.current = null;
+    }
+  }, [open]);
+
+  useEffect(() => {
+    return () => {
+      cleanupClickTrackingRef.current?.();
+      cleanupClickTrackingRef.current = null;
+    };
+  }, []);
+
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(fileUrl);
@@ -89,6 +115,37 @@ function FilePreviewModal(props: FilePreviewModalProps) {
     setFullscreen((prev) => !prev);
   }, []);
 
+  const handleIframeLoad = useCallback(() => {
+    cleanupClickTrackingRef.current?.();
+    cleanupClickTrackingRef.current = null;
+
+    const iframe = iframeRef.current;
+    if (!iframe || !isHtmlPreview || !enableClickTracking) {
+      return;
+    }
+
+    try {
+      cleanupClickTrackingRef.current = attachHtmlPreviewClickTracker({
+        iframe,
+        metadata: {
+          cronTaskId: trackingContext.cronTaskId,
+          cronTaskName: trackingContext.cronTaskName,
+          fileUrl,
+          fileName,
+        },
+        reporter: htmlPreviewEventsApi.recordClick,
+      });
+    } catch (error) {
+      console.warn("Failed to attach HTML preview click tracker:", error);
+    }
+  }, [
+    enableClickTracking,
+    fileName,
+    fileUrl,
+    isHtmlPreview,
+    trackingContext,
+  ]);
+
   const previewHeight = fullscreen ? "85vh" : "500px";
 
   const renderPreviewContent = useMemo(() => {
@@ -112,9 +169,11 @@ function FilePreviewModal(props: FilePreviewModalProps) {
         return (
           <div style={{ width: "100%", height: previewHeight }}>
             <iframe
+              ref={iframeRef}
               src={blobUrl}
               style={{ width: "100%", height: "100%", border: "none" }}
               title="File Preview"
+              onLoad={handleIframeLoad}
             />
           </div>
         );
@@ -141,7 +200,7 @@ function FilePreviewModal(props: FilePreviewModalProps) {
         </IconButton>
       </div>
     );
-  }, [fileType, blobUrl, loading, error, fileName, icon, color, handleDownload, previewHeight]);
+  }, [fileType, blobUrl, loading, error, fileName, icon, color, handleDownload, previewHeight, handleIframeLoad]);
 
   const headerActions = useMemo(() => {
     const actions = [

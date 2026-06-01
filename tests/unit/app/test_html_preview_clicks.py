@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from swe.app.html_preview_clicks.models import (
     HtmlPreviewClickEventCreate,
     HtmlPreviewClickSummaryItem,
+    HtmlPreviewCustomerClickSummaryItem,
 )
 from swe.app.html_preview_clicks.router import (
     router as html_preview_click_router,
@@ -157,6 +158,43 @@ async def test_list_events_returns_customer_info(mock_db):
     assert items[0].customer_info == {"客户姓名": "祝话"}
 
 
+@pytest.mark.asyncio
+async def test_list_customer_summary_groups_insight_and_phone(mock_db):
+    """客户维度聚合应分别返回洞察和电访次数。"""
+    clicked_at = datetime(2026, 5, 30, 11, 0, 0)
+    mock_db.fetch_all.return_value = [
+        {
+            "customer_id": "CUST-001",
+            "customer_name": "祝话",
+            "insight_count": 2,
+            "phone_count": 1,
+            "last_clicked_at": clicked_at,
+        },
+    ]
+    store = HtmlPreviewClickStore(mock_db)
+
+    items = await store.list_customer_summary(
+        source_id="copaw",
+        start_time=datetime(2026, 5, 30, 0, 0, 0),
+        end_time=datetime(2026, 5, 30, 23, 59, 59),
+        bbk_ids=["branch-1"],
+        limit=20,
+    )
+
+    query, params = mock_db.fetch_all.call_args[0]
+    assert "$.customer_id" in query
+    assert '$."客户姓名"' in query
+    assert "LIKE '%洞察%'" in query
+    assert "LIKE '%电话访问%'" in query
+    assert "GROUP BY customer_id, customer_name" in query
+    assert params[0] == "copaw"
+    assert "branch-1" in params
+    assert items[0].customer_id == "CUST-001"
+    assert items[0].customer_name == "祝话"
+    assert items[0].insight_count == 2
+    assert items[0].phone_count == 1
+
+
 def test_create_route_enriches_source_and_user(monkeypatch):
     """路由应从请求上下文补齐来源和用户标识。"""
 
@@ -231,6 +269,47 @@ def test_summary_route_returns_items(monkeypatch):
     payload = response.json()
     assert payload["success"] is True
     assert payload["items"][0]["button_id"] == "follow"
+
+
+def test_customer_summary_route_returns_customer_items(monkeypatch):
+    """客户聚合路由应返回洞察和电访点击次数。"""
+
+    class _FakeService:
+        async def list_customer_summary(self, **kwargs):
+            assert kwargs["source_id"] == "copaw"
+            assert kwargs["bbk_ids"] == ["branch-1"]
+            assert kwargs["limit"] == 20
+            return [
+                HtmlPreviewCustomerClickSummaryItem(
+                    customer_id="CUST-001",
+                    customer_name="祝话",
+                    insight_count=2,
+                    phone_count=1,
+                ),
+            ]
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_state(request: Request, call_next):
+        request.state.source_id = "copaw"
+        return await call_next(request)
+
+    app.include_router(html_preview_click_router)
+    monkeypatch.setattr(html_preview_router_module, "_service", _FakeService())
+
+    client = TestClient(app)
+    response = client.get(
+        "/html-preview/events/customer-summary",
+        params={"limit": 20, "bbk_ids": "branch-1"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["items"][0]["customer_id"] == "CUST-001"
+    assert payload["items"][0]["insight_count"] == 2
+    assert payload["items"][0]["phone_count"] == 1
 
 
 def test_event_list_route_returns_customer_items(monkeypatch):

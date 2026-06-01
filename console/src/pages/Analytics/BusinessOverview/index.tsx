@@ -30,8 +30,8 @@ import dayjs from "dayjs";
 import styles from "./index.module.less";
 import { htmlPreviewEventsApi } from "../../../api/modules/htmlPreviewEvents";
 import type {
-  HtmlPreviewClickEventItem,
   HtmlPreviewClickSummaryItem,
+  HtmlPreviewCustomerClickSummaryItem,
 } from "../../../api/types/htmlPreviewEvents";
 import {
   tracingApi,
@@ -285,38 +285,6 @@ function getHtmlPreviewButtonLabel(item: HtmlPreviewClickSummaryItem): string {
     item.button_label ||
     "未知按钮"
   );
-}
-
-function getHtmlPreviewEventButtonLabel(item: HtmlPreviewClickEventItem): string {
-  return (
-    item.button_name ||
-    item.button_text ||
-    item.button_id ||
-    "未知按钮"
-  );
-}
-
-function getHtmlPreviewCustomerLabel(item: HtmlPreviewClickEventItem): string {
-  const info = item.customer_info || {};
-  return (
-    info["客户姓名"] ||
-    info.customer_name ||
-    info.name ||
-    info["姓名"] ||
-    Object.values(info).find(Boolean) ||
-    "未知客户"
-  );
-}
-
-function getHtmlPreviewCustomerMeta(item: HtmlPreviewClickEventItem): string {
-  const info = item.customer_info || {};
-  return [
-    info["到期产品"] || info.product || info.customer_product,
-    info["到期金额"] || info.amount || info.expire_amount,
-    info["到期日期"] || info.expire_date,
-  ]
-    .filter(Boolean)
-    .join(" / ");
 }
 
 function buildHtmlPreviewClickOption(items: HtmlPreviewClickSummaryItem[]) {
@@ -809,8 +777,8 @@ export default function BusinessOverviewPage() {
   const [htmlPreviewClicks, setHtmlPreviewClicks] = useState<
     HtmlPreviewClickSummaryItem[]
   >([]);
-  const [htmlPreviewEvents, setHtmlPreviewEvents] = useState<
-    HtmlPreviewClickEventItem[]
+  const [htmlPreviewCustomerClicks, setHtmlPreviewCustomerClicks] = useState<
+    HtmlPreviewCustomerClickSummaryItem[]
   >([]);
   const [htmlPreviewLoading, setHtmlPreviewLoading] = useState(false);
   const [errorLoading, setErrorLoading] = useState(false);
@@ -1029,9 +997,9 @@ export default function BusinessOverviewPage() {
         bbkIds: effectiveBbkIds?.join(","),
         limit: 100,
       };
-      const [summaryResult, eventResult] = await Promise.allSettled([
+      const [summaryResult, customerSummaryResult] = await Promise.allSettled([
         htmlPreviewEventsApi.getSummary(params),
-        htmlPreviewEventsApi.getEvents({ ...params, limit: 50 }),
+        htmlPreviewEventsApi.getCustomerSummary(params),
       ]);
       if (summaryResult.status === "fulfilled") {
         setHtmlPreviewClicks(summaryResult.value.items || []);
@@ -1042,19 +1010,19 @@ export default function BusinessOverviewPage() {
         );
         setHtmlPreviewClicks([]);
       }
-      if (eventResult.status === "fulfilled") {
-        setHtmlPreviewEvents(eventResult.value.items || []);
+      if (customerSummaryResult.status === "fulfilled") {
+        setHtmlPreviewCustomerClicks(customerSummaryResult.value.items || []);
       } else {
         console.error(
-          "Failed to fetch HTML preview click events:",
-          eventResult.reason,
+          "Failed to fetch HTML preview customer click summary:",
+          customerSummaryResult.reason,
         );
-        setHtmlPreviewEvents([]);
+        setHtmlPreviewCustomerClicks([]);
       }
     } catch (error) {
       console.error("Failed to fetch HTML preview click statistics:", error);
       setHtmlPreviewClicks([]);
-      setHtmlPreviewEvents([]);
+      setHtmlPreviewCustomerClicks([]);
     } finally {
       setHtmlPreviewLoading(false);
     }
@@ -1952,40 +1920,46 @@ export default function BusinessOverviewPage() {
                   ))}
                 </div>
                 <div className={styles.htmlPreviewEventList}>
-                  <div className={styles.htmlPreviewTopTitle}>客户点击明细</div>
-                  {htmlPreviewEvents.length === 0 ? (
+                  <div className={styles.htmlPreviewTopTitle}>客户点击统计</div>
+                  {htmlPreviewCustomerClicks.length === 0 ? (
                     <div className={styles.htmlPreviewEmptyLine}>
-                      暂无客户点击明细
+                      暂无客户点击统计
                     </div>
                   ) : (
-                    htmlPreviewEvents.slice(0, 5).map((item) => {
-                      const meta = getHtmlPreviewCustomerMeta(item);
-                      return (
+                    <div className={styles.htmlPreviewCustomerTable}>
+                      <div className={styles.htmlPreviewCustomerHeader}>
+                        <span>客户</span>
+                        <span>洞察</span>
+                        <span>电访</span>
+                        <span>最近</span>
+                      </div>
+                      {htmlPreviewCustomerClicks.slice(0, 8).map((item) => (
                         <div
-                          key={`${item.id}-${item.clicked_at || ""}`}
-                          className={styles.htmlPreviewEventRow}
+                          key={`${item.customer_id || item.customer_name}-${
+                            item.last_clicked_at || ""
+                          }`}
+                          className={styles.htmlPreviewCustomerRow}
                         >
-                          <div className={styles.htmlPreviewEventMain}>
+                          <div className={styles.htmlPreviewCustomerCell}>
                             <span className={styles.htmlPreviewCustomerName}>
-                              {getHtmlPreviewCustomerLabel(item)}
+                              {item.customer_name || "未知客户"}
                             </span>
-                            <span className={styles.htmlPreviewEventButton}>
-                              {getHtmlPreviewEventButtonLabel(item)}
-                            </span>
+                            {item.customer_id && (
+                              <span className={styles.htmlPreviewCustomerId}>
+                                {item.customer_id}
+                              </span>
+                            )}
                           </div>
-                          {meta && (
-                            <div className={styles.htmlPreviewEventMeta}>
-                              {meta}
-                            </div>
-                          )}
-                          <div className={styles.htmlPreviewEventTime}>
-                            {item.clicked_at
-                              ? dayjs(item.clicked_at).format("MM-DD HH:mm")
+                          <strong>{formatNumber(item.insight_count)}</strong>
+                          <strong>{formatNumber(item.phone_count)}</strong>
+                          <span className={styles.htmlPreviewEventTime}>
+                            {item.last_clicked_at
+                              ? dayjs(item.last_clicked_at).format("MM-DD HH:mm")
                               : "-"}
-                          </div>
+                          </span>
                         </div>
-                      );
-                    })
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>

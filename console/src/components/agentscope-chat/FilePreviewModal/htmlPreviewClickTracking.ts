@@ -14,7 +14,15 @@ export type HtmlPreviewClickReporter = (
 const CLICKABLE_SELECTOR = "button,a,[role='button'],[data-track-id]";
 const CUSTOMER_DATA_PREFIX = "customer";
 const CUSTOMER_INFO_DATA_KEY = "customerInfo";
-const OPERATION_HEADER_PATTERN = /^(操作|动作|链接|按钮)$/;
+const CUSTOMER_NAME_HEADER_PATTERN = /^(客户姓名|客户名称|姓名)$/;
+const CUSTOMER_INFO_ALLOWED_KEYS = new Set([
+  "customer_id",
+  "customer_name",
+  "name",
+  "客户姓名",
+  "客户名称",
+  "姓名",
+]);
 
 function normalizeText(value: string | null | undefined, maxLength: number) {
   const normalized = value?.replace(/\s+/g, " ").trim() || "";
@@ -26,6 +34,12 @@ function normalizeKey(value: string) {
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replace(/[\s-]+/g, "_")
     .toLowerCase();
+}
+
+function normalizeCustomerDatasetKey(key: string) {
+  const rawKey = key.replace(CUSTOMER_DATA_PREFIX, "") || key;
+  const normalizedKey = normalizeKey(rawKey);
+  return normalizedKey === "id" ? "customer_id" : normalizedKey;
 }
 
 function getElementName(element: HTMLElement, buttonText: string | null) {
@@ -51,7 +65,10 @@ function parseCustomerInfoJson(value: string | undefined) {
           normalizeKey(key),
           item == null ? null : normalizeText(String(item), 512),
         ])
-        .filter((entry): entry is [string, string] => Boolean(entry[1])),
+        .filter(
+          (entry): entry is [string, string] =>
+            Boolean(entry[1]) && CUSTOMER_INFO_ALLOWED_KEYS.has(entry[0]),
+        ),
     );
   } catch {
     return null;
@@ -76,10 +93,11 @@ function getStructuredCustomerInfo(element: HTMLElement) {
       ([key, value]) =>
         key !== CUSTOMER_INFO_DATA_KEY &&
         key.startsWith(CUSTOMER_DATA_PREFIX) &&
+        CUSTOMER_INFO_ALLOWED_KEYS.has(normalizeCustomerDatasetKey(key)) &&
         Boolean(normalizeText(value, 512)),
     )
     .map(([key, value]) => [
-      normalizeKey(key.replace(CUSTOMER_DATA_PREFIX, "") || key),
+      normalizeCustomerDatasetKey(key),
       normalizeText(value, 512),
     ])
     .filter((entry): entry is [string, string] => Boolean(entry[1]));
@@ -116,7 +134,7 @@ function getFallbackCustomerInfoFromRow(element: HTMLElement) {
   const entries = cells
     .map((cell, index) => {
       const header = headers[index] || `column_${index + 1}`;
-      if (OPERATION_HEADER_PATTERN.test(header)) {
+      if (!CUSTOMER_NAME_HEADER_PATTERN.test(header)) {
         return null;
       }
       const value = normalizeText(cell.textContent, 512);

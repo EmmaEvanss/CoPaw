@@ -504,6 +504,26 @@ class CronManager:  # pylint: disable=too-many-public-methods
             resolve_scope_id(spec.tenant_id, spec.source_id) or spec.tenant_id
         )
 
+    @staticmethod
+    def _with_execution_source_identity(
+        spec: CronJobSpec,
+        source_id: str | None,
+    ) -> CronJobSpec:
+        """Use callback source identity for legacy jobs that lack it."""
+        if not source_id or spec.source_id or spec.scope_id:
+            return spec
+        tenant_id, resolved_source_id, scope_id = resolve_runtime_identity(
+            spec.tenant_id,
+            source_id,
+        )
+        return spec.model_copy(
+            update={
+                "tenant_id": tenant_id or spec.tenant_id,
+                "source_id": resolved_source_id or source_id,
+                "scope_id": scope_id,
+            },
+        )
+
     def _resolve_scheduled_run_source_id(
         self,
         source_id: str | None,
@@ -890,7 +910,12 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
             return True
 
-    async def run_job(self, job_id: str, is_manual: bool = True) -> None:
+    async def run_job(
+        self,
+        job_id: str,
+        is_manual: bool = True,
+        source_id: str | None = None,
+    ) -> None:
         """Trigger a job to run in the background (fire-and-forget).
 
         This is called either by:
@@ -924,7 +949,11 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self._states[job_id] = st
         with bind_llm_workload(LLM_WORKLOAD_CRON):
             task = asyncio.create_task(
-                self._execute_once(job, is_manual=is_manual),
+                self._execute_once(
+                    job,
+                    is_manual=is_manual,
+                    source_id=source_id,
+                ),
                 name=f"cron-run-{job_id}",
             )
         task.add_done_callback(lambda t: self._task_done_cb(t, job))
@@ -1920,8 +1949,10 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self,
         job: CronJobSpec,
         is_manual: bool = False,
+        source_id: str | None = None,
     ) -> None:
         job = await self._ensure_persisted_task_binding(job)
+        job = self._with_execution_source_identity(job, source_id)
         rt = self._rt.get(job.id)
         if not rt:
             rt = _Runtime(sem=asyncio.Semaphore(job.runtime.max_concurrency))

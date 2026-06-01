@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import type { HtmlPreviewClickEventPayload } from "@/api/types/htmlPreviewEvents";
 import {
   attachHtmlPreviewClickTracker,
   buildHtmlPreviewClickPayload,
+  buildHtmlPreviewListSnapshotPayload,
 } from "./htmlPreviewClickTracking";
 
 function createDocument(html: string) {
@@ -33,9 +35,12 @@ describe("htmlPreviewClickTracking", () => {
       cron_task_name: "存款到期提醒",
       file_url: "https://example.com/a.html",
       file_name: "a.html",
+      list_key: "https://example.com/a.html",
+      list_name: "a.html",
       button_id: "follow",
       button_name: "立即跟进",
       button_text: "跟进客户",
+      button_type: "other",
       clicked_at: "2026-05-30T10:00:00.000Z",
     });
   });
@@ -76,6 +81,7 @@ describe("htmlPreviewClickTracking", () => {
     expect(insightPayload?.button_name).toBe("洞察页面");
     expect(phonePayload?.button_id).toBe("phone");
     expect(phonePayload?.button_name).toBe("电话访问");
+    expect(phonePayload?.button_type).toBe("phone");
   });
 
   it("prefers structured customer fields from the clicked table row", () => {
@@ -101,6 +107,8 @@ describe("htmlPreviewClickTracking", () => {
       customer_id: "CUST-001",
       name: "祝话",
     });
+    expect(payload?.customer_id).toBe("CUST-001");
+    expect(payload?.customer_name).toBe("祝话");
   });
 
   it("only keeps customer identity when falling back to table headers", () => {
@@ -136,6 +144,71 @@ describe("htmlPreviewClickTracking", () => {
     expect(payload?.customer_info).toEqual({
       "客户姓名": "祝话",
     });
+    expect(payload?.customer_name).toBe("祝话");
+  });
+
+  it("builds list snapshot payload from structured and table fallback rows", () => {
+    const doc = createDocument(`
+      <table>
+        <thead>
+          <tr>
+            <th>序号</th>
+            <th>客户姓名</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-customer-id="CUST-001" data-customer-name="祝话">
+            <td>1</td>
+            <td><strong>祝话</strong></td>
+            <td><a class="link-btn">洞察页面</a></td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><strong>程广泛</strong></td>
+            <td><a class="link-btn phone">电话访问</a></td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+
+    const payload = buildHtmlPreviewListSnapshotPayload(
+      doc,
+      {
+        cronTaskId: "task-1",
+        cronTaskName: "存款到期提醒",
+        fileUrl: "https://example.com/a.html",
+        fileName: "a.html",
+      },
+      new Date("2026-05-30T10:00:00.000Z"),
+    );
+
+    expect(payload).toMatchObject({
+      cron_task_id: "task-1",
+      cron_task_name: "存款到期提醒",
+      list_key: "https://example.com/a.html",
+      list_name: "a.html",
+      file_url: "https://example.com/a.html",
+      file_name: "a.html",
+      snapshot_at: "2026-05-30T10:00:00.000Z",
+    });
+    expect(payload?.customers).toEqual([
+      {
+        customer_id: "CUST-001",
+        customer_name: "祝话",
+        extra_info: {
+          customer_id: "CUST-001",
+          name: "祝话",
+        },
+      },
+      {
+        customer_id: null,
+        customer_name: "程广泛",
+        extra_info: {
+          "客户姓名": "程广泛",
+        },
+      },
+    ]);
   });
 
   it("listens to iframe clicks without blocking rejected reports", async () => {
@@ -144,7 +217,9 @@ describe("htmlPreviewClickTracking", () => {
     const doc = iframe.contentDocument!;
     doc.body.innerHTML =
       '<div><button id="follow"><span>立即跟进</span></button></div>';
-    const reporter = vi.fn(() => Promise.reject(new Error("network error")));
+    const reporter = vi.fn((_: HtmlPreviewClickEventPayload) =>
+      Promise.reject(new Error("network error")),
+    );
 
     const cleanup = attachHtmlPreviewClickTracker({
       iframe,
@@ -153,6 +228,7 @@ describe("htmlPreviewClickTracking", () => {
         fileName: "a.html",
       },
       reporter,
+      listSnapshotReporter: vi.fn(),
     });
 
     const span = doc.querySelector("span") as HTMLElement;

@@ -141,6 +141,7 @@ function FilePreviewModal(props: FilePreviewModalProps) {
           fileName,
         },
         reporter: htmlPreviewEventsApi.recordClick,
+        listSnapshotReporter: htmlPreviewEventsApi.recordListSnapshot,
       });
     } catch (error) {
       console.warn("Failed to attach HTML preview click tracker:", error);

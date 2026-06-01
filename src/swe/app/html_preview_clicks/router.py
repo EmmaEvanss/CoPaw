@@ -12,14 +12,18 @@ from .models import (
     HtmlPreviewClickEventCreate,
     HtmlPreviewClickEventListResponse,
     HtmlPreviewClickSummaryResponse,
+    HtmlPreviewCustomerClickResponse,
     HtmlPreviewCustomerClickSummaryResponse,
+    HtmlPreviewListSnapshotCreate,
+    HtmlPreviewListSnapshotResponse,
+    HtmlPreviewListSummaryResponse,
 )
 from .service import HtmlPreviewClickService
 from .store import HtmlPreviewClickStore
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/html-preview/events", tags=["html-preview"])
+router = APIRouter(prefix="/html-preview", tags=["html-preview"])
 
 _store: Optional[HtmlPreviewClickStore] = None
 _service: Optional[HtmlPreviewClickService] = None
@@ -94,7 +98,7 @@ def _get_request_bbk_id(request: Request) -> Optional[str]:
     )
 
 
-@router.post("", response_model=HtmlPreviewClickCreateResponse)
+@router.post("/events", response_model=HtmlPreviewClickCreateResponse)
 async def create_html_preview_click_event(
     request: Request,
     event: HtmlPreviewClickEventCreate,
@@ -134,7 +138,42 @@ async def create_html_preview_click_event(
     return HtmlPreviewClickCreateResponse()
 
 
-@router.get("", response_model=HtmlPreviewClickEventListResponse)
+@router.post("/list-snapshot", response_model=HtmlPreviewListSnapshotResponse)
+async def create_html_preview_list_snapshot(
+    request: Request,
+    snapshot: HtmlPreviewListSnapshotCreate,
+) -> HtmlPreviewListSnapshotResponse:
+    """提交一份 HTML 预览名单客户快照。"""
+    try:
+        service = get_service()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    enriched = snapshot.model_copy(
+        update={
+            "source_id": _first_text(
+                _get_request_source_id(request),
+                snapshot.source_id,
+            ),
+            "bbk_id": _first_text(
+                _get_request_bbk_id(request),
+                snapshot.bbk_id,
+            ),
+            "snapshot_at": snapshot.snapshot_at or datetime.now(),
+        },
+    )
+    try:
+        count = await service.create_list_snapshot(enriched)
+    except Exception as exc:
+        logger.exception("保存 HTML 预览名单快照失败: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail="保存 HTML 预览名单快照失败，请检查数据库表结构与后端日志。",
+        ) from exc
+    return HtmlPreviewListSnapshotResponse(customer_count=count)
+
+
+@router.get("/events", response_model=HtmlPreviewClickEventListResponse)
 async def list_html_preview_click_events(
     request: Request,
     start_time: Optional[datetime] = None,
@@ -142,6 +181,7 @@ async def list_html_preview_click_events(
     bbk_ids: Optional[str] = None,
     cron_task_id: Optional[str] = None,
     file_url: Optional[str] = None,
+    list_key: Optional[str] = None,
     limit: int = Query(default=50, ge=1, le=200),
 ) -> HtmlPreviewClickEventListResponse:
     """查询 HTML 预览按钮点击明细。"""
@@ -157,12 +197,13 @@ async def list_html_preview_click_events(
         bbk_ids=_split_text_list(bbk_ids),
         cron_task_id=_first_text(cron_task_id),
         file_url=_first_text(file_url),
+        list_key=_first_text(list_key),
         limit=limit,
     )
     return HtmlPreviewClickEventListResponse(items=items)
 
 
-@router.get("/summary", response_model=HtmlPreviewClickSummaryResponse)
+@router.get("/events/summary", response_model=HtmlPreviewClickSummaryResponse)
 async def get_html_preview_click_summary(
     request: Request,
     start_time: Optional[datetime] = None,
@@ -170,6 +211,7 @@ async def get_html_preview_click_summary(
     bbk_ids: Optional[str] = None,
     cron_task_id: Optional[str] = None,
     file_url: Optional[str] = None,
+    list_key: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=200),
 ) -> HtmlPreviewClickSummaryResponse:
     """按按钮聚合查询 HTML 预览点击次数。"""
@@ -185,13 +227,14 @@ async def get_html_preview_click_summary(
         bbk_ids=_split_text_list(bbk_ids),
         cron_task_id=_first_text(cron_task_id),
         file_url=_first_text(file_url),
+        list_key=_first_text(list_key),
         limit=limit,
     )
     return HtmlPreviewClickSummaryResponse(items=items)
 
 
 @router.get(
-    "/customer-summary",
+    "/events/customer-summary",
     response_model=HtmlPreviewCustomerClickSummaryResponse,
 )
 async def get_html_preview_customer_click_summary(
@@ -201,6 +244,7 @@ async def get_html_preview_customer_click_summary(
     bbk_ids: Optional[str] = None,
     cron_task_id: Optional[str] = None,
     file_url: Optional[str] = None,
+    list_key: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=200),
 ) -> HtmlPreviewCustomerClickSummaryResponse:
     """按客户聚合查询洞察和电访按钮点击次数。"""
@@ -216,6 +260,66 @@ async def get_html_preview_customer_click_summary(
         bbk_ids=_split_text_list(bbk_ids),
         cron_task_id=_first_text(cron_task_id),
         file_url=_first_text(file_url),
+        list_key=_first_text(list_key),
         limit=limit,
     )
     return HtmlPreviewCustomerClickSummaryResponse(items=items)
+
+
+@router.get("/lists", response_model=HtmlPreviewListSummaryResponse)
+async def list_html_preview_lists(
+    request: Request,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    bbk_ids: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=200),
+) -> HtmlPreviewListSummaryResponse:
+    """查询 HTML 名单维度统计。"""
+    try:
+        service = get_service()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    items = await service.list_lists(
+        source_id=_get_request_source_id(request),
+        start_time=start_time,
+        end_time=end_time,
+        bbk_ids=_split_text_list(bbk_ids),
+        limit=limit,
+    )
+    return HtmlPreviewListSummaryResponse(items=items)
+
+
+@router.get(
+    "/customer-clicks",
+    response_model=HtmlPreviewCustomerClickResponse,
+)
+async def list_html_preview_customer_clicks(
+    request: Request,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    bbk_ids: Optional[str] = None,
+    cron_task_id: Optional[str] = None,
+    file_url: Optional[str] = None,
+    list_key: Optional[str] = None,
+    include_unclicked: bool = False,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> HtmlPreviewCustomerClickResponse:
+    """查询 HTML 名单客户维度洞察和电访点击明细。"""
+    try:
+        service = get_service()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    items = await service.list_customer_clicks(
+        source_id=_get_request_source_id(request),
+        start_time=start_time,
+        end_time=end_time,
+        bbk_ids=_split_text_list(bbk_ids),
+        cron_task_id=_first_text(cron_task_id),
+        file_url=_first_text(file_url),
+        list_key=_first_text(list_key),
+        include_unclicked=include_unclicked,
+        limit=limit,
+    )
+    return HtmlPreviewCustomerClickResponse(items=items)

@@ -270,8 +270,20 @@ async def test_source_disabled_config_skips_memory_tool_result_compaction(
         memory=memory,
         print=AsyncMock(),
     )
+    load_agent_config_calls: list[tuple[str, str | None]] = []
+
+    def fake_load_agent_config(
+        agent_id: str,
+        config_path=None,
+        *,
+        tenant_id: str | None = None,
+    ):
+        load_agent_config_calls.append((agent_id, tenant_id))
+        return agent_config
+
     memory_manager = SimpleNamespace(
         agent_id="default",
+        tenant_id="tenant-a",
         compact_tool_result=AsyncMock(),
         check_context=AsyncMock(return_value=([], [], True)),
     )
@@ -285,7 +297,7 @@ async def test_source_disabled_config_skips_memory_tool_result_compaction(
     monkeypatch.setattr(
         memory_compaction,
         "load_agent_config",
-        lambda agent_id: agent_config,
+        fake_load_agent_config,
     )
     monkeypatch.setattr(
         memory_compaction,
@@ -297,3 +309,5 @@ async def test_source_disabled_config_skips_memory_tool_result_compaction(
         await MemoryCompactionHook(memory_manager)(agent, {})
 
     memory_manager.compact_tool_result.assert_not_awaited()
+    memory_manager.check_context.assert_awaited_once()
+    assert load_agent_config_calls == [("default", "tenant-a")]

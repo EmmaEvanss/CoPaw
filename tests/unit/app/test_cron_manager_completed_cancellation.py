@@ -42,9 +42,7 @@ class _Runner:
 
 class _PendingRunner:
     async def stream_query(self, _req):
-        # 需要使用 yield 使其成为异步生成器，否则 async for 会报 TypeError
         await asyncio.sleep(30)
-        yield
 
 
 class _ChannelManager:
@@ -122,10 +120,6 @@ def test_completed_agent_output_cancelled_before_stream_close_keeps_success(
         manager._monitor_sync_client = (
             monitor  # pylint: disable=protected-access
         )
-        # executor 也需要使用同一个 monitor
-        manager._executor._monitor_sync_client = (
-            monitor  # pylint: disable=protected-access
-        )
 
         task = asyncio.create_task(
             manager._execute_once(  # pylint: disable=protected-access
@@ -173,10 +167,6 @@ def test_completed_agent_event_cancelled_during_send_keeps_success():
         manager._monitor_sync_client = (
             monitor  # pylint: disable=protected-access
         )
-        # executor 也需要使用同一个 monitor
-        manager._executor._monitor_sync_client = (
-            monitor  # pylint: disable=protected-access
-        )
 
         task = asyncio.create_task(
             manager._execute_once(  # pylint: disable=protected-access
@@ -216,10 +206,6 @@ def test_agent_cancelled_before_completed_output_keeps_cancelled():
             channel_manager=channel_manager,
         )
         manager._monitor_sync_client = (
-            monitor  # pylint: disable=protected-access
-        )
-        # executor 也需要使用同一个 monitor
-        manager._executor._monitor_sync_client = (
             monitor  # pylint: disable=protected-access
         )
 

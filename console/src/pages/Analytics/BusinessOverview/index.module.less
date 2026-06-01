@@ -967,6 +967,17 @@
   border-radius: 12px;
 }
 
+.htmlPreviewEventList {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: #ffffff;
+  border: 1px solid #edf2f8;
+  border-radius: 12px;
+}
+
 .htmlPreviewTopTitle {
   color: #25324b;
   font-size: 14px;
@@ -998,6 +1009,47 @@
 .htmlPreviewTopRow strong {
   color: #111827;
   font-variant-numeric: tabular-nums;
+}
+
+.htmlPreviewEventRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid #edf2f8;
+}
+
+.htmlPreviewEventMain {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.htmlPreviewCustomerName,
+.htmlPreviewEventMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htmlPreviewEventButton {
+  flex: none;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.htmlPreviewEventMeta,
+.htmlPreviewEventTime,
+.htmlPreviewEmptyLine {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .emptyChartState {

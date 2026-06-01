@@ -5,6 +5,7 @@ import { buildAuthHeaders } from "../authHeaders";
 import { getApiUrl } from "../config";
 import { request } from "../request";
 import type {
+  HtmlPreviewClickEventListResponse,
   HtmlPreviewClickEventPayload,
   HtmlPreviewClickSubmitResponse,
   HtmlPreviewClickSummaryResponse,
@@ -42,6 +43,20 @@ export const htmlPreviewEventsApi = {
       return { success: false };
     }
   },
+  getEvents: (params?: {
+    startTime?: string | null;
+    endTime?: string | null;
+    bbkIds?: string | null;
+    cronTaskId?: string | null;
+    fileUrl?: string | null;
+    limit?: number;
+  }) => {
+    const search = buildSearchParams(params);
+    const query = search.toString();
+    return request<HtmlPreviewClickEventListResponse>(
+      `/html-preview/events${query ? `?${query}` : ""}`,
+    );
+  },
   getSummary: (params?: {
     startTime?: string | null;
     endTime?: string | null;
@@ -50,28 +65,40 @@ export const htmlPreviewEventsApi = {
     fileUrl?: string | null;
     limit?: number;
   }) => {
-    const search = new URLSearchParams();
-    if (params?.startTime) {
-      search.set("start_time", params.startTime);
-    }
-    if (params?.endTime) {
-      search.set("end_time", params.endTime);
-    }
-    if (params?.bbkIds) {
-      search.set("bbk_ids", params.bbkIds);
-    }
-    if (params?.cronTaskId) {
-      search.set("cron_task_id", params.cronTaskId);
-    }
-    if (params?.fileUrl) {
-      search.set("file_url", params.fileUrl);
-    }
-    if (params?.limit) {
-      search.set("limit", String(params.limit));
-    }
+    const search = buildSearchParams(params);
     const query = search.toString();
     return request<HtmlPreviewClickSummaryResponse>(
       `/html-preview/events/summary${query ? `?${query}` : ""}`,
     );
   },
 };
+
+function buildSearchParams(params?: {
+  startTime?: string | null;
+  endTime?: string | null;
+  bbkIds?: string | null;
+  cronTaskId?: string | null;
+  fileUrl?: string | null;
+  limit?: number;
+}) {
+  const search = new URLSearchParams();
+  if (params?.startTime) {
+    search.set("start_time", params.startTime);
+  }
+  if (params?.endTime) {
+    search.set("end_time", params.endTime);
+  }
+  if (params?.bbkIds) {
+    search.set("bbk_ids", params.bbkIds);
+  }
+  if (params?.cronTaskId) {
+    search.set("cron_task_id", params.cronTaskId);
+  }
+  if (params?.fileUrl) {
+    search.set("file_url", params.fileUrl);
+  }
+  if (params?.limit) {
+    search.set("limit", String(params.limit));
+  }
+  return search;
+}

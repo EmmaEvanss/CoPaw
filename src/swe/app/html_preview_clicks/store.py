@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """HTML 预览点击统计数据库存储。"""
 
+import json
 from datetime import datetime
 from typing import Any, Optional
 
 from .models import (
     HtmlPreviewClickEventCreate,
+    HtmlPreviewClickEventItem,
     HtmlPreviewClickSummaryItem,
 )
 
@@ -31,6 +33,35 @@ class HtmlPreviewClickStore:
         return stripped or None
 
     @staticmethod
+    def _encode_customer_info(
+        value: Optional[dict[str, str]],
+    ) -> Optional[str]:
+        """把客户信息序列化为 JSON，避免数据库驱动差异影响写入。"""
+        if not value:
+            return None
+        cleaned = {
+            str(key).strip(): str(item).strip()
+            for key, item in value.items()
+            if str(key).strip() and str(item).strip()
+        }
+        return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+
+    @staticmethod
+    def _decode_customer_info(value: Any) -> Optional[dict[str, str]]:
+        """解析数据库中的客户信息 JSON。"""
+        if not value:
+            return None
+        if isinstance(value, dict):
+            return {str(key): str(item) for key, item in value.items()}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return {str(key): str(item) for key, item in parsed.items()}
+
+    @staticmethod
     def _to_summary_item(row: dict[str, Any]) -> HtmlPreviewClickSummaryItem:
         """把数据库行转换为点击聚合模型。"""
         return HtmlPreviewClickSummaryItem(
@@ -45,6 +76,25 @@ class HtmlPreviewClickStore:
             file_name=row.get("file_name"),
             click_count=int(row.get("click_count") or 0),
             last_clicked_at=row.get("last_clicked_at"),
+        )
+
+    @classmethod
+    def _to_event_item(cls, row: dict[str, Any]) -> HtmlPreviewClickEventItem:
+        """把数据库行转换为点击明细模型。"""
+        return HtmlPreviewClickEventItem(
+            id=int(row.get("id") or 0),
+            source_id=row.get("source_id"),
+            user_id=row.get("user_id"),
+            bbk_id=row.get("bbk_id"),
+            cron_task_id=row.get("cron_task_id"),
+            cron_task_name=row.get("cron_task_name"),
+            file_url=row.get("file_url") or "",
+            file_name=row.get("file_name"),
+            button_id=row.get("button_id"),
+            button_name=row.get("button_name"),
+            button_text=row.get("button_text"),
+            customer_info=cls._decode_customer_info(row.get("customer_info")),
+            clicked_at=row.get("clicked_at"),
         )
 
     async def create_event(
@@ -67,9 +117,10 @@ class HtmlPreviewClickStore:
                 button_id,
                 button_name,
                 button_text,
+                customer_info,
                 clicked_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         await self.db.execute(
             query,
@@ -84,9 +135,57 @@ class HtmlPreviewClickStore:
                 self._clean_text(event.button_id),
                 self._clean_text(event.button_name),
                 self._clean_text(event.button_text),
+                self._encode_customer_info(event.customer_info),
                 event.clicked_at or datetime.now(),
             ),
         )
+
+    async def list_events(
+        self,
+        *,
+        source_id: Optional[str],
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        bbk_ids: Optional[list[str]] = None,
+        cron_task_id: Optional[str] = None,
+        file_url: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[HtmlPreviewClickEventItem]:
+        """查询 HTML 预览按钮点击明细。"""
+        if not self._use_db:
+            return []
+
+        where_sql, params = self._build_where_clause(
+            source_id=source_id,
+            start_time=start_time,
+            end_time=end_time,
+            bbk_ids=bbk_ids,
+            cron_task_id=cron_task_id,
+            file_url=file_url,
+        )
+        safe_limit = max(1, min(limit, 200))
+        query = f"""
+            SELECT
+                id,
+                source_id,
+                user_id,
+                bbk_id,
+                cron_task_id,
+                cron_task_name,
+                file_url,
+                file_name,
+                button_id,
+                button_name,
+                button_text,
+                customer_info,
+                clicked_at
+            FROM swe_html_preview_click_events
+            {where_sql}
+            ORDER BY clicked_at DESC, id DESC
+            LIMIT {safe_limit}
+        """
+        rows = await self.db.fetch_all(query, tuple(params))
+        return [self._to_event_item(row) for row in rows]
 
     async def list_summary(
         self,
@@ -103,30 +202,13 @@ class HtmlPreviewClickStore:
         if not self._use_db:
             return []
 
-        where_clauses: list[str] = []
-        params: list[Any] = []
-        if source_id:
-            where_clauses.append("source_id <=> %s")
-            params.append(source_id)
-        if start_time:
-            where_clauses.append("clicked_at >= %s")
-            params.append(start_time)
-        if end_time:
-            where_clauses.append("clicked_at <= %s")
-            params.append(end_time)
-        if bbk_ids:
-            placeholders = ", ".join(["%s"] * len(bbk_ids))
-            where_clauses.append(f"bbk_id IN ({placeholders})")
-            params.extend(bbk_ids)
-        if cron_task_id:
-            where_clauses.append("cron_task_id = %s")
-            params.append(cron_task_id)
-        if file_url:
-            where_clauses.append("file_url = %s")
-            params.append(file_url)
-
-        where_sql = (
-            f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        where_sql, params = self._build_where_clause(
+            source_id=source_id,
+            start_time=start_time,
+            end_time=end_time,
+            bbk_ids=bbk_ids,
+            cron_task_id=cron_task_id,
+            file_url=file_url,
         )
         safe_limit = max(1, min(limit, 200))
 
@@ -162,3 +244,41 @@ class HtmlPreviewClickStore:
         """
         rows = await self.db.fetch_all(query, tuple(params))
         return [self._to_summary_item(row) for row in rows]
+
+    def _build_where_clause(
+        self,
+        *,
+        source_id: Optional[str],
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        bbk_ids: Optional[list[str]] = None,
+        cron_task_id: Optional[str] = None,
+        file_url: Optional[str] = None,
+    ) -> tuple[str, list[Any]]:
+        """构造点击查询的公共筛选条件。"""
+        where_clauses: list[str] = []
+        params: list[Any] = []
+        if source_id:
+            where_clauses.append("source_id <=> %s")
+            params.append(source_id)
+        if start_time:
+            where_clauses.append("clicked_at >= %s")
+            params.append(start_time)
+        if end_time:
+            where_clauses.append("clicked_at <= %s")
+            params.append(end_time)
+        if bbk_ids:
+            placeholders = ", ".join(["%s"] * len(bbk_ids))
+            where_clauses.append(f"bbk_id IN ({placeholders})")
+            params.extend(bbk_ids)
+        if cron_task_id:
+            where_clauses.append("cron_task_id = %s")
+            params.append(cron_task_id)
+        if file_url:
+            where_clauses.append("file_url = %s")
+            params.append(file_url)
+
+        where_sql = (
+            f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        )
+        return where_sql, params

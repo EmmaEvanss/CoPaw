@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from .models import (
     HtmlPreviewClickCreateResponse,
     HtmlPreviewClickEventCreate,
+    HtmlPreviewClickEventListResponse,
     HtmlPreviewClickSummaryResponse,
 )
 from .service import HtmlPreviewClickService
@@ -106,14 +107,14 @@ async def create_html_preview_click_event(
     enriched = event.model_copy(
         update={
             "source_id": _first_text(
-                event.source_id,
                 _get_request_source_id(request),
+                event.source_id,
             ),
             "user_id": _first_text(
-                event.user_id,
                 _get_request_user_id(request),
+                event.user_id,
             ),
-            "bbk_id": _first_text(event.bbk_id, _get_request_bbk_id(request)),
+            "bbk_id": _first_text(_get_request_bbk_id(request), event.bbk_id),
             "clicked_at": event.clicked_at or datetime.now(),
         },
     )
@@ -130,6 +131,34 @@ async def create_html_preview_click_event(
         ) from exc
 
     return HtmlPreviewClickCreateResponse()
+
+
+@router.get("", response_model=HtmlPreviewClickEventListResponse)
+async def list_html_preview_click_events(
+    request: Request,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    bbk_ids: Optional[str] = None,
+    cron_task_id: Optional[str] = None,
+    file_url: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> HtmlPreviewClickEventListResponse:
+    """查询 HTML 预览按钮点击明细。"""
+    try:
+        service = get_service()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    items = await service.list_events(
+        source_id=_get_request_source_id(request),
+        start_time=start_time,
+        end_time=end_time,
+        bbk_ids=_split_text_list(bbk_ids),
+        cron_task_id=_first_text(cron_task_id),
+        file_url=_first_text(file_url),
+        limit=limit,
+    )
+    return HtmlPreviewClickEventListResponse(items=items)
 
 
 @router.get("/summary", response_model=HtmlPreviewClickSummaryResponse)

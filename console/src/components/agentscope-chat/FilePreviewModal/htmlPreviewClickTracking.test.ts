@@ -54,6 +54,69 @@ describe("htmlPreviewClickTracking", () => {
     expect(payload?.button_text).toBe("预约电话");
   });
 
+  it("prefers structured customer fields from the clicked table row", () => {
+    const doc = createDocument(`
+      <table>
+        <tbody>
+          <tr data-customer-name="祝话" data-customer-product="定存243M">
+            <td>祝话</td>
+            <td>定存243M</td>
+            <td><a data-track-id="insight">洞察页面</a></td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+    const link = doc.querySelector("a") as HTMLElement;
+
+    const payload = buildHtmlPreviewClickPayload(link, {
+      fileUrl: "https://example.com/a.html",
+      fileName: "a.html",
+    });
+
+    expect(payload?.customer_info).toEqual({
+      name: "祝话",
+      product: "定存243M",
+    });
+  });
+
+  it("falls back to table headers and row cells for customer info", () => {
+    const doc = createDocument(`
+      <table>
+        <thead>
+          <tr>
+            <th>序号</th>
+            <th>客户姓名</th>
+            <th>到期产品</th>
+            <th>到期金额</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>3</td>
+            <td>祝话</td>
+            <td>定存243M</td>
+            <td>18.00万元</td>
+            <td><a class="link-btn phone">电话访问</a></td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+    const link = doc.querySelector("a") as HTMLElement;
+
+    const payload = buildHtmlPreviewClickPayload(link, {
+      fileUrl: "https://example.com/a.html",
+      fileName: "a.html",
+    });
+
+    expect(payload?.customer_info).toEqual({
+      "序号": "3",
+      "客户姓名": "祝话",
+      "到期产品": "定存243M",
+      "到期金额": "18.00万元",
+    });
+  });
+
   it("listens to iframe clicks without blocking rejected reports", async () => {
     const iframe = document.createElement("iframe");
     document.body.appendChild(iframe);

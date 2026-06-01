@@ -53,6 +53,16 @@ function getElementName(element: HTMLElement, buttonText: string | null) {
   );
 }
 
+function getClassFallbackId(element: HTMLElement) {
+  if (element.classList.contains("phone")) {
+    return "phone";
+  }
+  if (element.classList.contains("link-btn")) {
+    return "insight";
+  }
+  return null;
+}
+
 function parseCustomerInfoJson(value: string | undefined) {
   if (!value) {
     return null;
@@ -162,6 +172,7 @@ export function buildHtmlPreviewClickPayload(
     element.dataset.trackId ||
       element.id ||
       element.getAttribute("name") ||
+      getClassFallbackId(element) ||
       buttonText,
     255,
   );

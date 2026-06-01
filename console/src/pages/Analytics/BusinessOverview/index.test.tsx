@@ -24,6 +24,7 @@ const tracingApiMock = vi.hoisted(() => ({
 }));
 const htmlPreviewEventsApiMock = vi.hoisted(() => ({
   getSummary: vi.fn(),
+  getEvents: vi.fn(),
 }));
 
 vi.mock("../../../api/modules/tracing", () => ({
@@ -128,6 +129,21 @@ describe("BusinessOverview trend chart", () => {
         },
       ],
     });
+    htmlPreviewEventsApiMock.getEvents.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          button_name: "洞察页面",
+          file_url: "https://example.com/a.html",
+          customer_info: {
+            "客户姓名": "祝话",
+            "到期产品": "定存243M",
+            "到期金额": "18.00万元",
+          },
+          clicked_at: "2026-05-19T10:35:00",
+        },
+      ],
+    });
   });
 
   function renderBusinessOverview() {
@@ -196,6 +212,9 @@ describe("BusinessOverview trend chart", () => {
     expect(await screen.findByText("HTML 预览点击统计")).toBeInTheDocument();
     expect(await screen.findByText("点击总数")).toBeInTheDocument();
     expect(await screen.findByText("立即跟进")).toBeInTheDocument();
+    expect(await screen.findByText("祝话")).toBeInTheDocument();
+    expect(await screen.findByText("洞察页面")).toBeInTheDocument();
     expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
+    expect(htmlPreviewEventsApiMock.getEvents).toHaveBeenCalled();
   });
 });

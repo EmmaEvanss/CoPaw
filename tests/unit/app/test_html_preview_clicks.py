@@ -51,6 +51,7 @@ async def test_create_event_writes_click_detail(mock_db):
             button_id="follow",
             button_name="立即跟进",
             button_text="立即跟进",
+            customer_info={"客户姓名": "祝话", "到期金额": "18.00万元"},
             clicked_at=clicked_at,
         ),
     )
@@ -58,6 +59,7 @@ async def test_create_event_writes_click_detail(mock_db):
     query, params = mock_db.execute.call_args[0]
     assert "INSERT INTO swe_html_preview_click_events" in query
     assert "bbk_id" in query
+    assert "customer_info" in query
     assert params == (
         "copaw",
         "u-1",
@@ -69,6 +71,7 @@ async def test_create_event_writes_click_detail(mock_db):
         "follow",
         "立即跟进",
         "立即跟进",
+        '{"客户姓名": "祝话", "到期金额": "18.00万元"}',
         clicked_at,
     )
 
@@ -116,6 +119,44 @@ async def test_list_summary_filters_by_source_and_time(mock_db):
     assert items[0].last_clicked_at == clicked_at
 
 
+@pytest.mark.asyncio
+async def test_list_events_returns_customer_info(mock_db):
+    """点击明细应返回按钮和客户信息。"""
+    clicked_at = datetime(2026, 5, 30, 11, 0, 0)
+    mock_db.fetch_all.return_value = [
+        {
+            "id": 7,
+            "source_id": "copaw",
+            "user_id": "u-1",
+            "bbk_id": "branch-1",
+            "cron_task_id": "task-1",
+            "cron_task_name": "存款到期提醒",
+            "file_url": "https://example.com/a.html",
+            "file_name": "a.html",
+            "button_id": "insight",
+            "button_name": "洞察页面",
+            "button_text": "洞察页面",
+            "customer_info": '{"客户姓名": "祝话"}',
+            "clicked_at": clicked_at,
+        },
+    ]
+    store = HtmlPreviewClickStore(mock_db)
+
+    items = await store.list_events(
+        source_id="copaw",
+        start_time=datetime(2026, 5, 30, 0, 0, 0),
+        end_time=datetime(2026, 5, 30, 23, 59, 59),
+        limit=20,
+    )
+
+    query, params = mock_db.fetch_all.call_args[0]
+    assert "customer_info" in query
+    assert "ORDER BY clicked_at DESC, id DESC" in query
+    assert params[0] == "copaw"
+    assert items[0].button_name == "洞察页面"
+    assert items[0].customer_info == {"客户姓名": "祝话"}
+
+
 def test_create_route_enriches_source_and_user(monkeypatch):
     """路由应从请求上下文补齐来源和用户标识。"""
 
@@ -142,6 +183,9 @@ def test_create_route_enriches_source_and_user(monkeypatch):
     response = client.post(
         "/html-preview/events",
         json={
+            "source_id": "forged-source",
+            "user_id": "forged-user",
+            "bbk_id": "forged-branch",
             "file_url": "https://example.com/a.html",
             "button_id": "follow",
         },
@@ -187,3 +231,39 @@ def test_summary_route_returns_items(monkeypatch):
     payload = response.json()
     assert payload["success"] is True
     assert payload["items"][0]["button_id"] == "follow"
+
+
+def test_event_list_route_returns_customer_items(monkeypatch):
+    """点击明细路由应透出客户信息。"""
+
+    class _FakeService:
+        async def list_events(self, **kwargs):
+            assert kwargs["source_id"] == "copaw"
+            assert kwargs["limit"] == 20
+            return [
+                {
+                    "id": 1,
+                    "file_url": "https://example.com/a.html",
+                    "button_name": "洞察页面",
+                    "customer_info": {"客户姓名": "祝话"},
+                    "clicked_at": datetime(2026, 5, 30, 11, 0, 0),
+                },
+            ]
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_state(request: Request, call_next):
+        request.state.source_id = "copaw"
+        return await call_next(request)
+
+    app.include_router(html_preview_click_router)
+    monkeypatch.setattr(html_preview_router_module, "_service", _FakeService())
+
+    client = TestClient(app)
+    response = client.get("/html-preview/events", params={"limit": 20})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["items"][0]["customer_info"]["客户姓名"] == "祝话"

@@ -29,7 +29,10 @@ import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
 import { htmlPreviewEventsApi } from "../../../api/modules/htmlPreviewEvents";
-import type { HtmlPreviewClickSummaryItem } from "../../../api/types/htmlPreviewEvents";
+import type {
+  HtmlPreviewClickEventItem,
+  HtmlPreviewClickSummaryItem,
+} from "../../../api/types/htmlPreviewEvents";
 import {
   tracingApi,
   type BranchMetricItem,
@@ -282,6 +285,38 @@ function getHtmlPreviewButtonLabel(item: HtmlPreviewClickSummaryItem): string {
     item.button_label ||
     "未知按钮"
   );
+}
+
+function getHtmlPreviewEventButtonLabel(item: HtmlPreviewClickEventItem): string {
+  return (
+    item.button_name ||
+    item.button_text ||
+    item.button_id ||
+    "未知按钮"
+  );
+}
+
+function getHtmlPreviewCustomerLabel(item: HtmlPreviewClickEventItem): string {
+  const info = item.customer_info || {};
+  return (
+    info["客户姓名"] ||
+    info.customer_name ||
+    info.name ||
+    info["姓名"] ||
+    Object.values(info).find(Boolean) ||
+    "未知客户"
+  );
+}
+
+function getHtmlPreviewCustomerMeta(item: HtmlPreviewClickEventItem): string {
+  const info = item.customer_info || {};
+  return [
+    info["到期产品"] || info.product || info.customer_product,
+    info["到期金额"] || info.amount || info.expire_amount,
+    info["到期日期"] || info.expire_date,
+  ]
+    .filter(Boolean)
+    .join(" / ");
 }
 
 function buildHtmlPreviewClickOption(items: HtmlPreviewClickSummaryItem[]) {
@@ -774,6 +809,9 @@ export default function BusinessOverviewPage() {
   const [htmlPreviewClicks, setHtmlPreviewClicks] = useState<
     HtmlPreviewClickSummaryItem[]
   >([]);
+  const [htmlPreviewEvents, setHtmlPreviewEvents] = useState<
+    HtmlPreviewClickEventItem[]
+  >([]);
   const [htmlPreviewLoading, setHtmlPreviewLoading] = useState(false);
   const [errorLoading, setErrorLoading] = useState(false);
   const errorLoadingRef = useRef(false);
@@ -985,16 +1023,38 @@ export default function BusinessOverviewPage() {
   const fetchHtmlPreviewClicks = useCallback(async () => {
     setHtmlPreviewLoading(true);
     try {
-      const result = await htmlPreviewEventsApi.getSummary({
+      const params = {
         startTime: dateRange[0].startOf("day").toISOString(),
         endTime: dateRange[1].endOf("day").toISOString(),
         bbkIds: effectiveBbkIds?.join(","),
         limit: 100,
-      });
-      setHtmlPreviewClicks(result.items || []);
+      };
+      const [summaryResult, eventResult] = await Promise.allSettled([
+        htmlPreviewEventsApi.getSummary(params),
+        htmlPreviewEventsApi.getEvents({ ...params, limit: 50 }),
+      ]);
+      if (summaryResult.status === "fulfilled") {
+        setHtmlPreviewClicks(summaryResult.value.items || []);
+      } else {
+        console.error(
+          "Failed to fetch HTML preview click summary:",
+          summaryResult.reason,
+        );
+        setHtmlPreviewClicks([]);
+      }
+      if (eventResult.status === "fulfilled") {
+        setHtmlPreviewEvents(eventResult.value.items || []);
+      } else {
+        console.error(
+          "Failed to fetch HTML preview click events:",
+          eventResult.reason,
+        );
+        setHtmlPreviewEvents([]);
+      }
     } catch (error) {
-      console.error("Failed to fetch HTML preview click summary:", error);
+      console.error("Failed to fetch HTML preview click statistics:", error);
       setHtmlPreviewClicks([]);
+      setHtmlPreviewEvents([]);
     } finally {
       setHtmlPreviewLoading(false);
     }
@@ -1144,11 +1204,11 @@ export default function BusinessOverviewPage() {
     [htmlPreviewClicks],
   );
   const htmlPreviewLatestClick = useMemo(() => {
-    const latest = htmlPreviewClicks
+    const sortedClickTimes = htmlPreviewClicks
       .map((item) => item.last_clicked_at)
       .filter(Boolean)
-      .sort()
-      .at(-1);
+      .sort();
+    const latest = sortedClickTimes[sortedClickTimes.length - 1];
     return latest ? dayjs(latest).format("YYYY-MM-DD HH:mm") : "-";
   }, [htmlPreviewClicks]);
   const trendSvg = useMemo(() => buildTrendSvgData(trendData), [trendData]);
@@ -1890,6 +1950,43 @@ export default function BusinessOverviewPage() {
                       <strong>{formatNumber(item.click_count)}</strong>
                     </div>
                   ))}
+                </div>
+                <div className={styles.htmlPreviewEventList}>
+                  <div className={styles.htmlPreviewTopTitle}>客户点击明细</div>
+                  {htmlPreviewEvents.length === 0 ? (
+                    <div className={styles.htmlPreviewEmptyLine}>
+                      暂无客户点击明细
+                    </div>
+                  ) : (
+                    htmlPreviewEvents.slice(0, 5).map((item) => {
+                      const meta = getHtmlPreviewCustomerMeta(item);
+                      return (
+                        <div
+                          key={`${item.id}-${item.clicked_at || ""}`}
+                          className={styles.htmlPreviewEventRow}
+                        >
+                          <div className={styles.htmlPreviewEventMain}>
+                            <span className={styles.htmlPreviewCustomerName}>
+                              {getHtmlPreviewCustomerLabel(item)}
+                            </span>
+                            <span className={styles.htmlPreviewEventButton}>
+                              {getHtmlPreviewEventButtonLabel(item)}
+                            </span>
+                          </div>
+                          {meta && (
+                            <div className={styles.htmlPreviewEventMeta}>
+                              {meta}
+                            </div>
+                          )}
+                          <div className={styles.htmlPreviewEventTime}>
+                            {item.clicked_at
+                              ? dayjs(item.clicked_at).format("MM-DD HH:mm")
+                              : "-"}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>

@@ -14,9 +14,18 @@ vi.mock("@agentscope-ai/icons", () => ({
 }));
 
 vi.mock("../FilePreviewModal", () => ({
-  default: (props: { open: boolean; fileName: string }) =>
+  default: (props: {
+    open: boolean;
+    fileName: string;
+    enableClickTracking?: boolean;
+  }) =>
     props.open ? (
-      <div data-testid="file-preview-modal">{props.fileName}</div>
+      <div
+        data-click-tracking={String(Boolean(props.enableClickTracking))}
+        data-testid="file-preview-modal"
+      >
+        {props.fileName}
+      </div>
     ) : null,
 }));
 
@@ -102,6 +111,61 @@ describe("DownloadFileCard", () => {
 
     expect(screen.getByTestId("file-preview-modal")).toHaveTextContent(
       "report.html",
+    );
+    expect(screen.getByTestId("file-preview-modal")).toHaveAttribute(
+      "data-click-tracking",
+      "false",
+    );
+  });
+
+  it("显式传入采集开关时才启用 HTML 点击统计", () => {
+    render(
+      <DownloadFileCard
+        url="https://example.test/static/report[auto-preview].html"
+        fileName="report[auto-preview].html"
+        enableClickTracking
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("file-preview-modal")).toHaveAttribute(
+      "data-click-tracking",
+      "true",
+    );
+  });
+
+  it("auto-preview HTML 即使只传 autoPreview 也会启用点击统计", async () => {
+    render(
+      <DownloadFileCard
+        url="https://example.test/static/report[auto-preview].html"
+        fileName="report[auto-preview].html"
+        autoPreview
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("file-preview-modal")).toHaveAttribute(
+        "data-click-tracking",
+        "true",
+      );
+    });
+  });
+
+  it("auto-preview HTML 即使关闭自动弹窗，手动打开后也会启用点击统计", () => {
+    render(
+      <DownloadFileCard
+        url="https://example.test/static/report[auto-preview].html"
+        fileName="report[auto-preview].html"
+        autoPreview={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button"));
+
+    expect(screen.getByTestId("file-preview-modal")).toHaveAttribute(
+      "data-click-tracking",
+      "true",
     );
   });
 });

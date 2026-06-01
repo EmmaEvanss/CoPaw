@@ -130,7 +130,7 @@ export const compareVersions = (a: string, b: string): number => {
   const normalise = (v: string) =>
     v
       .replace(/\.post(\d+)/i, ".$1")
-      .split(/[.\-]/)
+      .split(/[.-]/)
       .map((seg) => (isNaN(Number(seg)) ? 0 : Number(seg)));
   const aN = normalise(a);
   const bN = normalise(b);

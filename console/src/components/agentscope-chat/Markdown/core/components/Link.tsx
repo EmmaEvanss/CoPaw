@@ -50,7 +50,14 @@ export default function Link(props) {
 
   const href = props.href;
   if (isFileLink(href)) {
-    return <DownloadFileCard url={href} fileName={extractFileName(href)} />;
+    const fileName = extractFileName(href);
+    return (
+      <DownloadFileCard
+        url={href}
+        fileName={fileName}
+        enableClickTracking={isAutoPreviewHtmlLink(href, fileName)}
+      />
+    );
   }
 
   return <a {...props} />;

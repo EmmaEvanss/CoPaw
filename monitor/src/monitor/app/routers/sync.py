@@ -4,6 +4,7 @@
 Provides endpoints for SWE to sync job definitions and execution records.
 """
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -85,31 +86,51 @@ async def record_execution(
 ) -> RecordExecutionResponse:
     """Record an execution history entry.
 
-    This endpoint is called by SWE after executing a job.
-    It creates a new execution record in Monitor database.
+    接口收到请求后立即返回 success，然后在后台异步处理数据库写入。
+    这种设计确保 SWE 服务不会因 Monitor 数据库写入延迟而阻塞。
 
     Args:
         request: Execution sync request
         service: Sync service
 
     Returns:
-        Record confirmation with execution ID
+        立即返回成功响应，execution_id 为 None（实际 ID 在后台写入后生成）
+    """
+    # 创建后台任务异步处理数据库写入
+    asyncio.create_task(_background_record_execution(service, request))
+
+    # 立即返回成功响应
+    return RecordExecutionResponse(recorded=True, execution_id=None)
+
+
+async def _background_record_execution(
+    service: SyncService,
+    request: ExecutionSyncRequest,
+) -> None:
+    """后台异步处理执行记录写入。
+
+    Args:
+        service: Sync service
+        request: Execution sync request
     """
     try:
         execution_id = await service.record_execution(request)
-        if execution_id is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to record execution",
+        if execution_id:
+            logger.info(
+                "Background recorded execution: job_id=%s execution_id=%s status=%s",
+                request.job_id,
+                execution_id,
+                request.status,
             )
-        return RecordExecutionResponse(
-            recorded=True,
-            execution_id=execution_id,
-        )
+        else:
+            logger.warning(
+                "Background record execution returned None: job_id=%s",
+                request.job_id,
+            )
     except Exception as e:
         logger.error(
-            "Failed to record execution for job %s: %s",
+            "Background record execution failed for job %s: %s",
             request.job_id,
             e,
+            exc_info=True,
         )
-        raise HTTPException(status_code=500, detail=str(e))

@@ -30,6 +30,7 @@ BROADCAST_ORIGINAL_MODEL_SLOT_META_KEY = "broadcast_original_model_slot"
 BROADCAST_MODEL_SLOT_FALLBACK_REASON_META_KEY = (
     "broadcast_model_slot_fallback_reason"
 )
+CRON_TRACE_SUCCESS_CLEANUP_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass
@@ -639,16 +640,62 @@ class CronExecutor:
             await asyncio.shield(task)
         except asyncio.CancelledError:
             # 外部取消信号到达，但 shield 已阻止其传播到 end_trace
-            # 显式等待 task 完成，确保 trace 状态正确写入
+            # 成功后的 trace 收尾是辅助写入，不应反向覆盖业务成功状态。
+            cancelling_count = self._current_task_cancelling_count()
+            uncancelled = self._uncancel_current_task()
             logger.info(
                 "Trace ending was cancelled after successful cron execution; "
-                "waiting for end_trace to finish: job_id=%s",
+                "waiting for end_trace to finish: job_id=%s "
+                "cancelling_count=%s uncancelled=%s",
                 job_id,
+                cancelling_count,
+                uncancelled,
             )
-            try:
-                await task
-            except Exception as e:
-                logger.warning("Failed to end trace for success: %s", e)
+            await self._wait_success_trace_end_after_cancel(task, job_id)
+        except Exception as e:
+            logger.warning("Failed to end trace for success: %s", e)
+
+    async def _wait_success_trace_end_after_cancel(
+        self,
+        task: asyncio.Task[Any],
+        job_id: str,
+    ) -> None:
+        """等待完成态 trace 收尾，重复取消时保留业务成功。"""
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=CRON_TRACE_SUCCESS_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Timed out ending trace after successful cron execution: "
+                "job_id=%s timeout=%ss",
+                job_id,
+                CRON_TRACE_SUCCESS_CLEANUP_TIMEOUT_SECONDS,
+            )
+            task.add_done_callback(self._consume_trace_end_task_result)
+        except asyncio.CancelledError:
+            cancelling_count = self._current_task_cancelling_count()
+            uncancelled = self._uncancel_current_task()
+            logger.info(
+                "Trace ending received repeated cancellation after successful "
+                "cron execution; keeping success status: job_id=%s "
+                "cancelling_count=%s uncancelled=%s",
+                job_id,
+                cancelling_count,
+                uncancelled,
+            )
+            task.add_done_callback(self._consume_trace_end_task_result)
+        except Exception as e:
+            logger.warning("Failed to end trace for success: %s", e)
+
+    @staticmethod
+    def _consume_trace_end_task_result(task: asyncio.Task[Any]) -> None:
+        """消费后台 trace 收尾结果，避免未读取异常污染事件循环。"""
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
         except Exception as e:
             logger.warning("Failed to end trace for success: %s", e)
 

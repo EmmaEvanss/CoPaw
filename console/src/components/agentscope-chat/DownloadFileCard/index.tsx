@@ -14,6 +14,7 @@ export interface DownloadFileCardProps {
   url: string;
   fileName?: string;
   autoPreview?: boolean;
+  enableClickTracking?: boolean;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -82,7 +83,14 @@ const downloadBtnStyle: React.CSSProperties = {
 };
 
 function DownloadFileCard(props: DownloadFileCardProps) {
-  const { url, fileName: propFileName, autoPreview, className, style } = props;
+  const {
+    url,
+    fileName: propFileName,
+    autoPreview,
+    enableClickTracking = false,
+    className,
+    style,
+  } = props;
   const [previewOpen, setPreviewOpen] = useState(false);
   const autoPreviewOpenedRef = useRef(false);
   const { enabled: pageAutoPreviewEnabled, register: registerAutoPreview } =
@@ -109,6 +117,11 @@ function DownloadFileCard(props: DownloadFileCardProps) {
       (pageAutoPreviewEnabled && isAutoPreviewHtmlLink(url, fileName)),
     [autoPreview, pageAutoPreviewEnabled, url, fileName],
   );
+  const isAutoPreviewHtml = useMemo(
+    () => isAutoPreviewHtmlLink(url, fileName),
+    [fileName, url],
+  );
+  const shouldEnableClickTracking = enableClickTracking || isAutoPreviewHtml;
 
   useEffect(() => {
     if (
@@ -207,6 +220,7 @@ function DownloadFileCard(props: DownloadFileCardProps) {
         onClose={() => setPreviewOpen(false)}
         fileUrl={url}
         fileName={fileName}
+        enableClickTracking={shouldEnableClickTracking}
       />
     </>
   );

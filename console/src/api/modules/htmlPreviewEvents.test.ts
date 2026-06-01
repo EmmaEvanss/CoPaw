@@ -1,0 +1,92 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  buildAuthHeaders: vi.fn(),
+  clearAuthToken: vi.fn(),
+  getApiUrl: vi.fn((path: string) => `/api${path}`),
+  getIframeContext: vi.fn(),
+  getUserId: vi.fn(),
+  request: vi.fn(),
+}));
+
+vi.mock("../authHeaders", () => ({
+  buildAuthHeaders: mocks.buildAuthHeaders,
+}));
+
+vi.mock("../config", () => ({
+  clearAuthToken: mocks.clearAuthToken,
+  getApiUrl: mocks.getApiUrl,
+}));
+
+vi.mock("../../stores/iframeStore", () => ({
+  getIframeContext: mocks.getIframeContext,
+}));
+
+vi.mock("../../utils/identity", () => ({
+  getUserId: mocks.getUserId,
+}));
+
+vi.mock("../request", () => ({
+  request: mocks.request,
+}));
+
+describe("htmlPreviewEventsApi", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.buildAuthHeaders.mockReturnValue({
+      Authorization: "Bearer token",
+      "X-Source-Id": "copaw",
+    });
+    mocks.getIframeContext.mockReturnValue({ source: "copaw", bbk: "branch-1" });
+    mocks.getUserId.mockReturnValue("user-1");
+  });
+
+  it("records clicks with auth headers without using global request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { htmlPreviewEventsApi } = await import("./htmlPreviewEvents");
+    const result = await htmlPreviewEventsApi.recordClick({
+      file_url: "https://example.com/a.html",
+      button_id: "follow",
+    });
+
+    expect(result).toEqual({ success: false });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/html-preview/events",
+      expect.objectContaining({
+        method: "POST",
+        keepalive: true,
+        headers: expect.objectContaining({
+          Authorization: "Bearer token",
+          "Content-Type": "application/json",
+          "X-Source-Id": "copaw",
+        }),
+      }),
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      source_id: "copaw",
+      user_id: "user-1",
+      bbk_id: "branch-1",
+      file_url: "https://example.com/a.html",
+      button_id: "follow",
+    });
+    expect(mocks.request).not.toHaveBeenCalled();
+    expect(mocks.clearAuthToken).not.toHaveBeenCalled();
+  });
+
+  it("passes bbk filters to summary query", async () => {
+    const { htmlPreviewEventsApi } = await import("./htmlPreviewEvents");
+
+    await htmlPreviewEventsApi.getSummary({
+      startTime: "2026-05-30T00:00:00.000Z",
+      endTime: "2026-05-30T23:59:59.999Z",
+      bbkIds: "branch-1,branch-2",
+      limit: 20,
+    });
+
+    expect(mocks.request).toHaveBeenCalledWith(
+      "/html-preview/events/summary?start_time=2026-05-30T00%3A00%3A00.000Z&end_time=2026-05-30T23%3A59%3A59.999Z&bbk_ids=branch-1%2Cbranch-2&limit=20",
+    );
+  });
+});

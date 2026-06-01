@@ -37,7 +37,17 @@ import {
   SparkFileTxtLine,
   SparkRefreshLine,
 } from "@agentscope-ai/icons";
-import { Store, Wrench, Puzzle } from "lucide-react";
+import {
+  ChartColumn,
+  ChevronDown,
+  CirclePlay,
+  PencilLine,
+  Settings,
+  ShieldCheck,
+  Store,
+  Wrench,
+  Puzzle,
+} from "lucide-react";
 import { clearAuthToken } from "../api/config";
 import { authApi } from "../api/modules/auth";
 import { useIframeStore } from "../stores/iframeStore";
@@ -69,6 +79,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountForm] = Form.useForm();
   const [collapsed, setCollapsed] = useState(false);
+  const [openKeys, setOpenKeys] = useState<string[]>([...DEFAULT_OPEN_KEYS]);
   const canManageCurrentSourceConfig = isSuperManager || manager;
 
   // ── Effects ──────────────────────────────────────────────────────────────
@@ -292,6 +303,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     {
       key: "creation-center",
       label: collapsed ? null : t("nav.creationCenter"),
+      icon: <PencilLine size={16} />,
       children: [
         {
           key: "workspace",
@@ -319,6 +331,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     {
       key: "run-center",
       label: collapsed ? null : t("nav.runCenter"),
+      icon: <CirclePlay size={16} />,
       children: [
         {
           key: "cron-jobs",
@@ -352,6 +365,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     {
       key: "system-settings",
       label: collapsed ? null : t("nav.systemSettings"),
+      icon: <Settings size={16} />,
       children: [
         {
           key: "models",
@@ -392,6 +406,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     {
       key: "insight-center",
       label: collapsed ? null : t("nav.insightCenter"),
+      icon: <ChartColumn size={16} />,
       children: [
         {
           key: "analytics-business-overview",
@@ -426,6 +441,7 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
     {
       key: "quality-engineering",
       label: collapsed ? null : t("nav.qualityEngineering"),
+      icon: <ShieldCheck size={16} />,
       children: [
         {
           key: "continuous-iteration",
@@ -435,6 +451,16 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       ],
     },
   ];
+
+  const renderExpandIcon = ({ isOpen }: { isOpen?: boolean }) => (
+    <ChevronDown
+      className={`${styles.submenuArrowIcon} ${
+        isOpen ? styles.submenuArrowIconOpen : ""
+      }`}
+      size={14}
+      strokeWidth={2.2}
+    />
+  );
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -480,12 +506,14 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
-          openKeys={DEFAULT_OPEN_KEYS}
+          openKeys={openKeys}
+          onOpenChange={(keys) => setOpenKeys(keys.map(String))}
           onClick={({ key }) => {
             const path = KEY_TO_PATH[String(key)];
             if (path) navigate(path);
           }}
           items={menuItems}
+          expandIcon={renderExpandIcon}
           theme={isDark ? "dark" : "light"}
           className={styles.sideMenu}
         />

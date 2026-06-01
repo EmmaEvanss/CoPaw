@@ -7,7 +7,7 @@ from SWE to Monitor database.
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -37,6 +37,15 @@ def _get_beijing_now() -> datetime:
         当前北京时间（无时区信息）
     """
     return datetime.now(_BEIJING_TZ).replace(tzinfo=None)
+
+
+def _to_beijing_naive(value: Optional[datetime]) -> Optional[datetime]:
+    """将有时区时间统一转为北京时区的无时区值。"""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(_BEIJING_TZ).replace(tzinfo=None)
 
 
 def _extract_bbk_id_from_path_name(path_name: Optional[str]) -> Optional[str]:
@@ -151,7 +160,7 @@ async def _enrich_sync_request(
 
         # 1. 解码 tenant_id（如果是加密格式）
         if request.tenant_id and is_encoded_scope_id(request.tenant_id):
-            decoded_tenant_id, decoded_source_id = try_decode_tenant_id(
+            decoded_tenant_id, _ = try_decode_tenant_id(
                 request.tenant_id,
             )
             if decoded_tenant_id != request.tenant_id:
@@ -417,10 +426,11 @@ class SyncService:
                 instance_id, executor_leader, is_manual,
                 trace_id, session_id,
                 input_snapshot, output_preview, meta,
+                notification_status, notification_due_at, notification_timezone,
                 is_read, read_at,
                 created_at
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """,
             (
@@ -441,6 +451,9 @@ class SyncService:
                 request.input_snapshot,
                 request.output_preview,
                 request.meta,
+                request.notification_status,
+                _to_beijing_naive(request.notification_due_at),
+                request.notification_timezone,
                 request.is_read,
                 request.read_at,
                 now,

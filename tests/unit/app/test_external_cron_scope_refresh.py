@@ -130,6 +130,7 @@ async def test_scheduler_payload_uses_logical_tenant_and_source() -> None:
         "agent_id": "default",
         "task_type": "job",
         "job_id": "job-1",
+        "scopeId": "tenant-a-source-a",
         "fromId": "tenant-a",
     }
 

@@ -5,8 +5,10 @@ Provides endpoints for SWE to sync job definitions and execution records.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from ..models.cron import (
     CronJobSyncRequest,
@@ -16,10 +18,37 @@ from ..models.cron import (
     RecordExecutionResponse,
 )
 from ..services.cron import SyncService, get_sync_service
+from ..services.cron.notification_service import (
+    ClaimedCronNotification,
+    CronNotificationService,
+    get_cron_notification_service,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/monitor/sync", tags=["sync"])
+
+
+class ClaimNotificationsRequest(BaseModel):
+    """领取待发送通知的请求。"""
+
+    lock_owner: str = Field(..., min_length=1)
+    now_utc: datetime | None = None
+    limit: int = Field(default=20, ge=1, le=100)
+    stale_lock_seconds: int = Field(default=600, ge=60, le=3600)
+
+
+class MarkNotificationSentRequest(BaseModel):
+    """标记通知已发送的请求。"""
+
+    sent_at: datetime | None = None
+
+
+class MarkNotificationFailedRequest(BaseModel):
+    """标记通知发送失败的请求。"""
+
+    error: str = ""
+    max_attempts: int = Field(default=3, ge=1, le=10)
 
 
 @router.post("/job", response_model=SyncJobResponse)
@@ -112,4 +141,62 @@ async def record_execution(
             request.job_id,
             e,
         )
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/notifications/claim",
+    response_model=list[ClaimedCronNotification],
+)
+async def claim_notifications(
+    request: ClaimNotificationsRequest,
+    service: CronNotificationService = Depends(get_cron_notification_service),
+) -> list[ClaimedCronNotification]:
+    """领取已到通知时间的执行记录。"""
+    try:
+        return await service.claim_due_notifications(
+            lock_owner=request.lock_owner,
+            now_utc=request.now_utc or datetime.now(timezone.utc),
+            limit=request.limit,
+            stale_lock_seconds=request.stale_lock_seconds,
+        )
+    except Exception as e:
+        logger.error("Failed to claim cron notifications: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/notifications/{execution_id}/sent")
+async def mark_notification_sent(
+    execution_id: int,
+    request: MarkNotificationSentRequest,
+    service: CronNotificationService = Depends(get_cron_notification_service),
+) -> dict:
+    """标记通知发送成功。"""
+    try:
+        await service.mark_sent(
+            execution_id=execution_id,
+            sent_at=request.sent_at or datetime.now(timezone.utc),
+        )
+        return {"marked": True}
+    except Exception as e:
+        logger.error("Failed to mark notification sent: id=%s %s", execution_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/notifications/{execution_id}/failed")
+async def mark_notification_failed(
+    execution_id: int,
+    request: MarkNotificationFailedRequest,
+    service: CronNotificationService = Depends(get_cron_notification_service),
+) -> dict:
+    """标记通知发送失败。"""
+    try:
+        await service.mark_failed(
+            execution_id=execution_id,
+            error=request.error,
+            max_attempts=request.max_attempts,
+        )
+        return {"marked": True}
+    except Exception as e:
+        logger.error("Failed to mark notification failed: id=%s %s", execution_id, e)
         raise HTTPException(status_code=500, detail=str(e))

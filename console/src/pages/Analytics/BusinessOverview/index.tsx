@@ -1856,7 +1856,7 @@ export default function BusinessOverviewPage() {
       >
         <article className={styles.panelLarge}>
           <div className={styles.panelHeader}>
-            <h3 className={styles.panelTitle}>HTML 预览点击统计</h3>
+            <h3 className={styles.panelTitle}>客户洞察/电访点击统计</h3>
             <span className={styles.panelMeta}>
               最近点击：{htmlPreviewLatestClick}
             </span>
@@ -1865,7 +1865,7 @@ export default function BusinessOverviewPage() {
             <div className={styles.emptyChartState}>
               <Database className={styles.emptyBreakdownIcon} />
               <span>
-                {htmlPreviewLoading ? "加载中..." : "暂无 HTML 预览点击数据"}
+                {htmlPreviewLoading ? "加载中..." : "暂无客户洞察/电访点击数据"}
               </span>
             </div>
           ) : (
@@ -1882,15 +1882,15 @@ export default function BusinessOverviewPage() {
                   <strong>{formatNumber(htmlPreviewTotalClicks)}</strong>
                 </div>
                 <div className={styles.htmlPreviewStatCard}>
-                  <span>按钮数量</span>
+                  <span>按钮类型</span>
                   <strong>{formatNumber(htmlPreviewButtonCount)}</strong>
                 </div>
                 <div className={styles.htmlPreviewStatCard}>
-                  <span>HTML 文件数</span>
+                  <span>名单数</span>
                   <strong>{formatNumber(htmlPreviewFileCount)}</strong>
                 </div>
                 <div className={styles.htmlPreviewTopList}>
-                  <div className={styles.htmlPreviewTopTitle}>点击最高</div>
+                  <div className={styles.htmlPreviewTopTitle}>页面点击排行</div>
                   {htmlPreviewClicks.slice(0, 3).map((item, index) => (
                     <div
                       key={`${item.button_id || item.button_label}-${index}`}
@@ -1920,10 +1920,10 @@ export default function BusinessOverviewPage() {
                   ))}
                 </div>
                 <div className={styles.htmlPreviewEventList}>
-                  <div className={styles.htmlPreviewTopTitle}>客户点击统计</div>
+                  <div className={styles.htmlPreviewTopTitle}>客户点击明细</div>
                   {htmlPreviewCustomerClicks.length === 0 ? (
                     <div className={styles.htmlPreviewEmptyLine}>
-                      暂无客户点击统计
+                      暂无客户点击明细
                     </div>
                   ) : (
                     <div className={styles.htmlPreviewCustomerTable}>

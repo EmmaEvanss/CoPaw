@@ -217,10 +217,10 @@ describe("BusinessOverview trend chart", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders HTML preview click statistics inside business overview", async () => {
+  it("renders customer insight and phone click statistics inside business overview", async () => {
     renderBusinessOverview();
 
-    expect(await screen.findByText("HTML 预览点击统计")).toBeInTheDocument();
+    expect(await screen.findByText("客户洞察/电访点击统计")).toBeInTheDocument();
     expect(await screen.findByText("点击总数")).toBeInTheDocument();
     expect(await screen.findByText("立即跟进")).toBeInTheDocument();
     expect(await screen.findByText("祝话")).toBeInTheDocument();

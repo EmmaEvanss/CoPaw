@@ -14,6 +14,39 @@ from ..channels.schema import DEFAULT_CHANNEL
 
 logger = logging.getLogger(__name__)
 
+_SESSION_TITLE_GENERATED_META_KEY = "session_title_generated"
+
+
+def _is_older_datetime(left: datetime, right: datetime) -> bool:
+    if left.tzinfo is None and right.tzinfo is not None:
+        left = left.replace(tzinfo=timezone.utc)
+    if right.tzinfo is None and left.tzinfo is not None:
+        right = right.replace(tzinfo=timezone.utc)
+    return left < right
+
+
+def _should_keep_generated_title(
+    *,
+    existing: ChatSpec,
+    incoming: ChatSpec,
+) -> bool:
+    existing_meta = existing.meta or {}
+    incoming_meta = incoming.meta or {}
+    if not existing_meta.get(_SESSION_TITLE_GENERATED_META_KEY):
+        return False
+    if incoming_meta.get(_SESSION_TITLE_GENERATED_META_KEY):
+        return False
+    return _is_older_datetime(incoming.updated_at, existing.updated_at)
+
+
+def _keep_generated_title(existing: ChatSpec, incoming: ChatSpec) -> None:
+    incoming.name = existing.name
+    incoming.meta = {
+        **(existing.meta or {}),
+        **(incoming.meta or {}),
+        _SESSION_TITLE_GENERATED_META_KEY: True,
+    }
+
 
 class ChatManager:
     """Manages chat specifications in repository.
@@ -171,6 +204,12 @@ class ChatManager:
             Updated chat spec
         """
         async with self._lock:
+            existing = await self._repo.get_chat(spec.id)
+            if existing is not None and _should_keep_generated_title(
+                existing=existing,
+                incoming=spec,
+            ):
+                _keep_generated_title(existing, spec)
             spec.updated_at = datetime.now(timezone.utc)
             await self._repo.upsert_chat(spec)
             return spec

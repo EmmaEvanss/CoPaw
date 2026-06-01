@@ -8,6 +8,7 @@ import pytest
 
 from swe.agents.hooks import memory_compaction
 from swe.agents.hooks.memory_compaction import MemoryCompactionHook
+from swe.agents.command_handler import CommandHandler
 from swe.agents.tools.file_io import read_file
 from swe.security import tenant_path_boundary
 from swe.app.source_system_config.models import (
@@ -297,3 +298,33 @@ async def test_source_disabled_config_skips_memory_tool_result_compaction(
         await MemoryCompactionHook(memory_manager)(agent, {})
 
     memory_manager.compact_tool_result.assert_not_awaited()
+
+
+def test_command_handler_get_agent_config_uses_memory_manager_tenant_scope(
+    monkeypatch,
+):
+    """Command handler should hot-reload the tenant-scoped agent config."""
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_load_agent_config(agent_id: str, tenant_id: str | None = None):
+        calls.append((agent_id, tenant_id))
+        return {"agent_id": agent_id, "tenant_id": tenant_id}
+
+    monkeypatch.setattr(
+        "swe.agents.command_handler.load_agent_config",
+        fake_load_agent_config,
+    )
+
+    handler = CommandHandler(
+        agent_name="agent",
+        memory=SimpleNamespace(),
+        memory_manager=SimpleNamespace(
+            agent_id="default",
+            tenant_id="tenant-a",
+        ),
+    )
+
+    config = handler._get_agent_config()
+
+    assert config == {"agent_id": "default", "tenant_id": "tenant-a"}
+    assert calls == [("default", "tenant-a")]

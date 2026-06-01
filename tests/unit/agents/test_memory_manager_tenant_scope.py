@@ -321,3 +321,84 @@ async def test_summary_memory_uses_tenant_scoped_tool_result_compact(
     await manager.summary_memory(messages=[])
 
     assert observed["recent_max_bytes"] == 50000
+
+
+@pytest.mark.asyncio
+async def test_compact_memory_uses_instance_tenant_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_load_agent_config(agent_id: str, tenant_id: str | None = None):
+        calls.append((agent_id, tenant_id))
+        return SimpleNamespace(
+            agent_id=agent_id,
+            language="zh",
+            workspace_dir="/tmp/ws",
+            running=SimpleNamespace(
+                max_input_length=128000,
+                context_compact=SimpleNamespace(
+                    memory_compact_ratio=0.8,
+                    compact_with_thinking_block=False,
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(
+        "swe.agents.memory.reme_light_memory_manager.load_agent_config",
+        fake_load_agent_config,
+    )
+    monkeypatch.setattr(
+        "swe.agents.memory.reme_light_memory_manager.get_swe_token_counter",
+        lambda _config: object(),
+    )
+
+    manager = object.__new__(ReMeLightMemoryManager)
+    manager.agent_id = "default"
+    manager.tenant_id = "tenant-a"
+    manager._warn_if_version_mismatch = lambda: None
+    manager._prepare_model_formatter = lambda: None
+    manager.chat_model = object()
+    manager.formatter = object()
+    manager._reme = SimpleNamespace(
+        compact_memory=AsyncMock(
+            return_value={"is_valid": True, "history_compact": "ok"},
+        ),
+    )
+
+    result = await manager.compact_memory(messages=[])
+
+    assert result == "ok"
+    assert calls == [("default", "tenant-a")]
+
+
+def test_get_in_memory_memory_uses_instance_tenant_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_load_agent_config(agent_id: str, tenant_id: str | None = None):
+        calls.append((agent_id, tenant_id))
+        return SimpleNamespace()
+
+    monkeypatch.setattr(
+        "swe.agents.memory.reme_light_memory_manager.load_agent_config",
+        fake_load_agent_config,
+    )
+    monkeypatch.setattr(
+        "swe.agents.memory.reme_light_memory_manager.get_swe_token_counter",
+        lambda _config: "token-counter",
+    )
+
+    manager = object.__new__(ReMeLightMemoryManager)
+    manager.agent_id = "default"
+    manager.tenant_id = "tenant-a"
+    manager._warn_if_version_mismatch = lambda: None
+    manager._reme = SimpleNamespace(
+        get_in_memory_memory=lambda **kwargs: kwargs["as_token_counter"],
+    )
+
+    token_counter = manager.get_in_memory_memory()
+
+    assert token_counter == "token-counter"
+    assert calls == [("default", "tenant-a")]

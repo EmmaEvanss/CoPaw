@@ -370,7 +370,7 @@ See: https://docs.trychroma.com/docs/overview/troubleshooting#sqlite
         """
         self._prepare_model_formatter()
 
-        agent_config = load_agent_config(self.agent_id)
+        agent_config = self._load_agent_config()
         cc = agent_config.running.context_compact
 
         result = await self._reme.compact_memory(
@@ -473,7 +473,7 @@ See: https://docs.trychroma.com/docs/overview/troubleshooting#sqlite
         self._warn_if_version_mismatch()
         if self._reme is None:
             return None
-        agent_config = load_agent_config(self.agent_id)
+        agent_config = self._load_agent_config()
         return self._reme.get_in_memory_memory(
             as_token_counter=get_swe_token_counter(agent_config),
         )

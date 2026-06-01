@@ -164,11 +164,18 @@ async def test_list_customer_summary_groups_insight_and_phone(mock_db):
     clicked_at = datetime(2026, 5, 30, 11, 0, 0)
     mock_db.fetch_all.return_value = [
         {
-            "customer_id": "CUST-001",
-            "customer_name": "祝话",
-            "insight_count": 2,
-            "phone_count": 1,
-            "last_clicked_at": clicked_at,
+            "button_id": "insight_page",
+            "button_name": "洞察",
+            "button_text": "洞察",
+            "customer_info": '{"customer_id": "CUST-001", "name": "祝话"}',
+            "clicked_at": clicked_at,
+        },
+        {
+            "button_id": "phone",
+            "button_name": "电访",
+            "button_text": "电话访问",
+            "customer_info": '{"customer_id": "CUST-001", "name": "祝话"}',
+            "clicked_at": datetime(2026, 5, 30, 10, 0, 0),
         },
     ]
     store = HtmlPreviewClickStore(mock_db)
@@ -182,16 +189,14 @@ async def test_list_customer_summary_groups_insight_and_phone(mock_db):
     )
 
     query, params = mock_db.fetch_all.call_args[0]
-    assert "$.customer_id" in query
-    assert '$."客户姓名"' in query
-    assert "LIKE '%洞察%'" in query
-    assert "LIKE '%电话访问%'" in query
-    assert "GROUP BY customer_id, customer_name" in query
+    assert "customer_info" in query
+    assert "JSON_EXTRACT" not in query
+    assert "ORDER BY clicked_at DESC, id DESC" in query
     assert params[0] == "copaw"
     assert "branch-1" in params
     assert items[0].customer_id == "CUST-001"
     assert items[0].customer_name == "祝话"
-    assert items[0].insight_count == 2
+    assert items[0].insight_count == 1
     assert items[0].phone_count == 1
 
 

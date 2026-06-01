@@ -8,12 +8,13 @@ import logging
 import os
 import random
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Optional, TypeVar, cast
 
 from ..channels.schema import DEFAULT_CHANNEL
 from ..tenant_context import bind_tenant_context
@@ -24,6 +25,11 @@ from ...config.context import (
     resolve_scope_id,
 )
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
+from ..source_system_config.runtime import (
+    bind_source_system_config,
+    reset_current_source_system_config,
+    set_current_source_system_config,
+)
 from .auth_state import prefetch_auth_token
 from .cron_utils import compute_next_run_at
 from .executor import CronExecutor
@@ -74,6 +80,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         agent_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
         scheduler_adapter: Optional[SchedulerAdapter] = None,
+        source_system_config_service: Any = None,
     ):
         self._repo = repo
         self._runner = runner
@@ -82,6 +89,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         self._agent_id = agent_id
         self._tenant_id = tenant_id
         self._timezone = timezone
+        self._source_system_config_service = source_system_config_service
 
         self._executor = CronExecutor(
             runner=runner,
@@ -495,6 +503,70 @@ class CronManager:  # pylint: disable=too-many-public-methods
         return (
             resolve_scope_id(spec.tenant_id, spec.source_id) or spec.tenant_id
         )
+
+    def _resolve_scheduled_run_source_id(
+        self,
+        source_id: str | None,
+        scope_id: str | None,
+    ) -> str | None:
+        """优先用显式 source_id，缺失时从 runtime scope 解码。"""
+        if source_id:
+            return source_id
+        if scope_id:
+            _, resolved_source_id, _ = resolve_runtime_identity(scope_id)
+            if resolved_source_id:
+                return resolved_source_id
+        return None
+
+    async def _resolve_scheduled_run_source_system_config(
+        self,
+        *,
+        source_id: str | None,
+        scope_id: str | None,
+        boundary_name: str,
+    ) -> Any | None:
+        """按 Scheduled Run Boundary 规则解析 source system config。"""
+        resolved_source_id = self._resolve_scheduled_run_source_id(
+            source_id,
+            scope_id,
+        )
+        if resolved_source_id is None:
+            logger.warning(
+                "Scheduled run source config binding skipped: boundary=%s "
+                "reason=no_source_identity",
+                boundary_name,
+            )
+            return None
+
+        if self._source_system_config_service is None:
+            logger.debug(
+                "Scheduled run source config binding skipped: boundary=%s "
+                "source_id=%s reason=no_service",
+                boundary_name,
+                resolved_source_id,
+            )
+            return None
+
+        return await self._source_system_config_service.resolve_config(
+            resolved_source_id,
+        )
+
+    @contextmanager
+    def _bind_scheduled_run_source_system_config(
+        self,
+        source_system_config: Any | None,
+    ):
+        """Bind resolved source config, or explicitly clear inherited request config."""
+        if source_system_config is not None:
+            with bind_source_system_config(source_system_config):
+                yield
+            return
+
+        token = set_current_source_system_config(cast(Any, None))
+        try:
+            yield
+        finally:
+            reset_current_source_system_config(token)
 
     async def _sync_job_to_external_scheduler(
         self,
@@ -1624,6 +1696,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         trace_id: str = "",
         input_snapshot: Optional[Dict[str, Any]] = None,
         executor_leader: str = "",
+        execution_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Sync execution record to Monitor service (non-blocking).
 
@@ -1639,6 +1712,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id: 从执行过程中捕获的 trace_id
             input_snapshot: 执行时的输入快照
             executor_leader: 执行者 leader ID
+            execution_meta: 执行模型相关的监控元数据
         """
         if self._monitor_sync_client is None:
             return
@@ -1658,6 +1732,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             output_preview=output_preview,
             input_snapshot=input_snapshot,
             executor_leader=executor_leader,
+            meta=execution_meta,
         )
 
     async def _handle_success_notifications(
@@ -1793,6 +1868,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
         trace_id: str,
         input_snapshot: Optional[Dict[str, Any]],
         executor_leader: str,
+        execution_meta: Optional[Dict[str, Any]],
     ) -> None:
         """最终化执行状态并同步到 Monitor。
 
@@ -1809,6 +1885,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id: trace ID
             input_snapshot: 输入快照
             executor_leader: 执行者 leader ID
+            execution_meta: 执行模型相关的监控元数据
         """
         st.last_run_at = datetime.now(timezone.utc)
         self._states[job.id] = st
@@ -1825,6 +1902,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id=trace_id,
             input_snapshot=input_snapshot,
             executor_leader=executor_leader,
+            execution_meta=execution_meta,
         )
         logger.info(
             "cron execution finalized: job_id=%s exec_status=%s "
@@ -1837,6 +1915,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
             len(output_preview or ""),
         )
 
+    # pylint: disable=too-many-statements
     async def _execute_once(
         self,
         job: CronJobSpec,
@@ -1863,27 +1942,45 @@ class CronManager:  # pylint: disable=too-many-public-methods
             trace_id = ""
             input_snapshot: Optional[Dict[str, Any]] = None
             executor_leader = ""
+            execution_meta: Optional[Dict[str, Any]] = None
+            source_system_config = None
 
             try:
-                # 执行任务并获取执行结果
-                exec_result = await self._executor.execute(job)
-                trace_id = exec_result.trace_id
-                output_preview = exec_result.output_preview
-                input_snapshot = exec_result.input_snapshot
-                executor_leader = exec_result.executor_leader
-                st.last_status = "success"
-                st.last_error = None
-                end_time = datetime.now(timezone.utc)
-                duration_ms = int(
-                    (end_time - actual_time).total_seconds() * 1000,
+                source_system_config = (
+                    await self._resolve_scheduled_run_source_system_config(
+                        source_id=job.source_id,
+                        scope_id=job.scope_id,
+                        boundary_name=f"job:{job.id}",
+                    )
                 )
-                await self._handle_success_notifications(job)
-                logger.info(
-                    "cron _execute_once: job_id=%s status=success trace_id=%s",
-                    job.id,
-                    trace_id[:20] if trace_id else "(empty)",
+                with self._bind_scheduled_run_source_system_config(
+                    source_system_config,
+                ):
+                    # 执行任务并获取执行结果
+                    exec_result = await self._executor.execute(job)
+                    trace_id = exec_result.trace_id
+                    output_preview = exec_result.output_preview
+                    input_snapshot = exec_result.input_snapshot
+                    executor_leader = exec_result.executor_leader
+                    execution_meta = exec_result.execution_meta
+                    st.last_status = "success"
+                    st.last_error = None
+                    end_time = datetime.now(timezone.utc)
+                    duration_ms = int(
+                        (end_time - actual_time).total_seconds() * 1000,
+                    )
+                    await self._handle_success_notifications(job)
+                    logger.info(
+                        "cron _execute_once: job_id=%s status=success trace_id=%s",
+                        job.id,
+                        trace_id[:20] if trace_id else "(empty)",
+                    )
+            except asyncio.CancelledError as exc:
+                execution_meta = getattr(
+                    exc,
+                    "cron_execution_meta",
+                    execution_meta,
                 )
-            except asyncio.CancelledError:
                 # 检查任务是否实际执行成功
                 # CancelledError 可能是在 finally 块中（trace 结束时）抛出的
                 # 如果任务已执行成功，应该记录为 success 而非 cancelled
@@ -1907,25 +2004,34 @@ class CronManager:  # pylint: disable=too-many-public-methods
                     )
                 raise
             except Exception as e:  # pylint: disable=broad-except
+                execution_meta = getattr(
+                    e,
+                    "cron_execution_meta",
+                    execution_meta,
+                )
                 exec_status, error_message, end_time, duration_ms = (
                     self._handle_execution_error(st, actual_time, e)
                 )
                 raise
             finally:
-                await self._finalize_execution_state(
-                    job=job,
-                    st=st,
-                    exec_status=exec_status,
-                    actual_time=actual_time,
-                    end_time=end_time,
-                    duration_ms=duration_ms,
-                    error_message=error_message,
-                    output_preview=output_preview,
-                    is_manual=is_manual,
-                    trace_id=trace_id,
-                    input_snapshot=input_snapshot,
-                    executor_leader=executor_leader,
-                )
+                with self._bind_scheduled_run_source_system_config(
+                    source_system_config,
+                ):
+                    await self._finalize_execution_state(
+                        job=job,
+                        st=st,
+                        exec_status=exec_status,
+                        actual_time=actual_time,
+                        end_time=end_time,
+                        duration_ms=duration_ms,
+                        error_message=error_message,
+                        output_preview=output_preview,
+                        is_manual=is_manual,
+                        trace_id=trace_id,
+                        input_snapshot=input_snapshot,
+                        executor_leader=executor_leader,
+                        execution_meta=execution_meta,
+                    )
 
     async def run_heartbeat(self) -> None:
         """执行一次心跳任务（供外部调度平台调用）。"""
@@ -1933,6 +2039,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
 
         workspace_dir, tenant_id, source_id, scope_id, runtime_tenant_id = (
             self._resolve_runtime_context()
+        )
+        source_system_config = (
+            await self._resolve_scheduled_run_source_system_config(
+                source_id=source_id,
+                scope_id=scope_id,
+                boundary_name="heartbeat",
+            )
         )
         with (
             bind_tenant_context(
@@ -1942,6 +2055,9 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
+            self._bind_scheduled_run_source_system_config(
+                source_system_config,
+            ),
         ):
             await run_heartbeat_once(
                 runner=self._runner,
@@ -1956,6 +2072,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
         workspace_dir, tenant_id, source_id, scope_id, runtime_tenant_id = (
             self._resolve_runtime_context()
         )
+        source_system_config = (
+            await self._resolve_scheduled_run_source_system_config(
+                source_id=source_id,
+                scope_id=scope_id,
+                boundary_name="dream",
+            )
+        )
         with (
             bind_tenant_context(
                 tenant_id=tenant_id,
@@ -1964,6 +2087,9 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 scope_id=scope_id,
             ),
             bind_llm_workload(LLM_WORKLOAD_CRON),
+            self._bind_scheduled_run_source_system_config(
+                source_system_config,
+            ),
         ):
             await self._runner.memory_manager.dream_memory(
                 tenant_id=runtime_tenant_id,

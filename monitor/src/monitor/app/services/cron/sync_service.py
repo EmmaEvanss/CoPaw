@@ -29,6 +29,41 @@ _BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 # 用户信息 API URL（与 SWE 服务共用同一个配置）
 USER_INFO_API_URL = os.environ.get("MONITOR_USER_INFO_API_URL", "")
 
+# 数据库字段长度限制（基于 swe_cron_executions 表结构）
+# VARCHAR 字段需要截断以避免写入失败
+# input_snapshot 已改为 TEXT 类型（最大 65535 字节）
+# utf8mb4 编码每字符最多 4 字节，保守上限 16000 字符
+INPUT_SNAPSHOT_MAX_LENGTH = 16000
+ERROR_MESSAGE_MAX_LENGTH = 2048
+OUTPUT_PREVIEW_MAX_LENGTH = 512
+META_MAX_LENGTH = 2048
+
+
+def _truncate_string(text: Optional[str], max_length: int) -> str:
+    """截断字符串到指定最大长度。
+
+    确保写入数据库不会因超长而报错。
+
+    Args:
+        text: 原始字符串（可能为 None）
+        max_length: 最大长度限制
+
+    Returns:
+        截断后的字符串（不超过 max_length）
+    """
+    if text is None:
+        return ""
+    if len(text) <= max_length:
+        return text
+    # 截断并保留截断标记，便于识别数据被裁剪
+    truncated = text[: max_length - 3] + "..."
+    logger.warning(
+        "String truncated from %d to %d chars for database field limit",
+        len(text),
+        max_length,
+    )
+    return truncated
+
 
 def _get_beijing_now() -> datetime:
     """获取当前东八区时间（无 tzinfo），用于数据库存储。
@@ -417,6 +452,21 @@ class SyncService:
 
         now = _get_beijing_now()
 
+        # 截断超长字段，确保写入数据库不会报错
+        input_snapshot = _truncate_string(
+            request.input_snapshot,
+            INPUT_SNAPSHOT_MAX_LENGTH,
+        )
+        error_message = _truncate_string(
+            request.error_message,
+            ERROR_MESSAGE_MAX_LENGTH,
+        )
+        output_preview = _truncate_string(
+            request.output_preview,
+            OUTPUT_PREVIEW_MAX_LENGTH,
+        )
+        meta = _truncate_string(request.meta, META_MAX_LENGTH)
+
         await db.execute(
             """
             INSERT INTO swe_cron_executions (
@@ -442,15 +492,15 @@ class SyncService:
                 request.end_time,
                 request.duration_ms,
                 request.status,
-                request.error_message,
+                error_message,
                 request.instance_id,
                 request.executor_leader,
                 request.is_manual,
                 request.trace_id,
                 request.session_id,
-                request.input_snapshot,
-                request.output_preview,
-                request.meta,
+                input_snapshot,
+                output_preview,
+                meta,
                 request.notification_status,
                 _to_beijing_naive(request.notification_due_at),
                 request.notification_timezone,

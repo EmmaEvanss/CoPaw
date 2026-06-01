@@ -9,6 +9,7 @@ export interface HtmlPreviewClickEventPayload {
   button_id?: string | null;
   button_name?: string | null;
   button_text?: string | null;
+  customer_info?: Record<string, string> | null;
   clicked_at?: string | null;
 }
 
@@ -33,4 +34,38 @@ export interface HtmlPreviewClickSummaryItem {
 export interface HtmlPreviewClickSummaryResponse {
   success: boolean;
   items: HtmlPreviewClickSummaryItem[];
+}
+
+export interface HtmlPreviewClickEventItem {
+  id: number;
+  source_id?: string | null;
+  user_id?: string | null;
+  bbk_id?: string | null;
+  cron_task_id?: string | null;
+  cron_task_name?: string | null;
+  file_url: string;
+  file_name?: string | null;
+  button_id?: string | null;
+  button_name?: string | null;
+  button_text?: string | null;
+  customer_info?: Record<string, string> | null;
+  clicked_at?: string | null;
+}
+
+export interface HtmlPreviewClickEventListResponse {
+  success: boolean;
+  items: HtmlPreviewClickEventItem[];
+}
+
+export interface HtmlPreviewCustomerClickSummaryItem {
+  customer_id?: string | null;
+  customer_name: string;
+  insight_count: number;
+  phone_count: number;
+  last_clicked_at?: string | null;
+}
+
+export interface HtmlPreviewCustomerClickSummaryResponse {
+  success: boolean;
+  items: HtmlPreviewCustomerClickSummaryItem[];
 }

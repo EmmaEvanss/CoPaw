@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for SWE Monitor sync client."""
 
+import json
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -250,3 +251,75 @@ class TestExecutionRecordFormat:
 
         assert result["notification_status"] == "pending"
         assert result["notification_due_at"] == "2026-05-19T18:05:00+08:00"
+
+    def test_build_execution_sync_data_includes_model_meta(self):
+        from swe.app.crons.models import (
+            CronJobRequest,
+            CronJobSpec,
+            DispatchSpec,
+            DispatchTarget,
+            JobRuntimeSpec,
+            ScheduleSpec,
+        )
+
+        client = MonitorSyncClient("http://test:8080/api")
+        job = CronJobSpec(
+            id="job-1",
+            name="agent job",
+            tenant_id="tenant-a",
+            schedule=ScheduleSpec(cron="* * * * *"),
+            task_type="agent",
+            request=CronJobRequest(input={"text": "ping"}),
+            dispatch=DispatchSpec(
+                target=DispatchTarget(
+                    user_id="user-a",
+                    session_id="session-a",
+                ),
+            ),
+            runtime=JobRuntimeSpec(),
+        )
+        actual_time = datetime(2026, 5, 28, 1, 2, 3, tzinfo=timezone.utc)
+        end_time = datetime(2026, 5, 28, 1, 2, 5, tzinfo=timezone.utc)
+
+        payload = client._build_execution_sync_data(
+            job=job,
+            status="success",
+            actual_time=actual_time,
+            end_time=end_time,
+            duration_ms=2000,
+            error_message="",
+            is_manual=False,
+            trace_id="trace-1",
+            session_id="session-a",
+            output_preview="done",
+            input_snapshot={"input": "ping"},
+            instance_id="instance-a",
+            executor_leader="leader-a",
+            scheduled_time=actual_time,
+            meta={
+                "original_model_slot": {
+                    "provider_id": "openai",
+                    "model": "gpt-5.4",
+                },
+                "effective_model_slot": {
+                    "provider_id": "anthropic",
+                    "model": "claude-3-7-sonnet",
+                },
+                "fallback_reason": "provider_not_found",
+            },
+        )
+
+        assert json.loads(payload["meta"]) == {
+            "original_model_slot": {
+                "provider_id": "openai",
+                "model": "gpt-5.4",
+            },
+            "effective_model_slot": {
+                "provider_id": "anthropic",
+                "model": "claude-3-7-sonnet",
+            },
+            "fallback_reason": "provider_not_found",
+        }
+        assert json.loads(payload["input_snapshot"]) == {
+            "input": "ping",
+        }

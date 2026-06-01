@@ -29,7 +29,10 @@ import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
 import { htmlPreviewEventsApi } from "../../../api/modules/htmlPreviewEvents";
-import type { HtmlPreviewClickSummaryItem } from "../../../api/types/htmlPreviewEvents";
+import type {
+  HtmlPreviewClickSummaryItem,
+  HtmlPreviewCustomerClickSummaryItem,
+} from "../../../api/types/htmlPreviewEvents";
 import {
   tracingApi,
   type BranchMetricItem,
@@ -774,6 +777,9 @@ export default function BusinessOverviewPage() {
   const [htmlPreviewClicks, setHtmlPreviewClicks] = useState<
     HtmlPreviewClickSummaryItem[]
   >([]);
+  const [htmlPreviewCustomerClicks, setHtmlPreviewCustomerClicks] = useState<
+    HtmlPreviewCustomerClickSummaryItem[]
+  >([]);
   const [htmlPreviewLoading, setHtmlPreviewLoading] = useState(false);
   const [errorLoading, setErrorLoading] = useState(false);
   const errorLoadingRef = useRef(false);
@@ -985,16 +991,38 @@ export default function BusinessOverviewPage() {
   const fetchHtmlPreviewClicks = useCallback(async () => {
     setHtmlPreviewLoading(true);
     try {
-      const result = await htmlPreviewEventsApi.getSummary({
+      const params = {
         startTime: dateRange[0].startOf("day").toISOString(),
         endTime: dateRange[1].endOf("day").toISOString(),
         bbkIds: effectiveBbkIds?.join(","),
         limit: 100,
-      });
-      setHtmlPreviewClicks(result.items || []);
+      };
+      const [summaryResult, customerSummaryResult] = await Promise.allSettled([
+        htmlPreviewEventsApi.getSummary(params),
+        htmlPreviewEventsApi.getCustomerSummary(params),
+      ]);
+      if (summaryResult.status === "fulfilled") {
+        setHtmlPreviewClicks(summaryResult.value.items || []);
+      } else {
+        console.error(
+          "Failed to fetch HTML preview click summary:",
+          summaryResult.reason,
+        );
+        setHtmlPreviewClicks([]);
+      }
+      if (customerSummaryResult.status === "fulfilled") {
+        setHtmlPreviewCustomerClicks(customerSummaryResult.value.items || []);
+      } else {
+        console.error(
+          "Failed to fetch HTML preview customer click summary:",
+          customerSummaryResult.reason,
+        );
+        setHtmlPreviewCustomerClicks([]);
+      }
     } catch (error) {
-      console.error("Failed to fetch HTML preview click summary:", error);
+      console.error("Failed to fetch HTML preview click statistics:", error);
       setHtmlPreviewClicks([]);
+      setHtmlPreviewCustomerClicks([]);
     } finally {
       setHtmlPreviewLoading(false);
     }
@@ -1144,11 +1172,11 @@ export default function BusinessOverviewPage() {
     [htmlPreviewClicks],
   );
   const htmlPreviewLatestClick = useMemo(() => {
-    const latest = htmlPreviewClicks
+    const sortedClickTimes = htmlPreviewClicks
       .map((item) => item.last_clicked_at)
       .filter(Boolean)
-      .sort()
-      .at(-1);
+      .sort();
+    const latest = sortedClickTimes[sortedClickTimes.length - 1];
     return latest ? dayjs(latest).format("YYYY-MM-DD HH:mm") : "-";
   }, [htmlPreviewClicks]);
   const trendSvg = useMemo(() => buildTrendSvgData(trendData), [trendData]);
@@ -1828,7 +1856,7 @@ export default function BusinessOverviewPage() {
       >
         <article className={styles.panelLarge}>
           <div className={styles.panelHeader}>
-            <h3 className={styles.panelTitle}>HTML 预览点击统计</h3>
+            <h3 className={styles.panelTitle}>客户洞察/电访点击统计</h3>
             <span className={styles.panelMeta}>
               最近点击：{htmlPreviewLatestClick}
             </span>
@@ -1837,7 +1865,7 @@ export default function BusinessOverviewPage() {
             <div className={styles.emptyChartState}>
               <Database className={styles.emptyBreakdownIcon} />
               <span>
-                {htmlPreviewLoading ? "加载中..." : "暂无 HTML 预览点击数据"}
+                {htmlPreviewLoading ? "加载中..." : "暂无客户洞察/电访点击数据"}
               </span>
             </div>
           ) : (
@@ -1854,15 +1882,15 @@ export default function BusinessOverviewPage() {
                   <strong>{formatNumber(htmlPreviewTotalClicks)}</strong>
                 </div>
                 <div className={styles.htmlPreviewStatCard}>
-                  <span>按钮数量</span>
+                  <span>按钮类型</span>
                   <strong>{formatNumber(htmlPreviewButtonCount)}</strong>
                 </div>
                 <div className={styles.htmlPreviewStatCard}>
-                  <span>HTML 文件数</span>
+                  <span>名单数</span>
                   <strong>{formatNumber(htmlPreviewFileCount)}</strong>
                 </div>
                 <div className={styles.htmlPreviewTopList}>
-                  <div className={styles.htmlPreviewTopTitle}>点击最高</div>
+                  <div className={styles.htmlPreviewTopTitle}>页面点击排行</div>
                   {htmlPreviewClicks.slice(0, 3).map((item, index) => (
                     <div
                       key={`${item.button_id || item.button_label}-${index}`}
@@ -1890,6 +1918,49 @@ export default function BusinessOverviewPage() {
                       <strong>{formatNumber(item.click_count)}</strong>
                     </div>
                   ))}
+                </div>
+                <div className={styles.htmlPreviewEventList}>
+                  <div className={styles.htmlPreviewTopTitle}>客户点击明细</div>
+                  {htmlPreviewCustomerClicks.length === 0 ? (
+                    <div className={styles.htmlPreviewEmptyLine}>
+                      暂无客户点击明细
+                    </div>
+                  ) : (
+                    <div className={styles.htmlPreviewCustomerTable}>
+                      <div className={styles.htmlPreviewCustomerHeader}>
+                        <span>客户</span>
+                        <span>洞察</span>
+                        <span>电访</span>
+                        <span>最近</span>
+                      </div>
+                      {htmlPreviewCustomerClicks.slice(0, 8).map((item) => (
+                        <div
+                          key={`${item.customer_id || item.customer_name}-${
+                            item.last_clicked_at || ""
+                          }`}
+                          className={styles.htmlPreviewCustomerRow}
+                        >
+                          <div className={styles.htmlPreviewCustomerCell}>
+                            <span className={styles.htmlPreviewCustomerName}>
+                              {item.customer_name || "未知客户"}
+                            </span>
+                            {item.customer_id && (
+                              <span className={styles.htmlPreviewCustomerId}>
+                                {item.customer_id}
+                              </span>
+                            )}
+                          </div>
+                          <strong>{formatNumber(item.insight_count)}</strong>
+                          <strong>{formatNumber(item.phone_count)}</strong>
+                          <span className={styles.htmlPreviewEventTime}>
+                            {item.last_clicked_at
+                              ? dayjs(item.last_clicked_at).format("MM-DD HH:mm")
+                              : "-"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

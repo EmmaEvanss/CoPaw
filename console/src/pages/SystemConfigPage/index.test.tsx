@@ -169,7 +169,7 @@ describe("SystemConfigPage", () => {
 
     render(<SystemConfigPage />);
 
-    expect(await screen.findByText("工具结果压缩配置")).toBeTruthy();
+    expect(await screen.findByText("工具输出控制")).toBeTruthy();
 
     fireEvent.click(getToolResultCompactSwitch());
     fireEvent.change(screen.getByDisplayValue("12000"), {
@@ -192,6 +192,83 @@ describe("SystemConfigPage", () => {
     expect(loadEffectiveConfig).toHaveBeenCalledWith("portal");
   });
 
+  it("saves explicit immediate truncation configs", async () => {
+    mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
+      source_id: "portal",
+      config: {
+        file_read_truncation: {
+          enabled: true,
+          max_bytes: 50000,
+        },
+      },
+      version: 1,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 10:00:00",
+    });
+
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("工具输出控制")).toBeTruthy();
+    expect(screen.getByText("继承旧工具结果近期阈值")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "启用独立配置" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
+        config: {
+          file_read_truncation: {
+            enabled: true,
+            max_bytes: 50000,
+          },
+        },
+      });
+    });
+  });
+
+  it("can restore a single immediate truncation section to inheritance", async () => {
+    mocks.sourceSystemConfigApi.getCurrent.mockResolvedValueOnce({
+      source_id: "portal",
+      config: {
+        provider_policy: { default_model: "qwen-max" },
+        file_read_truncation: {
+          enabled: true,
+          max_bytes: 12000,
+        },
+      },
+      version: 1,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 10:00:00",
+    });
+    mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
+      source_id: "portal",
+      config: {
+        provider_policy: { default_model: "qwen-max" },
+      },
+      version: 2,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 11:00:00",
+    });
+
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("工具输出控制")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "恢复继承" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
+        config: {
+          provider_policy: { default_model: "qwen-max" },
+        },
+      });
+    });
+  });
+
   it("blocks invalid tool result compact thresholds before saving", async () => {
     mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
       source_id: "portal",
@@ -208,7 +285,7 @@ describe("SystemConfigPage", () => {
 
     render(<SystemConfigPage />);
 
-    expect(await screen.findByText("工具结果压缩配置")).toBeTruthy();
+    expect(await screen.findByText("工具输出控制")).toBeTruthy();
 
     fireEvent.change(screen.getByDisplayValue("50000"), {
       target: { value: "1000" },
@@ -237,6 +314,35 @@ describe("SystemConfigPage", () => {
         },
       });
     });
+  });
+
+  it("blocks invalid immediate truncation max bytes before saving", async () => {
+    mocks.sourceSystemConfigApi.getCurrent.mockResolvedValueOnce({
+      source_id: "portal",
+      config: {
+        file_read_truncation: {
+          enabled: true,
+          max_bytes: 999,
+        },
+      },
+      version: 1,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-21 10:00:00",
+    });
+
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("工具输出控制")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.messageApi.error).toHaveBeenCalledWith(
+        "文件读取输出片段字节数不能小于 1000",
+      );
+    });
+    expect(mocks.sourceSystemConfigApi.updateCurrent).not.toHaveBeenCalled();
   });
 
   it("deletes explicit config and refreshes effective config", async () => {

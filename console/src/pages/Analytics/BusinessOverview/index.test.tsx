@@ -24,6 +24,8 @@ const tracingApiMock = vi.hoisted(() => ({
 }));
 const htmlPreviewEventsApiMock = vi.hoisted(() => ({
   getSummary: vi.fn(),
+  getEvents: vi.fn(),
+  getCustomerSummary: vi.fn(),
 }));
 
 vi.mock("../../../api/modules/tracing", () => ({
@@ -128,6 +130,31 @@ describe("BusinessOverview trend chart", () => {
         },
       ],
     });
+    htmlPreviewEventsApiMock.getEvents.mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          button_name: "洞察页面",
+          file_url: "https://example.com/a.html",
+          customer_info: {
+            customer_id: "CUST-001",
+            "客户姓名": "祝话",
+          },
+          clicked_at: "2026-05-19T10:35:00",
+        },
+      ],
+    });
+    htmlPreviewEventsApiMock.getCustomerSummary.mockResolvedValue({
+      items: [
+        {
+          customer_id: "CUST-001",
+          customer_name: "祝话",
+          insight_count: 2,
+          phone_count: 1,
+          last_clicked_at: "2026-05-19T10:35:00",
+        },
+      ],
+    });
   });
 
   function renderBusinessOverview() {
@@ -190,12 +217,17 @@ describe("BusinessOverview trend chart", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders HTML preview click statistics inside business overview", async () => {
+  it("renders customer insight and phone click statistics inside business overview", async () => {
     renderBusinessOverview();
 
-    expect(await screen.findByText("HTML 预览点击统计")).toBeInTheDocument();
+    expect(await screen.findByText("客户洞察/电访点击统计")).toBeInTheDocument();
     expect(await screen.findByText("点击总数")).toBeInTheDocument();
     expect(await screen.findByText("立即跟进")).toBeInTheDocument();
+    expect(await screen.findByText("祝话")).toBeInTheDocument();
+    expect(await screen.findByText("CUST-001")).toBeInTheDocument();
+    expect(await screen.findByText("洞察")).toBeInTheDocument();
+    expect(await screen.findByText("电访")).toBeInTheDocument();
     expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
+    expect(htmlPreviewEventsApiMock.getCustomerSummary).toHaveBeenCalled();
   });
 });

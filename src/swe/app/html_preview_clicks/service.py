@@ -4,7 +4,12 @@
 from datetime import datetime
 from typing import Optional
 
-from .models import HtmlPreviewClickEventCreate, HtmlPreviewClickSummaryItem
+from .models import (
+    HtmlPreviewClickEventCreate,
+    HtmlPreviewClickEventItem,
+    HtmlPreviewClickSummaryItem,
+    HtmlPreviewCustomerClickSummaryItem,
+)
 from .store import HtmlPreviewClickStore
 
 
@@ -39,6 +44,50 @@ class HtmlPreviewClickService:
     ) -> list[HtmlPreviewClickSummaryItem]:
         """查询 HTML 预览按钮点击聚合结果。"""
         return await self.store.list_summary(
+            source_id=source_id,
+            start_time=start_time,
+            end_time=end_time,
+            bbk_ids=bbk_ids,
+            cron_task_id=cron_task_id,
+            file_url=file_url,
+            limit=limit,
+        )
+
+    async def list_events(
+        self,
+        *,
+        source_id: Optional[str],
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        bbk_ids: Optional[list[str]] = None,
+        cron_task_id: Optional[str] = None,
+        file_url: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[HtmlPreviewClickEventItem]:
+        """查询 HTML 预览按钮点击明细。"""
+        return await self.store.list_events(
+            source_id=source_id,
+            start_time=start_time,
+            end_time=end_time,
+            bbk_ids=bbk_ids,
+            cron_task_id=cron_task_id,
+            file_url=file_url,
+            limit=limit,
+        )
+
+    async def list_customer_summary(
+        self,
+        *,
+        source_id: Optional[str],
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        bbk_ids: Optional[list[str]] = None,
+        cron_task_id: Optional[str] = None,
+        file_url: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[HtmlPreviewCustomerClickSummaryItem]:
+        """按客户查询洞察和电访按钮点击聚合结果。"""
+        return await self.store.list_customer_summary(
             source_id=source_id,
             start_time=start_time,
             end_time=end_time,

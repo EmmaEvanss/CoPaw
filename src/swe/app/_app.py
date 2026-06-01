@@ -359,6 +359,12 @@ async def lifespan(
         app.state.source_system_config_service = SourceSystemConfigService(
             SourceSystemConfigStore(db_connection),
         )
+        multi_agent_manager.set_source_system_config_service(
+            app.state.source_system_config_service,
+        )
+        tenant_workspace_pool.set_source_system_config_service(
+            app.state.source_system_config_service,
+        )
         logger.info("SourceSystemConfig module initialized")
     except Exception as e:
         logger.warning("Failed to initialize source system config: %s", e)

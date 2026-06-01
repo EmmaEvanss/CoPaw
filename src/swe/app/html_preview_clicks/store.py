@@ -12,34 +12,7 @@ from .models import (
     HtmlPreviewCustomerClickSummaryItem,
 )
 
-CUSTOMER_ID_SQL = (
-    "NULLIF(JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$.customer_id')), '')"
-)
-CUSTOMER_NAME_SQL = """
-    COALESCE(
-        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$.name')), ''),
-        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$.customer_name')), ''),
-        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$."客户姓名"')), ''),
-        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$."客户名称"')), ''),
-        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$."姓名"')), '')
-    )
-"""
-INSIGHT_BUTTON_SQL = """
-    (
-        LOWER(COALESCE(button_id, '')) LIKE '%insight%'
-        OR COALESCE(button_name, '') LIKE '%洞察%'
-        OR COALESCE(button_text, '') LIKE '%洞察%'
-    )
-"""
-PHONE_BUTTON_SQL = """
-    (
-        LOWER(COALESCE(button_id, '')) LIKE '%phone%'
-        OR COALESCE(button_name, '') LIKE '%电访%'
-        OR COALESCE(button_name, '') LIKE '%电话访问%'
-        OR COALESCE(button_text, '') LIKE '%电访%'
-        OR COALESCE(button_text, '') LIKE '%电话访问%'
-    )
-"""
+CUSTOMER_SUMMARY_SCAN_LIMIT = 10000
 
 
 class HtmlPreviewClickStore:
@@ -120,6 +93,104 @@ class HtmlPreviewClickStore:
             phone_count=int(row.get("phone_count") or 0),
             last_clicked_at=row.get("last_clicked_at"),
         )
+
+    @classmethod
+    def _get_customer_identity(
+        cls,
+        customer_info: Any,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """从客户信息中提取客户 ID 和展示姓名。"""
+        info = cls._decode_customer_info(customer_info) or {}
+        customer_id = cls._clean_text(info.get("customer_id"))
+        customer_name = (
+            cls._clean_text(info.get("name"))
+            or cls._clean_text(info.get("customer_name"))
+            or cls._clean_text(info.get("客户姓名"))
+            or cls._clean_text(info.get("客户名称"))
+            or cls._clean_text(info.get("姓名"))
+        )
+        return customer_id, customer_name
+
+    @classmethod
+    def _classify_button(cls, row: dict[str, Any]) -> Optional[str]:
+        """把按钮点击归类为洞察或电访。"""
+        button_id = (cls._clean_text(row.get("button_id")) or "").lower()
+        button_name = cls._clean_text(row.get("button_name")) or ""
+        button_text = cls._clean_text(row.get("button_text")) or ""
+        if (
+            "phone" in button_id
+            or "电访" in button_name
+            or "电访" in button_text
+        ):
+            return "phone"
+        if "电话访问" in button_name or "电话访问" in button_text:
+            return "phone"
+        if (
+            "insight" in button_id
+            or "洞察" in button_name
+            or "洞察" in button_text
+        ):
+            return "insight"
+        return None
+
+    @classmethod
+    def _build_customer_summary_items(
+        cls,
+        rows: list[dict[str, Any]],
+        limit: int,
+    ) -> list[HtmlPreviewCustomerClickSummaryItem]:
+        """基于点击明细在应用层聚合客户维度统计。"""
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            button_type = cls._classify_button(row)
+            if button_type is None:
+                continue
+
+            customer_id, customer_name = cls._get_customer_identity(
+                row.get("customer_info"),
+            )
+            if not customer_id and not customer_name:
+                continue
+
+            group_key = customer_id or f"name:{customer_name}"
+            item = grouped.setdefault(
+                group_key,
+                {
+                    "customer_id": customer_id,
+                    "customer_name": customer_name or "未知客户",
+                    "insight_count": 0,
+                    "phone_count": 0,
+                    "last_clicked_at": row.get("clicked_at"),
+                },
+            )
+            if customer_name and not item.get("customer_name"):
+                item["customer_name"] = customer_name
+            if button_type == "insight":
+                item["insight_count"] += 1
+            elif button_type == "phone":
+                item["phone_count"] += 1
+
+            clicked_at = row.get("clicked_at")
+            last_clicked_at = item.get("last_clicked_at")
+            if clicked_at and (
+                not last_clicked_at or clicked_at > last_clicked_at
+            ):
+                item["last_clicked_at"] = clicked_at
+                if customer_name:
+                    item["customer_name"] = customer_name
+
+        sorted_rows = sorted(
+            grouped.values(),
+            key=lambda item: (
+                item["insight_count"] + item["phone_count"],
+                item.get("last_clicked_at") or datetime.min,
+            ),
+            reverse=True,
+        )
+        return [
+            cls._to_customer_summary_item(row)
+            for row in sorted_rows[: max(1, min(limit, 200))]
+        ]
 
     @classmethod
     def _to_event_item(cls, row: dict[str, Any]) -> HtmlPreviewClickEventItem:
@@ -312,36 +383,22 @@ class HtmlPreviewClickStore:
             file_url=file_url,
         )
         safe_limit = max(1, min(limit, 200))
+        scan_limit = max(CUSTOMER_SUMMARY_SCAN_LIMIT, safe_limit)
 
         query = f"""
             SELECT
-                customer_id,
-                COALESCE(customer_name, '未知客户') AS customer_name,
-                SUM(CASE WHEN is_insight THEN 1 ELSE 0 END) AS insight_count,
-                SUM(CASE WHEN is_phone THEN 1 ELSE 0 END) AS phone_count,
-                MAX(clicked_at) AS last_clicked_at
-            FROM (
-                SELECT
-                    {CUSTOMER_ID_SQL} AS customer_id,
-                    {CUSTOMER_NAME_SQL} AS customer_name,
-                    {INSIGHT_BUTTON_SQL} AS is_insight,
-                    {PHONE_BUTTON_SQL} AS is_phone,
-                    clicked_at
-                FROM swe_html_preview_click_events
-                {where_sql}
-            ) AS customer_clicks
-            WHERE
-                (customer_id IS NOT NULL OR customer_name IS NOT NULL)
-                AND (is_insight OR is_phone)
-            GROUP BY customer_id, customer_name
-            ORDER BY
-                (SUM(CASE WHEN is_insight THEN 1 ELSE 0 END)
-                 + SUM(CASE WHEN is_phone THEN 1 ELSE 0 END)) DESC,
-                last_clicked_at DESC
-            LIMIT {safe_limit}
+                button_id,
+                button_name,
+                button_text,
+                customer_info,
+                clicked_at
+            FROM swe_html_preview_click_events
+            {where_sql}
+            ORDER BY clicked_at DESC, id DESC
+            LIMIT {scan_limit}
         """
         rows = await self.db.fetch_all(query, tuple(params))
-        return [self._to_customer_summary_item(row) for row in rows]
+        return self._build_customer_summary_items(rows, safe_limit)
 
     def _build_where_clause(
         self,

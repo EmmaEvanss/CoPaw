@@ -56,3 +56,16 @@ export interface HtmlPreviewClickEventListResponse {
   success: boolean;
   items: HtmlPreviewClickEventItem[];
 }
+
+export interface HtmlPreviewCustomerClickSummaryItem {
+  customer_id?: string | null;
+  customer_name: string;
+  insight_count: number;
+  phone_count: number;
+  last_clicked_at?: string | null;
+}
+
+export interface HtmlPreviewCustomerClickSummaryResponse {
+  success: boolean;
+  items: HtmlPreviewCustomerClickSummaryItem[];
+}

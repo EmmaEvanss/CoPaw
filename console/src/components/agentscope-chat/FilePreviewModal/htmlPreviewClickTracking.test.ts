@@ -58,7 +58,7 @@ describe("htmlPreviewClickTracking", () => {
     const doc = createDocument(`
       <table>
         <tbody>
-          <tr data-customer-name="祝话" data-customer-product="定存243M">
+          <tr data-customer-id="CUST-001" data-customer-name="祝话" data-customer-product="定存243M">
             <td>祝话</td>
             <td>定存243M</td>
             <td><a data-track-id="insight">洞察页面</a></td>
@@ -74,12 +74,12 @@ describe("htmlPreviewClickTracking", () => {
     });
 
     expect(payload?.customer_info).toEqual({
+      customer_id: "CUST-001",
       name: "祝话",
-      product: "定存243M",
     });
   });
 
-  it("falls back to table headers and row cells for customer info", () => {
+  it("only keeps customer identity when falling back to table headers", () => {
     const doc = createDocument(`
       <table>
         <thead>
@@ -110,10 +110,7 @@ describe("htmlPreviewClickTracking", () => {
     });
 
     expect(payload?.customer_info).toEqual({
-      "序号": "3",
       "客户姓名": "祝话",
-      "到期产品": "定存243M",
-      "到期金额": "18.00万元",
     });
   });
 

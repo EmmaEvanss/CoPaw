@@ -103,4 +103,18 @@ describe("htmlPreviewEventsApi", () => {
       "/html-preview/events?start_time=2026-05-30T00%3A00%3A00.000Z&bbk_ids=branch-1&limit=10",
     );
   });
+
+  it("passes filters to customer summary query", async () => {
+    const { htmlPreviewEventsApi } = await import("./htmlPreviewEvents");
+
+    await htmlPreviewEventsApi.getCustomerSummary({
+      startTime: "2026-05-30T00:00:00.000Z",
+      bbkIds: "branch-1",
+      limit: 20,
+    });
+
+    expect(mocks.request).toHaveBeenCalledWith(
+      "/html-preview/events/customer-summary?start_time=2026-05-30T00%3A00%3A00.000Z&bbk_ids=branch-1&limit=20",
+    );
+  });
 });

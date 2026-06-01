@@ -9,6 +9,7 @@ import type {
   HtmlPreviewClickEventPayload,
   HtmlPreviewClickSubmitResponse,
   HtmlPreviewClickSummaryResponse,
+  HtmlPreviewCustomerClickSummaryResponse,
 } from "../types/htmlPreviewEvents";
 
 function withRuntimeContext(
@@ -69,6 +70,20 @@ export const htmlPreviewEventsApi = {
     const query = search.toString();
     return request<HtmlPreviewClickSummaryResponse>(
       `/html-preview/events/summary${query ? `?${query}` : ""}`,
+    );
+  },
+  getCustomerSummary: (params?: {
+    startTime?: string | null;
+    endTime?: string | null;
+    bbkIds?: string | null;
+    cronTaskId?: string | null;
+    fileUrl?: string | null;
+    limit?: number;
+  }) => {
+    const search = buildSearchParams(params);
+    const query = search.toString();
+    return request<HtmlPreviewCustomerClickSummaryResponse>(
+      `/html-preview/events/customer-summary${query ? `?${query}` : ""}`,
     );
   },
 };

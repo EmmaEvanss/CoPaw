@@ -12,6 +12,7 @@ from .models import (
     HtmlPreviewClickEventCreate,
     HtmlPreviewClickEventListResponse,
     HtmlPreviewClickSummaryResponse,
+    HtmlPreviewCustomerClickSummaryResponse,
 )
 from .service import HtmlPreviewClickService
 from .store import HtmlPreviewClickStore
@@ -187,3 +188,34 @@ async def get_html_preview_click_summary(
         limit=limit,
     )
     return HtmlPreviewClickSummaryResponse(items=items)
+
+
+@router.get(
+    "/customer-summary",
+    response_model=HtmlPreviewCustomerClickSummaryResponse,
+)
+async def get_html_preview_customer_click_summary(
+    request: Request,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    bbk_ids: Optional[str] = None,
+    cron_task_id: Optional[str] = None,
+    file_url: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=200),
+) -> HtmlPreviewCustomerClickSummaryResponse:
+    """按客户聚合查询洞察和电访按钮点击次数。"""
+    try:
+        service = get_service()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    items = await service.list_customer_summary(
+        source_id=_get_request_source_id(request),
+        start_time=start_time,
+        end_time=end_time,
+        bbk_ids=_split_text_list(bbk_ids),
+        cron_task_id=_first_text(cron_task_id),
+        file_url=_first_text(file_url),
+        limit=limit,
+    )
+    return HtmlPreviewCustomerClickSummaryResponse(items=items)

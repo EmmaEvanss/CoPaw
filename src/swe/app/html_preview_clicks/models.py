@@ -53,6 +53,25 @@ class HtmlPreviewClickSummaryResponse(BaseModel):
     items: list[HtmlPreviewClickSummaryItem] = Field(default_factory=list)
 
 
+class HtmlPreviewCustomerClickSummaryItem(BaseModel):
+    """HTML 预览客户维度点击聚合结果。"""
+
+    customer_id: Optional[str] = None
+    customer_name: str = "未知客户"
+    insight_count: int = 0
+    phone_count: int = 0
+    last_clicked_at: Optional[datetime] = None
+
+
+class HtmlPreviewCustomerClickSummaryResponse(BaseModel):
+    """HTML 预览客户维度点击聚合查询响应。"""
+
+    success: bool = True
+    items: list[HtmlPreviewCustomerClickSummaryItem] = Field(
+        default_factory=list,
+    )
+
+
 class HtmlPreviewClickEventItem(BaseModel):
     """HTML 预览点击明细。"""
 

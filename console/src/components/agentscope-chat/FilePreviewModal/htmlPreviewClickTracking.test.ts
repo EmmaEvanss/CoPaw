@@ -54,6 +54,30 @@ describe("htmlPreviewClickTracking", () => {
     expect(payload?.button_text).toBe("预约电话");
   });
 
+  it("uses known button classes before text when tracking attributes are absent", () => {
+    const doc = createDocument(`
+      <div>
+        <a class="link-btn">洞察页面</a>
+        <a class="link-btn phone">电话访问</a>
+      </div>
+    `);
+    const links = doc.querySelectorAll("a");
+
+    const insightPayload = buildHtmlPreviewClickPayload(links[0] as HTMLElement, {
+      fileUrl: "https://example.com/a.html",
+      fileName: "a.html",
+    });
+    const phonePayload = buildHtmlPreviewClickPayload(links[1] as HTMLElement, {
+      fileUrl: "https://example.com/a.html",
+      fileName: "a.html",
+    });
+
+    expect(insightPayload?.button_id).toBe("insight");
+    expect(insightPayload?.button_name).toBe("洞察页面");
+    expect(phonePayload?.button_id).toBe("phone");
+    expect(phonePayload?.button_name).toBe("电话访问");
+  });
+
   it("prefers structured customer fields from the clicked table row", () => {
     const doc = createDocument(`
       <table>

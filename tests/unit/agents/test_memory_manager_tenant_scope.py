@@ -158,25 +158,109 @@ def test_memory_manager_load_agent_config_uses_instance_tenant_id(
     assert calls == [("default", "tenant-a")]
 
 
-def test_workspace_registers_tenant_id_for_memory_manager(
+@pytest.mark.asyncio
+async def test_workspace_memory_manager_factory_receives_tenant_id(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    observed: dict[str, tuple[str, str, str | None]] = {}
+
+    class RecordingMemoryManager(BaseMemoryManager):
+        def __init__(
+            self,
+            working_dir: str,
+            agent_id: str,
+            tenant_id: str | None = None,
+        ):
+            super().__init__(
+                working_dir=working_dir,
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+            )
+            observed["constructor"] = (working_dir, agent_id, tenant_id)
+
+        async def start(self) -> None:  # pragma: no cover - test stub
+            return None
+
+        async def close(self) -> bool:  # pragma: no cover - test stub
+            return True
+
+        async def compact_tool_result(
+            self,
+            **kwargs,
+        ) -> None:  # pragma: no cover - test stub
+            return None
+
+        async def check_context(
+            self,
+            **kwargs,
+        ) -> tuple:  # pragma: no cover - test stub
+            return (), (), True
+
+        async def compact_memory(
+            self,
+            messages,
+            previous_summary="",
+            **kwargs,
+        ) -> str:  # pragma: no cover - test stub
+            return ""
+
+        async def summary_memory(
+            self,
+            messages,
+            **kwargs,
+        ) -> str:  # pragma: no cover - test stub
+            return ""
+
+        async def dream_memory(
+            self,
+            tenant_id: str | None = None,
+            **kwargs,
+        ) -> None:  # pragma: no cover - test stub
+            return None
+
+        async def memory_search(
+            self,
+            query: str,
+            max_results: int = 5,
+            min_score: float = 0.1,
+        ):  # pragma: no cover - test stub
+            return None
+
+        def get_in_memory_memory(
+            self,
+            **kwargs,
+        ):  # pragma: no cover - test stub
+            return None
+
+    monkeypatch.setattr(
+        "swe.app.workspace.workspace._resolve_memory_class",
+        lambda backend: RecordingMemoryManager,
+    )
+
     workspace = Workspace(
         agent_id="default",
         workspace_dir=str(tmp_path / "ws"),
         tenant_id="tenant-a",
     )
+    workspace._config = SimpleNamespace(  # pylint: disable=protected-access
+        running=SimpleNamespace(memory_manager_backend="remelight"),
+    )
 
     descriptor = workspace._service_manager.descriptors[
         "memory_manager"
     ]  # pylint: disable=protected-access
+    service = await workspace._service_manager._get_or_create_service(  # pylint: disable=protected-access
+        descriptor,
+        is_reused=False,
+    )
 
-    assert descriptor.init_args is not None
-    assert descriptor.init_args(workspace) == {
-        "working_dir": str(workspace.workspace_dir),
-        "agent_id": "default",
-        "tenant_id": "tenant-a",
-    }
+    assert observed["constructor"] == (
+        str(workspace.workspace_dir),
+        "default",
+        "tenant-a",
+    )
+    assert service.tenant_id == "tenant-a"
 
 
 @pytest.mark.asyncio

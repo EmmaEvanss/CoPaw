@@ -31,6 +31,8 @@ from ..models.tracing import (
     DepthSummary,
     ExtractCustomerNamesRequest,
     ExtractCustomerNamesResponse,
+    InputTokensMismatchItem,
+    InputTokensFixItem,
 )
 from ..services.tracing import TracingQueryService, TracingExportService
 from ..services.tracing.extract_service import ExtractCustomerNamesService
@@ -1472,22 +1474,6 @@ async def extract_customer_names(
 # ===== Input Tokens 修复 =====
 
 
-class InputTokensMismatchItem(BaseModel):
-    """单条 input_tokens 不匹配的 trace 信息."""
-
-    trace_id: str = Field(..., description="对话ID")
-    trace_input_tokens: int = Field(
-        ..., description="trace 表记录的输入 token"
-    )
-    span_input_sum: int = Field(..., description="span 表汇总的输入 token")
-    input_diff: int = Field(
-        ...,
-        description="差值 (span_input_sum - trace_input_tokens)",
-    )
-    user_id: Optional[str] = Field(None, description="用户ID")
-    start_time: Optional[datetime] = Field(None, description="对话开始时间")
-
-
 class InputTokensMismatchListResponse(BaseModel):
     """input_tokens 不匹配列表响应."""
 
@@ -1511,15 +1497,6 @@ class InputTokensFixRequest(BaseModel):
         default=True,
         description="是否为预览模式（true=仅返回预览，不实际更新）",
     )
-
-
-class InputTokensFixItem(BaseModel):
-    """单条修复结果."""
-
-    trace_id: str = Field(..., description="对话ID")
-    old_input_tokens: int = Field(..., description="修复前的输入 token")
-    new_input_tokens: int = Field(..., description="修复后的输入 token")
-    span_input_sum: int = Field(..., description="span 汇总值（作为修复依据）")
 
 
 class InputTokensFixResponse(BaseModel):

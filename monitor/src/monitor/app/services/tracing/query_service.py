@@ -2233,11 +2233,16 @@ class TracingQueryService:
         if error_type and error_type in ("llm_input", "tool_call_end"):
             error_type_filter = "AND event_type = %s"
 
-        # 构建搜索过滤
+        # 构建搜索过滤（主查询带 JOIN，需要表别名）
         search_filter = ""
+        # count_query 没有 JOIN，不需要表别名
+        count_search_filter = ""
         search_params: list[str] = []
         if search:
             search_filter = (
+                "AND (s.user_id LIKE %s OR s.user_name LIKE %s OR s.error LIKE %s)"
+            )
+            count_search_filter = (
                 "AND (user_id LIKE %s OR user_name LIKE %s OR error LIKE %s)"
             )
             search_pattern = f"%{search}%"
@@ -2356,7 +2361,7 @@ class TracingQueryService:
               AND event_type IN ('llm_input', 'tool_call_end')
               {bbk_filter_sql}
               {error_type_filter}
-              {search_filter}
+              {count_search_filter}
         """
         if source_id == "all":
             count_params = (

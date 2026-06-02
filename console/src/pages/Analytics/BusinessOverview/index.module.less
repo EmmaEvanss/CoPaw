@@ -1060,13 +1060,12 @@
 }
 
 .htmlPreviewTopList {
-  grid-column: span 5;
+  grid-column: span 4;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  min-height: 460px;
-  max-height: 460px;
+  max-height: 380px;
   padding: 16px;
   overflow: auto;
   background: #ffffff;
@@ -1075,13 +1074,12 @@
 }
 
 .htmlPreviewEventList {
-  grid-column: span 7;
+  grid-column: span 8;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  min-height: 460px;
-  max-height: 460px;
+  max-height: 380px;
   padding: 16px;
   overflow: hidden;
   background: #ffffff;
@@ -1108,25 +1106,25 @@
 .htmlPreviewListRow {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
-  padding: 12px 0;
+  padding: 14px 0;
   border-top: 1px solid #edf2f8;
   color: #475569;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .htmlPreviewListRow .htmlPreviewTopName {
   color: #111827;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.35;
 }
 
 .htmlPreviewListMetrics {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1134,10 +1132,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
+  min-height: 42px;
+  padding: 9px 10px;
+  border: 1px solid #edf2f8;
+  border-radius: 8px;
+  background: #f8fbff;
   color: #475569;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.3;
 }
 
@@ -1152,7 +1155,7 @@
 .htmlPreviewListMetrics strong {
   flex: 0 0 auto;
   color: #111827;
-  font-size: 14px;
+  font-size: 17px;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
@@ -1198,9 +1201,9 @@
 .htmlPreviewCustomerHeader,
 .htmlPreviewCustomerRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px 42px 42px 50px 58px;
+  grid-template-columns: minmax(128px, 180px) 52px 52px 78px 58px 66px;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -1213,6 +1216,12 @@
   color: #64748b;
   font-size: 13px;
   font-weight: 700;
+}
+
+.htmlPreviewCustomerHeader span,
+.htmlPreviewCustomerRow strong,
+.htmlPreviewCustomerRow .htmlPreviewEventTime {
+  white-space: nowrap;
 }
 
 .htmlPreviewCustomerHeader span:not(:first-child),
@@ -1234,7 +1243,7 @@
   padding: 11px 0;
   border-top: 1px solid #edf2f8;
   color: #111827;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .htmlPreviewCustomerRow strong {
@@ -1270,7 +1279,7 @@
 
 .htmlPreviewCustomerId {
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -1349,7 +1358,7 @@
 
   .htmlPreviewCustomerHeader,
   .htmlPreviewCustomerRow {
-    grid-template-columns: minmax(0, 1fr) 40px 40px 40px 52px;
+    grid-template-columns: minmax(112px, 1fr) 40px 40px 70px 52px;
   }
 
   .htmlPreviewCustomerHeader span:nth-child(6),

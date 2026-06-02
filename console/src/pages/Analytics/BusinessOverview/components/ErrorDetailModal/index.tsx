@@ -551,7 +551,9 @@ export default function ErrorDetailModal({
                       <div>{traceDetail.trace.model_output}</div>
                     ) : (
                       <div className={styles.modelResponseEmpty}>
-                        模型调用失败，未生成响应内容
+                        {selectedError.event_type === "llm_input"
+                          ? "模型调用失败，未生成响应内容"
+                          : "工具调用失败，流程中断"}
                       </div>
                     )}
                   </div>

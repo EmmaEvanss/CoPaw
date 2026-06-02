@@ -1154,6 +1154,16 @@ export default function BusinessOverviewPage() {
     htmlPreviewPhoneClicks,
     1,
   );
+  const htmlPreviewActionTotal =
+    htmlPreviewInsightClicks + htmlPreviewPhoneClicks;
+  const htmlPreviewInsightPercent =
+    htmlPreviewActionTotal > 0
+      ? Math.round((htmlPreviewInsightClicks / htmlPreviewActionTotal) * 100)
+      : 0;
+  const htmlPreviewPhonePercent =
+    htmlPreviewActionTotal > 0
+      ? Math.round((htmlPreviewPhoneClicks / htmlPreviewActionTotal) * 100)
+      : 0;
   const htmlPreviewCustomerTotal = useMemo(
     () =>
       displayedHtmlPreviewLists.reduce(
@@ -1926,7 +1936,13 @@ export default function BusinessOverviewPage() {
                 <div className={styles.htmlPreviewTopTitle}>点击分布</div>
                 <div className={styles.htmlPreviewDistributionRows}>
                   <div className={styles.htmlPreviewDistributionRow}>
-                    <span>洞察</span>
+                    <div className={styles.htmlPreviewDistributionMeta}>
+                      <span>洞察</span>
+                      <strong>
+                        {formatNumber(htmlPreviewInsightClicks)}
+                        <em>{htmlPreviewInsightPercent}%</em>
+                      </strong>
+                    </div>
                     <div className={styles.htmlPreviewDistributionTrack}>
                       <i
                         className={styles.htmlPreviewInsightBar}
@@ -1940,10 +1956,15 @@ export default function BusinessOverviewPage() {
                         }}
                       />
                     </div>
-                    <strong>{formatNumber(htmlPreviewInsightClicks)}</strong>
                   </div>
                   <div className={styles.htmlPreviewDistributionRow}>
-                    <span>电访</span>
+                    <div className={styles.htmlPreviewDistributionMeta}>
+                      <span>电访</span>
+                      <strong>
+                        {formatNumber(htmlPreviewPhoneClicks)}
+                        <em>{htmlPreviewPhonePercent}%</em>
+                      </strong>
+                    </div>
                     <div className={styles.htmlPreviewDistributionTrack}>
                       <i
                         className={styles.htmlPreviewPhoneBar}
@@ -1957,7 +1978,6 @@ export default function BusinessOverviewPage() {
                         }}
                       />
                     </div>
-                    <strong>{formatNumber(htmlPreviewPhoneClicks)}</strong>
                   </div>
                 </div>
               </div>
@@ -1976,12 +1996,26 @@ export default function BusinessOverviewPage() {
                         {item.list_name}
                       </span>
                     </Tooltip>
-                    <span>{formatNumber(item.customer_count)} 客户</span>
-                    <span>{formatNumber(item.clicked_customer_count)} 点击客户</span>
-                    <strong>
-                      洞察 {formatNumber(item.insight_count)} / 电访{" "}
-                      {formatNumber(item.phone_count)}
-                    </strong>
+                    <div className={styles.htmlPreviewListMetrics}>
+                      <span>
+                        <em>名单客户</em>
+                        <strong>{formatNumber(item.customer_count)}</strong>
+                      </span>
+                      <span>
+                        <em>点击客户</em>
+                        <strong>
+                          {formatNumber(item.clicked_customer_count)}
+                        </strong>
+                      </span>
+                      <span>
+                        <em>洞察</em>
+                        <strong>{formatNumber(item.insight_count)}</strong>
+                      </span>
+                      <span>
+                        <em>电访</em>
+                        <strong>{formatNumber(item.phone_count)}</strong>
+                      </span>
+                    </div>
                   </div>
                 ))}
                 {displayedHtmlPreviewLists.length === 0 && (

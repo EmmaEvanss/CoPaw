@@ -139,8 +139,6 @@ class HtmlPreviewClickStore:
             "phone" in button_id
             or "电访" in button_name
             or "电访" in button_text
-            or "电话访问" in button_name
-            or "电话访问" in button_text
         ):
             return "phone"
         if (

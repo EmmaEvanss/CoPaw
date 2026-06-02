@@ -14,6 +14,8 @@ from ...models.tracing import (
     ErrorListResponse,
     ErrorSummary,
     EventType,
+    InputTokensMismatchItem,
+    InputTokensFixItem,
     ModelUsage,
     MCPToolUsage,
     MCPServerUsage,
@@ -2239,9 +2241,7 @@ class TracingQueryService:
         count_search_filter = ""
         search_params: list[str] = []
         if search:
-            search_filter = (
-                "AND (s.user_id LIKE %s OR s.user_name LIKE %s OR s.error LIKE %s)"
-            )
+            search_filter = "AND (s.user_id LIKE %s OR s.user_name LIKE %s OR s.error LIKE %s)"
             count_search_filter = (
                 "AND (user_id LIKE %s OR user_name LIKE %s OR error LIKE %s)"
             )
@@ -2347,6 +2347,16 @@ class TracingQueryService:
 
         # 过滤掉 None 值
         params = tuple(p for p in params if p is not None)
+
+        # DEBUG: 打印 SQL 和参数
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info("=== get_error_list SQL ===")
+        logger.info(f"Query: {query}")
+        logger.info(f"Params: {params}")
+        logger.info(f"source_id: {source_id}")
+        logger.info("=== END ===")
 
         rows = await self._db.fetch_all(query, params)
 
@@ -3960,6 +3970,109 @@ class TracingQueryService:
             return None
         return _row_to_feedback(row)
 
+    async def get_session_traces(
+        self,
+        session_id: str,
+        error_trace_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        """获取 Session 所有轮次的对话摘要.
+
+        Args:
+            session_id: 会话 ID
+            error_trace_id: 报错的 Trace ID（用于标记报错轮次）
+
+        Returns:
+            包含所有轮次的对话数据
+        """
+        # 查询该 session 的所有 trace
+        query = """
+            SELECT
+                trace_id,
+                source_id,
+                user_id,
+                user_name,
+                bbk_id,
+                session_name,
+                start_time,
+                duration_ms,
+                model_name,
+                total_input_tokens,
+                total_output_tokens,
+                tools_used,
+                status,
+                error,
+                user_message
+            FROM swe_tracing_traces
+            WHERE session_id = %s
+            ORDER BY start_time ASC
+        """
+        rows = await self._db.fetch_all(query, (session_id,))
+        if not rows:
+            return None
+
+        # 获取 session 基本信息（从第一条记录）
+        first_row = rows[0]
+        session_name = first_row.get("session_name")
+        user_id = first_row.get("user_id", "")
+        user_name = first_row.get("user_name")
+
+        # 从 ES 获取每个 trace 的 model_output
+        from ...database.elasticsearch import get_es_client
+
+        es_client = get_es_client()
+
+        traces = []
+        error_round_index = None
+
+        for idx, row in enumerate(rows):
+            trace_id = row["trace_id"]
+            model_output = None
+
+            # 从 ES 获取 model_output
+            if es_client and es_client.is_connected:
+                model_output = await es_client.get_message(trace_id)
+
+            # 解析 tools_used
+            tools_used = []
+            if row.get("tools_used"):
+                try:
+                    tools_used = json.loads(row["tools_used"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            is_error_round = trace_id == error_trace_id
+
+            if is_error_round:
+                error_round_index = idx
+
+            traces.append(
+                {
+                    "trace_id": trace_id,
+                    "round_number": idx + 1,
+                    "start_time": row["start_time"],
+                    "duration_ms": row.get("duration_ms"),
+                    "model_name": row.get("model_name"),
+                    "status": row.get("status", "completed"),
+                    "user_message": row.get("user_message"),
+                    "model_output": model_output,
+                    "input_tokens": row.get("total_input_tokens", 0),
+                    "output_tokens": row.get("total_output_tokens", 0),
+                    "tools_used": tools_used,
+                    "error": row.get("error"),
+                    "is_error_round": is_error_round,
+                }
+            )
+
+        return {
+            "session_id": session_id,
+            "session_name": session_name,
+            "user_id": user_id,
+            "user_name": user_name,
+            "traces": traces,
+            "total_rounds": len(traces),
+            "error_round_index": error_round_index,
+        }
+
     async def get_trace_detail(
         self,
         trace_id: str,
@@ -4358,3 +4471,166 @@ class TracingQueryService:
             tool_output=row["tool_output"],
             error=row["error"],
         )
+
+    # ===== Input Tokens 修复 =====
+
+    async def check_input_tokens_mismatch(
+        self,
+        page: int,
+        page_size: int,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> tuple[list[InputTokensMismatchItem], int]:
+        """检查 input_tokens 不匹配的 trace.
+
+        比对 trace.total_input_tokens 与 span 表汇总值，
+        找出存在差异的记录（span_input_sum != trace_input_tokens）。
+
+        Args:
+            page: 页码
+            page_size: 每页数量
+            start_date: 开始日期筛选
+            end_date: 结束日期筛选
+
+        Returns:
+            (不匹配列表, 总数)
+        """
+        # 构建日期过滤条件
+        date_filter = ""
+        params: list[Any] = []
+        if start_date:
+            date_filter += " AND t.start_time >= %s"
+            params.append(start_date)
+        if end_date:
+            date_filter += " AND t.start_time < %s"
+            params.append(end_date)
+
+        # 查询总数
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM swe_tracing_traces t
+            JOIN (
+                SELECT trace_id, SUM(input_tokens) as span_input_sum
+                FROM swe_tracing_spans
+                WHERE input_tokens > 0
+                GROUP BY trace_id
+            ) s ON s.trace_id = t.trace_id
+            WHERE t.total_input_tokens != s.span_input_sum
+            {date_filter}
+        """
+        count_result = await self._db.fetch_one(count_query, tuple(params))
+        total = count_result["total"] if count_result else 0
+
+        if total == 0:
+            return [], 0
+
+        # 查询列表
+        offset = (page - 1) * page_size
+        list_query = f"""
+            SELECT
+                t.trace_id,
+                t.total_input_tokens as trace_input_tokens,
+                s.span_input_sum,
+                (s.span_input_sum - t.total_input_tokens) as input_diff,
+                t.user_id,
+                t.start_time
+            FROM swe_tracing_traces t
+            JOIN (
+                SELECT trace_id, SUM(input_tokens) as span_input_sum
+                FROM swe_tracing_spans
+                WHERE input_tokens > 0
+                GROUP BY trace_id
+            ) s ON s.trace_id = t.trace_id
+            WHERE t.total_input_tokens != s.span_input_sum
+            {date_filter}
+            ORDER BY t.start_time DESC
+            LIMIT %s OFFSET %s
+        """
+        params.extend([page_size, offset])
+        rows = await self._db.fetch_all(list_query, tuple(params))
+
+        items = [
+            InputTokensMismatchItem(
+                trace_id=row["trace_id"],
+                trace_input_tokens=row["trace_input_tokens"],
+                span_input_sum=row["span_input_sum"],
+                input_diff=row["input_diff"],
+                user_id=row.get("user_id"),
+                start_time=row.get("start_time"),
+            )
+            for row in rows
+        ]
+
+        return items, total
+
+    async def fix_input_tokens_mismatch(
+        self,
+        trace_ids: list[str],
+        dry_run: bool = True,
+    ) -> dict:
+        """修复 input_tokens 不匹配.
+
+        将 trace.total_input_tokens 更新为 span 表汇总值。
+        dry_run=True 时仅返回预览，不实际更新。
+
+        Args:
+            trace_ids: 待修复的 trace_id 列表
+            dry_run: 是否为预览模式
+
+        Returns:
+            {"fixed_count": int, "items": list[InputTokensFixItem]}
+        """
+        if not trace_ids:
+            return {"fixed_count": 0, "items": []}
+
+        placeholders = ", ".join(["%s"] * len(trace_ids))
+
+        # 查询当前状态和 span 汇总值
+        query = f"""
+            SELECT
+                t.trace_id,
+                t.total_input_tokens as old_input_tokens,
+                s.span_input_sum
+            FROM swe_tracing_traces t
+            JOIN (
+                SELECT trace_id, SUM(input_tokens) as span_input_sum
+                FROM swe_tracing_spans
+                WHERE input_tokens > 0
+                GROUP BY trace_id
+            ) s ON s.trace_id = t.trace_id
+            WHERE t.trace_id IN ({placeholders})
+              AND t.total_input_tokens != s.span_input_sum
+        """
+        rows = await self._db.fetch_all(query, tuple(trace_ids))
+
+        if not rows:
+            return {"fixed_count": 0, "items": []}
+
+        items = [
+            InputTokensFixItem(
+                trace_id=row["trace_id"],
+                old_input_tokens=row["old_input_tokens"],
+                new_input_tokens=row["span_input_sum"],
+                span_input_sum=row["span_input_sum"],
+            )
+            for row in rows
+        ]
+
+        if not dry_run:
+            # 执行更新
+            update_query = f"""
+                UPDATE swe_tracing_traces t
+                JOIN (
+                    SELECT trace_id, SUM(input_tokens) as span_input_sum
+                    FROM swe_tracing_spans
+                    WHERE input_tokens > 0
+                    GROUP BY trace_id
+                ) s ON s.trace_id = t.trace_id
+                SET t.total_input_tokens = s.span_input_sum
+                WHERE t.trace_id IN ({placeholders})
+                  AND t.total_input_tokens != s.span_input_sum
+            """
+            await self._db.execute(update_query, tuple(trace_ids))
+            logger.info(f"Fixed input_tokens for {len(items)} traces")
+
+        return {"fixed_count": len(items), "items": items}

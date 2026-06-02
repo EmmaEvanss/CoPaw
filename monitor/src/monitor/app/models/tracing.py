@@ -673,3 +673,63 @@ class ExtractCustomerNamesResponse(BaseModel):
         default=0,
         description="模型输出中提取的姓名数",
     )
+
+
+class SessionRoundTrace(BaseModel):
+    """Session 中单轮对话的摘要信息."""
+
+    trace_id: str = Field(description="Trace ID")
+    round_number: int = Field(description="轮次编号（从1开始）")
+    start_time: datetime = Field(description="开始时间")
+    duration_ms: Optional[int] = Field(default=None, description="耗时毫秒")
+    model_name: Optional[str] = Field(default=None, description="模型名称")
+    status: str = Field(description="状态: completed / error")
+    user_message: Optional[str] = Field(default=None, description="用户消息")
+    model_output: Optional[str] = Field(default=None, description="模型响应")
+    input_tokens: int = Field(default=0, description="输入 Token")
+    output_tokens: int = Field(default=0, description="输出 Token")
+    tools_used: list[str] = Field(
+        default_factory=list, description="使用的工具"
+    )
+    error: Optional[str] = Field(default=None, description="错误信息")
+    is_error_round: bool = Field(default=False, description="是否是报错轮次")
+
+
+class SessionTracesResponse(BaseModel):
+    """Session 所有轮次对话响应."""
+
+    session_id: str = Field(description="会话 ID")
+    session_name: Optional[str] = Field(default=None, description="会话名称")
+    user_id: str = Field(description="用户 ID")
+    user_name: Optional[str] = Field(default=None, description="用户名称")
+    traces: list[SessionRoundTrace] = Field(
+        default_factory=list, description="所有轮次"
+    )
+    total_rounds: int = Field(default=0, description="总轮次")
+    error_round_index: Optional[int] = Field(
+        default=None, description="报错轮次索引（从0开始）"
+    )
+
+
+class InputTokensMismatchItem(BaseModel):
+    """单条 input_tokens 不匹配的 trace 信息."""
+
+    trace_id: str = Field(description="对话ID")
+    trace_input_tokens: int = Field(description="trace 表记录的输入 token")
+    span_input_sum: int = Field(description="span 表汇总的输入 token")
+    input_diff: int = Field(
+        description="差值 (span_input_sum - trace_input_tokens)",
+    )
+    user_id: Optional[str] = Field(default=None, description="用户ID")
+    start_time: Optional[datetime] = Field(
+        default=None, description="对话开始时间"
+    )
+
+
+class InputTokensFixItem(BaseModel):
+    """单条修复结果."""
+
+    trace_id: str = Field(description="对话ID")
+    old_input_tokens: int = Field(description="修复前的输入 token")
+    new_input_tokens: int = Field(description="修复后的输入 token")
+    span_input_sum: int = Field(description="span 汇总值（作为修复依据）")

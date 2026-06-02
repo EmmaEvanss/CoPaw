@@ -1997,7 +1997,7 @@ export default function BusinessOverviewPage() {
                   <strong>{formatNumber(htmlPreviewTotalClicks)}</strong>
                 </div>
                 <div className={styles.htmlPreviewTopList}>
-                  <div className={styles.htmlPreviewTopTitle}>名单效果</div>
+                  <div className={styles.htmlPreviewTopTitle}>名单点击概览</div>
                   {displayedHtmlPreviewLists.slice(0, 5).map((item) => (
                     <div
                       key={item.list_key}
@@ -2021,7 +2021,7 @@ export default function BusinessOverviewPage() {
                   ))}
                   {displayedHtmlPreviewLists.length === 0 && (
                     <div className={styles.htmlPreviewEmptyLine}>
-                      暂无名单效果数据
+                      暂无名单点击概览数据
                     </div>
                   )}
                 </div>

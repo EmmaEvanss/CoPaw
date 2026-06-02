@@ -71,6 +71,17 @@ class _ResolvedExecutionModel:
 
 
 @dataclass
+class _ExecutionContext:
+    target_user_id: str
+    target_session_id: str
+    dispatch_meta: Dict[str, Any]
+    workspace_dir: Path | None
+    tenant_id: str | None
+    source_id: str | None
+    scope_id: str | None
+
+
+@dataclass
 class AgentStreamState:
     """记录 Agent 流式执行边界，用于区分真实取消和完成后取消。"""
 
@@ -155,15 +166,52 @@ class CronExecutor:
         Returns:
             ExecutionResult containing trace_id and output_preview
         """
-        target_user_id = job.dispatch.target.user_id
-        target_session_id = job.dispatch.target.session_id
+        context = self._prepare_execution_context(job)
+        resolved_model = self._resolve_execution_model(job, context.scope_id)
+
+        logger.info(
+            "cron execute: job_id=%s channel=%s task_type=%s "
+            "target_user_id=%s target_session_id=%s tenant_id=%s",
+            job.id,
+            job.dispatch.channel,
+            job.task_type,
+            context.target_user_id[:40] if context.target_user_id else "",
+            (
+                context.target_session_id[:40]
+                if context.target_session_id
+                else ""
+            ),
+            context.tenant_id or "default",
+        )
+
+        try:
+            result = await self._execute_job_in_context(
+                job,
+                context,
+                resolved_model,
+            )
+        except BaseException as exc:
+            self._attach_execution_meta(exc, resolved_model)
+            raise
+
+        return self._build_execution_result(
+            result,
+            execution_meta=(
+                resolved_model.build_meta()
+                if resolved_model is not None
+                else None
+            ),
+        )
+
+    def _prepare_execution_context(
+        self,
+        job: CronJobSpec,
+    ) -> _ExecutionContext:
         dispatch_meta: Dict[str, Any] = dict(job.dispatch.meta or {})
         workspace_dir_value = dispatch_meta.get("workspace_dir")
-        workspace_dir = None
-        if workspace_dir_value:
-            workspace_dir = Path(workspace_dir_value)
-
-        # Extract tenant_id from job spec (added for tenant isolation)
+        workspace_dir = (
+            Path(workspace_dir_value) if workspace_dir_value else None
+        )
         tenant_id = getattr(job, "tenant_id", None)
         source_id = getattr(job, "source_id", None)
         job_scope_id = getattr(job, "scope_id", None)
@@ -178,65 +226,71 @@ class CronExecutor:
             dispatch_meta["source_id"] = source_id
         if scope_id:
             dispatch_meta["scope_id"] = scope_id
-        resolved_model = self._resolve_execution_model(job, scope_id)
-
-        logger.info(
-            "cron execute: job_id=%s channel=%s task_type=%s "
-            "target_user_id=%s target_session_id=%s tenant_id=%s",
-            job.id,
-            job.dispatch.channel,
-            job.task_type,
-            target_user_id[:40] if target_user_id else "",
-            target_session_id[:40] if target_session_id else "",
-            tenant_id or "default",
+        return _ExecutionContext(
+            target_user_id=job.dispatch.target.user_id,
+            target_session_id=job.dispatch.target.session_id,
+            dispatch_meta=dispatch_meta,
+            workspace_dir=workspace_dir,
+            tenant_id=tenant_id,
+            source_id=source_id,
+            scope_id=scope_id,
         )
 
-        # Wrap execution in tenant context
-        model_slot_context = (
-            bind_model_slot_override(resolved_model.bound_model_slot)
-            if resolved_model is not None
-            and resolved_model.bound_model_slot is not None
-            else nullcontext()
-        )
-        try:
-            with (
-                bind_tenant_context(
-                    tenant_id=tenant_id,
-                    user_id=target_user_id,
-                    workspace_dir=workspace_dir,
-                    source_id=source_id,
-                    scope_id=scope_id,
-                ),
-                bind_llm_workload(LLM_WORKLOAD_CRON),
-                model_slot_context,
-            ):
-                result = await self._execute_job(
-                    job,
-                    target_user_id,
-                    target_session_id,
-                    dispatch_meta,
-                )
-        except BaseException as exc:
-            if resolved_model is not None:
-                setattr(
-                    exc,
-                    "cron_execution_meta",
-                    resolved_model.build_meta(),
-                )
-            raise
+    async def _execute_job_in_context(
+        self,
+        job: CronJobSpec,
+        context: _ExecutionContext,
+        resolved_model: _ResolvedExecutionModel | None,
+    ) -> Dict[str, Any]:
+        with (
+            bind_tenant_context(
+                tenant_id=context.tenant_id,
+                user_id=context.target_user_id,
+                workspace_dir=context.workspace_dir,
+                source_id=context.source_id,
+                scope_id=context.scope_id,
+            ),
+            bind_llm_workload(LLM_WORKLOAD_CRON),
+            self._build_model_slot_context(resolved_model),
+        ):
+            return await self._execute_job(
+                job,
+                context.target_user_id,
+                context.target_session_id,
+                context.dispatch_meta,
+            )
+
+    @staticmethod
+    def _build_model_slot_context(
+        resolved_model: _ResolvedExecutionModel | None,
+    ) -> Any:
+        if resolved_model is None or resolved_model.bound_model_slot is None:
+            return nullcontext()
+        return bind_model_slot_override(resolved_model.bound_model_slot)
+
+    @staticmethod
+    def _attach_execution_meta(
+        exc: BaseException,
+        resolved_model: _ResolvedExecutionModel | None,
+    ) -> None:
+        if resolved_model is None:
+            return
+        setattr(exc, "cron_execution_meta", resolved_model.build_meta())
+
+    def _build_execution_result(
+        self,
+        result: Dict[str, Any] | None,
+        *,
+        execution_meta: Dict[str, Any] | None,
+    ) -> ExecutionResult:
         result = result or {}
         output_preview = str(result.get("output_preview") or "")
-
         return ExecutionResult(
             trace_id=str(result.get("trace_id") or ""),
             output_preview=output_preview[:100],
             input_snapshot=result.get("input_snapshot"),
             executor_leader=str(result.get("executor_leader") or ""),
-            execution_meta=(
-                resolved_model.build_meta()
-                if resolved_model is not None
-                else None
-            ),
+            execution_meta=execution_meta,
         )
 
     def _resolve_execution_model(
@@ -270,7 +324,8 @@ class CronExecutor:
         provider = manager.get_provider(original_model.provider_id)
         if provider is None:
             logger.warning(
-                "cron model_slot fallback: job_id=%s reason=provider_not_found "
+                "cron model_slot fallback: job_id=%s "
+                "reason=provider_not_found "
                 "original_provider=%s original_model=%s effective_provider=%s "
                 "effective_model=%s",
                 job.id,

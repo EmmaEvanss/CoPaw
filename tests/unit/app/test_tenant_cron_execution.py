@@ -232,6 +232,57 @@ def test_execute_binds_source_scope_during_job_and_resets_afterward(
     assert _get_current_source_id() is None
 
 
+def test_prepare_execution_context_resolves_scope_and_workspace_dir() -> None:
+    executor = CronExecutor(
+        runner=_Runner(),
+        channel_manager=_ChannelManager(),
+    )
+    job = _build_text_job("/tmp/tenant-a/workspaces/alpha")
+
+    context = executor._prepare_execution_context(job)
+
+    assert context.target_user_id == "user-a"
+    assert context.target_session_id == "session-a"
+    assert context.workspace_dir == Path("/tmp/tenant-a/workspaces/alpha")
+    assert context.tenant_id == "tenant-a"
+    assert context.source_id == "source-a"
+    assert context.scope_id == context_module.encode_scope_id(
+        "tenant-a",
+        "source-a",
+    )
+    assert context.dispatch_meta == {
+        "workspace_dir": "/tmp/tenant-a/workspaces/alpha",
+        "tenant_id": "tenant-a",
+        "source_id": "source-a",
+        "scope_id": context_module.encode_scope_id("tenant-a", "source-a"),
+    }
+
+
+def test_build_execution_result_truncates_output_preview() -> None:
+    executor = CronExecutor(
+        runner=_Runner(),
+        channel_manager=_ChannelManager(),
+    )
+
+    result = executor._build_execution_result(
+        {
+            "trace_id": "trace-1",
+            "output_preview": "x" * 120,
+            "input_snapshot": {"text": "hello"},
+            "executor_leader": "leader-1",
+        },
+        execution_meta={"fallback_reason": "provider_not_found"},
+    )
+
+    assert result == executor_module.ExecutionResult(
+        trace_id="trace-1",
+        output_preview="x" * 100,
+        input_snapshot={"text": "hello"},
+        executor_leader="leader-1",
+        execution_meta={"fallback_reason": "provider_not_found"},
+    )
+
+
 def test_build_agent_request_includes_runtime_scope():
     executor = CronExecutor(
         runner=_Runner(),

@@ -373,6 +373,7 @@ async def get_sessions(
     ),
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
     bbk_ids: Optional[str] = Query(None, description="按分行号筛选"),
+    has_error: Optional[bool] = Query(None, description="是否筛选报错会话"),
 ) -> dict:
     """获取会话列表及其统计信息.
 
@@ -383,6 +384,7 @@ async def get_sessions(
         session_id: 按会话 ID 筛选（模糊匹配）
         start_date: 开始日期筛选
         end_date: 结束日期筛选
+        has_error: 是否筛选报错会话（True=只返回报错会话，None=返回全部）
 
     Returns:
         分页的会话列表及统计信息
@@ -402,6 +404,7 @@ async def get_sessions(
         start_date=start,
         end_date=end,
         bbk_ids=bbk_ids,
+        has_error=has_error,
     )
     return {
         "items": [s.model_dump() for s in sessions],

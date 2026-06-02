@@ -2925,6 +2925,7 @@ class TracingQueryService:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         bbk_ids: Optional[str] = None,
+        has_error: Optional[bool] = None,
     ) -> tuple[list[SessionListItem], int]:
         """获取会话列表."""
         if source_id == "all":
@@ -2957,6 +2958,16 @@ class TracingQueryService:
         if end_date:
             where_clauses.append("start_time <= %s")
             params.append(end_date)
+
+        # 报错会话筛选
+        if has_error is True:
+            where_clauses.append(
+                "session_id IN (SELECT DISTINCT session_id FROM swe_tracing_traces WHERE status = 'error')",
+            )
+        elif has_error is False:
+            where_clauses.append(
+                "session_id NOT IN (SELECT DISTINCT session_id FROM swe_tracing_traces WHERE status = 'error')",
+            )
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 

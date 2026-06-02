@@ -84,6 +84,42 @@ describe("htmlPreviewClickTracking", () => {
     expect(phonePayload?.button_type).toBe("phone");
   });
 
+  it("tracks view plan links without treating generic link buttons as insight", () => {
+    const doc = createDocument(`
+      <table>
+        <thead>
+          <tr>
+            <th>客户姓名</th>
+            <th>经营方案</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-customer-id="CUST-001" data-customer-name="祝话">
+            <td><strong>祝话</strong></td>
+            <td><a class="link-btn" href="https://example.com/plan">查看方案</a></td>
+          </tr>
+          <tr>
+            <td>程广泛</td>
+            <td>暂不生成方案</td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+    const link = doc.querySelector("a") as HTMLElement;
+
+    const payload = buildHtmlPreviewClickPayload(link, {
+      fileUrl: "https://example.com/a.html",
+      fileName: "a.html",
+    });
+
+    expect(payload?.button_id).toBe("plan");
+    expect(payload?.button_name).toBe("查看方案");
+    expect(payload?.button_text).toBe("查看方案");
+    expect(payload?.button_type).toBe("plan");
+    expect(payload?.customer_id).toBe("CUST-001");
+    expect(payload?.customer_name).toBe("祝话");
+  });
+
   it("prefers structured customer fields from the clicked table row", () => {
     const doc = createDocument(`
       <table>

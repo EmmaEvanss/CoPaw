@@ -974,7 +974,7 @@
 
 .htmlPreviewDistributionRows {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -1039,6 +1039,10 @@
 
 .htmlPreviewPhoneBar {
   background: #16a34a;
+}
+
+.htmlPreviewPlanBar {
+  background: #f59e0b;
 }
 
 .htmlPreviewStatCard span {
@@ -1194,7 +1198,7 @@
 .htmlPreviewCustomerHeader,
 .htmlPreviewCustomerRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px 42px 50px 58px;
+  grid-template-columns: minmax(0, 1fr) 42px 42px 42px 50px 58px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -1345,10 +1349,10 @@
 
   .htmlPreviewCustomerHeader,
   .htmlPreviewCustomerRow {
-    grid-template-columns: minmax(0, 1fr) 40px 40px 52px;
+    grid-template-columns: minmax(0, 1fr) 40px 40px 40px 52px;
   }
 
-  .htmlPreviewCustomerHeader span:nth-child(5),
+  .htmlPreviewCustomerHeader span:nth-child(6),
   .htmlPreviewCustomerRow .htmlPreviewEventTime {
     display: none;
   }

@@ -11,7 +11,7 @@ export interface HtmlPreviewClickEventPayload {
   button_id?: string | null;
   button_name?: string | null;
   button_text?: string | null;
-  button_type?: "insight" | "phone" | "other" | string | null;
+  button_type?: "insight" | "phone" | "plan" | "other" | string | null;
   customer_id?: string | null;
   customer_name?: string | null;
   customer_info?: Record<string, string> | null;
@@ -74,6 +74,7 @@ export interface HtmlPreviewCustomerClickSummaryItem {
   customer_name: string;
   insight_count: number;
   phone_count: number;
+  plan_count: number;
   total_click_count: number;
   last_clicked_at?: string | null;
 }
@@ -118,6 +119,7 @@ export interface HtmlPreviewListSummaryItem {
   clicked_customer_count: number;
   insight_count: number;
   phone_count: number;
+  plan_count: number;
   total_click_count: number;
   last_clicked_at?: string | null;
 }
@@ -134,6 +136,7 @@ export interface HtmlPreviewCustomerClickItem {
   list_name?: string | null;
   insight_count: number;
   phone_count: number;
+  plan_count: number;
   total_click_count: number;
   last_clicked_at?: string | null;
 }

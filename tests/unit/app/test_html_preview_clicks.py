@@ -87,6 +87,34 @@ async def test_create_event_writes_click_detail(mock_db):
 
 
 @pytest.mark.asyncio
+async def test_create_event_classifies_view_plan_click(mock_db):
+    """查看方案链接应归类为独立的方案点击。"""
+    store = HtmlPreviewClickStore(mock_db)
+    clicked_at = datetime(2026, 5, 30, 10, 30, 0)
+
+    await store.create_event(
+        HtmlPreviewClickEventCreate(
+            source_id="copaw",
+            user_id="u-1",
+            bbk_id="branch-1",
+            file_url="https://example.com/a.html",
+            file_name="存款到期完整客户名单.html",
+            button_id="plan",
+            button_name="查看方案",
+            button_text="查看方案",
+            customer_id="CUST-001",
+            customer_name="祝话",
+            clicked_at=clicked_at,
+        ),
+    )
+
+    _, params = mock_db.execute.call_args[0]
+    assert params[12] == "plan"
+    assert params[13] == "CUST-001"
+    assert params[14] == "祝话"
+
+
+@pytest.mark.asyncio
 async def test_create_list_snapshot_writes_distinct_customers(mock_db):
     """名单快照应覆盖旧快照并按客户去重写入。"""
     store = HtmlPreviewClickStore(mock_db)
@@ -225,8 +253,8 @@ async def test_list_events_returns_customer_info(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_list_customer_summary_groups_insight_and_phone(mock_db):
-    """客户维度聚合应分别返回洞察和电访次数。"""
+async def test_list_customer_summary_groups_touchpoint_counts(mock_db):
+    """客户维度聚合应分别返回洞察、电访和方案次数。"""
     clicked_at = datetime(2026, 5, 30, 11, 0, 0)
     mock_db.fetch_all.return_value = [
         {
@@ -253,6 +281,18 @@ async def test_list_customer_summary_groups_insight_and_phone(mock_db):
             "customer_info": '{"customer_id": "CUST-001", "name": "祝话"}',
             "clicked_at": datetime(2026, 5, 30, 10, 0, 0),
         },
+        {
+            "list_key": "https://example.com/a.html",
+            "list_name": "a.html",
+            "button_id": "plan",
+            "button_name": "查看方案",
+            "button_text": "查看方案",
+            "button_type": "plan",
+            "customer_id": "CUST-001",
+            "customer_name": "祝话",
+            "customer_info": '{"customer_id": "CUST-001", "name": "祝话"}',
+            "clicked_at": datetime(2026, 5, 30, 9, 0, 0),
+        },
     ]
     store = HtmlPreviewClickStore(mock_db)
 
@@ -276,7 +316,8 @@ async def test_list_customer_summary_groups_insight_and_phone(mock_db):
     assert items[0].customer_name == "祝话"
     assert items[0].insight_count == 1
     assert items[0].phone_count == 1
-    assert items[0].total_click_count == 2
+    assert items[0].plan_count == 1
+    assert items[0].total_click_count == 3
 
 
 @pytest.mark.asyncio
@@ -333,6 +374,19 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
                 "customer_info": None,
                 "clicked_at": clicked_at,
             },
+            {
+                "list_key": "list-1",
+                "list_name": "存款到期名单",
+                "file_url": "https://example.com/a.html",
+                "file_name": "a.html",
+                "cron_task_id": "task-1",
+                "cron_task_name": "存款到期提醒",
+                "button_type": "plan",
+                "customer_id": "CUST-001",
+                "customer_name": "祝话",
+                "customer_info": None,
+                "clicked_at": clicked_at,
+            },
         ],
     ]
     store = HtmlPreviewClickStore(mock_db)
@@ -350,7 +404,8 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
     assert items[0].clicked_customer_count == 1
     assert items[0].insight_count == 1
     assert items[0].phone_count == 1
-    assert items[0].total_click_count == 2
+    assert items[0].plan_count == 1
+    assert items[0].total_click_count == 3
 
 
 def test_create_route_enriches_source_and_user(monkeypatch):
@@ -443,6 +498,7 @@ def test_customer_summary_route_returns_customer_items(monkeypatch):
                     customer_name="祝话",
                     insight_count=2,
                     phone_count=1,
+                    plan_count=1,
                 ),
             ]
 
@@ -468,6 +524,7 @@ def test_customer_summary_route_returns_customer_items(monkeypatch):
     assert payload["items"][0]["customer_id"] == "CUST-001"
     assert payload["items"][0]["insight_count"] == 2
     assert payload["items"][0]["phone_count"] == 1
+    assert payload["items"][0]["plan_count"] == 1
 
 
 def test_list_snapshot_route_enriches_context(monkeypatch):
@@ -525,7 +582,8 @@ def test_lists_route_returns_list_items(monkeypatch):
                     clicked_customer_count=3,
                     insight_count=4,
                     phone_count=2,
-                    total_click_count=6,
+                    plan_count=1,
+                    total_click_count=7,
                 ),
             ]
 
@@ -550,6 +608,7 @@ def test_lists_route_returns_list_items(monkeypatch):
     assert payload["success"] is True
     assert payload["items"][0]["list_key"] == "list-1"
     assert payload["items"][0]["customer_count"] == 16
+    assert payload["items"][0]["plan_count"] == 1
 
 
 def test_customer_clicks_route_returns_customer_items(monkeypatch):
@@ -569,7 +628,8 @@ def test_customer_clicks_route_returns_customer_items(monkeypatch):
                     list_name="存款到期名单",
                     insight_count=2,
                     phone_count=1,
-                    total_click_count=3,
+                    plan_count=1,
+                    total_click_count=4,
                 ),
             ]
 
@@ -597,7 +657,8 @@ def test_customer_clicks_route_returns_customer_items(monkeypatch):
     payload = response.json()
     assert payload["success"] is True
     assert payload["items"][0]["customer_id"] == "CUST-001"
-    assert payload["items"][0]["total_click_count"] == 3
+    assert payload["items"][0]["plan_count"] == 1
+    assert payload["items"][0]["total_click_count"] == 4
 
 
 def test_event_list_route_returns_customer_items(monkeypatch):

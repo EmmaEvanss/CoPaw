@@ -60,7 +60,13 @@ function getElementName(element: HTMLElement, buttonText: string | null) {
   );
 }
 
-function getClassFallbackId(element: HTMLElement) {
+function getClassFallbackId(
+  element: HTMLElement,
+  buttonText: string | null,
+) {
+  if (buttonText?.includes("查看方案")) {
+    return "plan";
+  }
   if (element.classList.contains("phone")) {
     return "phone";
   }
@@ -77,6 +83,13 @@ function getButtonType(
   buttonText: string | null,
 ) {
   const normalizedId = (buttonId || "").toLowerCase();
+  if (
+    normalizedId.includes("plan") ||
+    buttonName?.includes("查看方案") ||
+    buttonText?.includes("查看方案")
+  ) {
+    return "plan";
+  }
   if (
     element.classList.contains("phone") ||
     normalizedId.includes("phone") ||
@@ -229,7 +242,7 @@ export function buildHtmlPreviewClickPayload(
     element.dataset.trackId ||
       element.id ||
       element.getAttribute("name") ||
-      getClassFallbackId(element) ||
+      getClassFallbackId(element, buttonText) ||
       buttonText,
     255,
   );

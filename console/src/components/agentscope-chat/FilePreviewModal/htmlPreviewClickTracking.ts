@@ -1,4 +1,7 @@
-import type { HtmlPreviewClickEventPayload } from "@/api/types/htmlPreviewEvents";
+import type {
+  HtmlPreviewClickEventPayload,
+  HtmlPreviewListSnapshotPayload,
+} from "@/api/types/htmlPreviewEvents";
 
 export interface HtmlPreviewClickMetadata {
   cronTaskId?: string | null;
@@ -9,6 +12,10 @@ export interface HtmlPreviewClickMetadata {
 
 export type HtmlPreviewClickReporter = (
   payload: HtmlPreviewClickEventPayload,
+) => Promise<unknown> | unknown;
+
+export type HtmlPreviewListSnapshotReporter = (
+  payload: HtmlPreviewListSnapshotPayload,
 ) => Promise<unknown> | unknown;
 
 const CLICKABLE_SELECTOR = "button,a,[role='button'],[data-track-id]";
@@ -61,6 +68,34 @@ function getClassFallbackId(element: HTMLElement) {
     return "insight";
   }
   return null;
+}
+
+function getButtonType(
+  element: HTMLElement,
+  buttonId: string | null,
+  buttonName: string | null,
+  buttonText: string | null,
+) {
+  const normalizedId = (buttonId || "").toLowerCase();
+  if (
+    element.classList.contains("phone") ||
+    normalizedId.includes("phone") ||
+    buttonName?.includes("电访") ||
+    buttonName?.includes("电话访问") ||
+    buttonText?.includes("电访") ||
+    buttonText?.includes("电话访问")
+  ) {
+    return "phone";
+  }
+  if (
+    element.classList.contains("link-btn") ||
+    normalizedId.includes("insight") ||
+    buttonName?.includes("洞察") ||
+    buttonText?.includes("洞察")
+  ) {
+    return "insight";
+  }
+  return "other";
 }
 
 function parseCustomerInfoJson(value: string | undefined) {
@@ -162,6 +197,28 @@ function getCustomerInfo(element: HTMLElement) {
   );
 }
 
+function getListKey(metadata: HtmlPreviewClickMetadata) {
+  return metadata.fileUrl;
+}
+
+function getListName(metadata: HtmlPreviewClickMetadata) {
+  return metadata.fileName || metadata.fileUrl;
+}
+
+function getCustomerIdentity(customerInfo: Record<string, string> | null) {
+  const info = customerInfo || {};
+  return {
+    customerId: info.customer_id || null,
+    customerName:
+      info.name ||
+      info.customer_name ||
+      info["客户姓名"] ||
+      info["客户名称"] ||
+      info["姓名"] ||
+      null,
+  };
+}
+
 export function buildHtmlPreviewClickPayload(
   element: HTMLElement,
   metadata: HtmlPreviewClickMetadata,
@@ -177,6 +234,8 @@ export function buildHtmlPreviewClickPayload(
     255,
   );
   const buttonName = getElementName(element, buttonText);
+  const customerInfo = getCustomerInfo(element);
+  const customerIdentity = getCustomerIdentity(customerInfo);
 
   if (!buttonId && !buttonName && !buttonText) {
     return null;
@@ -187,11 +246,72 @@ export function buildHtmlPreviewClickPayload(
     cron_task_name: metadata.cronTaskName || null,
     file_url: metadata.fileUrl,
     file_name: metadata.fileName || null,
+    list_key: getListKey(metadata),
+    list_name: getListName(metadata),
     button_id: buttonId,
     button_name: buttonName,
     button_text: buttonText,
-    customer_info: getCustomerInfo(element),
+    button_type: getButtonType(element, buttonId, buttonName, buttonText),
+    customer_id: customerIdentity.customerId,
+    customer_name: customerIdentity.customerName,
+    customer_info: customerInfo,
     clicked_at: clickedAt.toISOString(),
+  };
+}
+
+export function buildHtmlPreviewListSnapshotPayload(
+  doc: Document,
+  metadata: HtmlPreviewClickMetadata,
+  snapshotAt: Date = new Date(),
+): HtmlPreviewListSnapshotPayload | null {
+  const HTMLElementCtor = doc.defaultView?.HTMLElement || HTMLElement;
+
+  const rows = Array.from(doc.querySelectorAll("tr"));
+  const customers = rows
+    .map((row) => {
+      if (!(row instanceof HTMLElementCtor)) {
+        return null;
+      }
+      if (
+        row.closest("thead") ||
+        (row.querySelector("th") && !row.querySelector("td"))
+      ) {
+        return null;
+      }
+      const customerInfo = getCustomerInfo(row);
+      const { customerId, customerName } = getCustomerIdentity(customerInfo);
+      if (!customerId && !customerName) {
+        return null;
+      }
+      return {
+        customer_id: customerId,
+        customer_name: customerName || "未知客户",
+        extra_info: customerInfo,
+      };
+    })
+    .filter(
+      (
+        item,
+      ): item is {
+        customer_id: string | null;
+        customer_name: string;
+        extra_info: Record<string, string> | null;
+      } => Boolean(item),
+    );
+
+  if (customers.length === 0) {
+    return null;
+  }
+
+  return {
+    cron_task_id: metadata.cronTaskId || null,
+    cron_task_name: metadata.cronTaskName || null,
+    list_key: getListKey(metadata),
+    list_name: getListName(metadata),
+    file_url: metadata.fileUrl,
+    file_name: metadata.fileName || null,
+    customers,
+    snapshot_at: snapshotAt.toISOString(),
   };
 }
 
@@ -199,11 +319,30 @@ export function attachHtmlPreviewClickTracker(params: {
   iframe: HTMLIFrameElement;
   metadata: HtmlPreviewClickMetadata;
   reporter: HtmlPreviewClickReporter;
+  listSnapshotReporter?: HtmlPreviewListSnapshotReporter;
 }): () => void {
   const doc = params.iframe.contentDocument;
   const view = doc?.defaultView;
   if (!doc || !view) {
     return () => {};
+  }
+
+  if (params.listSnapshotReporter) {
+    const snapshotPayload = buildHtmlPreviewListSnapshotPayload(
+      doc,
+      params.metadata,
+    );
+    if (snapshotPayload) {
+      try {
+        void Promise.resolve(
+          params.listSnapshotReporter(snapshotPayload),
+        ).catch((error) => {
+          console.warn("Failed to record HTML preview list snapshot:", error);
+        });
+      } catch (error) {
+        console.warn("Failed to record HTML preview list snapshot:", error);
+      }
+    }
   }
 
   const handleClick = (event: MouseEvent) => {

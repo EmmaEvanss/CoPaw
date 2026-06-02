@@ -42,6 +42,7 @@ export default function UserDetailModal({
   );
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(false);
+  const [hasErrorFilter, setHasErrorFilter] = useState(false);
   const [hasAutoSelectedSession, setHasAutoSelectedSession] = useState(false);
   const [chatSpecs, setChatSpecs] = useState<ChatSpec[]>([]);
 
@@ -82,6 +83,7 @@ export default function UserDetailModal({
       const data = await tracingApi.getSessions(page, pageSize, {
         user_id: userId,
         bbk_ids: bbkIds,
+        has_error: hasErrorFilter ? true : undefined,
       });
       setSessions(data.items || []);
       setSessionsTotal(data.total || 0);
@@ -91,7 +93,7 @@ export default function UserDetailModal({
     } finally {
       setSessionsLoading(false);
     }
-  }, [userId, bbkIds]);
+  }, [userId, bbkIds, hasErrorFilter]);
 
   // 获取聊天映射
   const fetchUserChats = useCallback(async () => {
@@ -129,14 +131,24 @@ export default function UserDetailModal({
       fetchUserChats();
       setSessionsPage(1);
       setHasAutoSelectedSession(false);
+      setSelectedSessionId(null);
     }
   }, [
     open,
     userId,
     fetchUserStats,
-    fetchSessions,
     fetchUserChats,
   ]);
+
+  // 筛选状态变化时重新加载会话列表
+  useEffect(() => {
+    if (open && userId) {
+      fetchSessions(1, DEFAULT_SESSIONS_PAGE_SIZE);
+      setSessionsPage(1);
+      setHasAutoSelectedSession(false);
+      setSelectedSessionId(null);
+    }
+  }, [hasErrorFilter]);
 
   // 首次打开详情弹窗时自动选中第一条会话，便于直接查看聊天内容
   useEffect(() => {
@@ -174,6 +186,7 @@ export default function UserDetailModal({
     setSessionsCollapsed(false);
     setHasAutoSelectedSession(false);
     setSelectedSessionId(null);
+    setHasErrorFilter(false);
     onClose();
   };
 
@@ -196,6 +209,11 @@ export default function UserDetailModal({
       fetchSessionStats(sessionId);
     }
   };
+
+  // 切换报错会话筛选
+  const handleToggleErrorFilter = useCallback(() => {
+    setHasErrorFilter((prev) => !prev);
+  }, []);
 
   // 判断当前显示的是用户级还是会话级统计
   const showSessionStats = selectedSessionId !== null && sessionStats !== null;
@@ -253,11 +271,13 @@ export default function UserDetailModal({
                 loading={sessionsLoading}
                 selectedSessionId={selectedSessionId}
                 collapsed={sessionsCollapsed}
+                hasErrorFilter={hasErrorFilter}
                 onSelect={handleSessionSelect}
                 onPageChange={handleSessionsPageChange}
                 onToggleCollapsed={() =>
                   setSessionsCollapsed((value) => !value)
                 }
+                onToggleErrorFilter={handleToggleErrorFilter}
               />
             </div>
             <div className={styles.rightPanel}>

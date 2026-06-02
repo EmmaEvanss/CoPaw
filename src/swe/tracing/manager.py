@@ -708,8 +708,8 @@ class TraceManager:
             mcp_server=mcp_server,
         )
 
-        # Update trace statistics (skills_used, tools_used)
-        self._update_trace_totals(trace_id, span, None)
+        # Update trace statistics (skills_used, tools_used, input_tokens if > 0)
+        self._update_trace_totals(trace_id, span, None, input_tokens)
 
         # Add to pending cache and queue atomically
         # 在锁内检查是否需要立即 flush，避免锁外检查导致的竞态条件
@@ -767,6 +767,7 @@ class TraceManager:
             trace_id,
             span,
             output_tokens,
+            input_tokens,
             is_update=True,
         )
 
@@ -824,7 +825,8 @@ class TraceManager:
         self,
         trace_id: str,
         span: Span,
-        output_tokens: Optional[int],
+        output_tokens: Optional[int] = None,
+        input_tokens: Optional[int] = None,
         is_update: bool = False,
     ) -> None:
         """Update trace statistics from span.
@@ -832,8 +834,9 @@ class TraceManager:
         Args:
             trace_id: Trace identifier
             span: Span object
-            output_tokens: Output token count
-            is_update: If True, this is an update to existing span (don't re-add input_tokens)
+            output_tokens: Output token count (累加传入值)
+            input_tokens: Input token count (累加传入值，仅在 update 时有值)
+            is_update: If True, this is an update to existing span
         """
         trace = self._active_traces.get(trace_id)
         if not trace:
@@ -841,9 +844,9 @@ class TraceManager:
 
         if output_tokens:
             trace.total_output_tokens += output_tokens
-        # Only add input_tokens when first emitting the span, not when updating
-        if span.input_tokens and not is_update:
-            trace.total_input_tokens += span.input_tokens
+        # input_tokens 累加传入参数值（非 span 字段），避免重复累加
+        if input_tokens and input_tokens > 0:
+            trace.total_input_tokens += input_tokens
         # 只在 trace.model_name 为空时设置，保留第一个模型作为主模型
         # 避免用户切换活跃模型后覆盖 trace 的 model_name
         if span.model_name and not trace.model_name:

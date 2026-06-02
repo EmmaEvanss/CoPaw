@@ -5,13 +5,18 @@ import { buildAuthHeaders } from "../authHeaders";
 import { getApiUrl } from "../config";
 import { request } from "../request";
 import type {
+  HtmlPreviewCustomerClickResponse,
   HtmlPreviewClickEventListResponse,
   HtmlPreviewClickEventPayload,
   HtmlPreviewClickSubmitResponse,
   HtmlPreviewClickSummaryResponse,
+  HtmlPreviewCustomerClickSummaryResponse,
+  HtmlPreviewListSnapshotPayload,
+  HtmlPreviewListSnapshotResponse,
+  HtmlPreviewListSummaryResponse,
 } from "../types/htmlPreviewEvents";
 
-function withRuntimeContext(
+function withClickRuntimeContext(
   payload: HtmlPreviewClickEventPayload,
 ): HtmlPreviewClickEventPayload {
   const iframeContext = getIframeContext();
@@ -19,6 +24,17 @@ function withRuntimeContext(
     ...payload,
     source_id: payload.source_id || iframeContext.source || DEFAULT_SOURCE_ID,
     user_id: payload.user_id || getUserId(),
+    bbk_id: payload.bbk_id || iframeContext.bbk || null,
+  };
+}
+
+function withListSnapshotRuntimeContext(
+  payload: HtmlPreviewListSnapshotPayload,
+): HtmlPreviewListSnapshotPayload {
+  const iframeContext = getIframeContext();
+  return {
+    ...payload,
+    source_id: payload.source_id || iframeContext.source || DEFAULT_SOURCE_ID,
     bbk_id: payload.bbk_id || iframeContext.bbk || null,
   };
 }
@@ -34,7 +50,7 @@ export const htmlPreviewEventsApi = {
           ...buildAuthHeaders(),
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(withRuntimeContext(payload)),
+        body: JSON.stringify(withClickRuntimeContext(payload)),
         keepalive: true,
       });
       return { success: response.ok };
@@ -43,12 +59,34 @@ export const htmlPreviewEventsApi = {
       return { success: false };
     }
   },
+  recordListSnapshot: async (
+    payload: HtmlPreviewListSnapshotPayload,
+  ): Promise<HtmlPreviewListSnapshotResponse> => {
+    try {
+      const response = await fetch(getApiUrl("/html-preview/list-snapshot"), {
+        method: "POST",
+        headers: {
+          ...buildAuthHeaders(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(withListSnapshotRuntimeContext(payload)),
+      });
+      if (!response.ok) {
+        return { success: false, customer_count: 0 };
+      }
+      return (await response.json()) as HtmlPreviewListSnapshotResponse;
+    } catch (error) {
+      console.warn("Failed to record HTML preview list snapshot:", error);
+      return { success: false, customer_count: 0 };
+    }
+  },
   getEvents: (params?: {
     startTime?: string | null;
     endTime?: string | null;
     bbkIds?: string | null;
     cronTaskId?: string | null;
     fileUrl?: string | null;
+    listKey?: string | null;
     limit?: number;
   }) => {
     const search = buildSearchParams(params);
@@ -63,12 +101,59 @@ export const htmlPreviewEventsApi = {
     bbkIds?: string | null;
     cronTaskId?: string | null;
     fileUrl?: string | null;
+    listKey?: string | null;
     limit?: number;
   }) => {
     const search = buildSearchParams(params);
     const query = search.toString();
     return request<HtmlPreviewClickSummaryResponse>(
       `/html-preview/events/summary${query ? `?${query}` : ""}`,
+    );
+  },
+  getCustomerSummary: (params?: {
+    startTime?: string | null;
+    endTime?: string | null;
+    bbkIds?: string | null;
+    cronTaskId?: string | null;
+    fileUrl?: string | null;
+    listKey?: string | null;
+    limit?: number;
+  }) => {
+    const search = buildSearchParams(params);
+    const query = search.toString();
+    return request<HtmlPreviewCustomerClickSummaryResponse>(
+      `/html-preview/events/customer-summary${query ? `?${query}` : ""}`,
+    );
+  },
+  getLists: (params?: {
+    startTime?: string | null;
+    endTime?: string | null;
+    bbkIds?: string | null;
+    limit?: number;
+  }) => {
+    const search = buildSearchParams(params);
+    const query = search.toString();
+    return request<HtmlPreviewListSummaryResponse>(
+      `/html-preview/lists${query ? `?${query}` : ""}`,
+    );
+  },
+  getCustomerClicks: (params?: {
+    startTime?: string | null;
+    endTime?: string | null;
+    bbkIds?: string | null;
+    cronTaskId?: string | null;
+    fileUrl?: string | null;
+    listKey?: string | null;
+    includeUnclicked?: boolean;
+    limit?: number;
+  }) => {
+    const search = buildSearchParams(params);
+    if (params?.includeUnclicked !== undefined) {
+      search.set("include_unclicked", String(params.includeUnclicked));
+    }
+    const query = search.toString();
+    return request<HtmlPreviewCustomerClickResponse>(
+      `/html-preview/customer-clicks${query ? `?${query}` : ""}`,
     );
   },
 };
@@ -79,6 +164,7 @@ function buildSearchParams(params?: {
   bbkIds?: string | null;
   cronTaskId?: string | null;
   fileUrl?: string | null;
+  listKey?: string | null;
   limit?: number;
 }) {
   const search = new URLSearchParams();
@@ -96,6 +182,9 @@ function buildSearchParams(params?: {
   }
   if (params?.fileUrl) {
     search.set("file_url", params.fileUrl);
+  }
+  if (params?.listKey) {
+    search.set("list_key", params.listKey);
   }
   if (params?.limit) {
     search.set("limit", String(params.limit));

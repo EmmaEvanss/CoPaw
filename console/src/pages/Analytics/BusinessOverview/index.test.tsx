@@ -25,6 +25,9 @@ const tracingApiMock = vi.hoisted(() => ({
 const htmlPreviewEventsApiMock = vi.hoisted(() => ({
   getSummary: vi.fn(),
   getEvents: vi.fn(),
+  getCustomerSummary: vi.fn(),
+  getLists: vi.fn(),
+  getCustomerClicks: vi.fn(),
 }));
 
 vi.mock("../../../api/modules/tracing", () => ({
@@ -136,11 +139,51 @@ describe("BusinessOverview trend chart", () => {
           button_name: "洞察页面",
           file_url: "https://example.com/a.html",
           customer_info: {
+            customer_id: "CUST-001",
             "客户姓名": "祝话",
-            "到期产品": "定存243M",
-            "到期金额": "18.00万元",
           },
           clicked_at: "2026-05-19T10:35:00",
+        },
+      ],
+    });
+    htmlPreviewEventsApiMock.getCustomerSummary.mockResolvedValue({
+      items: [
+        {
+          customer_id: "CUST-001",
+          customer_name: "祝话",
+          insight_count: 2,
+          phone_count: 1,
+          last_clicked_at: "2026-05-19T10:35:00",
+        },
+      ],
+    });
+    htmlPreviewEventsApiMock.getLists.mockResolvedValue({
+      items: [
+        {
+          list_key: "https://example.com/a.html",
+          list_name: "到期客户名单[auto-preview].html",
+          file_url: "https://example.com/a.html",
+          file_name: "到期客户名单[auto-preview].html",
+          customer_count: 16,
+          clicked_customer_count: 1,
+          insight_count: 2,
+          phone_count: 1,
+          total_click_count: 3,
+          last_clicked_at: "2026-05-19T10:35:00",
+        },
+      ],
+    });
+    htmlPreviewEventsApiMock.getCustomerClicks.mockResolvedValue({
+      items: [
+        {
+          customer_id: "CUST-001",
+          customer_name: "祝话",
+          list_key: "https://example.com/a.html",
+          list_name: "到期客户名单[auto-preview].html",
+          insight_count: 2,
+          phone_count: 1,
+          total_click_count: 3,
+          last_clicked_at: "2026-05-19T10:35:00",
         },
       ],
     });
@@ -206,15 +249,20 @@ describe("BusinessOverview trend chart", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders HTML preview click statistics inside business overview", async () => {
+  it("renders customer insight and phone click statistics inside business overview", async () => {
     renderBusinessOverview();
 
-    expect(await screen.findByText("HTML 预览点击统计")).toBeInTheDocument();
+    expect(await screen.findByText("客户洞察/电访点击统计")).toBeInTheDocument();
     expect(await screen.findByText("点击总数")).toBeInTheDocument();
-    expect(await screen.findByText("立即跟进")).toBeInTheDocument();
+    expect(await screen.findByText("名单总客户数")).toBeInTheDocument();
+    expect(await screen.findByText("被点击客户数")).toBeInTheDocument();
+    expect(await screen.findByText("到期客户名单[auto-preview].html")).toBeInTheDocument();
     expect(await screen.findByText("祝话")).toBeInTheDocument();
-    expect(await screen.findByText("洞察页面")).toBeInTheDocument();
+    expect(await screen.findByText("CUST-001")).toBeInTheDocument();
+    expect(await screen.findByText("洞察")).toBeInTheDocument();
+    expect(await screen.findByText("电访")).toBeInTheDocument();
     expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
-    expect(htmlPreviewEventsApiMock.getEvents).toHaveBeenCalled();
+    expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalled();
+    expect(htmlPreviewEventsApiMock.getCustomerClicks).toHaveBeenCalled();
   });
 });

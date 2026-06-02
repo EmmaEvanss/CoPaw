@@ -10,6 +10,7 @@ import click
 
 from .http import client, print_json
 from ..app.channels.schema import DEFAULT_CHANNEL
+from ..config.context import get_current_source_id, get_current_tenant_id
 from ..config.utils import load_config
 
 
@@ -166,13 +167,15 @@ def _build_headers(
     user_id: Optional[str] = None,
     source_id: Optional[str] = None,
 ) -> dict[str, str]:
-    headers = {"X-Agent-Id": agent_id}
-    if tenant_id:
-        headers["X-Tenant-Id"] = tenant_id
+    resolved_source_id = source_id or get_current_source_id()
+    headers = {
+        "X-Agent-Id": agent_id,
+        "X-Tenant-Id": tenant_id or get_current_tenant_id() or "default",
+    }
     if user_id:
         headers["X-User-Id"] = user_id
-    if source_id:
-        headers["X-Source-Id"] = source_id
+    if resolved_source_id:
+        headers["X-Source-Id"] = resolved_source_id
     return headers
 
 

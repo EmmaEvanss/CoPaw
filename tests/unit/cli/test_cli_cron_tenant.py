@@ -10,6 +10,7 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from swe.cli.cron_cmd import cron_group
+from swe.config.context import tenant_context
 
 
 class _Response:
@@ -57,6 +58,83 @@ def test_cron_create_passes_scope_headers():
                 "source-a",
             ],
         )
+
+    assert result.exit_code == 0
+    _, kwargs = mock_http.post.call_args
+    assert kwargs["headers"]["X-Tenant-Id"] == "tenant-a"
+    assert kwargs["headers"]["X-Source-Id"] == "source-a"
+
+
+def test_cron_create_does_not_invent_default_source_header():
+    runner = CliRunner()
+
+    with patch("swe.cli.cron_cmd.client") as mock_client:
+        mock_http = MagicMock()
+        mock_http.__enter__.return_value = mock_http
+        mock_http.post.return_value = _Response()
+        mock_client.return_value = mock_http
+
+        result = runner.invoke(
+            cron_group,
+            [
+                "create",
+                "--type",
+                "agent",
+                "--name",
+                "default cron",
+                "--cron",
+                "* * * * *",
+                "--channel",
+                "console",
+                "--target-user",
+                "user-a",
+                "--target-session",
+                "session-a",
+                "--text",
+                "ping",
+                "--timezone",
+                "UTC",
+            ],
+        )
+
+    assert result.exit_code == 0
+    _, kwargs = mock_http.post.call_args
+    assert kwargs["headers"]["X-Tenant-Id"] == "default"
+    assert "X-Source-Id" not in kwargs["headers"]
+
+
+def test_cron_create_uses_current_scope_context_for_headers():
+    runner = CliRunner()
+
+    with patch("swe.cli.cron_cmd.client") as mock_client:
+        mock_http = MagicMock()
+        mock_http.__enter__.return_value = mock_http
+        mock_http.post.return_value = _Response()
+        mock_client.return_value = mock_http
+
+        with tenant_context(tenant_id="tenant-a", source_id="source-a"):
+            result = runner.invoke(
+                cron_group,
+                [
+                    "create",
+                    "--type",
+                    "agent",
+                    "--name",
+                    "context cron",
+                    "--cron",
+                    "* * * * *",
+                    "--channel",
+                    "console",
+                    "--target-user",
+                    "user-a",
+                    "--target-session",
+                    "session-a",
+                    "--text",
+                    "ping",
+                    "--timezone",
+                    "UTC",
+                ],
+            )
 
     assert result.exit_code == 0
     _, kwargs = mock_http.post.call_args

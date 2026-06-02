@@ -4,11 +4,12 @@ import { FullscreenOutlined } from "@ant-design/icons";
 import {
   SparkFalseLine,
   SparkDownloadLine,
-  SparkCopyLine,
-  SparkTrueLine,
+  // SparkCopyLine,
+  // SparkTrueLine,
 } from "@agentscope-ai/icons";
 import { IconButton } from "@agentscope-ai/design";
 import { getFileIcon, getFileType, getContentType } from "./fileUtils";
+import Markdown from "../Markdown";
 import { htmlPreviewEventsApi } from "@/api/modules/htmlPreviewEvents";
 import { useHtmlPreviewTracking } from "../HtmlPreviewTrackingContext";
 import { attachHtmlPreviewClickTracker } from "./htmlPreviewClickTracking";
@@ -25,15 +26,16 @@ function FilePreviewModal(props: FilePreviewModalProps) {
   const { open, onClose, fileUrl, fileName, enableClickTracking = false } =
     props;
   const [copied, setCopied] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(true);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [markdownContent, setMarkdownContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const cleanupClickTrackingRef = useRef<(() => void) | null>(null);
   const trackingContext = useHtmlPreviewTracking();
-
   const fileType = useMemo(() => getFileType(fileName), [fileName]);
+  const isMarkdownFile = useMemo(() => /\.mdx?$/i.test(fileName), [fileName]);
   const { icon, color } = useMemo(() => getFileIcon(fileName, 48), [fileName]);
   const isHtmlPreview = useMemo(
     () => fileType === "previewable" && getContentType(fileName) === "text/html",
@@ -46,13 +48,18 @@ function FilePreviewModal(props: FilePreviewModalProps) {
       setLoading(true);
       setError(null);
       setBlobUrl(null);
+      setMarkdownContent(null);
 
       fetch(fileUrl)
-        .then((res) => {
+        .then(async (res) => {
           if (!res.ok) throw new Error("加载失败");
-          return res.blob();
-        })
-        .then((blob) => {
+
+          if (isMarkdownFile) {
+            setMarkdownContent(await res.text());
+            return;
+          }
+
+          const blob = await res.blob();
           const contentType = getContentType(fileName);
           const newBlob = new Blob([blob], { type: contentType });
           const url = URL.createObjectURL(newBlob);
@@ -65,7 +72,7 @@ function FilePreviewModal(props: FilePreviewModalProps) {
           setLoading(false);
         });
     }
-  }, [open, fileType, fileUrl, fileName]);
+  }, [open, fileType, fileUrl, fileName, isMarkdownFile]);
 
   // 清理 Blob URL
   useEffect(() => {
@@ -134,6 +141,7 @@ function FilePreviewModal(props: FilePreviewModalProps) {
           fileName,
         },
         reporter: htmlPreviewEventsApi.recordClick,
+        listSnapshotReporter: htmlPreviewEventsApi.recordListSnapshot,
       });
     } catch (error) {
       console.warn("Failed to attach HTML preview click tracker:", error);
@@ -162,6 +170,13 @@ function FilePreviewModal(props: FilePreviewModalProps) {
             <IconButton icon={<SparkDownloadLine />} onClick={handleDownload}>
               下载文件查看
             </IconButton>
+          </div>
+        );
+      }
+      if (isMarkdownFile && markdownContent !== null) {
+        return (
+          <div style={{ width: "100%", height: previewHeight, overflow: "auto", padding: "16px", boxSizing: "border-box", textAlign: "left" }}>
+            <Markdown content={markdownContent} />
           </div>
         );
       }
@@ -200,18 +215,31 @@ function FilePreviewModal(props: FilePreviewModalProps) {
         </IconButton>
       </div>
     );
-  }, [fileType, blobUrl, loading, error, fileName, icon, color, handleDownload, previewHeight, handleIframeLoad]);
+  }, [
+    fileType,
+    loading,
+    error,
+    isMarkdownFile,
+    markdownContent,
+    previewHeight,
+    blobUrl,
+    fileName,
+    icon,
+    color,
+    handleDownload,
+    handleIframeLoad,
+  ]);
 
   const headerActions = useMemo(() => {
     const actions = [
-      <Tooltip key="copy" title="复制链接">
-        <IconButton
-          size="small"
-          icon={copied ? <SparkTrueLine style={{ color: "#52c41a" }} /> : <SparkCopyLine />}
-          onClick={handleCopy}
-          bordered={false}
-        />
-      </Tooltip>,
+      // <Tooltip key="copy" title="复制链接">
+      //   <IconButton
+      //     size="small"
+      //     icon={copied ? <SparkTrueLine style={{ color: "#52c41a" }} /> : <SparkCopyLine />}
+      //     onClick={handleCopy}
+      //     bordered={false}
+      //   />
+      // </Tooltip>,
       <Tooltip key="download" title="下载文件">
         <IconButton
           size="small"

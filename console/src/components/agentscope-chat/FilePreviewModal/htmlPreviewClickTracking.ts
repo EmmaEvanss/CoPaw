@@ -1,4 +1,7 @@
-import type { HtmlPreviewClickEventPayload } from "@/api/types/htmlPreviewEvents";
+import type {
+  HtmlPreviewClickEventPayload,
+  HtmlPreviewListSnapshotPayload,
+} from "@/api/types/htmlPreviewEvents";
 
 export interface HtmlPreviewClickMetadata {
   cronTaskId?: string | null;
@@ -11,10 +14,22 @@ export type HtmlPreviewClickReporter = (
   payload: HtmlPreviewClickEventPayload,
 ) => Promise<unknown> | unknown;
 
+export type HtmlPreviewListSnapshotReporter = (
+  payload: HtmlPreviewListSnapshotPayload,
+) => Promise<unknown> | unknown;
+
 const CLICKABLE_SELECTOR = "button,a,[role='button'],[data-track-id]";
 const CUSTOMER_DATA_PREFIX = "customer";
 const CUSTOMER_INFO_DATA_KEY = "customerInfo";
-const OPERATION_HEADER_PATTERN = /^(操作|动作|链接|按钮)$/;
+const CUSTOMER_NAME_HEADER_PATTERN = /^(客户姓名|客户名称|姓名)$/;
+const CUSTOMER_INFO_ALLOWED_KEYS = new Set([
+  "customer_id",
+  "customer_name",
+  "name",
+  "客户姓名",
+  "客户名称",
+  "姓名",
+]);
 
 function normalizeText(value: string | null | undefined, maxLength: number) {
   const normalized = value?.replace(/\s+/g, " ").trim() || "";
@@ -28,6 +43,12 @@ function normalizeKey(value: string) {
     .toLowerCase();
 }
 
+function normalizeCustomerDatasetKey(key: string) {
+  const rawKey = key.replace(CUSTOMER_DATA_PREFIX, "") || key;
+  const normalizedKey = normalizeKey(rawKey);
+  return normalizedKey === "id" ? "customer_id" : normalizedKey;
+}
+
 function getElementName(element: HTMLElement, buttonText: string | null) {
   return normalizeText(
     element.dataset.trackName ||
@@ -37,6 +58,44 @@ function getElementName(element: HTMLElement, buttonText: string | null) {
       buttonText,
     255,
   );
+}
+
+function getClassFallbackId(element: HTMLElement) {
+  if (element.classList.contains("phone")) {
+    return "phone";
+  }
+  if (element.classList.contains("link-btn")) {
+    return "insight";
+  }
+  return null;
+}
+
+function getButtonType(
+  element: HTMLElement,
+  buttonId: string | null,
+  buttonName: string | null,
+  buttonText: string | null,
+) {
+  const normalizedId = (buttonId || "").toLowerCase();
+  if (
+    element.classList.contains("phone") ||
+    normalizedId.includes("phone") ||
+    buttonName?.includes("电访") ||
+    buttonName?.includes("电话访问") ||
+    buttonText?.includes("电访") ||
+    buttonText?.includes("电话访问")
+  ) {
+    return "phone";
+  }
+  if (
+    element.classList.contains("link-btn") ||
+    normalizedId.includes("insight") ||
+    buttonName?.includes("洞察") ||
+    buttonText?.includes("洞察")
+  ) {
+    return "insight";
+  }
+  return "other";
 }
 
 function parseCustomerInfoJson(value: string | undefined) {
@@ -51,7 +110,10 @@ function parseCustomerInfoJson(value: string | undefined) {
           normalizeKey(key),
           item == null ? null : normalizeText(String(item), 512),
         ])
-        .filter((entry): entry is [string, string] => Boolean(entry[1])),
+        .filter(
+          (entry): entry is [string, string] =>
+            Boolean(entry[1]) && CUSTOMER_INFO_ALLOWED_KEYS.has(entry[0]),
+        ),
     );
   } catch {
     return null;
@@ -76,10 +138,11 @@ function getStructuredCustomerInfo(element: HTMLElement) {
       ([key, value]) =>
         key !== CUSTOMER_INFO_DATA_KEY &&
         key.startsWith(CUSTOMER_DATA_PREFIX) &&
+        CUSTOMER_INFO_ALLOWED_KEYS.has(normalizeCustomerDatasetKey(key)) &&
         Boolean(normalizeText(value, 512)),
     )
     .map(([key, value]) => [
-      normalizeKey(key.replace(CUSTOMER_DATA_PREFIX, "") || key),
+      normalizeCustomerDatasetKey(key),
       normalizeText(value, 512),
     ])
     .filter((entry): entry is [string, string] => Boolean(entry[1]));
@@ -116,7 +179,7 @@ function getFallbackCustomerInfoFromRow(element: HTMLElement) {
   const entries = cells
     .map((cell, index) => {
       const header = headers[index] || `column_${index + 1}`;
-      if (OPERATION_HEADER_PATTERN.test(header)) {
+      if (!CUSTOMER_NAME_HEADER_PATTERN.test(header)) {
         return null;
       }
       const value = normalizeText(cell.textContent, 512);
@@ -134,6 +197,28 @@ function getCustomerInfo(element: HTMLElement) {
   );
 }
 
+function getListKey(metadata: HtmlPreviewClickMetadata) {
+  return metadata.fileUrl;
+}
+
+function getListName(metadata: HtmlPreviewClickMetadata) {
+  return metadata.fileName || metadata.fileUrl;
+}
+
+function getCustomerIdentity(customerInfo: Record<string, string> | null) {
+  const info = customerInfo || {};
+  return {
+    customerId: info.customer_id || null,
+    customerName:
+      info.name ||
+      info.customer_name ||
+      info["客户姓名"] ||
+      info["客户名称"] ||
+      info["姓名"] ||
+      null,
+  };
+}
+
 export function buildHtmlPreviewClickPayload(
   element: HTMLElement,
   metadata: HtmlPreviewClickMetadata,
@@ -144,10 +229,13 @@ export function buildHtmlPreviewClickPayload(
     element.dataset.trackId ||
       element.id ||
       element.getAttribute("name") ||
+      getClassFallbackId(element) ||
       buttonText,
     255,
   );
   const buttonName = getElementName(element, buttonText);
+  const customerInfo = getCustomerInfo(element);
+  const customerIdentity = getCustomerIdentity(customerInfo);
 
   if (!buttonId && !buttonName && !buttonText) {
     return null;
@@ -158,11 +246,72 @@ export function buildHtmlPreviewClickPayload(
     cron_task_name: metadata.cronTaskName || null,
     file_url: metadata.fileUrl,
     file_name: metadata.fileName || null,
+    list_key: getListKey(metadata),
+    list_name: getListName(metadata),
     button_id: buttonId,
     button_name: buttonName,
     button_text: buttonText,
-    customer_info: getCustomerInfo(element),
+    button_type: getButtonType(element, buttonId, buttonName, buttonText),
+    customer_id: customerIdentity.customerId,
+    customer_name: customerIdentity.customerName,
+    customer_info: customerInfo,
     clicked_at: clickedAt.toISOString(),
+  };
+}
+
+export function buildHtmlPreviewListSnapshotPayload(
+  doc: Document,
+  metadata: HtmlPreviewClickMetadata,
+  snapshotAt: Date = new Date(),
+): HtmlPreviewListSnapshotPayload | null {
+  const HTMLElementCtor = doc.defaultView?.HTMLElement || HTMLElement;
+
+  const rows = Array.from(doc.querySelectorAll("tr"));
+  const customers = rows
+    .map((row) => {
+      if (!(row instanceof HTMLElementCtor)) {
+        return null;
+      }
+      if (
+        row.closest("thead") ||
+        (row.querySelector("th") && !row.querySelector("td"))
+      ) {
+        return null;
+      }
+      const customerInfo = getCustomerInfo(row);
+      const { customerId, customerName } = getCustomerIdentity(customerInfo);
+      if (!customerId && !customerName) {
+        return null;
+      }
+      return {
+        customer_id: customerId,
+        customer_name: customerName || "未知客户",
+        extra_info: customerInfo,
+      };
+    })
+    .filter(
+      (
+        item,
+      ): item is {
+        customer_id: string | null;
+        customer_name: string;
+        extra_info: Record<string, string> | null;
+      } => Boolean(item),
+    );
+
+  if (customers.length === 0) {
+    return null;
+  }
+
+  return {
+    cron_task_id: metadata.cronTaskId || null,
+    cron_task_name: metadata.cronTaskName || null,
+    list_key: getListKey(metadata),
+    list_name: getListName(metadata),
+    file_url: metadata.fileUrl,
+    file_name: metadata.fileName || null,
+    customers,
+    snapshot_at: snapshotAt.toISOString(),
   };
 }
 
@@ -170,11 +319,30 @@ export function attachHtmlPreviewClickTracker(params: {
   iframe: HTMLIFrameElement;
   metadata: HtmlPreviewClickMetadata;
   reporter: HtmlPreviewClickReporter;
+  listSnapshotReporter?: HtmlPreviewListSnapshotReporter;
 }): () => void {
   const doc = params.iframe.contentDocument;
   const view = doc?.defaultView;
   if (!doc || !view) {
     return () => {};
+  }
+
+  if (params.listSnapshotReporter) {
+    const snapshotPayload = buildHtmlPreviewListSnapshotPayload(
+      doc,
+      params.metadata,
+    );
+    if (snapshotPayload) {
+      try {
+        void Promise.resolve(
+          params.listSnapshotReporter(snapshotPayload),
+        ).catch((error) => {
+          console.warn("Failed to record HTML preview list snapshot:", error);
+        });
+      } catch (error) {
+        console.warn("Failed to record HTML preview list snapshot:", error);
+      }
+    }
   }
 
   const handleClick = (event: MouseEvent) => {

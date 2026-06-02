@@ -38,6 +38,9 @@ EXECUTION_TIME_FIELDS = [
     "scheduled_time",
     "actual_time",
     "end_time",
+    "notification_due_at",
+    "notification_sent_at",
+    "notification_locked_at",
     "created_at",
 ]
 

@@ -918,6 +918,27 @@
   align-items: stretch;
 }
 
+.htmlPreviewFilters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+
+.htmlPreviewListSelect {
+  min-width: 260px;
+}
+
+.htmlPreviewSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .htmlPreviewChart {
   min-width: 0;
   min-height: 276px;
@@ -925,7 +946,7 @@
 
 .htmlPreviewStats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   align-content: start;
 }
@@ -994,6 +1015,27 @@
   font-weight: 600;
 }
 
+.htmlPreviewListRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px 82px 126px;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.htmlPreviewListRow span:not(:first-child),
+.htmlPreviewListRow strong {
+  text-align: right;
+}
+
+.htmlPreviewListRow strong {
+  color: #111827;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .htmlPreviewTopDot {
   width: 8px;
   height: 8px;
@@ -1019,6 +1061,60 @@
   border-top: 1px solid #edf2f8;
 }
 
+.htmlPreviewCustomerTable {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.htmlPreviewCustomerHeader,
+.htmlPreviewCustomerRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px 44px 52px 54px;
+  align-items: center;
+  gap: 8px;
+}
+
+.htmlPreviewCustomerHeader {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.htmlPreviewCustomerHeader span:not(:first-child),
+.htmlPreviewCustomerRow strong,
+.htmlPreviewCustomerRow .htmlPreviewEventTime {
+  text-align: right;
+}
+
+.htmlPreviewSelectedList {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htmlPreviewCustomerRow {
+  padding: 9px 0;
+  border-top: 1px solid #edf2f8;
+  color: #111827;
+  font-size: 13px;
+}
+
+.htmlPreviewCustomerRow strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.htmlPreviewCustomerCell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .htmlPreviewEventMain {
   display: flex;
   align-items: center;
@@ -1030,11 +1126,18 @@
 }
 
 .htmlPreviewCustomerName,
+.htmlPreviewCustomerId,
 .htmlPreviewEventMeta {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.htmlPreviewCustomerId {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .htmlPreviewEventButton {
@@ -1081,6 +1184,29 @@
 
   .htmlPreviewStats {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .htmlPreviewFilters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .htmlPreviewListSelect {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .htmlPreviewListRow,
+  .htmlPreviewCustomerHeader,
+  .htmlPreviewCustomerRow {
+    grid-template-columns: minmax(0, 1fr) 42px 42px 48px;
+  }
+
+  .htmlPreviewListRow span:nth-child(3),
+  .htmlPreviewListRow strong,
+  .htmlPreviewCustomerHeader span:nth-child(4),
+  .htmlPreviewCustomerRow strong:nth-of-type(3) {
+    display: none;
   }
 }
 
@@ -1130,8 +1256,6 @@
   max-height: 200px;
   overflow-y: auto;
 }
-
-
 .funnelWrap {
   min-height: 0;
 }

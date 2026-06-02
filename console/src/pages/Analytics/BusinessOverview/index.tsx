@@ -1141,6 +1141,14 @@ export default function BusinessOverviewPage() {
       ),
     [displayedHtmlPreviewLists],
   );
+  const htmlPreviewPlanClicks = useMemo(
+    () =>
+      displayedHtmlPreviewLists.reduce(
+        (sum, item) => sum + safeNumber(item.plan_count),
+        0,
+      ),
+    [displayedHtmlPreviewLists],
+  );
   const htmlPreviewTotalClicks = useMemo(
     () =>
       displayedHtmlPreviewLists.reduce(
@@ -1152,10 +1160,11 @@ export default function BusinessOverviewPage() {
   const htmlPreviewMaxActionClicks = Math.max(
     htmlPreviewInsightClicks,
     htmlPreviewPhoneClicks,
+    htmlPreviewPlanClicks,
     1,
   );
   const htmlPreviewActionTotal =
-    htmlPreviewInsightClicks + htmlPreviewPhoneClicks;
+    htmlPreviewInsightClicks + htmlPreviewPhoneClicks + htmlPreviewPlanClicks;
   const htmlPreviewInsightPercent =
     htmlPreviewActionTotal > 0
       ? Math.round((htmlPreviewInsightClicks / htmlPreviewActionTotal) * 100)
@@ -1163,6 +1172,10 @@ export default function BusinessOverviewPage() {
   const htmlPreviewPhonePercent =
     htmlPreviewActionTotal > 0
       ? Math.round((htmlPreviewPhoneClicks / htmlPreviewActionTotal) * 100)
+      : 0;
+  const htmlPreviewPlanPercent =
+    htmlPreviewActionTotal > 0
+      ? Math.round((htmlPreviewPlanClicks / htmlPreviewActionTotal) * 100)
       : 0;
   const htmlPreviewCustomerTotal = useMemo(
     () =>
@@ -1869,7 +1882,7 @@ export default function BusinessOverviewPage() {
       >
         <article className={styles.panelLarge}>
           <div className={styles.panelHeader}>
-            <h3 className={styles.panelTitle}>客户洞察/电访点击统计</h3>
+            <h3 className={styles.panelTitle}>客户经营点击分析</h3>
             <span className={styles.panelMeta}>
               最近点击：{htmlPreviewLatestClick}
             </span>
@@ -1909,7 +1922,7 @@ export default function BusinessOverviewPage() {
             <div className={styles.emptyChartState}>
               <Database className={styles.emptyBreakdownIcon} />
               <span>
-                {htmlPreviewLoading ? "加载中..." : "暂无客户洞察/电访点击数据"}
+                {htmlPreviewLoading ? "加载中..." : "暂无客户经营点击数据"}
               </span>
             </div>
           ) : (
@@ -1979,6 +1992,28 @@ export default function BusinessOverviewPage() {
                       />
                     </div>
                   </div>
+                  <div className={styles.htmlPreviewDistributionRow}>
+                    <div className={styles.htmlPreviewDistributionMeta}>
+                      <span>方案</span>
+                      <strong>
+                        {formatNumber(htmlPreviewPlanClicks)}
+                        <em>{htmlPreviewPlanPercent}%</em>
+                      </strong>
+                    </div>
+                    <div className={styles.htmlPreviewDistributionTrack}>
+                      <i
+                        className={styles.htmlPreviewPlanBar}
+                        style={{
+                          width: `${Math.max(
+                            6,
+                            (htmlPreviewPlanClicks /
+                              htmlPreviewMaxActionClicks) *
+                              100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className={styles.htmlPreviewTopList}>
@@ -2015,6 +2050,10 @@ export default function BusinessOverviewPage() {
                         <em>电访</em>
                         <strong>{formatNumber(item.phone_count)}</strong>
                       </span>
+                      <span>
+                        <em>方案</em>
+                        <strong>{formatNumber(item.plan_count)}</strong>
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -2041,6 +2080,7 @@ export default function BusinessOverviewPage() {
                       <span>客户</span>
                       <span>洞察</span>
                       <span>电访</span>
+                      <span>方案</span>
                       <span>总点击</span>
                       <span>最近</span>
                     </div>
@@ -2063,6 +2103,7 @@ export default function BusinessOverviewPage() {
                         </div>
                         <strong>{formatNumber(item.insight_count)}</strong>
                         <strong>{formatNumber(item.phone_count)}</strong>
+                        <strong>{formatNumber(item.plan_count)}</strong>
                         <strong>{formatNumber(item.total_click_count)}</strong>
                         <span className={styles.htmlPreviewEventTime}>
                           {item.last_clicked_at

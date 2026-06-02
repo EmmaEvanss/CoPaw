@@ -67,6 +67,7 @@ class HtmlPreviewCustomerClickSummaryItem(BaseModel):
     customer_name: str = "未知客户"
     insight_count: int = 0
     phone_count: int = 0
+    plan_count: int = 0
     total_click_count: int = 0
     last_clicked_at: Optional[datetime] = None
 
@@ -155,6 +156,7 @@ class HtmlPreviewListSummaryItem(BaseModel):
     clicked_customer_count: int = 0
     insight_count: int = 0
     phone_count: int = 0
+    plan_count: int = 0
     total_click_count: int = 0
     last_clicked_at: Optional[datetime] = None
 
@@ -175,6 +177,7 @@ class HtmlPreviewCustomerClickItem(BaseModel):
     list_name: Optional[str] = None
     insight_count: int = 0
     phone_count: int = 0
+    plan_count: int = 0
     total_click_count: int = 0
     last_clicked_at: Optional[datetime] = None
 

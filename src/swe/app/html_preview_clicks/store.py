@@ -121,14 +121,20 @@ class HtmlPreviewClickStore:
 
     @classmethod
     def _classify_button(cls, row: dict[str, Any]) -> str:
-        """把按钮点击归类为洞察、电访或其他。"""
+        """把按钮点击归类为洞察、电访、查看方案或其他。"""
         explicit = cls._clean_text(row.get("button_type"))
-        if explicit in {"insight", "phone", "other"}:
+        if explicit in {"insight", "phone", "plan", "other"}:
             return explicit
 
         button_id = (cls._clean_text(row.get("button_id")) or "").lower()
         button_name = cls._clean_text(row.get("button_name")) or ""
         button_text = cls._clean_text(row.get("button_text")) or ""
+        if (
+            "plan" in button_id
+            or "查看方案" in button_name
+            or "查看方案" in button_text
+        ):
+            return "plan"
         if (
             "phone" in button_id
             or "电访" in button_name
@@ -207,6 +213,7 @@ class HtmlPreviewClickStore:
             customer_name=row.get("customer_name") or "未知客户",
             insight_count=int(row.get("insight_count") or 0),
             phone_count=int(row.get("phone_count") or 0),
+            plan_count=int(row.get("plan_count") or 0),
             total_click_count=int(row.get("total_click_count") or 0),
             last_clicked_at=row.get("last_clicked_at"),
         )
@@ -521,6 +528,7 @@ class HtmlPreviewClickStore:
                 customer_name=item.customer_name,
                 insight_count=item.insight_count,
                 phone_count=item.phone_count,
+                plan_count=item.plan_count,
                 total_click_count=item.total_click_count,
                 last_clicked_at=item.last_clicked_at,
             )
@@ -706,6 +714,7 @@ class HtmlPreviewClickStore:
                     "clicked_customers": set(),
                     "insight_count": 0,
                     "phone_count": 0,
+                    "plan_count": 0,
                     "total_click_count": 0,
                     "last_clicked_at": None,
                 },
@@ -738,6 +747,7 @@ class HtmlPreviewClickStore:
                     "clicked_customers": set(),
                     "insight_count": 0,
                     "phone_count": 0,
+                    "plan_count": 0,
                     "total_click_count": 0,
                     "last_clicked_at": None,
                 },
@@ -756,6 +766,7 @@ class HtmlPreviewClickStore:
                 clicked_customer_count=len(row["clicked_customers"]),
                 insight_count=row["insight_count"],
                 phone_count=row["phone_count"],
+                plan_count=row["plan_count"],
                 total_click_count=row["total_click_count"],
                 last_clicked_at=row.get("last_clicked_at"),
             )
@@ -826,6 +837,7 @@ class HtmlPreviewClickStore:
                 list_name=row.get("list_name"),
                 insight_count=row["insight_count"],
                 phone_count=row["phone_count"],
+                plan_count=row["plan_count"],
                 total_click_count=row["total_click_count"],
                 last_clicked_at=row.get("last_clicked_at"),
             )
@@ -873,6 +885,7 @@ class HtmlPreviewClickStore:
             "list_name": cls._clean_text(list_name),
             "insight_count": 0,
             "phone_count": 0,
+            "plan_count": 0,
             "total_click_count": 0,
             "last_clicked_at": None,
         }
@@ -889,6 +902,8 @@ class HtmlPreviewClickStore:
             item["insight_count"] += 1
         elif button_type == "phone":
             item["phone_count"] += 1
+        elif button_type == "plan":
+            item["plan_count"] += 1
         else:
             return
 

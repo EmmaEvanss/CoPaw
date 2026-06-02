@@ -192,14 +192,6 @@
   color: #666;
 }
 
-// 对话详情
-.detailTitle {
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 12px;
-  color: #262626;
-}
-
 .detailLoading {
   display: flex;
   justify-content: center;
@@ -207,131 +199,238 @@
   height: 200px;
 }
 
-.detailMeta {
-  background: #f9fafb;
+// 右侧面板卡片样式
+.errorSummaryCard {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border: 1px solid #fecaca;
+  border-radius: 8px;
   padding: 12px;
-  border-radius: 6px;
   margin-bottom: 12px;
 }
 
-.detailMetaRow {
+.errorSummaryHeader {
   display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.errorSummaryTitle {
+  font-weight: 600;
+  color: #dc2626;
+}
+
+.errorSummaryContent {
+  color: #7f1d1d;
+  line-height: 1.4;
+}
+
+.errorSummaryMeta {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.conversationInfoCard {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.conversationInfoHeader {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conversationInfoGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.conversationInfoItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
-  margin-bottom: 8px;
+}
+
+.conversationInfoLabel {
+  color: #6b7280;
+}
+
+.conversationInfoValue {
+  font-weight: 500;
+}
+
+.conversationInfoBadge {
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.traceIdWrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.traceIdText {
+  color: #2563eb;
+  font-family: monospace;
+}
+
+.copyIconBtn {
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  transition: color 0.2s;
+
+  &:hover {
+    color: #1d4ed8;
+  }
+}
+
+.statusError {
+  background: #fef2f2;
+  color: #ef4444;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.conversationContentCard {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.conversationContentHeader {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conversationBlock {
+  margin-bottom: 12px;
 
   &:last-child {
     margin-bottom: 0;
   }
 }
 
-.detailMetaItem {
-  display: inline-flex;
+.conversationBlockHeader {
+  color: #6b7280;
+  font-size: 11px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.conversationBlockContent {
+  border-radius: 6px;
+  padding: 10px;
+  line-height: 1.5;
+  font-size: 12px;
+}
+
+.userMessageBlock {
+  background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+}
+
+.toolCallBlock {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  font-size: 11px;
+}
+
+.toolCallHeader {
+  color: #6b7280;
+  display: flex;
+  align-items: center;
   gap: 4px;
 }
 
-.detailErrorBox {
-  font-size: 12px;
-  color: #ef4444;
-  background: #fef2f2;
-  padding: 8px;
-  border-radius: 4px;
-  margin-top: 8px;
+.toolCallSuccess {
+  color: #059669;
 }
 
-.detailContent {
-  border: 1px solid #eee;
-  border-radius: 8px;
-  overflow-y: auto;
-  background: #fff;
-  padding: 12px;
-}
-
-.messageBlock {
-  margin-bottom: 16px;
-}
-
-.messageLabel {
-  font-size: 11px;
-  color: #666;
-  margin-bottom: 6px;
-  display: flex;
-  justify-content: space-between;
-}
-
-.messageContent {
-  padding: 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.userMessage {
-  background: #e8f4f8;
-}
-
-.modelOutput {
+.modelResponseBlock {
   background: #f5f5f5;
+  border: 1px solid #fee2e2;
 }
 
-.modelError {
+.modelResponseError {
   color: #ef4444;
+  font-weight: 500;
   margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #fecaca;
 }
 
-.callChain {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid #eee;
-}
-
-.callChainLabel {
+.modelResponseEmpty {
+  color: #9ca3af;
   font-size: 11px;
-  color: #666;
-  margin-bottom: 6px;
 }
 
-.callChainTags {
+.callChainCard {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.callChainHeader {
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 8px;
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
+}
+
+.callChainFlow {
+  display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
-.callChainTag {
-  background: #e8e8e8;
-  padding: 4px 8px;
-  border-radius: 4px;
+.callChainStep {
+  background: #f5f5f5;
+  padding: 6px 10px;
+  border-radius: 6px;
   font-size: 11px;
 }
 
-.callChainTagError {
-  background: #fef2f2;
-  color: #ef4444;
+.callChainStepSuccess {
+  color: #059669;
 }
 
-.detailActions {
-  margin-top: 12px;
-  display: flex;
-  justify-content: space-between;
+.callChainStepError {
+  background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+  border: 1px solid #fecaca;
+  color: #dc2626;
 }
 
-.actionButton {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.primaryButton {
-  background: #2563eb;
-  color: #fff;
-  border: none;
-}
-
-.secondaryButton {
-  background: #f5f5f5;
-  border: 1px solid #ddd;
+.callChainArrow {
+  color: #9ca3af;
 }

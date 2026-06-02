@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Modal, message, Select, Input, Spin, Tooltip } from "antd";
-import { AlertTriangle, Copy, ExternalLink } from "lucide-react";
+import { Modal, message, Select, Input, Spin } from "antd";
+import { AlertTriangle, Copy } from "lucide-react";
 import {
   tracingApi,
   type ErrorItem,
@@ -327,8 +327,6 @@ export default function ErrorDetailModal({
 
         {/* 右侧：对话详情 */}
         <div className={styles.rightPanel}>
-          <div className={styles.detailTitle}>对话详情</div>
-
           {detailLoading ? (
             <div className={styles.detailLoading}>
               <Spin size="small" />
@@ -337,135 +335,173 @@ export default function ErrorDetailModal({
             <div className={styles.detailLoading}>请选择一个错误查看详情</div>
           ) : traceDetail ? (
             <>
-              {/* 元信息 */}
-              <div className={styles.detailMeta}>
-                <div className={styles.detailMetaRow}>
-                  <span className={styles.detailMetaItem}>
-                    <strong>Trace ID:</strong>
-                    <span style={{ color: "#2563eb" }}>
-                      {truncateId(traceDetail.trace.trace_id)}
-                    </span>
-                  </span>
-                  <span className={styles.detailMetaItem}>
-                    <strong>用户:</strong>
-                    {traceDetail.trace.user_name || traceDetail.trace.user_id}
-                    {traceDetail.trace.bbk_id &&
-                      ` / ${getBbkDisplayName(traceDetail.trace.bbk_id)}`}
-                  </span>
-                  <span className={styles.detailMetaItem}>
-                    <strong>状态:</strong>
-                    <span style={{ color: "#ef4444" }}>
-                      {traceDetail.trace.status}
-                    </span>
-                  </span>
+              {/* 错误摘要卡片 */}
+              <div className={styles.errorSummaryCard}>
+                <div className={styles.errorSummaryHeader}>
+                  <span style={{ color: "#ef4444", fontSize: "16px" }}>⚠️</span>
+                  <span className={styles.errorSummaryTitle}>错误摘要</span>
                 </div>
-                <div className={styles.detailMetaRow}>
-                  <span className={styles.detailMetaItem}>
-                    <strong>时长:</strong>{" "}
-                    {formatDuration(traceDetail.trace.duration_ms)}
-                  </span>
-                  <span className={styles.detailMetaItem}>
-                    <strong>Token:</strong>{" "}
-                    {formatTokens(totalInputTokens + totalOutputTokens)}
-                    (输入 {formatTokens(totalInputTokens)} / 输出{" "}
-                    {formatTokens(totalOutputTokens)})
-                  </span>
-                  {traceDetail.trace.model_name && (
-                    <span className={styles.detailMetaItem}>
-                      <strong>模型:</strong> {traceDetail.trace.model_name}
-                    </span>
-                  )}
+                <div className={styles.errorSummaryContent}>
+                  {selectedError.error}
                 </div>
-                <div className={styles.detailErrorBox}>
-                  <strong>⚠️ 错误信息:</strong> {selectedError.error}
+                <div className={styles.errorSummaryMeta}>
+                  <span
+                    className={`${styles.errorTypeTag} ${
+                      selectedError.event_type === "llm_input"
+                        ? styles.errorTypeTagModel
+                        : styles.errorTypeTagTool
+                    }`}
+                  >
+                    {selectedError.event_type === "llm_input" ? "模型报错" : "工具报错"}
+                  </span>
+                  <span style={{ color: "#6b7280", fontSize: "11px" }}>
+                    {formatTime(selectedError.start_time)}
+                  </span>
                 </div>
               </div>
 
-              {/* 对话内容 */}
-              <div className={styles.detailContent}>
+              {/* 对话信息卡片 */}
+              <div className={styles.conversationInfoCard}>
+                <div className={styles.conversationInfoHeader}>
+                  <span>📊</span> 对话信息
+                </div>
+                <div className={styles.conversationInfoGrid}>
+                  <div className={styles.conversationInfoItem}>
+                    <span className={styles.conversationInfoLabel}>Trace ID:</span>
+                    <span className={styles.traceIdWrap}>
+                      <span className={styles.traceIdText}>
+                        {truncateId(traceDetail.trace.trace_id)}
+                      </span>
+                      <button
+                        type="button"
+                        className={styles.copyIconBtn}
+                        onClick={handleCopyTraceId}
+                        title="复制 Trace ID"
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </span>
+                  </div>
+                  <div className={styles.conversationInfoItem}>
+                    <span className={styles.conversationInfoLabel}>用户:</span>
+                    <span className={styles.conversationInfoValue}>
+                      {traceDetail.trace.user_name || traceDetail.trace.user_id}
+                      {traceDetail.trace.bbk_id &&
+                        ` / ${getBbkDisplayName(traceDetail.trace.bbk_id)}`}
+                    </span>
+                  </div>
+                  <div className={styles.conversationInfoItem}>
+                    <span className={styles.conversationInfoLabel}>时长:</span>
+                    <span className={styles.conversationInfoBadge}>
+                      {formatDuration(traceDetail.trace.duration_ms)}
+                    </span>
+                  </div>
+                  <div className={styles.conversationInfoItem}>
+                    <span className={styles.conversationInfoLabel}>Token:</span>
+                    <span className={styles.conversationInfoBadge}>
+                      输入 {formatTokens(totalInputTokens)} / 输出 {formatTokens(totalOutputTokens)}
+                    </span>
+                  </div>
+                  <div className={styles.conversationInfoItem}>
+                    <span className={styles.conversationInfoLabel}>模型:</span>
+                    <span className={styles.conversationInfoValue}>
+                      {traceDetail.trace.model_name || "-"}
+                    </span>
+                  </div>
+                  <div className={styles.conversationInfoItem}>
+                    <span className={styles.conversationInfoLabel}>状态:</span>
+                    <span className={styles.statusError}>
+                      {traceDetail.trace.status}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 完整对话卡片 */}
+              <div className={styles.conversationContentCard}>
+                <div className={styles.conversationContentHeader}>
+                  <span>💬</span> 完整对话
+                </div>
+
+                {/* 用户消息 */}
                 {traceDetail.trace.user_message && (
-                  <div className={styles.messageBlock}>
-                    <div className={styles.messageLabel}>
-                      <span>👤 用户消息</span>
+                  <div className={styles.conversationBlock}>
+                    <div className={styles.conversationBlockHeader}>
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        👤 用户消息
+                      </span>
                       <span>{formatTime(traceDetail.trace.start_time)}</span>
                     </div>
-                    <div className={`${styles.messageContent} ${styles.userMessage}`}>
-                      {truncateText(traceDetail.trace.user_message, 500)}
+                    <div className={`${styles.conversationBlockContent} ${styles.userMessageBlock}`}>
+                      {traceDetail.trace.user_message}
                     </div>
                   </div>
                 )}
 
-                <div className={styles.messageBlock}>
-                  <div className={styles.messageLabel}>
-                    <span>🤖 模型响应</span>
+                {/* 工具调用 */}
+                {traceDetail.trace.tools_used && traceDetail.trace.tools_used.length > 0 && (
+                  <div className={styles.conversationBlock}>
+                    <div className={`${styles.conversationBlockContent} ${styles.toolCallBlock}`}>
+                      <div className={styles.toolCallHeader}>
+                        🔧 工具调用: {traceDetail.trace.tools_used.join(", ")}
+                      </div>
+                      <div className={styles.toolCallSuccess}>
+                        ✓ 执行完成
+                      </div>
+                    </div>
                   </div>
-                  <div className={`${styles.messageContent} ${styles.modelOutput}`}>
-                    <div className={styles.modelError}>
+                )}
+
+                {/* 模型响应 */}
+                <div className={styles.conversationBlock}>
+                  <div className={styles.conversationBlockHeader}>
+                    <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                      🤖 模型响应
+                    </span>
+                  </div>
+                  <div className={`${styles.conversationBlockContent} ${styles.modelResponseBlock}`}>
+                    <div className={styles.modelResponseError}>
                       ❌ 报错: {selectedError.error}
                     </div>
                     {traceDetail.trace.model_output ? (
-                      <div>{truncateText(traceDetail.trace.model_output, 500)}</div>
+                      <div>{traceDetail.trace.model_output}</div>
                     ) : (
-                      <div style={{ color: "#666" }}>
+                      <div className={styles.modelResponseEmpty}>
                         模型调用失败，未生成响应内容
                       </div>
                     )}
                   </div>
                 </div>
-
-                {/* 调用链路 */}
-                <div className={styles.callChain}>
-                  <div className={styles.callChainLabel}>调用链路</div>
-                  <div className={styles.callChainTags}>
-                    {traceDetail.trace.model_name && (
-                      <span className={styles.callChainTag}>
-                        {traceDetail.trace.model_name}
-                      </span>
-                    )}
-                    <span
-                      className={`${styles.callChainTag} ${styles.callChainTagError}`}
-                    >
-                      ❌{" "}
-                      {selectedError.event_type === "llm_input"
-                        ? "模型报错"
-                        : "工具报错"}
-                    </span>
-                    {traceDetail.trace.tools_used?.map((tool) => (
-                      <span key={tool} className={styles.callChainTag}>
-                        {tool}
-                      </span>
-                    ))}
-                    {traceDetail.trace.skills_used?.map((skill) => (
-                      <span key={skill} className={styles.callChainTag}>
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
               </div>
 
-              {/* 操作按钮 */}
-              <div className={styles.detailActions}>
-                <button
-                  type="button"
-                  className={`${styles.actionButton} ${styles.primaryButton}`}
-                  onClick={handleCopyTraceId}
-                >
-                  <Copy size={14} style={{ marginRight: 4 }} />
-                  复制 Trace ID
-                </button>
-                <Tooltip title="查看完整 Span 详情">
-                  <button
-                    type="button"
-                    className={`${styles.actionButton} ${styles.secondaryButton}`}
-                    onClick={() => {
-                      message.info("Span 详情功能待开发");
-                    }}
-                  >
-                    <ExternalLink size={14} style={{ marginRight: 4 }} />
-                    查看完整 Span 详情
-                  </button>
-                </Tooltip>
+              {/* 调用链路卡片 */}
+              <div className={styles.callChainCard}>
+                <div className={styles.callChainHeader}>
+                  <span>🔗</span> 调用链路
+                </div>
+                <div className={styles.callChainFlow}>
+                  {traceDetail.trace.tools_used && traceDetail.trace.tools_used.length > 0 && (
+                    <>
+                      {traceDetail.trace.tools_used.map((tool) => (
+                        <span key={tool} className={`${styles.callChainStep} ${styles.callChainStepSuccess}`}>
+                          {tool} ✓
+                        </span>
+                      ))}
+                      <span className={styles.callChainArrow}>→</span>
+                    </>
+                  )}
+                  {traceDetail.trace.model_name && (
+                    <>
+                      <span className={styles.callChainStep}>
+                        {traceDetail.trace.model_name}
+                      </span>
+                      <span className={styles.callChainArrow}>→</span>
+                    </>
+                  )}
+                  <span className={`${styles.callChainStep} ${styles.callChainStepError}`}>
+                    ❌ {selectedError.event_type === "llm_input" ? "模型报错" : "工具报错"}
+                  </span>
+                </div>
               </div>
             </>
           ) : null}

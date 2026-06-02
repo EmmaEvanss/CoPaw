@@ -17,6 +17,7 @@ from swe.app.crons.models import (
     JobRuntimeSpec,
     ScheduleSpec,
 )
+from swe.providers.models import ModelSlotConfig
 
 
 class _Repo:
@@ -42,6 +43,8 @@ class _Runner:
 
 class _PendingRunner:
     async def stream_query(self, _req):
+        if _never_emit_stream_chunk():
+            yield None
         await asyncio.sleep(30)
 
 
@@ -70,6 +73,10 @@ class _MonitorSyncClient:
 
     async def record_execution(self, **kwargs) -> None:
         self.records.append(kwargs)
+
+
+def _never_emit_stream_chunk() -> bool:
+    return False
 
 
 def _build_agent_job() -> CronJobSpec:
@@ -233,3 +240,76 @@ def test_agent_cancelled_before_completed_output_keeps_cancelled():
     assert state.last_status == "cancelled"
     assert state.last_error == "Job was cancelled"
     assert monitor.records[-1]["status"] == "cancelled"
+
+
+def test_failed_execution_still_syncs_model_meta(monkeypatch):
+    async def _run():
+        job = _build_agent_job().model_copy(
+            update={
+                "model_slot": ModelSlotConfig(
+                    provider_id="openai",
+                    model="gpt-5.4",
+                ),
+            },
+        )
+        channel_manager = _ChannelManager()
+        monitor = _MonitorSyncClient()
+        manager = CronManager(
+            repo=_Repo(job),
+            runner=_Runner(),
+            channel_manager=channel_manager,
+        )
+        manager._monitor_sync_client = (
+            monitor  # pylint: disable=protected-access
+        )
+
+        monkeypatch.setattr(
+            "swe.app.crons.executor.ProviderManager",
+            SimpleNamespace(
+                ensure_tenant_provider_storage=lambda _tenant_id: None,
+                get_instance=lambda _tenant_id: SimpleNamespace(
+                    get_provider=lambda _provider_id: None,
+                    get_active_model=lambda: ModelSlotConfig(
+                        provider_id="anthropic",
+                        model="claude-3-7-sonnet",
+                    ),
+                ),
+            ),
+        )
+
+        async def fake_execute_job(
+            _job,
+            _target_user_id,
+            _target_session_id,
+            _dispatch_meta,
+        ):
+            raise RuntimeError("boom")
+
+        manager._executor._execute_job = (  # pylint: disable=protected-access
+            fake_execute_job
+        )
+
+        try:
+            await manager._execute_once(  # pylint: disable=protected-access
+                job,
+                is_manual=False,
+            )
+        except RuntimeError:
+            pass
+
+        return monitor
+
+    monitor = asyncio.run(_run())
+
+    assert monitor.records[-1]["status"] == "error"
+    assert monitor.records[-1]["meta"] == {
+        "original_model_slot": {
+            "provider_id": "openai",
+            "model": "gpt-5.4",
+        },
+        "effective_model_slot": {
+            "provider_id": "anthropic",
+            "model": "claude-3-7-sonnet",
+        },
+        "fallback_reason": "provider_not_found",
+    }

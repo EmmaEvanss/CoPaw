@@ -2205,6 +2205,101 @@ class TracingQueryService:
             tool_errors=tool_errors,
         )
 
+    def _build_error_list_params(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        bbk_filter_params: list,
+        error_type: Optional[str],
+        search_params: list[str],
+        page_size: int,
+        offset: int,
+    ) -> tuple:
+        """构建 get_error_list 的查询参数."""
+        error_type_params = (
+            [error_type]
+            if error_type in ("llm_input", "tool_call_end")
+            else []
+        )
+        if source_id == "all":
+            return (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+                *error_type_params,
+                *search_params,
+                page_size,
+                offset,
+            )
+        return (
+            start_date,
+            end_date,
+            source_id,
+            *bbk_filter_params,
+            *error_type_params,
+            *search_params,
+            page_size,
+            offset,
+        )
+
+    def _build_error_count_params(
+        self,
+        source_id: str,
+        start_date: datetime,
+        end_date: datetime,
+        bbk_filter_params: list,
+        error_type: Optional[str],
+        search_params: list[str],
+    ) -> tuple:
+        """构建 get_error_list 的 count 查询参数."""
+        error_type_params = (
+            [error_type]
+            if error_type in ("llm_input", "tool_call_end")
+            else []
+        )
+        if source_id == "all":
+            return (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+                *error_type_params,
+                *search_params,
+            )
+        return (
+            start_date,
+            end_date,
+            source_id,
+            *bbk_filter_params,
+            *error_type_params,
+            *search_params,
+        )
+
+    def _row_to_error_item(self, row: dict) -> ErrorItem:
+        """将数据库行转换为 ErrorItem."""
+        return ErrorItem(
+            trace_id=row["trace_id"],
+            span_id=row["span_id"],
+            event_type=row["event_type"],
+            error=row["error"],
+            user_id=row["user_id"],
+            user_name=row.get("user_name"),
+            bbk_id=row.get("bbk_id"),
+            session_id=row.get("session_id") or "",
+            session_name=row.get("session_name"),
+            model_name=row.get("model_name"),
+            tool_name=row.get("tool_name"),
+            mcp_server=row.get("mcp_server"),
+            start_time=(
+                row["start_time"].isoformat() if row["start_time"] else ""
+            ),
+            duration_ms=row.get("duration_ms"),
+            input_tokens=row.get("input_tokens"),
+            output_tokens=row.get("output_tokens"),
+        )
+
     async def get_error_list(
         self,
         source_id: str,
@@ -2235,9 +2330,8 @@ class TracingQueryService:
         if error_type and error_type in ("llm_input", "tool_call_end"):
             error_type_filter = "AND event_type = %s"
 
-        # 构建搜索过滤（主查询带 JOIN，需要表别名）
+        # 构建搜索过滤
         search_filter = ""
-        # count_query 没有 JOIN，不需要表别名
         count_search_filter = ""
         search_params: list[str] = []
         if search:
@@ -2248,188 +2342,80 @@ class TracingQueryService:
             search_pattern = f"%{search}%"
             search_params = [search_pattern, search_pattern, search_pattern]
 
+        # 构建 source_id 条件
+        if source_id == "all":
+            source_condition = f"s.source_id NOT IN ({exclude_placeholders})"
+            count_source_condition = (
+                f"source_id NOT IN ({exclude_placeholders})"
+            )
+        else:
+            source_condition = "s.source_id = %s"
+            count_source_condition = "source_id = %s"
+
         # 计算分页偏移
         offset = (page - 1) * page_size
 
-        # 构建查询
-        if source_id == "all":
-            query = f"""
-                SELECT
-                    s.span_id,
-                    s.trace_id,
-                    s.event_type,
-                    s.error,
-                    s.user_id,
-                    s.user_name,
-                    s.bbk_id,
-                    t.session_id,
-                    t.session_name,
-                    s.model_name,
-                    s.tool_name,
-                    s.mcp_server,
-                    s.start_time,
-                    s.duration_ms,
-                    s.input_tokens,
-                    s.output_tokens
-                FROM swe_tracing_spans s
-                LEFT JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
-                WHERE s.start_time >= %s AND s.start_time < %s
-                  AND s.error IS NOT NULL
-                  AND s.error != ''
-                  AND s.source_id NOT IN ({exclude_placeholders})
-                  AND s.event_type IN ('llm_input', 'tool_call_end')
-                  {bbk_filter_sql}
-                  {error_type_filter}
-                  {search_filter}
-                ORDER BY s.start_time DESC
-                LIMIT %s OFFSET %s
-            """
-            params = (
-                start_date,
-                end_date,
-                *EXCLUDED_SOURCE_IDS,
-                *bbk_filter_params,
-                *(
-                    [error_type]
-                    if error_type in ("llm_input", "tool_call_end")
-                    else []
-                ),
-                *search_params,
-                page_size,
-                offset,
-            )
-        else:
-            query = f"""
-                SELECT
-                    s.span_id,
-                    s.trace_id,
-                    s.event_type,
-                    s.error,
-                    s.user_id,
-                    s.user_name,
-                    s.bbk_id,
-                    t.session_id,
-                    t.session_name,
-                    s.model_name,
-                    s.tool_name,
-                    s.mcp_server,
-                    s.start_time,
-                    s.duration_ms,
-                    s.input_tokens,
-                    s.output_tokens
-                FROM swe_tracing_spans s
-                LEFT JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
-                WHERE s.start_time >= %s AND s.start_time < %s
-                  AND s.error IS NOT NULL
-                  AND s.error != ''
-                  AND s.source_id = %s
-                  AND s.event_type IN ('llm_input', 'tool_call_end')
-                  {bbk_filter_sql}
-                  {error_type_filter}
-                  {search_filter}
-                ORDER BY s.start_time DESC
-                LIMIT %s OFFSET %s
-            """
-            params = (
-                start_date,
-                end_date,
-                source_id,
-                *bbk_filter_params,
-                *(
-                    [error_type]
-                    if error_type in ("llm_input", "tool_call_end")
-                    else []
-                ),
-                *search_params,
-                page_size,
-                offset,
-            )
+        # 构建主查询（统一模板）
+        query = f"""
+            SELECT
+                s.span_id, s.trace_id, s.event_type, s.error,
+                s.user_id, s.user_name, s.bbk_id,
+                t.session_id, t.session_name,
+                s.model_name, s.tool_name, s.mcp_server,
+                s.start_time, s.duration_ms, s.input_tokens, s.output_tokens
+            FROM swe_tracing_spans s
+            LEFT JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
+            WHERE s.start_time >= %s AND s.start_time < %s
+              AND s.error IS NOT NULL AND s.error != ''
+              AND {source_condition}
+              AND s.event_type IN ('llm_input', 'tool_call_end')
+              {bbk_filter_sql}
+              {error_type_filter}
+              {search_filter}
+            ORDER BY s.start_time DESC
+            LIMIT %s OFFSET %s
+        """
 
-        # 过滤掉 None 值
+        params = self._build_error_list_params(
+            source_id,
+            start_date,
+            end_date,
+            bbk_filter_params,
+            error_type,
+            search_params,
+            page_size,
+            offset,
+        )
         params = tuple(p for p in params if p is not None)
-
-        # DEBUG: 打印 SQL 和参数
-        import logging
-
-        logger = logging.getLogger(__name__)
-        logger.info("=== get_error_list SQL ===")
-        logger.info(f"Query: {query}")
-        logger.info(f"Params: {params}")
-        logger.info(f"source_id: {source_id}")
-        logger.info("=== END ===")
 
         rows = await self._db.fetch_all(query, params)
 
-        # 获取总数
+        # 构建 count 查询
         count_query = f"""
             SELECT COUNT(*) as total
             FROM swe_tracing_spans
             WHERE start_time >= %s AND start_time < %s
-              AND error IS NOT NULL
-              AND error != ''
-              AND source_id {'NOT IN' if source_id == 'all' else '='} {'(' + exclude_placeholders + ')' if source_id == 'all' else '%s'}
+              AND error IS NOT NULL AND error != ''
+              AND {count_source_condition}
               AND event_type IN ('llm_input', 'tool_call_end')
               {bbk_filter_sql}
               {error_type_filter}
               {count_search_filter}
         """
-        if source_id == "all":
-            count_params = (
-                start_date,
-                end_date,
-                *EXCLUDED_SOURCE_IDS,
-                *bbk_filter_params,
-                *(
-                    [error_type]
-                    if error_type in ("llm_input", "tool_call_end")
-                    else []
-                ),
-                *search_params,
-            )
-        else:
-            count_params = (
-                start_date,
-                end_date,
-                source_id,
-                *bbk_filter_params,
-                *(
-                    [error_type]
-                    if error_type in ("llm_input", "tool_call_end")
-                    else []
-                ),
-                *search_params,
-            )
+
+        count_params = self._build_error_count_params(
+            source_id,
+            start_date,
+            end_date,
+            bbk_filter_params,
+            error_type,
+            search_params,
+        )
         count_params = tuple(p for p in count_params if p is not None)
         total_row = await self._db.fetch_one(count_query, count_params)
         total = total_row["total"] if total_row else 0
 
-        items = []
-        for row in rows:
-            items.append(
-                ErrorItem(
-                    trace_id=row["trace_id"],
-                    span_id=row["span_id"],
-                    event_type=row["event_type"],
-                    error=row["error"],
-                    user_id=row["user_id"],
-                    user_name=row.get("user_name"),
-                    bbk_id=row.get("bbk_id"),
-                    session_id=row.get("session_id") or "",
-                    session_name=row.get("session_name"),
-                    model_name=row.get("model_name"),
-                    tool_name=row.get("tool_name"),
-                    mcp_server=row.get("mcp_server"),
-                    start_time=(
-                        row["start_time"].isoformat()
-                        if row["start_time"]
-                        else ""
-                    ),
-                    duration_ms=row.get("duration_ms"),
-                    input_tokens=row.get("input_tokens"),
-                    output_tokens=row.get("output_tokens"),
-                ),
-            )
-
+        items = [self._row_to_error_item(row) for row in rows]
         return ErrorListResponse(items=items, total=total)
 
     async def get_depth_summary(
@@ -3144,27 +3130,21 @@ class TracingQueryService:
             for row in rows
         ]
 
-    # ===== 会话分析 =====
-
-    async def get_sessions(
+    def _build_sessions_where_clauses(
         self,
         source_id: str,
-        page: int = 1,
-        page_size: int = 20,
-        user_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        bbk_ids: Optional[str] = None,
-        has_error: Optional[bool] = None,
-    ) -> tuple[list[SessionListItem], int]:
-        """获取会话列表."""
+        user_id: Optional[str],
+        session_id: Optional[str],
+        bbk_ids: Optional[str],
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+        has_error: Optional[bool],
+    ) -> tuple[list[str], list[Any]]:
+        """构建 get_sessions 的 WHERE 条件."""
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
         if source_id == "all":
-            exclude_placeholders = ", ".join(
-                ["%s"] * len(EXCLUDED_SOURCE_IDS),
-            )
             where_clauses: list[str] = [
-                f"source_id NOT IN ({exclude_placeholders})",
+                f"source_id NOT IN ({exclude_placeholders})"
             ]
             params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
@@ -3200,9 +3180,14 @@ class TracingQueryService:
                 "session_id NOT IN (SELECT DISTINCT session_id FROM swe_tracing_traces WHERE status = 'error')",
             )
 
-        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        return where_clauses, params
 
-        # 构建技能统计子查询的日期筛选条件
+    def _build_skill_date_conditions(
+        self,
+        start_date: Optional[datetime],
+        end_date: Optional[datetime],
+    ) -> tuple[str, list[Any]]:
+        """构建技能统计子查询的日期筛选条件."""
         skill_date_conditions = "s.event_type = 'skill_invocation'"
         skill_params: list[Any] = []
         if start_date:
@@ -3211,142 +3196,155 @@ class TracingQueryService:
         if end_date:
             skill_date_conditions += " AND s.start_time <= %s"
             skill_params.append(end_date)
+        return skill_date_conditions, skill_params
 
+    def _build_sessions_query_params(
+        self,
+        source_id: str,
+        skill_params: list[Any],
+        where_params: list[Any],
+        page_size: int,
+        offset: int,
+    ) -> list[Any]:
+        """构建 get_sessions 主查询参数."""
+        if source_id == "all":
+            # 子查询1-5 各需要一份 EXCLUDED_SOURCE_IDS
+            return (
+                list(EXCLUDED_SOURCE_IDS)  # 子查询1: spans
+                + skill_params
+                + list(EXCLUDED_SOURCE_IDS)  # 子查询2: user_name
+                + list(EXCLUDED_SOURCE_IDS)  # 子查询3: bbk_id
+                + list(EXCLUDED_SOURCE_IDS)  # 子查询4: session_name
+                + list(EXCLUDED_SOURCE_IDS)  # 子查询5: user_message
+                + where_params
+                + [page_size, offset]
+            )
+        # 单个 source_id 需要在 5 个子查询中各出现一次
+        return (
+            [source_id]
+            + skill_params
+            + [source_id, source_id, source_id, source_id]
+            + where_params
+            + [page_size, offset]
+        )
+
+    def _row_to_session_item(self, row: dict) -> SessionListItem:
+        """将数据库行转换为 SessionListItem."""
+        return SessionListItem(
+            session_id=row["session_id"],
+            session_name=row.get("session_name"),
+            user_id=row["user_id"],
+            user_name=row["user_name"],
+            bbk_id=row["bbk_id"],
+            channel=row["channel"],
+            total_traces=row["total_traces"] or 0,
+            total_tokens=row["total_tokens"] or 0,
+            total_skills=row["total_skills"] or 0,
+            first_active=row["first_active"],
+            last_active=row["last_active"],
+        )
+
+    # ===== 会话分析 =====
+
+    async def get_sessions(
+        self,
+        source_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        bbk_ids: Optional[str] = None,
+        has_error: Optional[bool] = None,
+    ) -> tuple[list[SessionListItem], int]:
+        """获取会话列表."""
+        # 构建 WHERE 条件
+        where_clauses, params = self._build_sessions_where_clauses(
+            source_id,
+            user_id,
+            session_id,
+            bbk_ids,
+            start_date,
+            end_date,
+            has_error,
+        )
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        # 构建技能统计子查询的日期筛选条件
+        skill_date_conditions, skill_params = (
+            self._build_skill_date_conditions(
+                start_date,
+                end_date,
+            )
+        )
+
+        # 获取总数
         count_query = f"SELECT COUNT(DISTINCT session_id) as total FROM swe_tracing_traces WHERE {where_sql}"
         count_row = await self._db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
 
+        # 计算分页偏移
         offset = (page - 1) * page_size
         exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
-        if source_id == "all":
-            # SQL 占位符顺序（按在 SQL 字符串中出现顺序）：
-            # 1. SELECT 子查询1: s.source_id NOT IN (...)
-            # 2. SELECT 子查询1: {skill_date_conditions} 的日期参数
-            # 3. SELECT 子查询2: t2.source_id NOT IN (...)
-            # 4. SELECT 子查询3: t3.source_id NOT IN (...)
-            # 5. SELECT 子查询4: t4.source_id NOT IN (...) (session_name)
-            # 6. SELECT 子查询5: t5.source_id NOT IN (...) (user_message fallback)
-            # 7. WHERE {where_sql} 的参数
-            # 8. LIMIT %s OFFSET %s
-            query = f"""
-                SELECT t.session_id,
-                       t.user_id,
-                       t.channel,
-                       COUNT(*) as total_traces,
-                       SUM(t.total_tokens) as total_tokens,
-                       MIN(t.start_time) as first_active,
-                       MAX(t.start_time) as last_active,
-                       (SELECT COUNT(*) FROM swe_tracing_spans s
-                        WHERE s.session_id = t.session_id
-                        AND s.source_id NOT IN ({exclude_placeholders})
-                        AND {skill_date_conditions}) as total_skills,
-                       (SELECT t2.user_name FROM swe_tracing_traces t2
-                        WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
-                        AND t2.source_id NOT IN ({exclude_placeholders})
-                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
-                       (SELECT t3.bbk_id FROM swe_tracing_traces t3
-                        WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                        AND t3.source_id NOT IN ({exclude_placeholders})
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
-                       COALESCE(
-                           (SELECT t4.session_name FROM swe_tracing_traces t4
-                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
-                            AND t4.source_id NOT IN ({exclude_placeholders})
-                            ORDER BY t4.start_time ASC LIMIT 1),
-                           SUBSTRING(
-                               (SELECT t5.user_message FROM swe_tracing_traces t5
-                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
-                                AND t5.source_id NOT IN ({exclude_placeholders})
-                                ORDER BY t5.start_time ASC LIMIT 1),
-                               1, 10
-                           )
-                       ) as session_name
-                FROM swe_tracing_traces t
-                WHERE {where_sql}
-                GROUP BY t.session_id, t.user_id, t.channel
-                ORDER BY last_active DESC
-                LIMIT %s OFFSET %s
-            """
-            # 参数按 SQL 占位符出现顺序构建：
-            # 子查询1参数 + 子查询2参数 + 子查询3参数 + 子查询4参数 + 子查询5参数 + WHERE参数 + LIMIT/OFFSET
-            params = (
-                list(EXCLUDED_SOURCE_IDS)  # 子查询1: s.source_id NOT IN
-                + skill_params  # 子查询1: 日期条件
-                + list(EXCLUDED_SOURCE_IDS)  # 子查询2: t2.source_id NOT IN
-                + list(EXCLUDED_SOURCE_IDS)  # 子查询3: t3.source_id NOT IN
-                + list(
-                    EXCLUDED_SOURCE_IDS,
-                )  # 子查询4: t4.source_id NOT IN (session_name)
-                + list(
-                    EXCLUDED_SOURCE_IDS,
-                )  # 子查询5: t5.source_id NOT IN (user_message fallback)
-                + params  # WHERE 子句参数
-                + [page_size, offset]
-            )
-        else:
-            query = f"""
-                SELECT t.session_id,
-                       t.user_id,
-                       t.channel,
-                       COUNT(*) as total_traces,
-                       SUM(t.total_tokens) as total_tokens,
-                       MIN(t.start_time) as first_active,
-                       MAX(t.start_time) as last_active,
-                       (SELECT COUNT(*) FROM swe_tracing_spans s
-                        WHERE s.source_id = %s
-                        AND s.session_id = t.session_id
-                        AND {skill_date_conditions}) as total_skills,
-                       (SELECT t2.user_name FROM swe_tracing_traces t2
-                        WHERE t2.user_id = t.user_id AND t2.source_id = %s AND t2.user_name IS NOT NULL
-                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
-                       (SELECT t3.bbk_id FROM swe_tracing_traces t3
-                        WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
-                       COALESCE(
-                           (SELECT t4.session_name FROM swe_tracing_traces t4
-                            WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
-                            AND t4.source_id = %s
-                            ORDER BY t4.start_time ASC LIMIT 1),
-                           SUBSTRING(
-                               (SELECT t5.user_message FROM swe_tracing_traces t5
-                                WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
-                                AND t5.source_id = %s
-                                ORDER BY t5.start_time ASC LIMIT 1),
-                               1, 10
-                           )
-                       ) as session_name
-                FROM swe_tracing_traces t
-                WHERE {where_sql}
-                GROUP BY t.session_id, t.user_id, t.channel
-                ORDER BY last_active DESC
-                LIMIT %s OFFSET %s
-            """
-            # 参数顺序: 子查询1 + 子查询2 + 子查询3 + 子查询4 + 子查询5 + WHERE参数 + LIMIT/OFFSET
-            params = (
-                [source_id]
-                + skill_params
-                + [source_id, source_id, source_id, source_id]
-                + params
-                + [page_size, offset]
-            )
 
-        rows = await self._db.fetch_all(query, tuple(params))
-        sessions = [
-            SessionListItem(
-                session_id=row["session_id"],
-                session_name=row.get("session_name"),
-                user_id=row["user_id"],
-                user_name=row["user_name"],
-                bbk_id=row["bbk_id"],
-                channel=row["channel"],
-                total_traces=row["total_traces"] or 0,
-                total_tokens=row["total_tokens"] or 0,
-                total_skills=row["total_skills"] or 0,
-                first_active=row["first_active"],
-                last_active=row["last_active"],
-            )
-            for row in rows
-        ]
+        # 构建 source_id 条件模板
+        if source_id == "all":
+            source_condition = f"source_id NOT IN ({exclude_placeholders})"
+            subquery_source_cond = f"source_id NOT IN ({exclude_placeholders})"
+        else:
+            source_condition = "source_id = %s"
+            subquery_source_cond = "source_id = %s"
+
+        # 统一的查询模板
+        query = f"""
+            SELECT t.session_id, t.user_id, t.channel,
+                   COUNT(*) as total_traces,
+                   SUM(t.total_tokens) as total_tokens,
+                   MIN(t.start_time) as first_active,
+                   MAX(t.start_time) as last_active,
+                   (SELECT COUNT(*) FROM swe_tracing_spans s
+                    WHERE s.session_id = t.session_id
+                    AND s.{subquery_source_cond}
+                    AND {skill_date_conditions}) as total_skills,
+                   (SELECT t2.user_name FROM swe_tracing_traces t2
+                    WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                    AND t2.{subquery_source_cond}
+                    ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                   (SELECT t3.bbk_id FROM swe_tracing_traces t3
+                    WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                    AND t3.{subquery_source_cond}
+                    ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                   COALESCE(
+                       (SELECT t4.session_name FROM swe_tracing_traces t4
+                        WHERE t4.session_id = t.session_id AND t4.session_name IS NOT NULL
+                        AND t4.{subquery_source_cond}
+                        ORDER BY t4.start_time ASC LIMIT 1),
+                       SUBSTRING(
+                           (SELECT t5.user_message FROM swe_tracing_traces t5
+                            WHERE t5.session_id = t.session_id AND t5.user_message IS NOT NULL
+                            AND t5.{subquery_source_cond}
+                            ORDER BY t5.start_time ASC LIMIT 1),
+                           1, 10
+                       )
+                   ) as session_name
+            FROM swe_tracing_traces t
+            WHERE {where_sql}
+            GROUP BY t.session_id, t.user_id, t.channel
+            ORDER BY last_active DESC
+            LIMIT %s OFFSET %s
+        """
+
+        query_params = self._build_sessions_query_params(
+            source_id,
+            skill_params,
+            params,
+            page_size,
+            offset,
+        )
+
+        rows = await self._db.fetch_all(query, tuple(query_params))
+        sessions = [self._row_to_session_item(row) for row in rows]
         return sessions, total
 
     async def get_session_stats(
@@ -4060,7 +4058,7 @@ class TracingQueryService:
                     "tools_used": tools_used,
                     "error": row.get("error"),
                     "is_error_round": is_error_round,
-                }
+                },
             )
 
         return {

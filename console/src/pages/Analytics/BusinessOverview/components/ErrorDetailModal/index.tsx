@@ -51,8 +51,8 @@ const truncateText = (text: string, maxLen: number) => {
 };
 
 const truncateId = (id: string) => {
-  if (id.length <= 24) return id;
-  return id.slice(0, 24) + "...";
+  if (id.length <= 64) return id;
+  return id.slice(0, 64) + "...";
 };
 
 const truncateSessionName = (name: string) => {

@@ -539,20 +539,6 @@ export default function ErrorDetailModal({
                   </div>
                 )}
 
-                {/* 工具调用 */}
-                {traceDetail.trace.tools_used && traceDetail.trace.tools_used.length > 0 && (
-                  <div className={styles.conversationBlock}>
-                    <div className={`${styles.conversationBlockContent} ${styles.toolCallBlock}`}>
-                      <div className={styles.toolCallHeader}>
-                        🔧 工具调用: {traceDetail.trace.tools_used.join(", ")}
-                      </div>
-                      <div className={styles.toolCallSuccess}>
-                        ✓ 执行完成
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {/* 模型响应 */}
                 <div className={styles.conversationBlock}>
                   <div className={styles.conversationBlockHeader}>
@@ -561,9 +547,6 @@ export default function ErrorDetailModal({
                     </span>
                   </div>
                   <div className={`${styles.conversationBlockContent} ${styles.modelResponseBlock}`}>
-                    <div className={styles.modelResponseError}>
-                      ❌ 报错: {selectedError.error}
-                    </div>
                     {traceDetail.trace.model_output ? (
                       <div>{traceDetail.trace.model_output}</div>
                     ) : (

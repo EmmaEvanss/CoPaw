@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal, message, Select, Input, Spin, Tooltip } from "antd";
 import { AlertTriangle, Copy, ExternalLink } from "lucide-react";
 import {
@@ -74,6 +74,9 @@ export default function ErrorDetailModal({
   const [traceDetail, setTraceDetail] = useState<TraceDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // 使用 ref 跟踪是否需要自动选中第一个
+  const shouldAutoSelect = useRef(true);
+
   const fetchErrors = useCallback(
     async (pageNum: number) => {
       setLoading(true);
@@ -87,9 +90,10 @@ export default function ErrorDetailModal({
         });
         setErrors(result.items || []);
         setTotal(result.total || 0);
-        // 默认选中第一个
-        if (result.items && result.items.length > 0 && !selectedError) {
+        // 默认选中第一个（仅在初始化时）
+        if (result.items && result.items.length > 0 && shouldAutoSelect.current) {
           setSelectedError(result.items[0]);
+          shouldAutoSelect.current = false;
         }
       } catch (error) {
         console.error("Failed to fetch error list:", error);
@@ -98,7 +102,7 @@ export default function ErrorDetailModal({
         setLoading(false);
       }
     },
-    [startDate, endDate, bbkIds, errorType, searchText, pageSize, selectedError],
+    [startDate, endDate, bbkIds, errorType, searchText, pageSize],
   );
 
   const fetchTraceDetail = useCallback(async (traceId: string) => {
@@ -116,6 +120,7 @@ export default function ErrorDetailModal({
 
   useEffect(() => {
     if (open) {
+      shouldAutoSelect.current = true;
       fetchErrors(1);
       setPage(1);
       setSelectedError(null);
@@ -130,6 +135,7 @@ export default function ErrorDetailModal({
   }, [selectedError, fetchTraceDetail]);
 
   const handleClose = () => {
+    shouldAutoSelect.current = true;
     setErrors([]);
     setTotal(0);
     setPage(1);
@@ -167,7 +173,7 @@ export default function ErrorDetailModal({
       }
       open={open}
       onCancel={handleClose}
-      width={900}
+      width="100vw"
       footer={null}
       destroyOnClose
     >

@@ -8,11 +8,13 @@
 .modalContent {
   display: flex;
   gap: 16px;
-  height: 60vh;
+  height: calc(100vh - 112px);
+  min-height: 0;
+  padding: 18px 22px 22px;
 }
 
 .leftPanel {
-  width: 360px;
+  width: 420px;
   flex-shrink: 0;
   overflow-y: auto;
   border: 1px solid #f0f0f0;

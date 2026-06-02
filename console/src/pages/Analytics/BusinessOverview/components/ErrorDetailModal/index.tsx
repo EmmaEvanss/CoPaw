@@ -384,6 +384,12 @@ export default function ErrorDetailModal({
                     </span>
                   </div>
                   <div className={styles.conversationInfoItem}>
+                    <span className={styles.conversationInfoLabel}>会话:</span>
+                    <span className={styles.conversationInfoValue}>
+                      {traceDetail.trace.session_name || truncateId(traceDetail.trace.session_id)}
+                    </span>
+                  </div>
+                  <div className={styles.conversationInfoItem}>
                     <span className={styles.conversationInfoLabel}>用户:</span>
                     <span className={styles.conversationInfoValue}>
                       {traceDetail.trace.user_name || traceDetail.trace.user_id}

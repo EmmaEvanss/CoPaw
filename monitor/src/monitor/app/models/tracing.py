@@ -116,6 +116,10 @@ class Trace(BaseModel):
     user_name: Optional[str] = Field(default=None, description="User name")
     bbk_id: Optional[str] = Field(default=None, description="BBK identifier")
     session_id: str = Field(description="Session identifier")
+    session_name: Optional[str] = Field(
+        default=None,
+        description="Session name",
+    )
     channel: str = Field(description="Channel identifier")
     start_time: datetime = Field(description="Trace start timestamp")
     end_time: Optional[datetime] = Field(
@@ -330,6 +334,8 @@ class ErrorItem(BaseModel):
     user_id: str = Field(description="用户 ID")
     user_name: Optional[str] = Field(default=None, description="用户名称")
     bbk_id: Optional[str] = Field(default=None, description="分行 ID")
+    session_id: str = Field(default="", description="会话 ID")
+    session_name: Optional[str] = Field(default=None, description="会话名称")
     model_name: Optional[str] = Field(
         default=None,
         description="模型名称（模型报错）",

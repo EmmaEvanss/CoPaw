@@ -123,6 +123,8 @@ export interface ErrorItem {
   user_id: string;
   user_name?: string;
   bbk_id?: string;
+  session_id: string;
+  session_name?: string;
   model_name?: string;
   tool_name?: string;
   mcp_server?: string;
@@ -235,6 +237,7 @@ export interface Trace {
   user_name?: string;
   bbk_id?: string;
   session_id: string;
+  session_name?: string;
   channel: string;
   start_time: string;
   end_time: string | null;

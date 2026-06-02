@@ -2250,30 +2250,33 @@ class TracingQueryService:
         if source_id == "all":
             query = f"""
                 SELECT
-                    span_id,
-                    trace_id,
-                    event_type,
-                    error,
-                    user_id,
-                    user_name,
-                    bbk_id,
-                    model_name,
-                    tool_name,
-                    mcp_server,
-                    start_time,
-                    duration_ms,
-                    input_tokens,
-                    output_tokens
-                FROM swe_tracing_spans
-                WHERE start_time >= %s AND start_time < %s
-                  AND error IS NOT NULL
-                  AND error != ''
-                  AND source_id NOT IN ({exclude_placeholders})
-                  AND event_type IN ('llm_input', 'tool_call_end')
+                    s.span_id,
+                    s.trace_id,
+                    s.event_type,
+                    s.error,
+                    s.user_id,
+                    s.user_name,
+                    s.bbk_id,
+                    t.session_id,
+                    t.session_name,
+                    s.model_name,
+                    s.tool_name,
+                    s.mcp_server,
+                    s.start_time,
+                    s.duration_ms,
+                    s.input_tokens,
+                    s.output_tokens
+                FROM swe_tracing_spans s
+                LEFT JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
+                WHERE s.start_time >= %s AND s.start_time < %s
+                  AND s.error IS NOT NULL
+                  AND s.error != ''
+                  AND s.source_id NOT IN ({exclude_placeholders})
+                  AND s.event_type IN ('llm_input', 'tool_call_end')
                   {bbk_filter_sql}
                   {error_type_filter}
                   {search_filter}
-                ORDER BY start_time DESC
+                ORDER BY s.start_time DESC
                 LIMIT %s OFFSET %s
             """
             params = (
@@ -2293,30 +2296,33 @@ class TracingQueryService:
         else:
             query = f"""
                 SELECT
-                    span_id,
-                    trace_id,
-                    event_type,
-                    error,
-                    user_id,
-                    user_name,
-                    bbk_id,
-                    model_name,
-                    tool_name,
-                    mcp_server,
-                    start_time,
-                    duration_ms,
-                    input_tokens,
-                    output_tokens
-                FROM swe_tracing_spans
-                WHERE start_time >= %s AND start_time < %s
-                  AND error IS NOT NULL
-                  AND error != ''
-                  AND source_id = %s
-                  AND event_type IN ('llm_input', 'tool_call_end')
+                    s.span_id,
+                    s.trace_id,
+                    s.event_type,
+                    s.error,
+                    s.user_id,
+                    s.user_name,
+                    s.bbk_id,
+                    t.session_id,
+                    t.session_name,
+                    s.model_name,
+                    s.tool_name,
+                    s.mcp_server,
+                    s.start_time,
+                    s.duration_ms,
+                    s.input_tokens,
+                    s.output_tokens
+                FROM swe_tracing_spans s
+                LEFT JOIN swe_tracing_traces t ON s.trace_id = t.trace_id
+                WHERE s.start_time >= %s AND s.start_time < %s
+                  AND s.error IS NOT NULL
+                  AND s.error != ''
+                  AND s.source_id = %s
+                  AND s.event_type IN ('llm_input', 'tool_call_end')
                   {bbk_filter_sql}
                   {error_type_filter}
                   {search_filter}
-                ORDER BY start_time DESC
+                ORDER BY s.start_time DESC
                 LIMIT %s OFFSET %s
             """
             params = (
@@ -2393,6 +2399,8 @@ class TracingQueryService:
                     user_id=row["user_id"],
                     user_name=row.get("user_name"),
                     bbk_id=row.get("bbk_id"),
+                    session_id=row.get("session_id", ""),
+                    session_name=row.get("session_name"),
                     model_name=row.get("model_name"),
                     tool_name=row.get("tool_name"),
                     mcp_server=row.get("mcp_server"),
@@ -4294,6 +4302,7 @@ class TracingQueryService:
             user_name=row.get("user_name"),
             bbk_id=row.get("bbk_id"),
             session_id=row["session_id"],
+            session_name=row.get("session_name"),
             channel=row["channel"],
             start_time=row["start_time"],
             end_time=row["end_time"],

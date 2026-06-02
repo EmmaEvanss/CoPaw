@@ -200,6 +200,15 @@ class ExecutionModel(BaseModel):
     meta: str = Field(default="", description="执行元数据 (JSON字符串)")
 
     # 已读状态
+    notification_status: str = Field(default="not_required", description="通知状态")
+    notification_due_at: Optional[datetime] = Field(default=None, description="计划通知时间")
+    notification_timezone: str = Field(default="", description="通知计算时区")
+    notification_sent_at: Optional[datetime] = Field(default=None, description="通知发送时间")
+    notification_attempts: int = Field(default=0, description="通知尝试次数")
+    notification_error: str = Field(default="", description="通知错误")
+    notification_lock_owner: str = Field(default="", description="通知锁持有者")
+    notification_locked_at: Optional[datetime] = Field(default=None, description="通知锁时间")
+
     is_read: bool = Field(default=False, description="是否已读")
     read_at: Optional[datetime] = Field(
         default=None,
@@ -337,6 +346,10 @@ class ExecutionSyncRequest(BaseModel):
     meta: str = Field(default="", description="执行元数据 (JSON字符串)")
 
     # 已读状态（手动执行且成功的任务默认已读）
+    notification_status: str = Field(default="not_required", description="通知状态")
+    notification_due_at: Optional[datetime] = Field(default=None, description="计划通知时间")
+    notification_timezone: str = Field(default="", description="通知计算时区")
+
     is_read: bool = Field(default=False, description="是否已读")
     read_at: Optional[datetime] = Field(
         default=None,

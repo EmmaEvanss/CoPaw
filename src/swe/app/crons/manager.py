@@ -1560,6 +1560,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
     async def _push_task_success_notification(
         self,
         job: CronJobSpec,
+        *,
+        raise_on_error: bool = False,
     ) -> None:
         """Push success notification when an agent task completes."""
         # 只对 agent 类型的任务发送通知
@@ -1595,7 +1597,13 @@ class CronManager:  # pylint: disable=too-many-public-methods
             meta["link_text"] = "点击跳转小助claw版查看"
         meta["notification_summary"] = "小助claw定时任务完成提醒"
 
-        await self.push_message(creator_id, job, session_id, meta)
+        await self.push_message(
+            creator_id,
+            job,
+            session_id,
+            meta,
+            raise_on_error=raise_on_error,
+        )
 
     async def push_message(
         self,
@@ -1603,6 +1611,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
         job: CronJobSpec,
         session_id: Any | None,
         meta: Optional[Dict[str, Any]] | None,
+        *,
+        raise_on_error: bool = False,
     ):
         # 固定使用 zhaohu 通道发送通知
         # 用 try-except 包裹，避免任务被取消时通知发送失败影响主流程
@@ -1635,6 +1645,18 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 job.name,
                 repr(exc),
             )
+            if raise_on_error:
+                raise
+
+    async def send_task_success_notification(self, job_id: str) -> None:
+        """发送指定定时任务的完成通知，供通知 worker 调用。"""
+        job = await self._repo.get_job(job_id)
+        if job is None:
+            raise ValueError(f"cron job not found: {job_id}")
+        await self._push_task_success_notification(
+            job,
+            raise_on_error=True,
+        )
 
     @staticmethod
     def _extract_latest_assistant_preview(messages: list[Any]) -> str:
@@ -1718,6 +1740,24 @@ class CronManager:  # pylint: disable=too-many-public-methods
             return
 
         session_id = str((job.meta or {}).get("task_session_id", "") or "")
+        notification_due_at = None
+        notification_timezone = job.schedule.timezone or self._timezone or "UTC"
+        if exec_status == "success":
+            try:
+                offset = int(
+                    (job.meta or {}).get("broadcast_offset_minutes", 0) or 0,
+                )
+            except (TypeError, ValueError):
+                offset = 0
+            if (
+                (job.meta or {}).get("broadcast_notification_policy")
+                == "original_schedule"
+            ):
+                notification_due_at = actual_time + timedelta(minutes=offset)
+                notification_timezone = (
+                    (job.meta or {}).get("broadcast_original_timezone")
+                    or notification_timezone
+                )
 
         await self._monitor_sync_client.record_execution(
             job=job,
@@ -1732,6 +1772,8 @@ class CronManager:  # pylint: disable=too-many-public-methods
             output_preview=output_preview,
             input_snapshot=input_snapshot,
             executor_leader=executor_leader,
+            notification_due_at=notification_due_at,
+            notification_timezone=notification_timezone,
             meta=execution_meta,
         )
 
@@ -1745,16 +1787,6 @@ class CronManager:  # pylint: disable=too-many-public-methods
             job: 任务定义
         """
         # 通知用 shield 保护，避免任务取消时误标记状态
-        try:
-            await asyncio.shield(
-                self._push_task_success_notification(job),
-            )
-        except asyncio.CancelledError:
-            logger.info(
-                "cron task notification/record cancelled but task succeeded: "
-                "job_id=%s",
-                job.id,
-            )
         try:
             await asyncio.shield(
                 self._record_task_execution_success(job),

@@ -477,6 +477,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       bbk_ids?: string;
+      has_error?: boolean;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -489,7 +490,9 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== null && value !== "") {
+          params.append(key, String(value));
+        }
       });
     }
     return request(`/monitor/tracing/sessions?${params.toString()}`);

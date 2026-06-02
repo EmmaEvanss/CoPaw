@@ -6,6 +6,7 @@ import {
   type ErrorItem,
   type ErrorListResponse,
   type TraceDetail,
+  type Span,
 } from "../../../../../api/modules/tracing";
 import { getBbkDisplayName } from "../../../../../constants/bbk";
 import styles from "./index.module.less";
@@ -58,6 +59,92 @@ const truncateId = (id: string) => {
 const truncateSessionName = (name: string) => {
   if (name.length <= 100) return name;
   return name.slice(0, 100) + "...";
+};
+
+// 调用链路步骤类型
+interface ChainStep {
+  type: "user" | "llm" | "tool";
+  name: string;
+  status: "success" | "error" | "pending";
+  isErrorNode: boolean;
+  time: string;
+}
+
+// 从 spans 组装调用链路
+const buildCallChain = (
+  spans: Span[],
+  selectedError: ErrorItem | null
+): ChainStep[] => {
+  if (!spans || spans.length === 0) return [];
+
+  // 按 start_time 排序
+  const sortedSpans = [...spans].sort(
+    (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  );
+
+  const chain: ChainStep[] = [];
+
+  // 添加用户消息步骤（从第一个 llm_input 之前推断）
+  const firstLlmInput = sortedSpans.find(s => s.event_type === "llm_input");
+  if (firstLlmInput) {
+    chain.push({
+      type: "user",
+      name: "用户消息",
+      status: "success",
+      isErrorNode: false,
+      time: firstLlmInput.start_time,
+    });
+  }
+
+  // 处理每个 span
+  for (const span of sortedSpans) {
+    // 过滤关键事件类型
+    if (
+      span.event_type !== "llm_input" &&
+      span.event_type !== "llm_output" &&
+      span.event_type !== "tool_call_end"
+    ) {
+      continue;
+    }
+
+    // 判断是否是报错节点
+    const isErrorNode =
+      selectedError &&
+      span.span_id === selectedError.span_id &&
+      span.error;
+
+    // LLM 调用
+    if (span.event_type === "llm_input" || span.event_type === "llm_output") {
+      const modelName = span.model_name || "LLM";
+      // 检查是否已存在相同模型名的 LLM 步骤（避免重复）
+      const existingLlm = chain.find(
+        c => c.type === "llm" && c.name === modelName
+      );
+      if (!existingLlm) {
+        chain.push({
+          type: "llm",
+          name: modelName,
+          status: isErrorNode ? "error" : span.error ? "error" : "success",
+          isErrorNode: isErrorNode || false,
+          time: span.start_time,
+        });
+      }
+    }
+
+    // 工具调用（只处理 tool_call_end，代表完成状态）
+    if (span.event_type === "tool_call_end") {
+      const toolName = span.tool_name || "工具";
+      chain.push({
+        type: "tool",
+        name: toolName,
+        status: isErrorNode ? "error" : span.error ? "error" : "success",
+        isErrorNode: isErrorNode || false,
+        time: span.start_time,
+      });
+    }
+  }
+
+  return chain;
 };
 
 export default function ErrorDetailModal({
@@ -494,27 +581,36 @@ export default function ErrorDetailModal({
                   <span>🔗</span> 调用链路
                 </div>
                 <div className={styles.callChainFlow}>
-                  {traceDetail.trace.tools_used && traceDetail.trace.tools_used.length > 0 && (
-                    <>
-                      {traceDetail.trace.tools_used.map((tool) => (
-                        <span key={tool} className={`${styles.callChainStep} ${styles.callChainStepSuccess}`}>
-                          {tool} ✓
+                  {(() => {
+                    const chain = buildCallChain(traceDetail.spans, selectedError);
+                    if (chain.length === 0) {
+                      return <span className={styles.callChainEmpty}>无执行记录</span>;
+                    }
+                    return chain.map((step, idx) => (
+                      <>
+                        <span
+                          key={`${step.type}-${step.name}-${idx}`}
+                          className={`${styles.callChainStep} ${
+                            step.status === "success"
+                              ? styles.callChainStepSuccess
+                              : step.status === "error"
+                              ? styles.callChainStepError
+                              : ""
+                          }`}
+                        >
+                          {step.type === "user" && "👤 "}
+                          {step.type === "llm" && "🤖 "}
+                          {step.type === "tool" && "🔧 "}
+                          {step.name}
+                          {step.status === "success" && " ✓"}
+                          {step.isErrorNode && " ❌"}
                         </span>
-                      ))}
-                      <span className={styles.callChainArrow}>→</span>
-                    </>
-                  )}
-                  {traceDetail.trace.model_name && (
-                    <>
-                      <span className={styles.callChainStep}>
-                        {traceDetail.trace.model_name}
-                      </span>
-                      <span className={styles.callChainArrow}>→</span>
-                    </>
-                  )}
-                  <span className={`${styles.callChainStep} ${styles.callChainStepError}`}>
-                    ❌ {selectedError.event_type === "llm_input" ? "模型报错" : "工具报错"}
-                  </span>
+                        {idx < chain.length - 1 && (
+                          <span className={styles.callChainArrow}>→</span>
+                        )}
+                      </>
+                    ));
+                  })()}
                 </div>
               </div>
             </>

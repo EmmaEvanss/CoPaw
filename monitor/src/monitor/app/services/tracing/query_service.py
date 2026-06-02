@@ -2399,7 +2399,7 @@ class TracingQueryService:
                     user_id=row["user_id"],
                     user_name=row.get("user_name"),
                     bbk_id=row.get("bbk_id"),
-                    session_id=row.get("session_id", ""),
+                    session_id=row.get("session_id") or "",
                     session_name=row.get("session_name"),
                     model_name=row.get("model_name"),
                     tool_name=row.get("tool_name"),

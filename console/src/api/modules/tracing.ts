@@ -115,6 +115,30 @@ export interface ErrorSummary {
   tool_errors: number;
 }
 
+export interface ErrorItem {
+  trace_id: string;
+  span_id: string;
+  event_type: string;
+  error: string;
+  user_id: string;
+  user_name?: string;
+  bbk_id?: string;
+  session_id: string;
+  session_name?: string;
+  model_name?: string;
+  tool_name?: string;
+  mcp_server?: string;
+  start_time: string;
+  duration_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+}
+
+export interface ErrorListResponse {
+  items: ErrorItem[];
+  total: number;
+}
+
 export interface DailyStats {
   date: string;
   total_users: number;
@@ -207,12 +231,39 @@ export interface TraceDetail {
   tools_called: ToolCall[];
 }
 
+export interface SessionRoundTrace {
+  trace_id: string;
+  round_number: number;
+  start_time: string;
+  duration_ms: number | null;
+  model_name: string | null;
+  status: string;
+  user_message: string | null;
+  model_output: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  tools_used: string[];
+  error: string | null;
+  is_error_round: boolean;
+}
+
+export interface SessionTracesResponse {
+  session_id: string;
+  session_name: string | null;
+  user_id: string;
+  user_name: string | null;
+  traces: SessionRoundTrace[];
+  total_rounds: number;
+  error_round_index: number | null;
+}
+
 export interface Trace {
   trace_id: string;
   user_id: string;
   user_name?: string;
   bbk_id?: string;
   session_id: string;
+  session_name?: string;
   channel: string;
   start_time: string;
   end_time: string | null;
@@ -446,6 +497,18 @@ export const tracingApi = {
     return request(`/monitor/tracing/traces/${traceId}`);
   },
 
+  getSessionTraces: async (
+    sessionId: string,
+    errorTraceId?: string,
+  ): Promise<SessionTracesResponse> => {
+    const params = new URLSearchParams();
+    if (errorTraceId) params.append("error_trace_id", errorTraceId);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(
+      `/monitor/tracing/session/${encodeURIComponent(sessionId)}/traces${query}`,
+    );
+  },
+
   getModelUsage: async (
     startDate?: string,
     endDate?: string,
@@ -477,6 +540,7 @@ export const tracingApi = {
       start_date?: string;
       end_date?: string;
       bbk_ids?: string;
+      has_error?: boolean;
     },
   ): Promise<{
     items: SessionListItem[];
@@ -489,7 +553,9 @@ export const tracingApi = {
     params.append("page_size", pageSize.toString());
     if (filters) {
       Object.entries(filters).forEach(([key, value]) => {
-        if (value) params.append(key, value);
+        if (value !== undefined && value !== null && value !== "") {
+          params.append(key, String(value));
+        }
       });
     }
     return request(`/monitor/tracing/sessions?${params.toString()}`);
@@ -824,5 +890,28 @@ export const tracingApi = {
     }
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/error/summary${query}`);
+  },
+
+  getErrorList: async (
+    page: number = 1,
+    pageSize: number = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      bbk_ids?: string;
+      error_type?: string;
+      search?: string;
+    },
+  ): Promise<ErrorListResponse> => {
+    const params = new URLSearchParams();
+    params.append("page", String(page));
+    params.append("page_size", String(pageSize));
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/error/list${query}`);
   },
 };

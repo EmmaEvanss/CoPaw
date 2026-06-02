@@ -43,6 +43,133 @@ def _build_effective_source_config(
 
 
 @pytest.mark.asyncio
+async def test_memory_compaction_hook_uses_tenant_scoped_agent_config(
+    tmp_path,
+    monkeypatch,
+):
+    """Hook compaction should use tenant agent.json instead of global defaults."""
+    from swe.config.config import (
+        Config,
+        AgentsConfig,
+        AgentProfileConfig,
+        AgentProfileRef,
+        AgentsRunningConfig,
+        save_agent_config,
+    )
+    from swe.config.utils import save_config
+    import swe.config.utils as config_utils
+    import swe.config.config as config_module
+
+    monkeypatch.setattr(config_utils, "WORKING_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "WORKING_DIR", tmp_path)
+
+    global_workspace = tmp_path / "workspaces" / "default"
+    tenant_workspace = tmp_path / "tenant-a" / "workspaces" / "default"
+    global_workspace.mkdir(parents=True)
+    tenant_workspace.mkdir(parents=True)
+
+    save_config(
+        Config(
+            agents=AgentsConfig(
+                active_agent="default",
+                profiles={
+                    "default": AgentProfileRef(
+                        id="default",
+                        workspace_dir=str(global_workspace),
+                    ),
+                },
+            ),
+        ),
+        tmp_path / "config.json",
+    )
+    save_config(
+        Config(
+            agents=AgentsConfig(
+                active_agent="default",
+                profiles={
+                    "default": AgentProfileRef(
+                        id="default",
+                        workspace_dir=str(tenant_workspace),
+                    ),
+                },
+            ),
+        ),
+        tmp_path / "tenant-a" / "config.json",
+    )
+
+    save_agent_config(
+        "default",
+        AgentProfileConfig(
+            id="default",
+            name="Global",
+            workspace_dir=str(global_workspace),
+            running=AgentsRunningConfig(
+                tool_result_compact={
+                    "enabled": True,
+                    "recent_n": 2,
+                    "old_max_bytes": 3000,
+                    "recent_max_bytes": 50000,
+                    "retention_days": 5,
+                },
+                memory_summary={"memory_summary_enabled": False},
+            ),
+        ),
+        config_path=tmp_path / "config.json",
+    )
+    save_agent_config(
+        "default",
+        AgentProfileConfig(
+            id="default",
+            name="Tenant",
+            workspace_dir=str(tenant_workspace),
+            running=AgentsRunningConfig(
+                tool_result_compact={
+                    "enabled": True,
+                    "recent_n": 10,
+                    "old_max_bytes": 50000,
+                    "recent_max_bytes": 50000,
+                    "retention_days": 5,
+                },
+                memory_summary={"memory_summary_enabled": False},
+            ),
+        ),
+        config_path=tmp_path / "tenant-a" / "config.json",
+    )
+
+    token_counter = SimpleNamespace(count=AsyncMock(return_value=0))
+    memory_manager = SimpleNamespace(
+        agent_id="default",
+        tenant_id="tenant-a",
+        compact_tool_result=AsyncMock(),
+        check_context=AsyncMock(return_value=([], [], True)),
+    )
+    agent = SimpleNamespace(
+        name="agent",
+        sys_prompt="",
+        memory=SimpleNamespace(
+            get_compressed_summary=lambda: "",
+            get_memory=AsyncMock(return_value=["dummy"]),
+        ),
+        print=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        memory_compaction,
+        "get_swe_token_counter",
+        lambda _config: token_counter,
+    )
+
+    await MemoryCompactionHook(memory_manager)(agent, {})
+
+    assert (
+        memory_manager.compact_tool_result.await_args.kwargs["old_max_bytes"]
+        == 50000
+    )
+    assert (
+        memory_manager.compact_tool_result.await_args.kwargs["recent_n"] == 10
+    )
+
+
+@pytest.mark.asyncio
 async def test_source_recent_max_bytes_affects_read_file_context(
     tmp_path,
     monkeypatch,
@@ -143,8 +270,20 @@ async def test_source_disabled_config_skips_memory_tool_result_compaction(
         memory=memory,
         print=AsyncMock(),
     )
+    load_agent_config_calls: list[tuple[str, str | None]] = []
+
+    def fake_load_agent_config(
+        agent_id: str,
+        config_path=None,
+        *,
+        tenant_id: str | None = None,
+    ):
+        load_agent_config_calls.append((agent_id, tenant_id))
+        return agent_config
+
     memory_manager = SimpleNamespace(
         agent_id="default",
+        tenant_id="tenant-a",
         compact_tool_result=AsyncMock(),
         check_context=AsyncMock(return_value=([], [], True)),
     )
@@ -158,7 +297,7 @@ async def test_source_disabled_config_skips_memory_tool_result_compaction(
     monkeypatch.setattr(
         memory_compaction,
         "load_agent_config",
-        lambda agent_id: agent_config,
+        fake_load_agent_config,
     )
     monkeypatch.setattr(
         memory_compaction,
@@ -170,3 +309,5 @@ async def test_source_disabled_config_skips_memory_tool_result_compaction(
         await MemoryCompactionHook(memory_manager)(agent, {})
 
     memory_manager.compact_tool_result.assert_not_awaited()
+    memory_manager.check_context.assert_awaited_once()
+    assert load_agent_config_calls == [("default", "tenant-a")]

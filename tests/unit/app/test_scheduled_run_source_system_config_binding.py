@@ -27,6 +27,7 @@ from swe.app.source_system_config.models import (
 from swe.app.source_system_config.runtime import (
     bind_source_system_config,
     get_current_source_system_config,
+    resolve_tool_result_compact_config,
 )
 from swe.app.source_system_config.service import (
     SourceSystemConfigDataInvalid,
@@ -36,6 +37,7 @@ from swe.app.workspace.tenant_pool import TenantWorkspacePool
 from swe.app.workspace.workspace import Workspace
 from swe.app.multi_agent_manager import MultiAgentManager
 from swe.config.context import encode_scope_id
+from swe.config.config import ToolResultCompactConfig
 
 
 def _build_effective_config(
@@ -43,6 +45,20 @@ def _build_effective_config(
 ) -> EffectiveSourceSystemConfig:
     raw_config = SourceSystemConfig.model_validate(
         {"feature_switches": {"scheduled_boundary": True}},
+    )
+    return EffectiveSourceSystemConfig(
+        source_id=source_id,
+        config=raw_config.merged_with_defaults(),
+        raw_config=raw_config,
+        version=1,
+    )
+
+
+def _build_tool_compact_disabled_config(
+    source_id: str = "portal",
+) -> EffectiveSourceSystemConfig:
+    raw_config = SourceSystemConfig.model_validate(
+        {"tool_result_compact": {"enabled": False}},
     )
     return EffectiveSourceSystemConfig(
         source_id=source_id,
@@ -414,6 +430,85 @@ async def test_run_job_manual_clears_request_source_for_legacy_unbound_job(
         "execute": None,
         "success": None,
         "finalize": None,
+    }
+    assert get_current_source_system_config() is None
+
+
+@pytest.mark.asyncio
+async def test_run_job_uses_callback_source_for_legacy_unbound_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _build_agent_job(source_id=None, scope_id=None)
+    service = _RecordingSourceConfigService(
+        effective=_build_tool_compact_disabled_config("callback-source"),
+    )
+    manager = CronManager(
+        repo=SimpleNamespace(get_job=AsyncMock(return_value=job)),
+        runner=object(),
+        channel_manager=object(),
+        source_system_config_service=service,
+    )
+    observed: dict[str, str | None] = {}
+    created_tasks: list[asyncio.Task[None]] = []
+    original_create_task = asyncio.create_task
+
+    async def fake_execute(_job):
+        current = get_current_source_system_config()
+        observed["execute"] = None if current is None else current.source_id
+        resolved = resolve_tool_result_compact_config(
+            ToolResultCompactConfig(enabled=True),
+        )
+        observed["tool_result_compact_enabled"] = str(resolved.enabled)
+        return SimpleNamespace(
+            trace_id="",
+            output_preview="",
+            input_snapshot=None,
+            executor_leader="",
+            execution_meta=None,
+        )
+
+    async def fake_success(_job):
+        current = get_current_source_system_config()
+        observed["success"] = None if current is None else current.source_id
+
+    async def fake_finalize(**_kwargs):
+        current = get_current_source_system_config()
+        observed["finalize"] = None if current is None else current.source_id
+
+    def capture_create_task(coro, *, name=None):
+        task = original_create_task(coro, name=name)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(
+        manager,
+        "_executor",
+        SimpleNamespace(execute=fake_execute),
+    )
+    monkeypatch.setattr(manager, "_handle_success_notifications", fake_success)
+    monkeypatch.setattr(manager, "_finalize_execution_state", fake_finalize)
+    monkeypatch.setattr(
+        manager,
+        "_ensure_persisted_task_binding",
+        AsyncMock(return_value=job),
+    )
+    monkeypatch.setattr(asyncio, "create_task", capture_create_task)
+
+    await manager.run_job(
+        job.id,
+        is_manual=False,
+        source_id="callback-source",
+    )
+
+    assert len(created_tasks) == 1
+    await created_tasks[0]
+
+    assert service.calls == ["callback-source"]
+    assert observed == {
+        "execute": "callback-source",
+        "tool_result_compact_enabled": "False",
+        "success": "callback-source",
+        "finalize": "callback-source",
     }
     assert get_current_source_system_config() is None
 

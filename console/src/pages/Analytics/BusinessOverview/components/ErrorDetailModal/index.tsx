@@ -51,8 +51,13 @@ const truncateText = (text: string, maxLen: number) => {
 };
 
 const truncateId = (id: string) => {
-  if (id.length <= 16) return id;
-  return id.slice(0, 16) + "...";
+  if (id.length <= 24) return id;
+  return id.slice(0, 24) + "...";
+};
+
+const truncateSessionName = (name: string) => {
+  if (name.length <= 100) return name;
+  return name.slice(0, 100) + "...";
 };
 
 export default function ErrorDetailModal({
@@ -386,7 +391,9 @@ export default function ErrorDetailModal({
                   <div className={styles.conversationInfoItem}>
                     <span className={styles.conversationInfoLabel}>会话:</span>
                     <span className={styles.conversationInfoValue}>
-                      {traceDetail.trace.session_name || truncateId(traceDetail.trace.session_id)}
+                      {traceDetail.trace.session_name
+                        ? truncateSessionName(traceDetail.trace.session_name)
+                        : truncateId(traceDetail.trace.session_id)}
                     </span>
                   </div>
                   <div className={styles.conversationInfoItem}>

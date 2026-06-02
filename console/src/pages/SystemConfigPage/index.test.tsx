@@ -95,9 +95,18 @@ describe("SystemConfigPage", () => {
 
     expect(await screen.findByText("403")).toBeTruthy();
     expect(
-      screen.getByText("仅管理员可访问当前 Source 系统配置页面。"),
+      screen.getByText("仅管理员可访问当前系统配置页面。"),
     ).toBeTruthy();
     expect(mocks.sourceSystemConfigApi.getCurrent).not.toHaveBeenCalled();
+  });
+
+  it("uses 系统 wording across the system config page", async () => {
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("当前系统")).toBeTruthy();
+    expect(screen.getByText("系统特性配置")).toBeTruthy();
+    expect(screen.queryByText("当前 Source")).toBeNull();
+    expect(screen.queryByText(/Source/)).toBeNull();
   });
 
   it("loads current-source config and saves switch changes", async () => {
@@ -414,7 +423,7 @@ describe("SystemConfigPage", () => {
       });
     });
 
-    expect(await screen.findByText("当前 Source 配置请求失败")).toBeTruthy();
+    expect(await screen.findByText("当前系统配置请求失败")).toBeTruthy();
     expect(getTaskProgressSwitch()).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("button", { name: "common.save" })).toBeDisabled();
     expect(

@@ -222,6 +222,7 @@ class Workspace:
                 init_args=lambda ws: {
                     "working_dir": str(ws.workspace_dir),
                     "agent_id": ws.agent_id,
+                    "tenant_id": ws.tenant_id,
                 },
                 post_init=lambda ws, mm: setattr(
                     ws._service_manager.services["runner"],

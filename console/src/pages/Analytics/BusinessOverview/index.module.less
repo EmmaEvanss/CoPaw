@@ -913,9 +913,10 @@
 
 .htmlPreviewDashboard {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 18px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
   align-items: stretch;
+  min-width: 0;
 }
 
 .htmlPreviewFilters {
@@ -939,16 +940,11 @@
   font-weight: 600;
 }
 
-.htmlPreviewChart {
-  min-width: 0;
-  min-height: 276px;
-}
-
 .htmlPreviewStats {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  align-content: start;
 }
 
 .htmlPreviewStatCard {
@@ -956,11 +952,93 @@
   flex-direction: column;
   justify-content: center;
   gap: 6px;
-  min-height: 76px;
+  min-width: 0;
+  min-height: 78px;
   padding: 12px;
   background: #f8fbff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
+}
+
+.htmlPreviewDistribution {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #edf2f8;
+  border-radius: 12px;
+}
+
+.htmlPreviewDistributionRows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.htmlPreviewDistributionRow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #edf2f8;
+  border-radius: 10px;
+  background: #fbfdff;
+}
+
+.htmlPreviewDistributionMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.htmlPreviewDistributionMeta span {
+  color: #334155;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.htmlPreviewDistributionMeta strong {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #111827;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.htmlPreviewDistributionMeta em {
+  color: #64748b;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.htmlPreviewDistributionTrack {
+  height: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f7;
+}
+
+.htmlPreviewDistributionTrack i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.htmlPreviewInsightBar {
+  background: #2563eb;
+}
+
+.htmlPreviewPhoneBar {
+  background: #16a34a;
 }
 
 .htmlPreviewStatCard span {
@@ -978,22 +1056,30 @@
 }
 
 .htmlPreviewTopList {
-  grid-column: 1 / -1;
+  grid-column: span 5;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px;
+  min-width: 0;
+  min-height: 460px;
+  max-height: 460px;
+  padding: 16px;
+  overflow: auto;
   background: #ffffff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
 }
 
 .htmlPreviewEventList {
-  grid-column: 1 / -1;
+  grid-column: span 7;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px;
+  min-width: 0;
+  min-height: 460px;
+  max-height: 460px;
+  padding: 16px;
+  overflow: hidden;
   background: #ffffff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
@@ -1001,7 +1087,7 @@
 
 .htmlPreviewTopTitle {
   color: #25324b;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
 }
 
@@ -1016,24 +1102,55 @@
 }
 
 .htmlPreviewListRow {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 68px 82px 126px;
-  align-items: center;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid #edf2f8;
   color: #475569;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
-.htmlPreviewListRow span:not(:first-child),
-.htmlPreviewListRow strong {
-  text-align: right;
+.htmlPreviewListRow .htmlPreviewTopName {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
-.htmlPreviewListRow strong {
+.htmlPreviewListMetrics {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.htmlPreviewListMetrics span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.htmlPreviewListMetrics em {
+  min-width: 0;
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htmlPreviewListMetrics strong {
+  flex: 0 0 auto;
   color: #111827;
-  font-size: 12px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
+  font-weight: 700;
 }
 
 .htmlPreviewTopDot {
@@ -1043,6 +1160,9 @@
 }
 
 .htmlPreviewTopName {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1065,20 +1185,29 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
 .htmlPreviewCustomerHeader,
 .htmlPreviewCustomerRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px 44px 52px 54px;
+  grid-template-columns: minmax(0, 1fr) 42px 42px 50px 58px;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .htmlPreviewCustomerHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0 0 6px;
+  background: #ffffff;
   color: #64748b;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -1091,14 +1220,14 @@
 .htmlPreviewSelectedList {
   overflow: hidden;
   color: #64748b;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .htmlPreviewCustomerRow {
-  padding: 9px 0;
+  padding: 11px 0;
   border-top: 1px solid #edf2f8;
   color: #111827;
   font-size: 13px;
@@ -1106,6 +1235,7 @@
 
 .htmlPreviewCustomerRow strong {
   font-variant-numeric: tabular-nums;
+  min-width: 0;
 }
 
 .htmlPreviewCustomerCell {
@@ -1153,6 +1283,7 @@
   color: #64748b;
   font-size: 12px;
   font-weight: 600;
+  min-width: 0;
 }
 
 .emptyChartState {
@@ -1166,10 +1297,11 @@
   gap: 8px;
 }
 
-@media (max-width: 1180px) {
-  .htmlPreviewDashboard {
-    grid-template-columns: minmax(0, 1fr);
+@media (max-width: 1120px) {
+  .htmlPreviewStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
 }
 
 @media (max-width: 720px) {
@@ -1183,7 +1315,22 @@
   }
 
   .htmlPreviewStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .htmlPreviewDistributionRows {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .htmlPreviewTopList,
+  .htmlPreviewEventList {
+    grid-column: 1 / -1;
+    min-height: auto;
+    max-height: none;
+  }
+
+  .htmlPreviewCustomerTable {
+    max-height: 360px;
   }
 
   .htmlPreviewFilters {
@@ -1196,17 +1343,20 @@
     min-width: 0;
   }
 
-  .htmlPreviewListRow,
   .htmlPreviewCustomerHeader,
   .htmlPreviewCustomerRow {
-    grid-template-columns: minmax(0, 1fr) 42px 42px 48px;
+    grid-template-columns: minmax(0, 1fr) 40px 40px 52px;
   }
 
-  .htmlPreviewListRow span:nth-child(3),
-  .htmlPreviewListRow strong,
-  .htmlPreviewCustomerHeader span:nth-child(4),
-  .htmlPreviewCustomerRow strong:nth-of-type(3) {
+  .htmlPreviewCustomerHeader span:nth-child(5),
+  .htmlPreviewCustomerRow .htmlPreviewEventTime {
     display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .htmlPreviewStats {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

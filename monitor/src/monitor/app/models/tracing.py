@@ -320,6 +320,49 @@ class ErrorSummary(BaseModel):
     tool_errors: int = 0  # 工具报错（tool_call_end）
 
 
+class ErrorItem(BaseModel):
+    """单个错误记录."""
+
+    trace_id: str = Field(description="关联对话 ID")
+    span_id: str = Field(description="事件 ID")
+    event_type: str = Field(description="事件类型: llm_input / tool_call_end")
+    error: str = Field(description="错误信息")
+    user_id: str = Field(description="用户 ID")
+    user_name: Optional[str] = Field(default=None, description="用户名称")
+    bbk_id: Optional[str] = Field(default=None, description="分行 ID")
+    model_name: Optional[str] = Field(
+        default=None,
+        description="模型名称（模型报错）",
+    )
+    tool_name: Optional[str] = Field(
+        default=None,
+        description="工具名称（工具报错）",
+    )
+    mcp_server: Optional[str] = Field(default=None, description="MCP 服务名称")
+    start_time: datetime = Field(description="发生时间")
+    duration_ms: Optional[int] = Field(
+        default=None,
+        description="持续时间（毫秒）",
+    )
+    input_tokens: Optional[int] = Field(default=None, description="输入 Token")
+    output_tokens: Optional[int] = Field(
+        default=None,
+        description="输出 Token",
+    )
+
+
+class ErrorListResponse(BaseModel):
+    """错误列表响应."""
+
+    items: list[ErrorItem] = Field(
+        default_factory=list,
+        description="错误列表",
+    )
+    total: int = Field(default=0, description="总数")
+    page: int = Field(default=1, description="当前页码")
+    page_size: int = Field(default=10, description="每页数量")
+
+
 class DepthSummary(BaseModel):
     """使用深度汇总统计."""
 

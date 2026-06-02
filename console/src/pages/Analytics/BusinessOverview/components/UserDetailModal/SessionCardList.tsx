@@ -115,37 +115,39 @@ export default function SessionCardList({
     <div className={styles.sessionList}>
       <div className={styles.sessionListHeader}>
         <div className={styles.sessionListTitle}>会话列表</div>
-        {/* 报错会话筛选按钮 */}
-        {onToggleErrorFilter && (
-          <Tooltip
-            title={hasErrorFilter ? "显示全部会话" : "筛选报错会话"}
-            placement="right"
-          >
+        <div className={styles.sessionListActions}>
+          {/* 报错会话筛选按钮 */}
+          {onToggleErrorFilter && (
+            <Tooltip
+              title={hasErrorFilter ? "显示全部会话" : "筛选报错会话"}
+              placement="right"
+            >
+              <button
+                type="button"
+                className={
+                  hasErrorFilter
+                    ? styles.errorFilterButtonActive
+                    : styles.errorFilterButton
+                }
+                onClick={onToggleErrorFilter}
+                aria-label={hasErrorFilter ? "显示全部会话" : "筛选报错会话"}
+              >
+                <AlertCircle size={16} />
+              </button>
+            </Tooltip>
+          )}
+          {/* 收起会话列表按钮 */}
+          <Tooltip title="收起会话列表" placement="right">
             <button
               type="button"
-              className={
-                hasErrorFilter
-                  ? styles.errorFilterButtonActive
-                  : styles.errorFilterButton
-              }
-              onClick={onToggleErrorFilter}
-              aria-label={hasErrorFilter ? "显示全部会话" : "筛选报错会话"}
-            >
-              <AlertCircle size={16} />
-            </button>
-          </Tooltip>
-        )}
-        {/* 收起会话列表按钮 */}
-        <Tooltip title="收起会话列表" placement="right">
-          <button
-            type="button"
-            className={styles.sessionPanelToggle}
-            onClick={onToggleCollapsed}
+              className={styles.sessionPanelToggle}
+              onClick={onToggleCollapsed}
             aria-label="收起会话列表"
           >
             <PanelLeftClose size={16} />
           </button>
         </Tooltip>
+        </div>
       </div>
 
       {loading ? (

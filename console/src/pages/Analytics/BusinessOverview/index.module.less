@@ -913,9 +913,10 @@
 
 .htmlPreviewDashboard {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 18px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
   align-items: stretch;
+  min-width: 0;
 }
 
 .htmlPreviewFilters {
@@ -939,16 +940,11 @@
   font-weight: 600;
 }
 
-.htmlPreviewChart {
-  min-width: 0;
-  min-height: 276px;
-}
-
 .htmlPreviewStats {
+  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  align-content: start;
 }
 
 .htmlPreviewStatCard {
@@ -956,11 +952,69 @@
   flex-direction: column;
   justify-content: center;
   gap: 6px;
-  min-height: 76px;
+  min-width: 0;
+  min-height: 78px;
   padding: 12px;
   background: #f8fbff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
+}
+
+.htmlPreviewDistribution {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  background: #ffffff;
+  border: 1px solid #edf2f8;
+  border-radius: 12px;
+}
+
+.htmlPreviewDistributionRows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.htmlPreviewDistributionRow {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.htmlPreviewDistributionRow strong {
+  color: #111827;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.htmlPreviewDistributionTrack {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f7;
+}
+
+.htmlPreviewDistributionTrack i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.htmlPreviewInsightBar {
+  background: #2563eb;
+}
+
+.htmlPreviewPhoneBar {
+  background: #16a34a;
 }
 
 .htmlPreviewStatCard span {
@@ -986,6 +1040,7 @@
   background: #ffffff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
+  min-width: 0;
 }
 
 .htmlPreviewEventList {
@@ -997,6 +1052,7 @@
   background: #ffffff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
+  min-width: 0;
 }
 
 .htmlPreviewTopTitle {
@@ -1017,23 +1073,47 @@
 
 .htmlPreviewListRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 68px 82px 126px;
-  align-items: center;
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px solid #edf2f8;
   color: #475569;
   font-size: 12px;
   font-weight: 600;
 }
 
-.htmlPreviewListRow span:not(:first-child),
-.htmlPreviewListRow strong {
-  text-align: right;
+.htmlPreviewListRow .htmlPreviewTopName {
+  grid-column: 1 / -1;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
+.htmlPreviewListRow span:not(:first-child),
 .htmlPreviewListRow strong {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 7px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f8fbff;
   color: #111827;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.htmlPreviewListRow strong {
+  background: #eef5ff;
+  color: #1d4ed8;
 }
 
 .htmlPreviewTopDot {
@@ -1043,6 +1123,9 @@
 }
 
 .htmlPreviewTopName {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1066,17 +1149,25 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  max-height: 420px;
+  overflow: auto;
 }
 
 .htmlPreviewCustomerHeader,
 .htmlPreviewCustomerRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 44px 44px 52px 54px;
+  grid-template-columns: minmax(0, 1fr) 42px 42px 50px 58px;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
 }
 
 .htmlPreviewCustomerHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0 0 6px;
+  background: #ffffff;
   color: #64748b;
   font-size: 12px;
   font-weight: 700;
@@ -1101,11 +1192,12 @@
   padding: 9px 0;
   border-top: 1px solid #edf2f8;
   color: #111827;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .htmlPreviewCustomerRow strong {
   font-variant-numeric: tabular-nums;
+  min-width: 0;
 }
 
 .htmlPreviewCustomerCell {
@@ -1153,6 +1245,7 @@
   color: #64748b;
   font-size: 12px;
   font-weight: 600;
+  min-width: 0;
 }
 
 .emptyChartState {
@@ -1166,10 +1259,11 @@
   gap: 8px;
 }
 
-@media (max-width: 1180px) {
-  .htmlPreviewDashboard {
-    grid-template-columns: minmax(0, 1fr);
+@media (max-width: 1120px) {
+  .htmlPreviewStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
 }
 
 @media (max-width: 720px) {
@@ -1183,6 +1277,10 @@
   }
 
   .htmlPreviewStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .htmlPreviewDistributionRows {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1196,17 +1294,24 @@
     min-width: 0;
   }
 
-  .htmlPreviewListRow,
-  .htmlPreviewCustomerHeader,
-  .htmlPreviewCustomerRow {
-    grid-template-columns: minmax(0, 1fr) 42px 42px 48px;
+  .htmlPreviewListRow {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .htmlPreviewListRow span:nth-child(3),
-  .htmlPreviewListRow strong,
-  .htmlPreviewCustomerHeader span:nth-child(4),
-  .htmlPreviewCustomerRow strong:nth-of-type(3) {
+  .htmlPreviewCustomerHeader,
+  .htmlPreviewCustomerRow {
+    grid-template-columns: minmax(0, 1fr) 40px 40px 52px;
+  }
+
+  .htmlPreviewCustomerHeader span:nth-child(5),
+  .htmlPreviewCustomerRow .htmlPreviewEventTime {
     display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .htmlPreviewStats {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

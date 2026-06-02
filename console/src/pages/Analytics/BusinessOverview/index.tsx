@@ -73,15 +73,6 @@ const METRIC_ACCENT_COLORS = [
 ];
 
 const DONUT_COLORS = ["#18b368", "#ef4444", "#94a3b8"];
-const HTML_PREVIEW_COLORS = [
-  "#2563eb",
-  "#16a34a",
-  "#0891b2",
-  "#f97316",
-  "#7c3aed",
-  "#db2777",
-];
-
 const safeNumber = (value: unknown): number =>
   typeof value === "number" && !Number.isNaN(value) ? value : 0;
 
@@ -276,83 +267,6 @@ function buildErrorSummary(summary: ErrorSummary | null): SummaryLegendItem[] {
       color: "#ef4444",
     },
   ];
-}
-
-function getHtmlPreviewButtonLabel(item: HtmlPreviewClickSummaryItem): string {
-  return (
-    item.button_name ||
-    item.button_text ||
-    item.button_id ||
-    item.button_label ||
-    "未知按钮"
-  );
-}
-
-function buildHtmlPreviewClickOption(items: HtmlPreviewClickSummaryItem[]) {
-  const chartItems = items.slice(0, 10).reverse();
-  return {
-    grid: {
-      left: 110,
-      right: 36,
-      top: 12,
-      bottom: 18,
-    },
-    tooltip: {
-      trigger: "axis",
-      axisPointer: { type: "shadow" },
-      formatter: (params: Array<{ name: string; value: number }>) => {
-        const first = params[0];
-        return first
-          ? `${first.name}<br/>点击次数：${formatNumber(first.value)}`
-          : "";
-      },
-    },
-    xAxis: {
-      type: "value",
-      axisLine: { show: false },
-      axisTick: { show: false },
-      splitLine: { lineStyle: { color: "#edf2f8" } },
-      axisLabel: {
-        color: "#94a3b8",
-        fontSize: 12,
-        formatter: (value: number) => formatNumber(value),
-      },
-    },
-    yAxis: {
-      type: "category",
-      data: chartItems.map((item) =>
-        truncateName(getHtmlPreviewButtonLabel(item), 12),
-      ),
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: {
-        color: "#475569",
-        fontSize: 12,
-        fontWeight: 600,
-      },
-    },
-    series: [
-      {
-        type: "bar",
-        data: chartItems.map((item, index) => ({
-          value: item.click_count,
-          itemStyle: {
-            color: HTML_PREVIEW_COLORS[index % HTML_PREVIEW_COLORS.length],
-            borderRadius: [0, 8, 8, 0],
-          },
-        })),
-        barWidth: 14,
-        label: {
-          show: true,
-          position: "right",
-          color: "#111827",
-          fontSize: 12,
-          fontWeight: 700,
-          formatter: (params: { value: number }) => formatNumber(params.value),
-        },
-      },
-    ],
-  };
 }
 
 function buildDonutSegments(items: SummaryLegendItem[]) {
@@ -1194,18 +1108,6 @@ export default function BusinessOverviewPage() {
     () => buildErrorSummary(errorSummaryData),
     [errorSummaryData],
   );
-  const htmlPreviewChartOption = useMemo(
-    () => buildHtmlPreviewClickOption(htmlPreviewClicks),
-    [htmlPreviewClicks],
-  );
-  const htmlPreviewTotalClicks = useMemo(
-    () =>
-      htmlPreviewClicks.reduce(
-        (sum, item) => sum + safeNumber(item.click_count),
-        0,
-      ),
-    [htmlPreviewClicks],
-  );
   const selectedHtmlPreviewList = useMemo(
     () =>
       htmlPreviewLists.find(
@@ -1223,6 +1125,35 @@ export default function BusinessOverviewPage() {
     [htmlPreviewLists, selectedHtmlPreviewListKey],
   );
   const htmlPreviewListCount = displayedHtmlPreviewLists.length;
+  const htmlPreviewInsightClicks = useMemo(
+    () =>
+      displayedHtmlPreviewLists.reduce(
+        (sum, item) => sum + safeNumber(item.insight_count),
+        0,
+      ),
+    [displayedHtmlPreviewLists],
+  );
+  const htmlPreviewPhoneClicks = useMemo(
+    () =>
+      displayedHtmlPreviewLists.reduce(
+        (sum, item) => sum + safeNumber(item.phone_count),
+        0,
+      ),
+    [displayedHtmlPreviewLists],
+  );
+  const htmlPreviewTotalClicks = useMemo(
+    () =>
+      displayedHtmlPreviewLists.reduce(
+        (sum, item) => sum + safeNumber(item.total_click_count),
+        0,
+      ),
+    [displayedHtmlPreviewLists],
+  );
+  const htmlPreviewMaxActionClicks = Math.max(
+    htmlPreviewInsightClicks,
+    htmlPreviewPhoneClicks,
+    1,
+  );
   const htmlPreviewCustomerTotal = useMemo(
     () =>
       displayedHtmlPreviewLists.reduce(
@@ -1973,12 +1904,6 @@ export default function BusinessOverviewPage() {
             </div>
           ) : (
             <div className={styles.htmlPreviewDashboard}>
-              <div className={styles.htmlPreviewChart}>
-                <ReactECharts
-                  option={htmlPreviewChartOption}
-                  style={{ height: 276 }}
-                />
-              </div>
               <div className={styles.htmlPreviewStats}>
                 <div className={styles.htmlPreviewStatCard}>
                   <span>名单数</span>
@@ -1996,85 +1921,124 @@ export default function BusinessOverviewPage() {
                   <span>点击总数</span>
                   <strong>{formatNumber(htmlPreviewTotalClicks)}</strong>
                 </div>
-                <div className={styles.htmlPreviewTopList}>
-                  <div className={styles.htmlPreviewTopTitle}>名单点击概览</div>
-                  {displayedHtmlPreviewLists.slice(0, 5).map((item) => (
-                    <div
-                      key={item.list_key}
-                      className={styles.htmlPreviewListRow}
+              </div>
+              <div className={styles.htmlPreviewDistribution}>
+                <div className={styles.htmlPreviewTopTitle}>点击分布</div>
+                <div className={styles.htmlPreviewDistributionRows}>
+                  <div className={styles.htmlPreviewDistributionRow}>
+                    <span>洞察</span>
+                    <div className={styles.htmlPreviewDistributionTrack}>
+                      <i
+                        className={styles.htmlPreviewInsightBar}
+                        style={{
+                          width: `${Math.max(
+                            6,
+                            (htmlPreviewInsightClicks /
+                              htmlPreviewMaxActionClicks) *
+                              100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <strong>{formatNumber(htmlPreviewInsightClicks)}</strong>
+                  </div>
+                  <div className={styles.htmlPreviewDistributionRow}>
+                    <span>电访</span>
+                    <div className={styles.htmlPreviewDistributionTrack}>
+                      <i
+                        className={styles.htmlPreviewPhoneBar}
+                        style={{
+                          width: `${Math.max(
+                            6,
+                            (htmlPreviewPhoneClicks /
+                              htmlPreviewMaxActionClicks) *
+                              100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                    <strong>{formatNumber(htmlPreviewPhoneClicks)}</strong>
+                  </div>
+                </div>
+              </div>
+              <div className={styles.htmlPreviewTopList}>
+                <div className={styles.htmlPreviewTopTitle}>名单点击概览</div>
+                {displayedHtmlPreviewLists.slice(0, 5).map((item) => (
+                  <div
+                    key={item.list_key}
+                    className={styles.htmlPreviewListRow}
+                  >
+                    <Tooltip
+                      title={item.file_name || item.file_url || item.list_name}
+                      placement="top"
                     >
-                      <Tooltip
-                        title={item.file_name || item.file_url || item.list_name}
-                        placement="top"
+                      <span className={styles.htmlPreviewTopName}>
+                        {item.list_name}
+                      </span>
+                    </Tooltip>
+                    <span>{formatNumber(item.customer_count)} 客户</span>
+                    <span>{formatNumber(item.clicked_customer_count)} 点击客户</span>
+                    <strong>
+                      洞察 {formatNumber(item.insight_count)} / 电访{" "}
+                      {formatNumber(item.phone_count)}
+                    </strong>
+                  </div>
+                ))}
+                {displayedHtmlPreviewLists.length === 0 && (
+                  <div className={styles.htmlPreviewEmptyLine}>
+                    暂无名单点击概览数据
+                  </div>
+                )}
+              </div>
+              <div className={styles.htmlPreviewEventList}>
+                <div className={styles.htmlPreviewTopTitle}>客户点击明细</div>
+                {selectedHtmlPreviewList && (
+                  <div className={styles.htmlPreviewSelectedList}>
+                    当前名单：{selectedHtmlPreviewList.list_name}
+                  </div>
+                )}
+                {htmlPreviewCustomerClicks.length === 0 ? (
+                  <div className={styles.htmlPreviewEmptyLine}>
+                    暂无客户点击明细
+                  </div>
+                ) : (
+                  <div className={styles.htmlPreviewCustomerTable}>
+                    <div className={styles.htmlPreviewCustomerHeader}>
+                      <span>客户</span>
+                      <span>洞察</span>
+                      <span>电访</span>
+                      <span>总点击</span>
+                      <span>最近</span>
+                    </div>
+                    {htmlPreviewCustomerClicks.map((item) => (
+                      <div
+                        key={`${item.customer_id || item.customer_name}-${
+                          item.last_clicked_at || ""
+                        }`}
+                        className={styles.htmlPreviewCustomerRow}
                       >
-                        <span className={styles.htmlPreviewTopName}>
-                          {item.list_name}
-                        </span>
-                      </Tooltip>
-                      <span>{formatNumber(item.customer_count)} 客户</span>
-                      <span>{formatNumber(item.clicked_customer_count)} 点击客户</span>
-                      <strong>
-                        洞察 {formatNumber(item.insight_count)} / 电访{" "}
-                        {formatNumber(item.phone_count)}
-                      </strong>
-                    </div>
-                  ))}
-                  {displayedHtmlPreviewLists.length === 0 && (
-                    <div className={styles.htmlPreviewEmptyLine}>
-                      暂无名单点击概览数据
-                    </div>
-                  )}
-                </div>
-                <div className={styles.htmlPreviewEventList}>
-                  <div className={styles.htmlPreviewTopTitle}>客户点击明细</div>
-                  {selectedHtmlPreviewList && (
-                    <div className={styles.htmlPreviewSelectedList}>
-                      当前名单：{selectedHtmlPreviewList.list_name}
-                    </div>
-                  )}
-                  {htmlPreviewCustomerClicks.length === 0 ? (
-                    <div className={styles.htmlPreviewEmptyLine}>
-                      暂无客户点击明细
-                    </div>
-                  ) : (
-                    <div className={styles.htmlPreviewCustomerTable}>
-                      <div className={styles.htmlPreviewCustomerHeader}>
-                        <span>客户</span>
-                        <span>洞察</span>
-                        <span>电访</span>
-                        <span>总点击</span>
-                        <span>最近</span>
-                      </div>
-                      {htmlPreviewCustomerClicks.slice(0, 8).map((item) => (
-                        <div
-                          key={`${item.customer_id || item.customer_name}-${
-                            item.last_clicked_at || ""
-                          }`}
-                          className={styles.htmlPreviewCustomerRow}
-                        >
-                          <div className={styles.htmlPreviewCustomerCell}>
-                            <span className={styles.htmlPreviewCustomerName}>
-                              {item.customer_name || "未知客户"}
-                            </span>
-                            {item.customer_id && (
-                              <span className={styles.htmlPreviewCustomerId}>
-                                {item.customer_id}
-                              </span>
-                            )}
-                          </div>
-                          <strong>{formatNumber(item.insight_count)}</strong>
-                          <strong>{formatNumber(item.phone_count)}</strong>
-                          <strong>{formatNumber(item.total_click_count)}</strong>
-                          <span className={styles.htmlPreviewEventTime}>
-                            {item.last_clicked_at
-                              ? dayjs(item.last_clicked_at).format("MM-DD HH:mm")
-                              : "-"}
+                        <div className={styles.htmlPreviewCustomerCell}>
+                          <span className={styles.htmlPreviewCustomerName}>
+                            {item.customer_name || "未知客户"}
                           </span>
+                          {item.customer_id && (
+                            <span className={styles.htmlPreviewCustomerId}>
+                              {item.customer_id}
+                            </span>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                        <strong>{formatNumber(item.insight_count)}</strong>
+                        <strong>{formatNumber(item.phone_count)}</strong>
+                        <strong>{formatNumber(item.total_click_count)}</strong>
+                        <span className={styles.htmlPreviewEventTime}>
+                          {item.last_clicked_at
+                            ? dayjs(item.last_clicked_at).format("MM-DD HH:mm")
+                            : "-"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

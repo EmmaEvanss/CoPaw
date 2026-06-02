@@ -39,6 +39,7 @@ import {
 } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
 import SkillDetailModal from "./components/SkillDetailModal";
+import ErrorDetailModal from "./components/ErrorDetailModal";
 import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP, getBbkDisplayName } from "../../../constants/bbk";
 import {
   formatChange,
@@ -692,6 +693,7 @@ export default function BusinessOverviewPage() {
   const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [selectedSkillName, setSelectedSkillName] = useState("");
+  const [errorModalOpen, setErrorModalOpen] = useState(false);
   const [activeTrendIndex, setActiveTrendIndex] = useState<number | null>(null);
 
   const startDateText = useMemo(
@@ -1624,13 +1626,14 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelLarge}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>报错分析</h3>
-            {/* TODO: 后续补充点击查看功能 */}
-            {false && (
-              <button type="button" className={styles.detailLink}>
-                查看详情
-                <ChevronRight size={14} />
-              </button>
-            )}
+            <button
+              type="button"
+              className={styles.detailLink}
+              onClick={() => setErrorModalOpen(true)}
+            >
+              查看详情
+              <ChevronRight size={14} />
+            </button>
           </div>
           <div className={styles.donutLayoutCompact}>
             <div className={styles.donutCompact}>
@@ -1710,6 +1713,14 @@ export default function BusinessOverviewPage() {
           setSkillModalOpen(false);
           setSelectedSkillName("");
         }}
+      />
+
+      <ErrorDetailModal
+        open={errorModalOpen}
+        startDate={startDateText}
+        endDate={endDateText}
+        bbkIds={effectiveBbkIds?.join(",")}
+        onClose={() => setErrorModalOpen(false)}
       />
     </div>
   );

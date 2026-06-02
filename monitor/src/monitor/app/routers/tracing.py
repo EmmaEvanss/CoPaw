@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 from ..models.tracing import (
+    ErrorItem,
+    ErrorListResponse,
     ErrorSummary,
     OverviewStats,
     TraceDetail,
@@ -1021,6 +1023,46 @@ async def get_error_summary(
         bbk_ids,
     )
     return summary
+
+
+@router.get("/error/list", response_model=ErrorListResponse)
+async def get_error_list(
+    request: Request,
+    start_date: Optional[str] = Query(
+        None,
+        description="开始日期 (YYYY-MM-DD)",
+    ),
+    end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
+    bbk_ids: Optional[str] = Query(None, description="分行ID筛选"),
+    error_type: Optional[str] = Query(
+        None,
+        description="错误类型: llm_input / tool_call_end",
+    ),
+    search: Optional[str] = Query(None, description="搜索关键词"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量"),
+) -> ErrorListResponse:
+    """获取报错列表.
+
+    返回错误详情列表，支持按错误类型过滤和关键词搜索。
+    """
+    actual_source_id = _get_source_id_from_header(request)
+    service = TracingQueryService.get_instance()
+
+    start = _parse_date(start_date, "start_date")
+    end = _parse_date(end_date, "end_date", add_day=True)
+
+    result = await service.get_error_list(
+        actual_source_id,
+        start,
+        end,
+        bbk_ids,
+        error_type,
+        search,
+        page,
+        page_size,
+    )
+    return result
 
 
 # ===== 使用深度统计 =====

@@ -10,6 +10,8 @@ from typing import Any, Optional
 from ...database import get_db_connection, DatabaseConnection
 from ....utils.bbk import get_bbk_name_by_id
 from ...models.tracing import (
+    ErrorItem,
+    ErrorListResponse,
     ErrorSummary,
     EventType,
     ModelUsage,
@@ -2200,6 +2202,212 @@ class TracingQueryService:
             model_errors=model_errors,
             tool_errors=tool_errors,
         )
+
+    async def get_error_list(
+        self,
+        source_id: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        bbk_ids: Optional[str] = None,
+        error_type: Optional[str] = None,
+        search: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> ErrorListResponse:
+        """获取报错列表.
+
+        查询 swe_tracing_spans 中 error 不为空的记录，
+        仅返回 llm_input（模型报错）和 tool_call_end（工具报错）。
+        支持按错误类型过滤和关键词搜索。
+        """
+        if start_date is None:
+            start_date = datetime.now() - timedelta(days=30)
+        if end_date is None:
+            end_date = datetime.now() + timedelta(days=1)
+
+        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
+        exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
+
+        # 构建错误类型过滤
+        error_type_filter = ""
+        if error_type and error_type in ("llm_input", "tool_call_end"):
+            error_type_filter = "AND event_type = %s"
+
+        # 构建搜索过滤
+        search_filter = ""
+        search_params: list[str] = []
+        if search:
+            search_filter = (
+                "AND (user_id LIKE %s OR user_name LIKE %s OR error LIKE %s)"
+            )
+            search_pattern = f"%{search}%"
+            search_params = [search_pattern, search_pattern, search_pattern]
+
+        # 计算分页偏移
+        offset = (page - 1) * page_size
+
+        # 构建查询
+        if source_id == "all":
+            query = f"""
+                SELECT
+                    span_id,
+                    trace_id,
+                    event_type,
+                    error,
+                    user_id,
+                    user_name,
+                    bbk_id,
+                    model_name,
+                    tool_name,
+                    mcp_server,
+                    start_time,
+                    duration_ms,
+                    input_tokens,
+                    output_tokens
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time < %s
+                  AND error IS NOT NULL
+                  AND error != ''
+                  AND source_id NOT IN ({exclude_placeholders})
+                  AND event_type IN ('llm_input', 'tool_call_end')
+                  {bbk_filter_sql}
+                  {error_type_filter}
+                  {search_filter}
+                ORDER BY start_time DESC
+                LIMIT %s OFFSET %s
+            """
+            params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+                *(
+                    [error_type]
+                    if error_type in ("llm_input", "tool_call_end")
+                    else []
+                ),
+                *search_params,
+                page_size,
+                offset,
+            )
+        else:
+            query = f"""
+                SELECT
+                    span_id,
+                    trace_id,
+                    event_type,
+                    error,
+                    user_id,
+                    user_name,
+                    bbk_id,
+                    model_name,
+                    tool_name,
+                    mcp_server,
+                    start_time,
+                    duration_ms,
+                    input_tokens,
+                    output_tokens
+                FROM swe_tracing_spans
+                WHERE start_time >= %s AND start_time < %s
+                  AND error IS NOT NULL
+                  AND error != ''
+                  AND source_id = %s
+                  AND event_type IN ('llm_input', 'tool_call_end')
+                  {bbk_filter_sql}
+                  {error_type_filter}
+                  {search_filter}
+                ORDER BY start_time DESC
+                LIMIT %s OFFSET %s
+            """
+            params = (
+                start_date,
+                end_date,
+                source_id,
+                *bbk_filter_params,
+                *(
+                    [error_type]
+                    if error_type in ("llm_input", "tool_call_end")
+                    else []
+                ),
+                *search_params,
+                page_size,
+                offset,
+            )
+
+        # 过滤掉 None 值
+        params = tuple(p for p in params if p is not None)
+
+        rows = await self._db.fetch_all(query, params)
+
+        # 获取总数
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM swe_tracing_spans
+            WHERE start_time >= %s AND start_time < %s
+              AND error IS NOT NULL
+              AND error != ''
+              AND source_id {'NOT IN' if source_id == 'all' else '='} {'(' + exclude_placeholders + ')' if source_id == 'all' else '%s'}
+              AND event_type IN ('llm_input', 'tool_call_end')
+              {bbk_filter_sql}
+              {error_type_filter}
+              {search_filter}
+        """
+        if source_id == "all":
+            count_params = (
+                start_date,
+                end_date,
+                *EXCLUDED_SOURCE_IDS,
+                *bbk_filter_params,
+                *(
+                    [error_type]
+                    if error_type in ("llm_input", "tool_call_end")
+                    else []
+                ),
+                *search_params,
+            )
+        else:
+            count_params = (
+                start_date,
+                end_date,
+                source_id,
+                *bbk_filter_params,
+                *(
+                    [error_type]
+                    if error_type in ("llm_input", "tool_call_end")
+                    else []
+                ),
+                *search_params,
+            )
+        count_params = tuple(p for p in count_params if p is not None)
+        total_row = await self._db.fetch_one(count_query, count_params)
+        total = total_row["total"] if total_row else 0
+
+        items = []
+        for row in rows:
+            items.append(
+                ErrorItem(
+                    trace_id=row["trace_id"],
+                    span_id=row["span_id"],
+                    event_type=row["event_type"],
+                    error=row["error"],
+                    user_id=row["user_id"],
+                    user_name=row.get("user_name"),
+                    bbk_id=row.get("bbk_id"),
+                    model_name=row.get("model_name"),
+                    tool_name=row.get("tool_name"),
+                    mcp_server=row.get("mcp_server"),
+                    start_time=(
+                        row["start_time"].isoformat()
+                        if row["start_time"]
+                        else ""
+                    ),
+                    duration_ms=row.get("duration_ms"),
+                    input_tokens=row.get("input_tokens"),
+                    output_tokens=row.get("output_tokens"),
+                ),
+            )
+
+        return ErrorListResponse(items=items, total=total)
 
     async def get_depth_summary(
         self,

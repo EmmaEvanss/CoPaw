@@ -115,6 +115,28 @@ export interface ErrorSummary {
   tool_errors: number;
 }
 
+export interface ErrorItem {
+  trace_id: string;
+  span_id: string;
+  event_type: string;
+  error: string;
+  user_id: string;
+  user_name?: string;
+  bbk_id?: string;
+  model_name?: string;
+  tool_name?: string;
+  mcp_server?: string;
+  start_time: string;
+  duration_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+}
+
+export interface ErrorListResponse {
+  items: ErrorItem[];
+  total: number;
+}
+
 export interface DailyStats {
   date: string;
   total_users: number;
@@ -827,5 +849,28 @@ export const tracingApi = {
     }
     const query = params.toString() ? `?${params.toString()}` : "";
     return request(`/monitor/tracing/error/summary${query}`);
+  },
+
+  getErrorList: async (
+    page: number = 1,
+    pageSize: number = 10,
+    filters?: {
+      start_date?: string;
+      end_date?: string;
+      bbk_ids?: string;
+      error_type?: string;
+      search?: string;
+    },
+  ): Promise<ErrorListResponse> => {
+    const params = new URLSearchParams();
+    params.append("page", String(page));
+    params.append("page_size", String(pageSize));
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) params.append(key, value);
+      });
+    }
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(`/monitor/tracing/error/list${query}`);
   },
 };

@@ -66,6 +66,9 @@ export default function ErrorDetailModal({
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const loadingRef = useRef(false);
 
   const [errorType, setErrorType] = useState<string>("all");
   const [searchText, setSearchText] = useState("");
@@ -78,8 +81,16 @@ export default function ErrorDetailModal({
   const shouldAutoSelect = useRef(true);
 
   const fetchErrors = useCallback(
-    async (pageNum: number) => {
-      setLoading(true);
+    async (pageNum: number, append: boolean = false) => {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+
+      if (append) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+      }
+
       try {
         const result = await tracingApi.getErrorList(pageNum, pageSize, {
           start_date: startDate,
@@ -88,10 +99,17 @@ export default function ErrorDetailModal({
           error_type: errorType === "all" ? undefined : errorType,
           search: searchText || undefined,
         });
-        setErrors(result.items || []);
+
+        if (append) {
+          setErrors(prev => [...prev, ...(result.items || [])]);
+        } else {
+          setErrors(result.items || []);
+        }
         setTotal(result.total || 0);
+        setHasMore((result.items || []).length >= pageSize);
+
         // 默认选中第一个（仅在初始化时）
-        if (result.items && result.items.length > 0 && shouldAutoSelect.current) {
+        if (!append && result.items && result.items.length > 0 && shouldAutoSelect.current) {
           setSelectedError(result.items[0]);
           shouldAutoSelect.current = false;
         }
@@ -100,9 +118,25 @@ export default function ErrorDetailModal({
         message.error("获取错误列表失败");
       } finally {
         setLoading(false);
+        setLoadingMore(false);
+        loadingRef.current = false;
       }
     },
     [startDate, endDate, bbkIds, errorType, searchText, pageSize],
+  );
+
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const target = e.currentTarget;
+      const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+
+      if (scrollBottom < 40 && hasMore && !loadingRef.current) {
+        const nextPage = page + 1;
+        setPage(nextPage);
+        fetchErrors(nextPage, true);
+      }
+    },
+    [page, hasMore, fetchErrors],
   );
 
   const fetchTraceDetail = useCallback(async (traceId: string) => {
@@ -118,13 +152,16 @@ export default function ErrorDetailModal({
     }
   }, []);
 
+  // 重置并加载新数据（当筛选条件变化时）
   useEffect(() => {
     if (open) {
       shouldAutoSelect.current = true;
-      fetchErrors(1);
+      setErrors([]);
       setPage(1);
+      setHasMore(true);
       setSelectedError(null);
       setTraceDetail(null);
+      fetchErrors(1, false);
     }
   }, [open, fetchErrors]);
 
@@ -139,6 +176,7 @@ export default function ErrorDetailModal({
     setErrors([]);
     setTotal(0);
     setPage(1);
+    setHasMore(true);
     setSelectedError(null);
     setTraceDetail(null);
     setErrorType("all");
@@ -176,116 +214,115 @@ export default function ErrorDetailModal({
       width="100vw"
       footer={null}
       destroyOnClose
+      className={styles.errorDetailModal}
+      classNames={{ body: styles.errorDetailModalBody }}
+      style={{ top: 0, paddingBottom: 0 }}
     >
       <div className={styles.modalContent}>
         {/* 左侧：错误列表 */}
         <div className={styles.leftPanel}>
-          <div className={styles.errorListHeader}>
-            <div className={styles.errorListTitle}>错误列表</div>
-            <span className={styles.errorListCount}>共 {total} 条</span>
-          </div>
-
-          <div className={styles.errorListFilters}>
-            <Select
-              value={errorType}
-              onChange={(val) => {
-                setErrorType(val);
-                setSelectedError(null);
-              }}
-              style={{ flex: 1 }}
-              options={[
-                { value: "all", label: "全部类型" },
-                { value: "llm_input", label: "模型报错" },
-                { value: "tool_call_end", label: "工具报错" },
-              ]}
-            />
-            <Input
-              placeholder="搜索用户/错误"
-              value={searchText}
-              onChange={(e) => {
-                setSearchText(e.target.value);
-                setSelectedError(null);
-              }}
-              style={{ width: 140 }}
-              allowClear
-            />
-          </div>
-
-          {loading ? (
-            <div className={styles.errorListLoading}>
-              <Spin size="small" />
+          {/* 固定的头部区域 */}
+          <div className={styles.leftPanelHeader}>
+            <div className={styles.errorListHeader}>
+              <div className={styles.errorListTitle}>错误列表</div>
+              <span className={styles.errorListCount}>共 {total} 条</span>
             </div>
-          ) : errors.length === 0 ? (
-            <div className={styles.errorListEmpty}>暂无错误记录</div>
-          ) : (
-            <>
-              {errors.map((err) => (
-                <div
-                  key={err.span_id}
-                  className={`${styles.errorCard} ${
-                    selectedError?.span_id === err.span_id ? styles.selected : ""
-                  }`}
-                  onClick={() => handleSelectError(err)}
-                >
-                  <div className={styles.errorCardHeader}>
-                    <span
-                      className={`${styles.errorTypeTag} ${
-                        err.event_type === "llm_input"
-                          ? styles.errorTypeTagModel
-                          : styles.errorTypeTagTool
-                      }`}
-                    >
-                      {err.event_type === "llm_input" ? "模型报错" : "工具报错"}
-                    </span>
-                    <span className={styles.errorCardTime}>
-                      {formatTime(err.start_time)}
-                    </span>
-                  </div>
-                  <div className={styles.errorCardMessage}>
-                    {truncateText(err.error, 50)}
-                  </div>
-                  <div className={styles.errorCardMeta}>
-                    <span>
-                      👤 {err.user_name || err.user_id}
-                      {err.bbk_id && ` / ${getBbkDisplayName(err.bbk_id)}`}
-                    </span>
-                    {err.event_type === "llm_input" && err.model_name && (
-                      <span>🤖 {err.model_name}</span>
-                    )}
-                    {err.event_type === "tool_call_end" && err.tool_name && (
-                      <span>🔧 {err.tool_name}</span>
-                    )}
-                  </div>
-                  <div className={styles.errorCardTrace}>
-                    trace:{" "}
-                    <span className={styles.errorTraceId}>
-                      {truncateId(err.trace_id)}
-                    </span>{" "}
-                    | {formatDuration(err.duration_ms)} |{" "}
-                    {formatTokens(
-                      (err.input_tokens ?? 0) + (err.output_tokens ?? 0),
-                    )}{" "}
-                    tokens
-                  </div>
-                </div>
-              ))}
-              <div className={styles.errorListPagination}>
-                第 {page}/{Math.ceil(total / pageSize) || 1} 页
-                {page < Math.ceil(total / pageSize) && (
-                  <span
-                    style={{ color: "#2563eb", cursor: "pointer", marginLeft: 8 }}
-                    onClick={() => {
-                      const next = page + 1;
-                      setPage(next);
-                      fetchErrors(next);
-                    }}
-                  >
-                    下一页
-                  </span>
-                )}
+
+            <div className={styles.errorListFilters}>
+              <Select
+                value={errorType}
+                onChange={(val) => {
+                  setErrorType(val);
+                  shouldAutoSelect.current = true;
+                  setSelectedError(null);
+                }}
+                style={{ flex: 1 }}
+                options={[
+                  { value: "all", label: "全部类型" },
+                  { value: "llm_input", label: "模型报错" },
+                  { value: "tool_call_end", label: "工具报错" },
+                ]}
+              />
+              <Input
+                placeholder="搜索用户/错误"
+                value={searchText}
+                onChange={(e) => {
+                  setSearchText(e.target.value);
+                  shouldAutoSelect.current = true;
+                  setSelectedError(null);
+                }}
+                style={{ width: 140 }}
+                allowClear
+              />
+            </div>
+          </div>
+
+          {/* 滚动的列表区域 */}
+          <div className={styles.errorListScroll} onScroll={handleScroll}>
+            {loading && errors.length === 0 ? (
+              <div className={styles.errorListLoading}>
+                <Spin size="small" />
               </div>
-            </>
-          )}
+            ) : errors.length === 0 ? (
+              <div className={styles.errorListEmpty}>暂无错误记录</div>
+            ) : (
+              <>
+                {errors.map((err) => (
+                  <div
+                    key={err.span_id}
+                    className={`${styles.errorCard} ${
+                      selectedError?.span_id === err.span_id ? styles.selected : ""
+                    }`}
+                    onClick={() => handleSelectError(err)}
+                  >
+                    <div className={styles.errorCardHeader}>
+                      <span
+                        className={`${styles.errorTypeTag} ${
+                          err.event_type === "llm_input"
+                            ? styles.errorTypeTagModel
+                            : styles.errorTypeTagTool
+                        }`}
+                      >
+                        {err.event_type === "llm_input" ? "模型报错" : "工具报错"}
+                      </span>
+                      <span className={styles.errorCardTime}>
+                        {formatTime(err.start_time)}
+                      </span>
+                    </div>
+                    <div className={styles.errorCardMessage}>
+                      {truncateText(err.error, 50)}
+                    </div>
+                    <div className={styles.errorCardMeta}>
+                      <span>
+                        👤 {err.user_name || err.user_id}
+                        {err.bbk_id && ` / ${getBbkDisplayName(err.bbk_id)}`}
+                      </span>
+                      {err.event_type === "llm_input" && err.model_name && (
+                        <span>🤖 {err.model_name}</span>
+                      )}
+                      {err.event_type === "tool_call_end" && err.tool_name && (
+                        <span>🔧 {err.tool_name}</span>
+                      )}
+                    </div>
+                    <div className={styles.errorCardTrace}>
+                      trace:{" "}
+                      <span className={styles.errorTraceId}>
+                        {truncateId(err.trace_id)}
+                      </span>{" "}
+                      | {formatDuration(err.duration_ms)} |{" "}
+                      {formatTokens(
+                        (err.input_tokens ?? 0) + (err.output_tokens ?? 0),
+                      )}{" "}
+                      tokens
+                    </div>
+                  </div>
+                ))}
+                {loadingMore && (
+                  <div className={styles.loadingMore}>加载中...</div>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         {/* 右侧：对话详情 */}

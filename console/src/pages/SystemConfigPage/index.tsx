@@ -148,7 +148,7 @@ export default function SystemConfigPage() {
         <PageHeader
           parent={t("nav.systemSettings")}
           current={t("nav.currentSourceConfig", {
-            defaultValue: "当前 Source 配置",
+            defaultValue: "当前系统配置",
           })}
         />
         <div className={styles.centerState}>
@@ -156,7 +156,7 @@ export default function SystemConfigPage() {
             status="403"
             title="403"
             subTitle={t("sourceSystemConfigPage.forbidden", {
-              defaultValue: "仅管理员可访问当前 Source 系统配置页面。",
+              defaultValue: "仅管理员可访问当前系统配置页面。",
             })}
           />
         </div>
@@ -285,7 +285,7 @@ export default function SystemConfigPage() {
       }
       message.success(
         t("sourceSystemConfigPage.saveSuccess", {
-          defaultValue: "当前 Source 配置已保存",
+          defaultValue: "当前系统配置已保存",
         }),
       );
     } catch (requestError) {
@@ -339,7 +339,7 @@ export default function SystemConfigPage() {
       }
       message.success(
         t("sourceSystemConfigPage.deleteSuccess", {
-          defaultValue: "当前 Source 配置已恢复默认态",
+          defaultValue: "当前系统配置已恢复默认态",
         }),
       );
     } catch (requestError) {
@@ -389,7 +389,7 @@ export default function SystemConfigPage() {
             type="error"
             showIcon
             message={t("sourceSystemConfigPage.requestFailed", {
-              defaultValue: "当前 Source 配置请求失败",
+              defaultValue: "当前系统配置请求失败",
             })}
             description={requestError}
           />
@@ -400,7 +400,7 @@ export default function SystemConfigPage() {
             type="error"
             showIcon
             message={t("sourceSystemConfigPage.validationFailed", {
-              defaultValue: "当前 Source 配置校验失败",
+              defaultValue: "当前系统配置校验失败",
             })}
             description={validationError}
           />
@@ -417,7 +417,7 @@ export default function SystemConfigPage() {
                 <div>
                   <span className={styles.metaLabel}>
                     {t("sourceSystemConfigPage.sourceLabel", {
-                      defaultValue: "当前 Source",
+                      defaultValue: "当前系统",
                     })}
                   </span>
                   <span className={styles.metaValue}>{activeSourceId}</span>
@@ -496,7 +496,7 @@ export default function SystemConfigPage() {
               <div className={styles.toolResultIntro}>
                 {t("sourceSystemConfigPage.toolResultCompactIntro", {
                   defaultValue:
-                    "当前 Source 下工具历史压缩和文件读取即时截断的解析配置。",
+                    "当前系统下工具历史压缩和文件读取即时截断的解析配置。",
                 })}
               </div>
               <section className={styles.toolOutputSection}>
@@ -512,7 +512,7 @@ export default function SystemConfigPage() {
                         "sourceSystemConfigPage.historyToolResultDescription",
                         {
                           defaultValue:
-                            "未保存 source 覆盖时继承 Agent 配置；保存后当前 source 下请求使用这些历史压缩阈值。",
+                            "未保存系统覆盖时继承 Agent 配置；保存后当前系统下请求使用这些历史压缩阈值。",
                         },
                       )}
                     </span>
@@ -530,7 +530,7 @@ export default function SystemConfigPage() {
                         "sourceSystemConfigPage.toolResultEnabledDescription",
                         {
                           defaultValue:
-                            "关闭后当前 source 的历史工具结果不再压缩为 toolresult 文件。",
+                            "关闭后当前系统的历史工具结果不再压缩为 toolresult 文件。",
                         },
                       )}
                     </span>
@@ -616,7 +616,7 @@ export default function SystemConfigPage() {
                             "sourceSystemConfigPage.fileReadEnabledDescription",
                             {
                               defaultValue:
-                                "关闭后当前 source 的文件读取即时输出不再由 SWE 截断。",
+                                "关闭后当前系统的文件读取即时输出不再由 SWE 截断。",
                             },
                           )}
                         </span>

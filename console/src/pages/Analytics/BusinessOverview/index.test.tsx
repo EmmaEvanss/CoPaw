@@ -264,7 +264,7 @@ describe("BusinessOverview trend chart", () => {
     expect(await screen.findByText("CUST-001")).toBeInTheDocument();
     expect((await screen.findAllByText("洞察")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("电访")).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText("方案")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("查看方案")).length).toBeGreaterThan(0);
     expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
     expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalled();
     expect(htmlPreviewEventsApiMock.getCustomerClicks).toHaveBeenCalled();

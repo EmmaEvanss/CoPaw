@@ -1994,7 +1994,7 @@ export default function BusinessOverviewPage() {
                   </div>
                   <div className={styles.htmlPreviewDistributionRow}>
                     <div className={styles.htmlPreviewDistributionMeta}>
-                      <span>方案</span>
+                      <span>查看方案</span>
                       <strong>
                         {formatNumber(htmlPreviewPlanClicks)}
                         <em>{htmlPreviewPlanPercent}%</em>
@@ -2051,7 +2051,7 @@ export default function BusinessOverviewPage() {
                         <strong>{formatNumber(item.phone_count)}</strong>
                       </span>
                       <span>
-                        <em>方案</em>
+                        <em>查看方案</em>
                         <strong>{formatNumber(item.plan_count)}</strong>
                       </span>
                     </div>
@@ -2080,7 +2080,7 @@ export default function BusinessOverviewPage() {
                       <span>客户</span>
                       <span>洞察</span>
                       <span>电访</span>
-                      <span>方案</span>
+                      <span>查看方案</span>
                       <span>总点击</span>
                       <span>最近</span>
                     </div>

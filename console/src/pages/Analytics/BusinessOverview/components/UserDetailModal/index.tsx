@@ -137,9 +137,18 @@ export default function UserDetailModal({
     open,
     userId,
     fetchUserStats,
-    fetchSessions,
     fetchUserChats,
   ]);
+
+  // 筛选状态变化时重新加载会话列表
+  useEffect(() => {
+    if (open && userId) {
+      fetchSessions(1, DEFAULT_SESSIONS_PAGE_SIZE);
+      setSessionsPage(1);
+      setHasAutoSelectedSession(false);
+      setSelectedSessionId(null);
+    }
+  }, [hasErrorFilter]);
 
   // 首次打开详情弹窗时自动选中第一条会话，便于直接查看聊天内容
   useEffect(() => {
@@ -204,9 +213,6 @@ export default function UserDetailModal({
   // 切换报错会话筛选
   const handleToggleErrorFilter = useCallback(() => {
     setHasErrorFilter((prev) => !prev);
-    setSessionsPage(1);
-    setHasAutoSelectedSession(false);
-    setSelectedSessionId(null);
   }, []);
 
   // 判断当前显示的是用户级还是会话级统计

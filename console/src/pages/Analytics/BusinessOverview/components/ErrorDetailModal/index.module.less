@@ -1,0 +1,290 @@
+.loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 300px;
+}
+
+.modalContent {
+  display: flex;
+  gap: 16px;
+  height: 60vh;
+}
+
+.leftPanel {
+  width: 360px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.rightPanel {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+// 错误列表
+.errorListHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.errorListTitle {
+  font-weight: 600;
+  font-size: 14px;
+  color: #262626;
+}
+
+.errorListCount {
+  background: #ef4444;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+}
+
+.errorListFilters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.errorListLoading,
+.errorListEmpty {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+  color: #999;
+}
+
+.errorCard {
+  padding: 12px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 8px;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #ef4444;
+    background: #fafafa;
+  }
+
+  &.selected {
+    border-color: #ef4444;
+    background: #fef2f2;
+  }
+}
+
+.errorCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.errorTypeTag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #fff;
+}
+
+.errorTypeTagModel {
+  background: #f59e0b;
+}
+
+.errorTypeTagTool {
+  background: #ef4444;
+}
+
+.errorCardTime {
+  font-size: 11px;
+  color: #666;
+}
+
+.errorCardMessage {
+  font-size: 13px;
+  color: #ef4444;
+  font-weight: 500;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.errorCardMeta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.errorCardTrace {
+  font-size: 11px;
+  color: #999;
+}
+
+.errorTraceId {
+  color: #2563eb;
+}
+
+.errorListPagination {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+}
+
+// 对话详情
+.detailTitle {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: #262626;
+}
+
+.detailLoading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+}
+
+.detailMeta {
+  background: #f9fafb;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.detailMetaRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  margin-bottom: 8px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.detailMetaItem {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.detailErrorBox {
+  font-size: 12px;
+  color: #ef4444;
+  background: #fef2f2;
+  padding: 8px;
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.detailContent {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  overflow-y: auto;
+  background: #fff;
+  padding: 12px;
+}
+
+.messageBlock {
+  margin-bottom: 16px;
+}
+
+.messageLabel {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.messageContent {
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.userMessage {
+  background: #e8f4f8;
+}
+
+.modelOutput {
+  background: #f5f5f5;
+}
+
+.modelError {
+  color: #ef4444;
+  margin-bottom: 8px;
+}
+
+.callChain {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #eee;
+}
+
+.callChainLabel {
+  font-size: 11px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.callChainTags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.callChainTag {
+  background: #e8e8e8;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.callChainTagError {
+  background: #fef2f2;
+  color: #ef4444;
+}
+
+.detailActions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.actionButton {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+}
+
+.secondaryButton {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+}

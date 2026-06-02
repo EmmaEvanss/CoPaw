@@ -45,9 +45,8 @@ def load_db_config_from_env_file() -> dict[str, Any]:
 from monitor.app.database.config import MonitorDatabaseConfig
 from monitor.app.database.connection import DatabaseConnection
 
-
-# 数据源 ID
-SOURCE_IDS = ["swe-server", "swe-agent", "swe-console"]
+# 数据源 ID（使用前端 header 匹配的 source_id）
+SOURCE_IDS = ["UPPCLAW"]
 
 # 多轮对话场景配置
 MULTI_ROUND_SCENARIOS = [
@@ -359,7 +358,10 @@ async def insert_trace(
     # 工具调用 spans
     for tool in round_data.get("tools_used", []):
         tool_span_id = str(uuid.uuid4())
-        is_error_tool = round_data.get("tool_name") == tool and round_data.get("error_type") == "tool_call_end"
+        is_error_tool = (
+            round_data.get("tool_name") == tool
+            and round_data.get("error_type") == "tool_call_end"
+        )
 
         tool_query = """
             INSERT INTO swe_tracing_spans (
@@ -378,7 +380,8 @@ async def insert_trace(
             f"tool_{tool}",
             "tool_call_end",
             trace_start + timedelta(milliseconds=100),
-            trace_start + timedelta(milliseconds=round_data["duration_ms"] - 100),
+            trace_start
+            + timedelta(milliseconds=round_data["duration_ms"] - 100),
             round_data["duration_ms"] - 200,
             user_id,
             user_name,
@@ -496,10 +499,12 @@ async def main():
             total_spans += span_count
 
             status_icon = "[OK]" if status == "completed" else "[ERR]"
-            print(f"  第{i+1}轮: {status_icon} {round_data['user_message'][:30]}... | {trace_id[:16]}...")
+            print(
+                f"  第{i + 1}轮: {status_icon} {round_data['user_message'][:30]}... | {trace_id[:16]}...",
+            )
 
     print("\n" + "=" * 60)
-    print(f"插入完成:")
+    print("插入完成:")
     print(f"  - 会话数: {len(MULTI_ROUND_SCENARIOS)} 个")
     print(f"  - Trace 记录: {total_traces} 条")
     print(f"  - Span 记录: {total_spans} 条")

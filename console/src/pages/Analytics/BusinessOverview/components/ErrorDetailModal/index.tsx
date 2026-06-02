@@ -7,6 +7,7 @@ import {
   type ErrorListResponse,
   type TraceDetail,
   type Span,
+  type SessionTracesResponse,
 } from "../../../../../api/modules/tracing";
 import { getBbkDisplayName } from "../../../../../constants/bbk";
 import styles from "./index.module.less";
@@ -111,7 +112,7 @@ const buildCallChain = (
     const isErrorNode =
       selectedError &&
       span.span_id === selectedError.span_id &&
-      span.error;
+      !!span.error;
 
     // LLM 调用
     if (span.event_type === "llm_input" || span.event_type === "llm_output") {
@@ -125,7 +126,7 @@ const buildCallChain = (
           type: "llm",
           name: modelName,
           status: isErrorNode ? "error" : span.error ? "error" : "success",
-          isErrorNode: isErrorNode || false,
+          isErrorNode,
           time: span.start_time,
         });
       }
@@ -138,7 +139,7 @@ const buildCallChain = (
         type: "tool",
         name: toolName,
         status: isErrorNode ? "error" : span.error ? "error" : "success",
-        isErrorNode: isErrorNode || false,
+        isErrorNode,
         time: span.start_time,
       });
     }
@@ -168,6 +169,7 @@ export default function ErrorDetailModal({
 
   const [selectedError, setSelectedError] = useState<ErrorItem | null>(null);
   const [traceDetail, setTraceDetail] = useState<TraceDetail | null>(null);
+  const [sessionTraces, setSessionTraces] = useState<SessionTracesResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
   // 使用 ref 跟踪是否需要自动选中第一个
@@ -232,11 +234,16 @@ export default function ErrorDetailModal({
     [page, hasMore, fetchErrors],
   );
 
-  const fetchTraceDetail = useCallback(async (traceId: string) => {
+  const fetchTraceDetail = useCallback(async (traceId: string, sessionId: string) => {
     setDetailLoading(true);
     try {
-      const detail = await tracingApi.getTraceDetail(traceId);
+      // 并行获取 trace detail 和 session traces
+      const [detail, sessionData] = await Promise.all([
+        tracingApi.getTraceDetail(traceId),
+        tracingApi.getSessionTraces(sessionId, traceId),
+      ]);
       setTraceDetail(detail);
+      setSessionTraces(sessionData);
     } catch (error) {
       console.error("Failed to fetch trace detail:", error);
       message.error("获取对话详情失败");
@@ -260,7 +267,7 @@ export default function ErrorDetailModal({
 
   useEffect(() => {
     if (selectedError) {
-      fetchTraceDetail(selectedError.trace_id);
+      fetchTraceDetail(selectedError.trace_id, selectedError.session_id);
     }
   }, [selectedError, fetchTraceDetail]);
 
@@ -272,6 +279,7 @@ export default function ErrorDetailModal({
     setHasMore(true);
     setSelectedError(null);
     setTraceDetail(null);
+    setSessionTraces(null);
     setErrorType("all");
     setSearchText("");
     onClose();
@@ -518,46 +526,147 @@ export default function ErrorDetailModal({
                 </div>
               </div>
 
-              {/* 完整对话卡片 */}
+              {/* 完整对话卡片 - Session 时间线 */}
               <div className={styles.conversationContentCard}>
                 <div className={styles.conversationContentHeader}>
                   <span>💬</span> 完整对话
+                  {sessionTraces && (
+                    <span className={styles.sessionRoundInfo}>
+                      共 {sessionTraces.total_rounds} 轮
+                      {sessionTraces.error_round_index !== null && (
+                        <span className={styles.errorRoundHint}>
+                          · 第 {sessionTraces.error_round_index + 1} 轮报错
+                        </span>
+                      )}
+                    </span>
+                  )}
                 </div>
 
-                {/* 用户消息 */}
-                {traceDetail.trace.user_message && (
-                  <div className={styles.conversationBlock}>
-                    <div className={styles.conversationBlockHeader}>
-                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                        👤 用户消息
-                      </span>
-                      <span>{formatTime(traceDetail.trace.start_time)}</span>
-                    </div>
-                    <div className={`${styles.conversationBlockContent} ${styles.userMessageBlock}`}>
-                      {traceDetail.trace.user_message}
-                    </div>
-                  </div>
-                )}
+                {sessionTraces && sessionTraces.traces.length > 0 ? (
+                  <div className={styles.sessionTimeline}>
+                    {sessionTraces.traces.map((round, idx) => (
+                      <div
+                        key={round.trace_id}
+                        className={`${styles.roundCard} ${round.is_error_round ? styles.roundError : ""}`}
+                      >
+                        {/* 轮次头部 */}
+                        <div className={styles.roundHeader}>
+                          <span className={styles.roundNumberBadge}>
+                            第 {round.round_number} 轮
+                          </span>
+                          <span className={styles.roundTime}>
+                            {formatTime(round.start_time)}
+                          </span>
+                          {round.model_name && (
+                            <span className={styles.roundModel}>
+                              🤖 {round.model_name}
+                            </span>
+                          )}
+                          <span className={`${styles.roundStatus} ${round.is_error_round ? styles.statusError : styles.statusSuccess}`}>
+                            {round.is_error_round ? "❌" : "✓"}
+                          </span>
+                        </div>
 
-                {/* 模型响应 */}
-                <div className={styles.conversationBlock}>
-                  <div className={styles.conversationBlockHeader}>
-                    <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                      🤖 模型响应
-                    </span>
+                        {/* 轮次内容 */}
+                        <div className={styles.roundContent}>
+                          {/* 用户消息 */}
+                          {round.user_message && (
+                            <div className={styles.roundMessageBlock}>
+                              <div className={styles.roundMessageLabel}>👤 用户</div>
+                              <div className={styles.roundMessageText}>
+                                {round.user_message}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 模型响应 */}
+                          <div className={styles.roundMessageBlock}>
+                            <div className={styles.roundMessageLabel}>🤖 模型</div>
+                            <div className={`${styles.roundMessageText} ${round.is_error_round ? styles.modelResponseError : ""}`}>
+                              {round.model_output || (
+                                <span className={styles.emptyResponse}>
+                                  {round.is_error_round ? "调用失败，未生成响应" : "等待响应..."}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 工具使用 */}
+                          {round.tools_used && round.tools_used.length > 0 && (
+                            <div className={styles.roundTools}>
+                              <span className={styles.roundToolsLabel}>🔧 工具:</span>
+                              {round.tools_used.map((tool, tIdx) => (
+                                <span key={`${tool}-${tIdx}`} className={styles.roundToolTag}>
+                                  {tool}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* 指标 */}
+                          <div className={styles.roundMetrics}>
+                            <span>时长: {formatDuration(round.duration_ms)}</span>
+                            <span>
+                              Token: {formatTokens(round.input_tokens)} 输入 / {formatTokens(round.output_tokens)} 输出
+                            </span>
+                          </div>
+
+                          {/* 错误信息 */}
+                          {round.is_error_round && round.error && (
+                            <div className={styles.roundErrorInfo}>
+                              <span>⚠️ 错误: {round.error}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 轮次分隔箭头 */}
+                        {idx < sessionTraces.traces.length - 1 && (
+                          <div className={styles.roundSeparator}>
+                            <span className={styles.roundArrow}>↓</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  <div className={`${styles.conversationBlockContent} ${styles.modelResponseBlock}`}>
-                    {traceDetail.trace.model_output ? (
-                      <div>{traceDetail.trace.model_output}</div>
-                    ) : (
-                      <div className={styles.modelResponseEmpty}>
-                        {selectedError.event_type === "llm_input"
-                          ? "模型调用失败，未生成响应内容"
-                          : "工具调用失败，流程中断"}
+                ) : (
+                  /* 兜底：无 sessionTraces 时显示原有单轮内容 */
+                  <>
+                    {/* 用户消息 */}
+                    {traceDetail.trace.user_message && (
+                      <div className={styles.conversationBlock}>
+                        <div className={styles.conversationBlockHeader}>
+                          <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                            👤 用户消息
+                          </span>
+                          <span>{formatTime(traceDetail.trace.start_time)}</span>
+                        </div>
+                        <div className={`${styles.conversationBlockContent} ${styles.userMessageBlock}`}>
+                          {traceDetail.trace.user_message}
+                        </div>
                       </div>
                     )}
-                  </div>
-                </div>
+
+                    {/* 模型响应 */}
+                    <div className={styles.conversationBlock}>
+                      <div className={styles.conversationBlockHeader}>
+                        <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          🤖 模型响应
+                        </span>
+                      </div>
+                      <div className={`${styles.conversationBlockContent} ${styles.modelResponseBlock}`}>
+                        {traceDetail.trace.model_output ? (
+                          <div>{traceDetail.trace.model_output}</div>
+                        ) : (
+                          <div className={styles.modelResponseEmpty}>
+                            {selectedError.event_type === "llm_input"
+                              ? "模型调用失败，未生成响应内容"
+                              : "工具调用失败，流程中断"}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* 调用链路卡片 */}

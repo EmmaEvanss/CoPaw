@@ -260,13 +260,16 @@ def _process_single_skill(
             )
 
         # inactive 状态的同名技能，复用条目并重新激活（与 publish_skill API 一致）
+        now = datetime.now(timezone.utc).isoformat()
+        # 重新发布已下架技能时，更新 created_at 为当前时间
+        existing.created_at = now
         existing.status = "active"
         existing.description = description
         existing.version = _bump_patch(existing.version)
         existing.creator_id = user_id
         existing.creator_name = user_name
         existing.category_id = category_id
-        existing.updated_at = datetime.now(timezone.utc).isoformat()
+        existing.updated_at = now
         item = existing
     else:
         # 创建新市场条目

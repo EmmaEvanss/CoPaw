@@ -231,6 +231,32 @@ export interface TraceDetail {
   tools_called: ToolCall[];
 }
 
+export interface SessionRoundTrace {
+  trace_id: string;
+  round_number: number;
+  start_time: string;
+  duration_ms: number | null;
+  model_name: string | null;
+  status: string;
+  user_message: string | null;
+  model_output: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  tools_used: string[];
+  error: string | null;
+  is_error_round: boolean;
+}
+
+export interface SessionTracesResponse {
+  session_id: string;
+  session_name: string | null;
+  user_id: string;
+  user_name: string | null;
+  traces: SessionRoundTrace[];
+  total_rounds: number;
+  error_round_index: number | null;
+}
+
 export interface Trace {
   trace_id: string;
   user_id: string;
@@ -469,6 +495,18 @@ export const tracingApi = {
 
   getTraceDetail: async (traceId: string): Promise<TraceDetail> => {
     return request(`/monitor/tracing/traces/${traceId}`);
+  },
+
+  getSessionTraces: async (
+    sessionId: string,
+    errorTraceId?: string,
+  ): Promise<SessionTracesResponse> => {
+    const params = new URLSearchParams();
+    if (errorTraceId) params.append("error_trace_id", errorTraceId);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return request(
+      `/monitor/tracing/session/${encodeURIComponent(sessionId)}/traces${query}`,
+    );
   },
 
   getModelUsage: async (

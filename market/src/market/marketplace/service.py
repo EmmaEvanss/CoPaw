@@ -701,6 +701,9 @@ class MarketplaceService:
             existing.creator_name = req.creator_name
             existing.category_id = req.category_id
             existing.bbk_ids = req.bbk_ids
+            # 重新发布已下架技能时，更新 created_at 为当前时间
+            if existing.status == "inactive":
+                existing.created_at = now
             existing.status = "active"
             existing.updated_at = now
             item = existing
@@ -1655,6 +1658,9 @@ class MarketplaceService:
             existing.creator_name = req.creator_name
             existing.category_id = req.category_id
             existing.bbk_ids = req.bbk_ids
+            # 重新发布已下架 MCP 时，更新 created_at 为当前时间
+            if existing.status == "inactive":
+                existing.created_at = now
             existing.status = "active"
             existing.updated_at = now
             item = existing

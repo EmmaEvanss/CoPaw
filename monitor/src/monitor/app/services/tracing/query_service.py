@@ -1097,11 +1097,12 @@ class TracingQueryService:
         Args:
             filter_user_type: 'filtered' 过滤80/IT开头用户，'all' 仅过滤default用户
         """
-        order_by = "last_active DESC"
+        # 添加 user_id 作为第二排序条件，确保排序唯一性，避免分页重复
+        order_by = "last_active DESC, user_id ASC"
         if sort_by == "conversations":
-            order_by = "total_conversations DESC"
+            order_by = "total_conversations DESC, user_id ASC"
         elif sort_by == "last_active":
-            order_by = "last_active DESC"
+            order_by = "last_active DESC, user_id ASC"
 
         if source_id == "all":
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
@@ -1938,7 +1939,7 @@ class TracingQueryService:
             FROM swe_tracing_spans
             WHERE {base_where}
             GROUP BY skill_name
-            ORDER BY count DESC
+            ORDER BY count DESC, skill_name ASC
             LIMIT %s OFFSET %s
         """
         params = count_params + [page_size, offset]
@@ -2569,7 +2570,7 @@ class TracingQueryService:
             FROM swe_tracing_spans
             WHERE {base_where}
             GROUP BY mcp_server
-            ORDER BY total_calls DESC
+            ORDER BY total_calls DESC, mcp_server ASC
             LIMIT %s OFFSET %s
         """
         params = count_params + [page_size, offset]
@@ -3144,7 +3145,7 @@ class TracingQueryService:
         exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
         if source_id == "all":
             where_clauses: list[str] = [
-                f"source_id NOT IN ({exclude_placeholders})"
+                f"source_id NOT IN ({exclude_placeholders})",
             ]
             params: list[Any] = list(EXCLUDED_SOURCE_IDS)
         else:
@@ -3331,7 +3332,7 @@ class TracingQueryService:
             FROM swe_tracing_traces t
             WHERE {where_sql}
             GROUP BY t.session_id, t.user_id, t.channel
-            ORDER BY last_active DESC
+            ORDER BY last_active DESC, session_id ASC
             LIMIT %s OFFSET %s
         """
 

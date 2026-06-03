@@ -13,3 +13,23 @@ def test_claim_due_notifications_uses_skip_locked() -> None:
     )
 
     assert "FOR UPDATE SKIP LOCKED" in source
+
+
+def test_claim_due_notifications_filters_allowed_source_ids() -> None:
+    """领取待通知记录时必须按配置的 source 范围过滤。"""
+    source = inspect.getsource(
+        CronNotificationService._claim_due_notification_ids,
+    )
+
+    assert "LEFT JOIN swe_cron_jobs" in source
+    assert "j.source_id IN" in source
+
+
+def test_claim_due_notifications_allows_empty_source_for_all_workers() -> None:
+    """没有 source 的通知记录需要保留为所有实例都可领取。"""
+    source = inspect.getsource(
+        CronNotificationService._claim_due_notification_ids,
+    )
+
+    assert "j.source_id IS NULL" in source
+    assert "j.source_id = ''" in source

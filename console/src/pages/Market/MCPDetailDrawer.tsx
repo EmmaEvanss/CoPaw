@@ -303,13 +303,16 @@ export function MCPDetailDrawer({
                     分发
                   </Button>
                 )}
-                {/* 撤回功能临时隐藏，后续启用时移除 false 条件 */}
-                {isManager && onRecall && false && (
+                {isManager && onRecall && (
                   <Button
                     size="small"
-                    danger
                     onClick={onRecall}
-                    style={{ ...footerButtonStyle }}
+                    style={{
+                      ...footerButtonStyle,
+                      color: "#5e5d59",
+                      border: "1px solid #d9d9d9",
+                      backgroundColor: "#fff",
+                    }}
                   >
                     <Undo2 size={12} />
                     撤回

@@ -30,7 +30,7 @@ import { MCPDetailDrawer } from "./MCPDetailDrawer";
 import { MCPUploadModal } from "./MCPUploadModal";
 import { MCPEditModal } from "./MCPEditModal";
 import { useMarket } from "./useMarket";
-import { marketApi, MarketSkill } from "../../api/modules/market";
+import { marketApi, MarketSkill, MarketSkillDetail } from "../../api/modules/market";
 import { marketMcpApi } from "../../api/modules/marketMcp";
 import type { MarketMCPItem, MarketMCPDetail } from "../../api/types";
 
@@ -131,6 +131,37 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
       console.error("获取 MCP 详情失败:", err);
     }
   }, []);
+
+  // 删除技能
+  const handleDeleteSkill = useCallback(async (target?: MarketSkill | MarketSkillDetail | null) => {
+    const item = target || selectedSkill;
+    if (!item || !sourceId) return;
+    try {
+      await marketApi.unpublishSkill(sourceId, item.item_id);
+      message.success("删除成功");
+      if (selectedSkill?.item_id === item.item_id) {
+        setSelectedSkill(null);
+        setSkillDetailMode("list");
+      }
+      refreshSkills();
+    } catch (err) {
+      console.error("删除技能失败:", err);
+      message.error("删除失败");
+    }
+  }, [selectedSkill, refreshSkills, sourceId]);
+
+  const confirmDeleteSkill = useCallback((target: MarketSkill | MarketSkillDetail) => {
+    Modal.confirm({
+      title: "确认删除此技能？",
+      content: "删除操作会直接删除市场条目，但不会影响已经分发出去的用户。",
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        await handleDeleteSkill(target);
+      },
+    });
+  }, [handleDeleteSkill]);
 
   // 删除 MCP
   const handleDeleteMCP = useCallback(async (target?: MarketMCPItem | MarketMCPDetail | null) => {
@@ -417,6 +448,11 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                 onRecall={
                   isManager
                     ? () => openSkillRecallModal(selectedSkill)
+                    : undefined
+                }
+                onDelete={
+                  isManager
+                    ? () => confirmDeleteSkill(selectedSkill)
                     : undefined
                 }
                 sourceId={sourceId}

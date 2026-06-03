@@ -4,14 +4,13 @@ import {
   BarChartOutlined,
   CalendarOutlined,
   ProfileOutlined,
-  ShareAltOutlined,
   TagOutlined,
   UserOutlined,
-  RollbackOutlined,
 } from "@ant-design/icons";
-import { Button, Spin, Table, Tag, Typography } from "antd";
+import { Button, Popconfirm, Spin, Table, Tag, Typography } from "antd";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Send, Undo2, Trash2 } from "lucide-react";
 import { marketApi, MarketSkillDetail } from "../../api/modules/market";
 import type { FileContentResponse } from "../../api/modules/mySkills";
 import styles from "./SkillDetailDrawer.module.less";
@@ -25,12 +24,23 @@ interface SkillDetailDrawerProps {
   isManager?: boolean;
   onDistribute?: () => void;
   onRecall?: () => void;
+  onDelete?: () => void;
   sourceId?: string;
   onRefresh?: () => void;
   categoryName?: string;
 }
 
 const FRONTMATTER_PATTERN = /^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+
+const FOOTER_BUTTON_STYLE = {
+  height: 28,
+  padding: "0 12px",
+  borderRadius: 8,
+  fontSize: 12,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+} as const;
 
 const BASE_META_TAG_STYLE = {
   margin: 0,
@@ -188,15 +198,19 @@ function renderPreviewContent(
   );
 }
 
-export function SkillDetailDrawer({
-  open,
-  skill,
-  isManager,
-  onDistribute,
-  onRecall,
-  sourceId,
-  categoryName,
-}: SkillDetailDrawerProps) {
+export function SkillDetailDrawer(
+  props: SkillDetailDrawerProps,
+) {
+  const {
+    open,
+    skill,
+    isManager,
+    onDistribute,
+    onRecall,
+    onDelete,
+    sourceId,
+    categoryName,
+  } = props;
   const [fileDetail, setFileDetail] = useState<FileContentResponse | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -493,42 +507,45 @@ export function SkillDetailDrawer({
               </Tag>
             </div>
 
-            {isManager && (onDistribute || onRecall) && (
+            {isManager && (onDistribute || onRecall || onDelete) && (
               <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
                 {onDistribute && (
                   <Button
                     type="primary"
-                    aria-label="分发技能"
-                    icon={<ShareAltOutlined />}
                     onClick={onDistribute}
-                    style={{
-                      flex: 1,
-                      height: 36,
-                      borderRadius: 12,
-                      background:
-                        "linear-gradient(135deg, #c4956a 0%, #b85a3a 100%)",
-                      border: "none",
-                      boxShadow: "none",
-                    }}
+                    style={{ ...FOOTER_BUTTON_STYLE }}
                   >
-                    分发技能
+                    <Send size={12} />
+                    分发
                   </Button>
                 )}
-                {/* 撤回功能临时隐藏，后续启用时移除 false 条件 */}
-                {onRecall && false && (
+                {onRecall && (
                   <Button
-                    danger
-                    aria-label="撤回技能"
-                    icon={<RollbackOutlined />}
                     onClick={onRecall}
                     style={{
-                      flex: onDistribute ? 0 : 1,
-                      height: 36,
-                      borderRadius: 12,
+                      ...FOOTER_BUTTON_STYLE,
+                      color: "#5e5d59",
+                      border: "1px solid #d9d9d9",
+                      backgroundColor: "#fff",
                     }}
                   >
+                    <Undo2 size={12} />
                     撤回
                   </Button>
+                )}
+                {onDelete && (
+                  <Popconfirm
+                    title="确认删除此技能？删除后不影响已分发用户"
+                    onConfirm={onDelete}
+                  >
+                    <Button
+                      danger
+                      style={{ ...FOOTER_BUTTON_STYLE }}
+                    >
+                      <Trash2 size={12} />
+                      删除
+                    </Button>
+                  </Popconfirm>
                 )}
               </div>
             )}

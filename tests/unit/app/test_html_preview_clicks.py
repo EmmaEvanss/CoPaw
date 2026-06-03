@@ -48,6 +48,7 @@ async def test_create_event_writes_click_detail(mock_db):
         HtmlPreviewClickEventCreate(
             source_id="copaw",
             user_id="u-1",
+            user_name="张经理",
             bbk_id="branch-1",
             cron_task_id="task-1",
             cron_task_name="存款到期提醒",
@@ -68,6 +69,7 @@ async def test_create_event_writes_click_detail(mock_db):
     assert params == (
         "copaw",
         "u-1",
+        "张经理",
         "branch-1",
         "task-1",
         "存款到期提醒",
@@ -109,9 +111,9 @@ async def test_create_event_classifies_view_plan_click(mock_db):
     )
 
     _, params = mock_db.execute.call_args[0]
-    assert params[12] == "plan"
-    assert params[13] == "CUST-001"
-    assert params[14] == "祝话"
+    assert params[13] == "plan"
+    assert params[14] == "CUST-001"
+    assert params[15] == "祝话"
 
 
 @pytest.mark.asyncio
@@ -214,7 +216,7 @@ async def test_list_events_returns_customer_info(mock_db):
         {
             "id": 7,
             "source_id": "copaw",
-            "user_id": "u-1",
+            "user_name": "张经理",
             "bbk_id": "branch-1",
             "cron_task_id": "task-1",
             "cron_task_name": "存款到期提醒",
@@ -226,6 +228,7 @@ async def test_list_events_returns_customer_info(mock_db):
             "button_name": "洞察页面",
             "button_text": "洞察页面",
             "button_type": "insight",
+            "user_id": "manager-1",
             "customer_id": "CUST-001",
             "customer_name": "祝话",
             "customer_info": '{"客户姓名": "祝话"}',
@@ -246,6 +249,7 @@ async def test_list_events_returns_customer_info(mock_db):
     assert "ORDER BY clicked_at DESC, id DESC" in query
     assert params[0] == "copaw"
     assert items[0].button_name == "洞察页面"
+    assert items[0].user_name == "张经理"
     assert items[0].button_type == "insight"
     assert items[0].customer_id == "CUST-001"
     assert items[0].customer_name == "祝话"
@@ -264,6 +268,8 @@ async def test_list_customer_summary_groups_touchpoint_counts(mock_db):
             "button_name": "洞察",
             "button_text": "洞察",
             "button_type": "insight",
+            "user_id": "manager-1",
+            "user_name": "张经理",
             "customer_id": "CUST-001",
             "customer_name": "祝话",
             "customer_info": '{"customer_id": "CUST-001", "name": "祝话"}',
@@ -276,6 +282,8 @@ async def test_list_customer_summary_groups_touchpoint_counts(mock_db):
             "button_name": "电访",
             "button_text": "电话访问",
             "button_type": "phone",
+            "user_id": "manager-1",
+            "user_name": "张经理",
             "customer_id": "CUST-001",
             "customer_name": "祝话",
             "customer_info": '{"customer_id": "CUST-001", "name": "祝话"}',
@@ -288,6 +296,8 @@ async def test_list_customer_summary_groups_touchpoint_counts(mock_db):
             "button_name": "查看方案",
             "button_text": "查看方案",
             "button_type": "plan",
+            "user_id": "manager-2",
+            "user_name": "李经理",
             "customer_id": "CUST-001",
             "customer_name": "祝话",
             "customer_info": '{"customer_id": "CUST-001", "name": "祝话"}',
@@ -318,6 +328,8 @@ async def test_list_customer_summary_groups_touchpoint_counts(mock_db):
     assert items[0].phone_count == 1
     assert items[0].plan_count == 1
     assert items[0].total_click_count == 3
+    assert items[0].last_clicked_user_id == "manager-1"
+    assert items[0].last_clicked_user_name == "张经理"
 
 
 @pytest.mark.asyncio
@@ -356,6 +368,7 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
                 "cron_task_id": "task-1",
                 "cron_task_name": "存款到期提醒",
                 "button_type": "insight",
+                "user_id": "manager-1",
                 "customer_id": "CUST-001",
                 "customer_name": "祝话",
                 "customer_info": None,
@@ -369,6 +382,7 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
                 "cron_task_id": "task-1",
                 "cron_task_name": "存款到期提醒",
                 "button_type": "phone",
+                "user_id": "manager-1",
                 "customer_id": "CUST-001",
                 "customer_name": "祝话",
                 "customer_info": None,
@@ -382,6 +396,7 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
                 "cron_task_id": "task-1",
                 "cron_task_name": "存款到期提醒",
                 "button_type": "plan",
+                "user_id": "manager-2",
                 "customer_id": "CUST-001",
                 "customer_name": "祝话",
                 "customer_info": None,
@@ -415,6 +430,7 @@ def test_create_route_enriches_source_and_user(monkeypatch):
         async def create_event(self, event):
             assert event.source_id == "copaw"
             assert event.user_id == "user-9"
+            assert event.user_name == "张经理"
             assert event.bbk_id == "branch-1"
             assert event.file_url == "https://example.com/a.html"
 
@@ -424,6 +440,7 @@ def test_create_route_enriches_source_and_user(monkeypatch):
     async def _inject_state(request: Request, call_next):
         request.state.source_id = "copaw"
         request.state.user_id = "user-9"
+        request.state.user_name = "张经理"
         request.state.bbk = "branch-1"
         return await call_next(request)
 
@@ -436,6 +453,7 @@ def test_create_route_enriches_source_and_user(monkeypatch):
         json={
             "source_id": "forged-source",
             "user_id": "forged-user",
+            "user_name": "伪造姓名",
             "bbk_id": "forged-branch",
             "file_url": "https://example.com/a.html",
             "button_id": "follow",
@@ -630,6 +648,26 @@ def test_customer_clicks_route_returns_customer_items(monkeypatch):
                     phone_count=1,
                     plan_count=1,
                     total_click_count=4,
+                    last_clicked_user_id="manager-1",
+                    last_clicked_user_name="张经理",
+                    manager_clicks=[
+                        {
+                            "user_id": "manager-1",
+                            "user_name": "张经理",
+                            "insight_count": 2,
+                            "phone_count": 1,
+                            "plan_count": 0,
+                            "total_click_count": 3,
+                        },
+                        {
+                            "user_id": "manager-2",
+                            "user_name": "李经理",
+                            "insight_count": 0,
+                            "phone_count": 0,
+                            "plan_count": 1,
+                            "total_click_count": 1,
+                        },
+                    ],
                 ),
             ]
 
@@ -658,6 +696,10 @@ def test_customer_clicks_route_returns_customer_items(monkeypatch):
     assert payload["success"] is True
     assert payload["items"][0]["customer_id"] == "CUST-001"
     assert payload["items"][0]["plan_count"] == 1
+    assert payload["items"][0]["last_clicked_user_id"] == "manager-1"
+    assert payload["items"][0]["last_clicked_user_name"] == "张经理"
+    assert payload["items"][0]["manager_clicks"][0]["user_id"] == "manager-1"
+    assert payload["items"][0]["manager_clicks"][0]["user_name"] == "张经理"
     assert payload["items"][0]["total_click_count"] == 4
 
 

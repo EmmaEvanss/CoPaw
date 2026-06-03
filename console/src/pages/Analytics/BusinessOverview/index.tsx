@@ -23,7 +23,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { DatePicker, Select, Switch, Tooltip, message } from "antd";
+import { DatePicker, Modal, Select, Switch, Tooltip, message } from "antd";
 import ReactECharts from "echarts-for-react";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
@@ -76,6 +76,23 @@ const METRIC_ACCENT_COLORS = [
 const DONUT_COLORS = ["#18b368", "#ef4444", "#94a3b8"];
 const safeNumber = (value: unknown): number =>
   typeof value === "number" && !Number.isNaN(value) ? value : 0;
+
+const formatManagerName = (
+  name?: string | null,
+  userId?: string | null,
+) => name || userId || "-";
+
+const formatHtmlPreviewTime = (
+  value?: string | null,
+  format = "MM-DD HH:mm",
+) => {
+  if (!value) {
+    return "-";
+  }
+  const normalized = value.includes("T") ? value : value.replace(" ", "T");
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  return dayjs(hasTimezone ? normalized : `${normalized}Z`).format(format);
+};
 
 const iconMap = {
   users: UserRound,
@@ -699,6 +716,8 @@ export default function BusinessOverviewPage() {
   const [htmlPreviewCustomerClicks, setHtmlPreviewCustomerClicks] = useState<
     HtmlPreviewCustomerClickItem[]
   >([]);
+  const [selectedHtmlPreviewCustomer, setSelectedHtmlPreviewCustomer] =
+    useState<HtmlPreviewCustomerClickItem | null>(null);
   const [selectedHtmlPreviewListKey, setSelectedHtmlPreviewListKey] =
     useState<string>("all");
   const [includeUnclickedCustomers, setIncludeUnclickedCustomers] =
@@ -1201,7 +1220,7 @@ export default function BusinessOverviewPage() {
       .filter(Boolean)
       .sort();
     const latest = sortedClickTimes[sortedClickTimes.length - 1];
-    return latest ? dayjs(latest).format("YYYY-MM-DD HH:mm") : "-";
+    return formatHtmlPreviewTime(latest, "YYYY-MM-DD HH:mm");
   }, [htmlPreviewClicks]);
   const hasHtmlPreviewAnalysisData =
     htmlPreviewClicks.length > 0 ||
@@ -2092,6 +2111,7 @@ export default function BusinessOverviewPage() {
                       <span>电访</span>
                       <span>查看方案</span>
                       <span>总点击</span>
+                      <span>客户经理</span>
                       <span>最近</span>
                     </div>
                     {htmlPreviewCustomerClicks.map((item) => (
@@ -2115,10 +2135,24 @@ export default function BusinessOverviewPage() {
                         <strong>{formatNumber(item.phone_count)}</strong>
                         <strong>{formatNumber(item.plan_count)}</strong>
                         <strong>{formatNumber(item.total_click_count)}</strong>
+                        <div className={styles.htmlPreviewManagerCell}>
+                          <span>
+                            {formatManagerName(
+                              item.last_clicked_user_name,
+                              item.last_clicked_user_id,
+                            )}
+                          </span>
+                          {item.manager_clicks?.length ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedHtmlPreviewCustomer(item)}
+                            >
+                              详情
+                            </button>
+                          ) : null}
+                        </div>
                         <span className={styles.htmlPreviewEventTime}>
-                          {item.last_clicked_at
-                            ? dayjs(item.last_clicked_at).format("MM-DD HH:mm")
-                            : "-"}
+                          {formatHtmlPreviewTime(item.last_clicked_at)}
                         </span>
                       </div>
                     ))}
@@ -2129,6 +2163,44 @@ export default function BusinessOverviewPage() {
           )}
         </article>
       </section>
+
+      <Modal
+        open={Boolean(selectedHtmlPreviewCustomer)}
+        title={
+          selectedHtmlPreviewCustomer
+            ? `${selectedHtmlPreviewCustomer.customer_name} 客户经理点击详情`
+            : "客户经理点击详情"
+        }
+        footer={null}
+        width={640}
+        onCancel={() => setSelectedHtmlPreviewCustomer(null)}
+      >
+        <div className={styles.htmlPreviewManagerDetail}>
+          <div className={styles.htmlPreviewManagerDetailHeader}>
+            <span>客户经理</span>
+            <span>洞察</span>
+            <span>电访</span>
+            <span>查看方案</span>
+            <span>总点击</span>
+            <span>最近</span>
+          </div>
+          {selectedHtmlPreviewCustomer?.manager_clicks?.map((item) => (
+            <div
+              key={`${item.user_id}-${item.last_clicked_at || ""}`}
+              className={styles.htmlPreviewManagerDetailRow}
+            >
+              <span>{formatManagerName(item.user_name, item.user_id)}</span>
+              <strong>{formatNumber(item.insight_count)}</strong>
+              <strong>{formatNumber(item.phone_count)}</strong>
+              <strong>{formatNumber(item.plan_count)}</strong>
+              <strong>{formatNumber(item.total_click_count)}</strong>
+              <span>
+                {formatHtmlPreviewTime(item.last_clicked_at)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Modal>
 
       <UserDetailModal
         open={modalOpen}

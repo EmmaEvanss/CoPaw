@@ -1201,9 +1201,9 @@
 .htmlPreviewCustomerHeader,
 .htmlPreviewCustomerRow {
   display: grid;
-  grid-template-columns: minmax(128px, 180px) 52px 52px 78px 58px 66px;
+  grid-template-columns: minmax(180px, 1fr) 42px 42px 72px 50px minmax(80px, 108px) 66px;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -1220,14 +1220,46 @@
 
 .htmlPreviewCustomerHeader span,
 .htmlPreviewCustomerRow strong,
+.htmlPreviewManagerCell,
 .htmlPreviewCustomerRow .htmlPreviewEventTime {
   white-space: nowrap;
 }
 
-.htmlPreviewCustomerHeader span:not(:first-child),
-.htmlPreviewCustomerRow strong,
-.htmlPreviewCustomerRow .htmlPreviewEventTime {
+.htmlPreviewCustomerHeader span:nth-child(n + 2):not(:last-child),
+.htmlPreviewCustomerRow strong {
   text-align: right;
+}
+
+.htmlPreviewCustomerHeader span:last-child,
+.htmlPreviewCustomerRow .htmlPreviewEventTime {
+  text-align: left;
+}
+
+.htmlPreviewManagerCell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.htmlPreviewManagerCell span {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-weight: 700;
+  text-overflow: ellipsis;
+}
+
+.htmlPreviewManagerCell button {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .htmlPreviewSelectedList {
@@ -1256,6 +1288,52 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+
+.htmlPreviewManagerDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.htmlPreviewManagerDetailHeader,
+.htmlPreviewManagerDetailRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 48px 48px 78px 58px 82px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.htmlPreviewManagerDetailHeader {
+  position: sticky;
+  top: 0;
+  padding: 0 0 8px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.htmlPreviewManagerDetailRow {
+  padding: 10px 0;
+  border-top: 1px solid #edf2f8;
+  color: #111827;
+  font-size: 14px;
+}
+
+.htmlPreviewManagerDetailRow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htmlPreviewManagerDetailHeader span:not(:first-child):not(:last-child),
+.htmlPreviewManagerDetailRow strong {
+  text-align: right;
 }
 
 .htmlPreviewEventMain {
@@ -1358,10 +1436,10 @@
 
   .htmlPreviewCustomerHeader,
   .htmlPreviewCustomerRow {
-    grid-template-columns: minmax(112px, 1fr) 40px 40px 70px 52px;
+    grid-template-columns: minmax(140px, 1fr) 36px 36px 64px 46px 72px;
   }
 
-  .htmlPreviewCustomerHeader span:nth-child(6),
+  .htmlPreviewCustomerHeader span:nth-child(7),
   .htmlPreviewCustomerRow .htmlPreviewEventTime {
     display: none;
   }

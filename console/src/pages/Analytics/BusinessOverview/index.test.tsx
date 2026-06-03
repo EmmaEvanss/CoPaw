@@ -186,6 +186,28 @@ describe("BusinessOverview trend chart", () => {
           phone_count: 1,
           plan_count: 1,
           total_click_count: 4,
+          last_clicked_user_id: "manager-1",
+          last_clicked_user_name: "张经理",
+          manager_clicks: [
+            {
+              user_id: "manager-1",
+              user_name: "张经理",
+              insight_count: 2,
+              phone_count: 1,
+              plan_count: 0,
+              total_click_count: 3,
+              last_clicked_at: "2026-05-19T10:35:00",
+            },
+            {
+              user_id: "manager-2",
+              user_name: "李经理",
+              insight_count: 0,
+              phone_count: 0,
+              plan_count: 1,
+              total_click_count: 1,
+              last_clicked_at: "2026-05-19T09:35:00",
+            },
+          ],
           last_clicked_at: "2026-05-19T10:35:00",
         },
       ],
@@ -262,9 +284,13 @@ describe("BusinessOverview trend chart", () => {
     expect(await screen.findByText("到期客户名单[auto-preview].html")).toBeInTheDocument();
     expect(await screen.findByText("祝话")).toBeInTheDocument();
     expect(await screen.findByText("CUST-001")).toBeInTheDocument();
+    expect(await screen.findByText("张经理")).toBeInTheDocument();
     expect((await screen.findAllByText("洞察")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("电访")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("查看方案")).length).toBeGreaterThan(0);
+    fireEvent.click(await screen.findByText("详情"));
+    expect(await screen.findByText("祝话 客户经理点击详情")).toBeInTheDocument();
+    expect(await screen.findByText("李经理")).toBeInTheDocument();
     expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
     expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalled();
     expect(htmlPreviewEventsApiMock.getCustomerClicks).toHaveBeenCalled();

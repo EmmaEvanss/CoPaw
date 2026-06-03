@@ -24,6 +24,7 @@ function withClickRuntimeContext(
     ...payload,
     source_id: payload.source_id || iframeContext.source || DEFAULT_SOURCE_ID,
     user_id: payload.user_id || getUserId(),
+    user_name: payload.user_name || iframeContext.userName || null,
     bbk_id: payload.bbk_id || iframeContext.bbk || null,
   };
 }

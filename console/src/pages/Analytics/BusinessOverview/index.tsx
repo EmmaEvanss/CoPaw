@@ -23,17 +23,11 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { DatePicker, Select, Switch, Tooltip, message } from "antd";
+import { DatePicker, Select, Tooltip, message } from "antd";
 import ReactECharts from "echarts-for-react";
 import type { Dayjs } from "dayjs";
 import dayjs from "dayjs";
 import styles from "./index.module.less";
-import { htmlPreviewEventsApi } from "../../../api/modules/htmlPreviewEvents";
-import type {
-  HtmlPreviewCustomerClickItem,
-  HtmlPreviewClickSummaryItem,
-  HtmlPreviewListSummaryItem,
-} from "../../../api/types/htmlPreviewEvents";
 import {
   tracingApi,
   type BranchMetricItem,
@@ -45,6 +39,8 @@ import {
 } from "../../../api/modules/tracing";
 import UserDetailModal from "./components/UserDetailModal";
 import SkillDetailModal from "./components/SkillDetailModal";
+import ErrorDetailModal from "./components/ErrorDetailModal";
+import HtmlPreviewClickAnalysis from "./components/HtmlPreviewClickAnalysis";
 import { BBK_ID_MAP, BBK_ID_TO_NAME_MAP, getBbkDisplayName } from "../../../constants/bbk";
 import {
   formatChange,
@@ -73,15 +69,6 @@ const METRIC_ACCENT_COLORS = [
 ];
 
 const DONUT_COLORS = ["#18b368", "#ef4444", "#94a3b8"];
-const HTML_PREVIEW_COLORS = [
-  "#2563eb",
-  "#16a34a",
-  "#0891b2",
-  "#f97316",
-  "#7c3aed",
-  "#db2777",
-];
-
 const safeNumber = (value: unknown): number =>
   typeof value === "number" && !Number.isNaN(value) ? value : 0;
 
@@ -276,83 +263,6 @@ function buildErrorSummary(summary: ErrorSummary | null): SummaryLegendItem[] {
       color: "#ef4444",
     },
   ];
-}
-
-function getHtmlPreviewButtonLabel(item: HtmlPreviewClickSummaryItem): string {
-  return (
-    item.button_name ||
-    item.button_text ||
-    item.button_id ||
-    item.button_label ||
-    "未知按钮"
-  );
-}
-
-function buildHtmlPreviewClickOption(items: HtmlPreviewClickSummaryItem[]) {
-  const chartItems = items.slice(0, 10).reverse();
-  return {
-    grid: {
-      left: 110,
-      right: 36,
-      top: 12,
-      bottom: 18,
-    },
-    tooltip: {
-      trigger: "axis",
-      axisPointer: { type: "shadow" },
-      formatter: (params: Array<{ name: string; value: number }>) => {
-        const first = params[0];
-        return first
-          ? `${first.name}<br/>点击次数：${formatNumber(first.value)}`
-          : "";
-      },
-    },
-    xAxis: {
-      type: "value",
-      axisLine: { show: false },
-      axisTick: { show: false },
-      splitLine: { lineStyle: { color: "#edf2f8" } },
-      axisLabel: {
-        color: "#94a3b8",
-        fontSize: 12,
-        formatter: (value: number) => formatNumber(value),
-      },
-    },
-    yAxis: {
-      type: "category",
-      data: chartItems.map((item) =>
-        truncateName(getHtmlPreviewButtonLabel(item), 12),
-      ),
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: {
-        color: "#475569",
-        fontSize: 12,
-        fontWeight: 600,
-      },
-    },
-    series: [
-      {
-        type: "bar",
-        data: chartItems.map((item, index) => ({
-          value: item.click_count,
-          itemStyle: {
-            color: HTML_PREVIEW_COLORS[index % HTML_PREVIEW_COLORS.length],
-            borderRadius: [0, 8, 8, 0],
-          },
-        })),
-        barWidth: 14,
-        label: {
-          show: true,
-          position: "right",
-          color: "#111827",
-          fontSize: 12,
-          fontWeight: 700,
-          formatter: (params: { value: number }) => formatNumber(params.value),
-        },
-      },
-    ],
-  };
 }
 
 function buildDonutSegments(items: SummaryLegendItem[]) {
@@ -775,20 +685,7 @@ export default function BusinessOverviewPage() {
   const [taskStatusSummary, setTaskStatusSummary] =
     useState<TaskStatusSummary | null>(null);
   const [depthSummary, setDepthSummary] = useState<DepthSummary | null>(null);
-  const [htmlPreviewClicks, setHtmlPreviewClicks] = useState<
-    HtmlPreviewClickSummaryItem[]
-  >([]);
-  const [htmlPreviewLists, setHtmlPreviewLists] = useState<
-    HtmlPreviewListSummaryItem[]
-  >([]);
-  const [htmlPreviewCustomerClicks, setHtmlPreviewCustomerClicks] = useState<
-    HtmlPreviewCustomerClickItem[]
-  >([]);
-  const [selectedHtmlPreviewListKey, setSelectedHtmlPreviewListKey] =
-    useState<string>("all");
-  const [includeUnclickedCustomers, setIncludeUnclickedCustomers] =
-    useState(false);
-  const [htmlPreviewLoading, setHtmlPreviewLoading] = useState(false);
+  const [htmlPreviewRefreshKey, setHtmlPreviewRefreshKey] = useState(0);
   const [errorLoading, setErrorLoading] = useState(false);
   const errorLoadingRef = useRef(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -796,6 +693,7 @@ export default function BusinessOverviewPage() {
   const [selectedUserName, setSelectedUserName] = useState<string | null>(null);
   const [skillModalOpen, setSkillModalOpen] = useState(false);
   const [selectedSkillName, setSelectedSkillName] = useState("");
+  const [errorModalOpen, setErrorModalOpen] = useState(false);
   const [activeTrendIndex, setActiveTrendIndex] = useState<number | null>(null);
 
   const startDateText = useMemo(
@@ -996,99 +894,20 @@ export default function BusinessOverviewPage() {
     }
   }, [effectiveBbkIds, endDateText, startDateText]);
 
-  const fetchHtmlPreviewClicks = useCallback(async () => {
-    setHtmlPreviewLoading(true);
-    try {
-      const params = {
-        startTime: dateRange[0].startOf("day").toISOString(),
-        endTime: dateRange[1].endOf("day").toISOString(),
-        bbkIds: effectiveBbkIds?.join(","),
-        limit: 100,
-      };
-      const selectedListKey =
-        selectedHtmlPreviewListKey === "all"
-          ? null
-          : selectedHtmlPreviewListKey;
-      const detailParams = {
-        ...params,
-        listKey: selectedListKey,
-      };
-      const [summaryResult, listResult, customerResult] = await Promise.allSettled([
-        htmlPreviewEventsApi.getSummary(detailParams),
-        htmlPreviewEventsApi.getLists(params),
-        htmlPreviewEventsApi.getCustomerClicks({
-          ...detailParams,
-          includeUnclicked: includeUnclickedCustomers,
-          limit: 500,
-        }),
-      ]);
-      if (summaryResult.status === "fulfilled") {
-        setHtmlPreviewClicks(summaryResult.value.items || []);
-      } else {
-        console.error(
-          "Failed to fetch HTML preview click summary:",
-          summaryResult.reason,
-        );
-        setHtmlPreviewClicks([]);
-      }
-      if (listResult.status === "fulfilled") {
-        setHtmlPreviewLists(listResult.value.items || []);
-      } else {
-        console.error(
-          "Failed to fetch HTML preview list summary:",
-          listResult.reason,
-        );
-        setHtmlPreviewLists([]);
-      }
-      if (customerResult.status === "fulfilled") {
-        setHtmlPreviewCustomerClicks(customerResult.value.items || []);
-      } else {
-        console.error(
-          "Failed to fetch HTML preview customer clicks:",
-          customerResult.reason,
-        );
-        setHtmlPreviewCustomerClicks([]);
-      }
-    } catch (error) {
-      console.error("Failed to fetch HTML preview click statistics:", error);
-      setHtmlPreviewClicks([]);
-      setHtmlPreviewLists([]);
-      setHtmlPreviewCustomerClicks([]);
-    } finally {
-      setHtmlPreviewLoading(false);
-    }
-  }, [
-    dateRange,
-    effectiveBbkIds,
-    includeUnclickedCustomers,
-    selectedHtmlPreviewListKey,
-  ]);
-
   useEffect(() => {
     fetchDashboard();
     fetchSkills();
     fetchErrorSummary();
     fetchTaskStatusSummary();
     fetchDepthSummary();
-    fetchHtmlPreviewClicks();
     // 活跃用户请求由独立的 useEffect 处理
   }, [
     fetchDashboard,
     fetchDepthSummary,
     fetchErrorSummary,
-    fetchHtmlPreviewClicks,
     fetchSkills,
     fetchTaskStatusSummary,
   ]);
-
-  useEffect(() => {
-    if (
-      selectedHtmlPreviewListKey !== "all" &&
-      !htmlPreviewLists.some((item) => item.list_key === selectedHtmlPreviewListKey)
-    ) {
-      setSelectedHtmlPreviewListKey("all");
-    }
-  }, [htmlPreviewLists, selectedHtmlPreviewListKey]);
 
   // 活跃用户请求独立处理，避免 activeFilterType 变化触发其他请求
   useEffect(() => {
@@ -1194,63 +1013,6 @@ export default function BusinessOverviewPage() {
     () => buildErrorSummary(errorSummaryData),
     [errorSummaryData],
   );
-  const htmlPreviewChartOption = useMemo(
-    () => buildHtmlPreviewClickOption(htmlPreviewClicks),
-    [htmlPreviewClicks],
-  );
-  const htmlPreviewTotalClicks = useMemo(
-    () =>
-      htmlPreviewClicks.reduce(
-        (sum, item) => sum + safeNumber(item.click_count),
-        0,
-      ),
-    [htmlPreviewClicks],
-  );
-  const selectedHtmlPreviewList = useMemo(
-    () =>
-      htmlPreviewLists.find(
-        (item) => item.list_key === selectedHtmlPreviewListKey,
-      ) || null,
-    [htmlPreviewLists, selectedHtmlPreviewListKey],
-  );
-  const displayedHtmlPreviewLists = useMemo(
-    () =>
-      selectedHtmlPreviewListKey === "all"
-        ? htmlPreviewLists
-        : htmlPreviewLists.filter(
-            (item) => item.list_key === selectedHtmlPreviewListKey,
-          ),
-    [htmlPreviewLists, selectedHtmlPreviewListKey],
-  );
-  const htmlPreviewListCount = displayedHtmlPreviewLists.length;
-  const htmlPreviewCustomerTotal = useMemo(
-    () =>
-      displayedHtmlPreviewLists.reduce(
-        (sum, item) => sum + safeNumber(item.customer_count),
-        0,
-      ),
-    [displayedHtmlPreviewLists],
-  );
-  const htmlPreviewClickedCustomerCount = useMemo(
-    () =>
-      displayedHtmlPreviewLists.reduce(
-        (sum, item) => sum + safeNumber(item.clicked_customer_count),
-        0,
-      ),
-    [displayedHtmlPreviewLists],
-  );
-  const htmlPreviewLatestClick = useMemo(() => {
-    const sortedClickTimes = htmlPreviewClicks
-      .map((item) => item.last_clicked_at)
-      .filter(Boolean)
-      .sort();
-    const latest = sortedClickTimes[sortedClickTimes.length - 1];
-    return latest ? dayjs(latest).format("YYYY-MM-DD HH:mm") : "-";
-  }, [htmlPreviewClicks]);
-  const hasHtmlPreviewAnalysisData =
-    htmlPreviewClicks.length > 0 ||
-    htmlPreviewLists.length > 0 ||
-    htmlPreviewCustomerClicks.length > 0;
   const trendSvg = useMemo(() => buildTrendSvgData(trendData), [trendData]);
   const activeTrendZone =
     activeTrendIndex === null ? null : trendSvg.hoverZones[activeTrendIndex] ?? null;
@@ -1352,7 +1114,7 @@ export default function BusinessOverviewPage() {
                 fetchErrorSummary();
                 fetchTaskStatusSummary();
                 fetchDepthSummary();
-                fetchHtmlPreviewClicks();
+                setHtmlPreviewRefreshKey((value) => value + 1);
               }}
             >
               <RotateCw size={16} />
@@ -1865,6 +1627,14 @@ export default function BusinessOverviewPage() {
         <article className={styles.panelLarge}>
           <div className={styles.panelHeader}>
             <h3 className={styles.panelTitle}>报错分析</h3>
+            <button
+              type="button"
+              className={styles.detailLink}
+              onClick={() => setErrorModalOpen(true)}
+            >
+              查看详情
+              <ChevronRight size={14} />
+            </button>
           </div>
           <div className={styles.donutLayoutCompact}>
             <div className={styles.donutCompact}>
@@ -1922,164 +1692,11 @@ export default function BusinessOverviewPage() {
         </article>
       </section>
 
-      <section
-        className={styles.htmlPreviewSection}
-        data-testid="html-preview-click-section"
-      >
-        <article className={styles.panelLarge}>
-          <div className={styles.panelHeader}>
-            <h3 className={styles.panelTitle}>客户洞察/电访点击统计</h3>
-            <span className={styles.panelMeta}>
-              最近点击：{htmlPreviewLatestClick}
-            </span>
-          </div>
-          <div className={styles.htmlPreviewFilters}>
-            <Select
-              className={styles.htmlPreviewListSelect}
-              value={selectedHtmlPreviewListKey}
-              onChange={setSelectedHtmlPreviewListKey}
-              placeholder="全部名单"
-              showSearch
-              optionFilterProp="label"
-            >
-              <Option value="all" label="全部名单">
-                全部名单
-              </Option>
-              {htmlPreviewLists.map((item) => (
-                <Option
-                  key={item.list_key}
-                  value={item.list_key}
-                  label={item.list_name}
-                >
-                  {item.list_name}
-                </Option>
-              ))}
-            </Select>
-            <label className={styles.htmlPreviewSwitch}>
-              <Switch
-                size="small"
-                checked={includeUnclickedCustomers}
-                onChange={setIncludeUnclickedCustomers}
-              />
-              <span>显示未点击客户</span>
-            </label>
-          </div>
-          {!hasHtmlPreviewAnalysisData ? (
-            <div className={styles.emptyChartState}>
-              <Database className={styles.emptyBreakdownIcon} />
-              <span>
-                {htmlPreviewLoading ? "加载中..." : "暂无客户洞察/电访点击数据"}
-              </span>
-            </div>
-          ) : (
-            <div className={styles.htmlPreviewDashboard}>
-              <div className={styles.htmlPreviewChart}>
-                <ReactECharts
-                  option={htmlPreviewChartOption}
-                  style={{ height: 276 }}
-                />
-              </div>
-              <div className={styles.htmlPreviewStats}>
-                <div className={styles.htmlPreviewStatCard}>
-                  <span>名单数</span>
-                  <strong>{formatNumber(htmlPreviewListCount)}</strong>
-                </div>
-                <div className={styles.htmlPreviewStatCard}>
-                  <span>名单总客户数</span>
-                  <strong>{formatNumber(htmlPreviewCustomerTotal)}</strong>
-                </div>
-                <div className={styles.htmlPreviewStatCard}>
-                  <span>被点击客户数</span>
-                  <strong>{formatNumber(htmlPreviewClickedCustomerCount)}</strong>
-                </div>
-                <div className={styles.htmlPreviewStatCard}>
-                  <span>点击总数</span>
-                  <strong>{formatNumber(htmlPreviewTotalClicks)}</strong>
-                </div>
-                <div className={styles.htmlPreviewTopList}>
-                  <div className={styles.htmlPreviewTopTitle}>名单点击概览</div>
-                  {displayedHtmlPreviewLists.slice(0, 5).map((item) => (
-                    <div
-                      key={item.list_key}
-                      className={styles.htmlPreviewListRow}
-                    >
-                      <Tooltip
-                        title={item.file_name || item.file_url || item.list_name}
-                        placement="top"
-                      >
-                        <span className={styles.htmlPreviewTopName}>
-                          {item.list_name}
-                        </span>
-                      </Tooltip>
-                      <span>{formatNumber(item.customer_count)} 客户</span>
-                      <span>{formatNumber(item.clicked_customer_count)} 点击客户</span>
-                      <strong>
-                        洞察 {formatNumber(item.insight_count)} / 电访{" "}
-                        {formatNumber(item.phone_count)}
-                      </strong>
-                    </div>
-                  ))}
-                  {displayedHtmlPreviewLists.length === 0 && (
-                    <div className={styles.htmlPreviewEmptyLine}>
-                      暂无名单点击概览数据
-                    </div>
-                  )}
-                </div>
-                <div className={styles.htmlPreviewEventList}>
-                  <div className={styles.htmlPreviewTopTitle}>客户点击明细</div>
-                  {selectedHtmlPreviewList && (
-                    <div className={styles.htmlPreviewSelectedList}>
-                      当前名单：{selectedHtmlPreviewList.list_name}
-                    </div>
-                  )}
-                  {htmlPreviewCustomerClicks.length === 0 ? (
-                    <div className={styles.htmlPreviewEmptyLine}>
-                      暂无客户点击明细
-                    </div>
-                  ) : (
-                    <div className={styles.htmlPreviewCustomerTable}>
-                      <div className={styles.htmlPreviewCustomerHeader}>
-                        <span>客户</span>
-                        <span>洞察</span>
-                        <span>电访</span>
-                        <span>总点击</span>
-                        <span>最近</span>
-                      </div>
-                      {htmlPreviewCustomerClicks.slice(0, 8).map((item) => (
-                        <div
-                          key={`${item.customer_id || item.customer_name}-${
-                            item.last_clicked_at || ""
-                          }`}
-                          className={styles.htmlPreviewCustomerRow}
-                        >
-                          <div className={styles.htmlPreviewCustomerCell}>
-                            <span className={styles.htmlPreviewCustomerName}>
-                              {item.customer_name || "未知客户"}
-                            </span>
-                            {item.customer_id && (
-                              <span className={styles.htmlPreviewCustomerId}>
-                                {item.customer_id}
-                              </span>
-                            )}
-                          </div>
-                          <strong>{formatNumber(item.insight_count)}</strong>
-                          <strong>{formatNumber(item.phone_count)}</strong>
-                          <strong>{formatNumber(item.total_click_count)}</strong>
-                          <span className={styles.htmlPreviewEventTime}>
-                            {item.last_clicked_at
-                              ? dayjs(item.last_clicked_at).format("MM-DD HH:mm")
-                              : "-"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </article>
-      </section>
+      <HtmlPreviewClickAnalysis
+        dateRange={dateRange}
+        effectiveBbkIds={effectiveBbkIds}
+        refreshKey={htmlPreviewRefreshKey}
+      />
 
       <UserDetailModal
         open={modalOpen}
@@ -2103,6 +1720,14 @@ export default function BusinessOverviewPage() {
           setSkillModalOpen(false);
           setSelectedSkillName("");
         }}
+      />
+
+      <ErrorDetailModal
+        open={errorModalOpen}
+        startDate={startDateText}
+        endDate={endDateText}
+        bbkIds={effectiveBbkIds?.join(",")}
+        onClose={() => setErrorModalOpen(false)}
       />
     </div>
   );

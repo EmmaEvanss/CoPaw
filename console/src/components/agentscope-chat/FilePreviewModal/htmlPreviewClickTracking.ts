@@ -8,6 +8,9 @@ export interface HtmlPreviewClickMetadata {
   cronTaskName?: string | null;
   fileUrl: string;
   fileName?: string | null;
+  listKey?: string | null;
+  listName?: string | null;
+  defaultCustomerInfo?: Record<string, string> | null;
 }
 
 export type HtmlPreviewClickReporter = (
@@ -18,7 +21,16 @@ export type HtmlPreviewListSnapshotReporter = (
   payload: HtmlPreviewListSnapshotPayload,
 ) => Promise<unknown> | unknown;
 
+export interface NestedHtmlPreviewRequest {
+  fileUrl: string;
+  fileName: string;
+  listKey: string;
+  listName: string;
+  customerInfo: Record<string, string> | null;
+}
+
 const CLICKABLE_SELECTOR = "button,a,[role='button'],[data-track-id]";
+const NESTED_PREVIEW_SELECTOR = "a[data-preview-modal='true']";
 const CUSTOMER_DATA_PREFIX = "customer";
 const CUSTOMER_INFO_DATA_KEY = "customerInfo";
 const CUSTOMER_NAME_HEADER_PATTERN = /^(客户姓名|客户名称|姓名)$/;
@@ -60,7 +72,13 @@ function getElementName(element: HTMLElement, buttonText: string | null) {
   );
 }
 
-function getClassFallbackId(element: HTMLElement) {
+function getClassFallbackId(
+  element: HTMLElement,
+  buttonText: string | null,
+) {
+  if (buttonText?.includes("查看方案")) {
+    return "plan";
+  }
   if (element.classList.contains("phone")) {
     return "phone";
   }
@@ -77,6 +95,13 @@ function getButtonType(
   buttonText: string | null,
 ) {
   const normalizedId = (buttonId || "").toLowerCase();
+  if (
+    normalizedId.includes("plan") ||
+    buttonName?.includes("查看方案") ||
+    buttonText?.includes("查看方案")
+  ) {
+    return "plan";
+  }
   if (
     element.classList.contains("phone") ||
     normalizedId.includes("phone") ||
@@ -198,11 +223,11 @@ function getCustomerInfo(element: HTMLElement) {
 }
 
 function getListKey(metadata: HtmlPreviewClickMetadata) {
-  return metadata.fileUrl;
+  return metadata.listKey || metadata.fileUrl;
 }
 
 function getListName(metadata: HtmlPreviewClickMetadata) {
-  return metadata.fileName || metadata.fileUrl;
+  return metadata.listName || metadata.fileName || metadata.fileUrl;
 }
 
 function getCustomerIdentity(customerInfo: Record<string, string> | null) {
@@ -219,6 +244,35 @@ function getCustomerIdentity(customerInfo: Record<string, string> | null) {
   };
 }
 
+function getFileNameFromUrl(url: string) {
+  try {
+    const urlObj = new URL(url, window.location.origin);
+    const fileName = urlObj.pathname.split("/").pop();
+    if (!fileName) {
+      return "preview.html";
+    }
+    try {
+      return decodeURIComponent(fileName);
+    } catch {
+      return fileName;
+    }
+  } catch {
+    return url.split(/[?#]/)[0].split("/").pop() || "preview.html";
+  }
+}
+
+function resolveNestedPreviewUrl(
+  link: HTMLAnchorElement,
+  metadata: HtmlPreviewClickMetadata,
+) {
+  const rawHref = link.getAttribute("href") || link.href;
+  try {
+    return new URL(rawHref, metadata.fileUrl).toString();
+  } catch {
+    return link.href || rawHref;
+  }
+}
+
 export function buildHtmlPreviewClickPayload(
   element: HTMLElement,
   metadata: HtmlPreviewClickMetadata,
@@ -229,12 +283,13 @@ export function buildHtmlPreviewClickPayload(
     element.dataset.trackId ||
       element.id ||
       element.getAttribute("name") ||
-      getClassFallbackId(element) ||
+      getClassFallbackId(element, buttonText) ||
       buttonText,
     255,
   );
   const buttonName = getElementName(element, buttonText);
-  const customerInfo = getCustomerInfo(element);
+  const customerInfo =
+    getCustomerInfo(element) || metadata.defaultCustomerInfo || null;
   const customerIdentity = getCustomerIdentity(customerInfo);
 
   if (!buttonId && !buttonName && !buttonText) {
@@ -320,6 +375,7 @@ export function attachHtmlPreviewClickTracker(params: {
   metadata: HtmlPreviewClickMetadata;
   reporter: HtmlPreviewClickReporter;
   listSnapshotReporter?: HtmlPreviewListSnapshotReporter;
+  onOpenNestedPreview?: (preview: NestedHtmlPreviewRequest) => void;
 }): () => void {
   const doc = params.iframe.contentDocument;
   const view = doc?.defaultView;
@@ -370,6 +426,26 @@ export function attachHtmlPreviewClickTracker(params: {
       });
     } catch (error) {
       console.warn("Failed to record HTML preview click:", error);
+    }
+
+    const nestedPreviewLink = element.closest(NESTED_PREVIEW_SELECTOR);
+    if (
+      params.onOpenNestedPreview &&
+      nestedPreviewLink instanceof view.HTMLAnchorElement &&
+      nestedPreviewLink.href
+    ) {
+      const nestedPreviewUrl = resolveNestedPreviewUrl(
+        nestedPreviewLink,
+        params.metadata,
+      );
+      event.preventDefault();
+      params.onOpenNestedPreview({
+        fileUrl: nestedPreviewUrl,
+        fileName: getFileNameFromUrl(nestedPreviewUrl),
+        listKey: payload.list_key || getListKey(params.metadata),
+        listName: payload.list_name || getListName(params.metadata),
+        customerInfo: payload.customer_info || null,
+      });
     }
   };
 

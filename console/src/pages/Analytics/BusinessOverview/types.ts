@@ -59,16 +59,6 @@ export interface TrendDatum {
 
 export type TimeRange = "day" | "week" | "month" | "custom";
 
-const BBK_NAME_MAP: Record<string, string> = {
-  "100": "总行",
-  "200": "北京分行",
-  "201": "上海分行",
-  "202": "深圳分行",
-  "203": "广州分行",
-  "204": "杭州分行",
-  "205": "苏州分行",
-  "206": "南京分行",
-};
 
 export function formatNumber(
   value: number | string | undefined | null,
@@ -163,9 +153,3 @@ export function truncateName(name: string, maxLength = 20): string {
   return `${name.slice(0, maxLength)}...`;
 }
 
-export function getBbkDisplayName(bbkId?: string): string {
-  if (!bbkId) {
-    return "-";
-  }
-  return BBK_NAME_MAP[bbkId] || bbkId;
-}

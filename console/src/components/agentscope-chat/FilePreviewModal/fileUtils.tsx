@@ -111,7 +111,11 @@ function matchExt(suffix: string, ext: string[]): boolean {
 
 export type FileType = "previewable" | "unsupported";
 
-const AUTO_PREVIEW_MARKERS = ["[auto-preview]", "存款到期完整客户名单"];
+const AUTO_PREVIEW_MARKERS = [
+  "[auto-preview]",
+  "auto-preview",
+  "存款到期完整客户名单",
+];
 const HTML_PREVIEW_EXTS = ["html", "htm"];
 
 function safeDecodeValue(value: string): string {

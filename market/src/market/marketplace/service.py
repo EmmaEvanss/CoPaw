@@ -678,7 +678,7 @@ class MarketplaceService:
             )
         return results
 
-    async def publish_skill(
+    async def publish_skill(  # pylint: disable=too-many-statements
         self,
         source_id: str,
         req: PublishSkillRequest,
@@ -1172,30 +1172,37 @@ class MarketplaceService:
         self,
         skill_dir: Path,
         skill_name: str,
-    ) -> tuple[str, str]:
-        """读取技能 frontmatter 中的展示名称和描述."""
+    ) -> tuple[str, str, str]:
+        """读取技能 frontmatter 中的展示名称、描述和版本号."""
         skill_md_path = skill_dir / "SKILL.md"
         if not skill_md_path.exists():
-            return skill_name, ""
+            return skill_name, "", ""
         try:
             md_content = skill_md_path.read_text(encoding="utf-8")
         except Exception:  # pylint: disable=broad-except
-            return skill_name, ""
+            return skill_name, "", ""
         if not md_content.startswith("---"):
-            return skill_name, ""
-        return _parse_md_frontmatter(md_content, skill_name)
+            return skill_name, "", ""
+        name, desc = _parse_md_frontmatter(md_content, skill_name)
+        version = _extract_version_from_frontmatter(md_content)
+        return name, desc, version
 
     def _resolve_skill_display_fields(
         self,
         skill_dir: Path,
         skill_name: str,
         manifest_metadata: dict[str, Any],
-    ) -> tuple[str, str]:
-        """合并 manifest 与 frontmatter，得到展示名称和描述."""
-        md_name, md_desc = self._read_skill_frontmatter(skill_dir, skill_name)
+    ) -> tuple[str, str, str]:
+        """合并 manifest 与 frontmatter，得到展示名称、描述和版本号."""
+        md_name, md_desc, md_version = self._read_skill_frontmatter(
+            skill_dir,
+            skill_name,
+        )
         display_name = manifest_metadata.get("name") or md_name
         description = manifest_metadata.get("description") or md_desc
-        return display_name, description
+        # 版本号优先使用 manifest_metadata，其次 frontmatter
+        version = manifest_metadata.get("version_text") or md_version
+        return display_name, description, version
 
     def _resolve_skill_timestamps(
         self,
@@ -1225,10 +1232,12 @@ class MarketplaceService:
             "source",
             "customized",
         )
-        display_name, description = self._resolve_skill_display_fields(
-            skill_dir,
-            skill_name,
-            manifest_metadata,
+        display_name, description, version = (
+            self._resolve_skill_display_fields(
+                skill_dir,
+                skill_name,
+                manifest_metadata,
+            )
         )
         received_version = manifest_metadata.get("received_version")
         market_version = market_versions.get(display_name)
@@ -1251,7 +1260,7 @@ class MarketplaceService:
             display_name=display_name,
             source=source,
             description=description,
-            version=manifest_metadata.get("version_text"),
+            version=version or None,
             received_version=received_version,
             distributed_by=manifest_metadata.get("distributed_by"),
             is_received=is_received,

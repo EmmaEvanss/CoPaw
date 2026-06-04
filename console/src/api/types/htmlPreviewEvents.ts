@@ -1,6 +1,7 @@
 export interface HtmlPreviewClickEventPayload {
   source_id?: string | null;
   user_id?: string | null;
+  user_name?: string | null;
   bbk_id?: string | null;
   cron_task_id?: string | null;
   cron_task_name?: string | null;
@@ -11,7 +12,7 @@ export interface HtmlPreviewClickEventPayload {
   button_id?: string | null;
   button_name?: string | null;
   button_text?: string | null;
-  button_type?: "insight" | "phone" | "other" | string | null;
+  button_type?: "insight" | "phone" | "plan" | "other" | string | null;
   customer_id?: string | null;
   customer_name?: string | null;
   customer_info?: Record<string, string> | null;
@@ -47,6 +48,7 @@ export interface HtmlPreviewClickEventItem {
   id: number;
   source_id?: string | null;
   user_id?: string | null;
+  user_name?: string | null;
   bbk_id?: string | null;
   cron_task_id?: string | null;
   cron_task_name?: string | null;
@@ -74,7 +76,10 @@ export interface HtmlPreviewCustomerClickSummaryItem {
   customer_name: string;
   insight_count: number;
   phone_count: number;
+  plan_count: number;
   total_click_count: number;
+  last_clicked_user_id?: string | null;
+  last_clicked_user_name?: string | null;
   last_clicked_at?: string | null;
 }
 
@@ -118,6 +123,7 @@ export interface HtmlPreviewListSummaryItem {
   clicked_customer_count: number;
   insight_count: number;
   phone_count: number;
+  plan_count: number;
   total_click_count: number;
   last_clicked_at?: string | null;
 }
@@ -134,6 +140,20 @@ export interface HtmlPreviewCustomerClickItem {
   list_name?: string | null;
   insight_count: number;
   phone_count: number;
+  plan_count: number;
+  total_click_count: number;
+  last_clicked_user_id?: string | null;
+  last_clicked_user_name?: string | null;
+  manager_clicks?: HtmlPreviewCustomerManagerClickItem[];
+  last_clicked_at?: string | null;
+}
+
+export interface HtmlPreviewCustomerManagerClickItem {
+  user_id: string;
+  user_name?: string | null;
+  insight_count: number;
+  phone_count: number;
+  plan_count: number;
   total_click_count: number;
   last_clicked_at?: string | null;
 }

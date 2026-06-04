@@ -121,20 +121,24 @@ class HtmlPreviewClickStore:
 
     @classmethod
     def _classify_button(cls, row: dict[str, Any]) -> str:
-        """把按钮点击归类为洞察、电访或其他。"""
+        """把按钮点击归类为洞察、电访、查看方案或其他。"""
         explicit = cls._clean_text(row.get("button_type"))
-        if explicit in {"insight", "phone", "other"}:
+        if explicit in {"insight", "phone", "plan", "other"}:
             return explicit
 
         button_id = (cls._clean_text(row.get("button_id")) or "").lower()
         button_name = cls._clean_text(row.get("button_name")) or ""
         button_text = cls._clean_text(row.get("button_text")) or ""
         if (
+            "plan" in button_id
+            or "查看方案" in button_name
+            or "查看方案" in button_text
+        ):
+            return "plan"
+        if (
             "phone" in button_id
             or "电访" in button_name
             or "电访" in button_text
-            or "电话访问" in button_name
-            or "电话访问" in button_text
         ):
             return "phone"
         if (
@@ -207,7 +211,10 @@ class HtmlPreviewClickStore:
             customer_name=row.get("customer_name") or "未知客户",
             insight_count=int(row.get("insight_count") or 0),
             phone_count=int(row.get("phone_count") or 0),
+            plan_count=int(row.get("plan_count") or 0),
             total_click_count=int(row.get("total_click_count") or 0),
+            last_clicked_user_id=row.get("last_clicked_user_id"),
+            last_clicked_user_name=row.get("last_clicked_user_name"),
             last_clicked_at=row.get("last_clicked_at"),
         )
 
@@ -223,6 +230,7 @@ class HtmlPreviewClickStore:
             id=int(row.get("id") or 0),
             source_id=row.get("source_id"),
             user_id=row.get("user_id"),
+            user_name=row.get("user_name"),
             bbk_id=row.get("bbk_id"),
             cron_task_id=row.get("cron_task_id"),
             cron_task_name=row.get("cron_task_name"),
@@ -253,6 +261,7 @@ class HtmlPreviewClickStore:
             INSERT INTO swe_html_preview_click_events (
                 source_id,
                 user_id,
+                user_name,
                 bbk_id,
                 cron_task_id,
                 cron_task_name,
@@ -271,7 +280,7 @@ class HtmlPreviewClickStore:
             )
             VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
         """
         await self.db.execute(
@@ -279,6 +288,7 @@ class HtmlPreviewClickStore:
             (
                 self._clean_text(event.source_id),
                 self._clean_text(event.user_id),
+                self._clean_text(event.user_name),
                 self._clean_text(event.bbk_id),
                 self._clean_text(event.cron_task_id),
                 self._clean_text(event.cron_task_name),
@@ -404,6 +414,7 @@ class HtmlPreviewClickStore:
                 id,
                 source_id,
                 user_id,
+                user_name,
                 bbk_id,
                 cron_task_id,
                 cron_task_name,
@@ -521,7 +532,10 @@ class HtmlPreviewClickStore:
                 customer_name=item.customer_name,
                 insight_count=item.insight_count,
                 phone_count=item.phone_count,
+                plan_count=item.plan_count,
                 total_click_count=item.total_click_count,
+                last_clicked_user_id=item.last_clicked_user_id,
+                last_clicked_user_name=item.last_clicked_user_name,
                 last_clicked_at=item.last_clicked_at,
             )
             for item in items
@@ -621,6 +635,8 @@ class HtmlPreviewClickStore:
         query = f"""
             SELECT
                 id,
+                user_id,
+                user_name,
                 cron_task_id,
                 cron_task_name,
                 file_url,
@@ -706,6 +722,7 @@ class HtmlPreviewClickStore:
                     "clicked_customers": set(),
                     "insight_count": 0,
                     "phone_count": 0,
+                    "plan_count": 0,
                     "total_click_count": 0,
                     "last_clicked_at": None,
                 },
@@ -738,6 +755,7 @@ class HtmlPreviewClickStore:
                     "clicked_customers": set(),
                     "insight_count": 0,
                     "phone_count": 0,
+                    "plan_count": 0,
                     "total_click_count": 0,
                     "last_clicked_at": None,
                 },
@@ -756,6 +774,7 @@ class HtmlPreviewClickStore:
                 clicked_customer_count=len(row["clicked_customers"]),
                 insight_count=row["insight_count"],
                 phone_count=row["phone_count"],
+                plan_count=row["plan_count"],
                 total_click_count=row["total_click_count"],
                 last_clicked_at=row.get("last_clicked_at"),
             )
@@ -826,7 +845,11 @@ class HtmlPreviewClickStore:
                 list_name=row.get("list_name"),
                 insight_count=row["insight_count"],
                 phone_count=row["phone_count"],
+                plan_count=row["plan_count"],
                 total_click_count=row["total_click_count"],
+                last_clicked_user_id=row.get("last_clicked_user_id"),
+                last_clicked_user_name=row.get("last_clicked_user_name"),
+                manager_clicks=cls._manager_click_items(row["managers"]),
                 last_clicked_at=row.get("last_clicked_at"),
             )
             for row in grouped.values()
@@ -873,7 +896,11 @@ class HtmlPreviewClickStore:
             "list_name": cls._clean_text(list_name),
             "insight_count": 0,
             "phone_count": 0,
+            "plan_count": 0,
             "total_click_count": 0,
+            "last_clicked_user_id": None,
+            "last_clicked_user_name": None,
+            "managers": {},
             "last_clicked_at": None,
         }
 
@@ -889,6 +916,8 @@ class HtmlPreviewClickStore:
             item["insight_count"] += 1
         elif button_type == "phone":
             item["phone_count"] += 1
+        elif button_type == "plan":
+            item["plan_count"] += 1
         else:
             return
 
@@ -904,14 +933,72 @@ class HtmlPreviewClickStore:
         if customer_key and "customers" in item:
             item["customers"].add(customer_key)
 
+        cls._apply_manager_click(item, row, button_type)
+
         clicked_at = row.get("clicked_at")
         last_clicked_at = item.get("last_clicked_at")
         if clicked_at and (
             not last_clicked_at or clicked_at > last_clicked_at
         ):
             item["last_clicked_at"] = clicked_at
+            item["last_clicked_user_id"] = cls._clean_text(row.get("user_id"))
+            item["last_clicked_user_name"] = cls._clean_text(
+                row.get("user_name"),
+            )
             if customer_name and "customer_name" in item:
                 item["customer_name"] = customer_name
+
+    @classmethod
+    def _apply_manager_click(
+        cls,
+        item: dict[str, Any],
+        row: dict[str, Any],
+        button_type: str,
+    ) -> None:
+        """按点击人统计客户经理维度点击次数。"""
+        user_id = cls._clean_text(row.get("user_id"))
+        user_name = cls._clean_text(row.get("user_name"))
+        managers = item.get("managers")
+        if not user_id or not isinstance(managers, dict):
+            return
+
+        manager = managers.setdefault(
+            user_id,
+            {
+                "user_id": user_id,
+                "user_name": user_name,
+                "insight_count": 0,
+                "phone_count": 0,
+                "plan_count": 0,
+                "total_click_count": 0,
+                "last_clicked_at": None,
+            },
+        )
+        manager[f"{button_type}_count"] += 1
+        manager["total_click_count"] += 1
+        if user_name and not manager.get("user_name"):
+            manager["user_name"] = user_name
+        clicked_at = row.get("clicked_at")
+        last_clicked_at = manager.get("last_clicked_at")
+        if clicked_at and (
+            not last_clicked_at or clicked_at > last_clicked_at
+        ):
+            manager["last_clicked_at"] = clicked_at
+            manager["user_name"] = user_name or manager.get("user_name")
+
+    @staticmethod
+    def _manager_click_items(
+        managers: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """把客户经理点击聚合映射为响应列表。"""
+        return sorted(
+            managers.values(),
+            key=lambda item: (
+                item["total_click_count"],
+                item.get("last_clicked_at") or datetime.min,
+            ),
+            reverse=True,
+        )
 
     def _build_event_where_clause(
         self,

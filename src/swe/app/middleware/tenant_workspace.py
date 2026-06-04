@@ -11,6 +11,7 @@ AgentContextMiddleware.
 
 import logging
 from pathlib import Path
+import time
 from typing import Callable, Awaitable
 
 from fastapi import Request, HTTPException
@@ -220,12 +221,24 @@ class TenantWorkspaceMiddleware(BaseHTTPMiddleware):
             bbk_id = getattr(request.state, "bbk_id", None)
 
             # Ensure tenant is bootstrapped (minimal - directories only)
+            bootstrap_started_at = time.perf_counter()
             await pool.ensure_bootstrap(
                 getattr(request.state, "tenant_id", None) or tenant_id,
                 source_id=source_id,
                 scope_id=scope_id,
                 tenant_name=user_name,
                 bbk_id=bbk_id,
+            )
+            bootstrap_duration_ms = int(
+                (time.perf_counter() - bootstrap_started_at) * 1000,
+            )
+            logger.debug(
+                "ensure_bootstrap duration_ms=%d tenant_id=%s source_id=%s "
+                "scope_id=%s",
+                bootstrap_duration_ms,
+                tenant_id,
+                source_id,
+                scope_id,
             )
 
             # Create lightweight context without starting workspace runtime

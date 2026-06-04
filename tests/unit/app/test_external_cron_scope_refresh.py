@@ -138,6 +138,26 @@ async def test_scheduler_payload_uses_logical_tenant_and_source() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scheduler_payload_keeps_full_normalized_cron() -> None:
+    """行外注册时不能截断转换后的 cron 表达式。"""
+    adapter = CapturingSchedulerAdapter()
+
+    await adapter.register_job(
+        tenant_id="tenant-a",
+        source_id="source-a",
+        agent_id="default",
+        task_type="job",
+        job_id="job-1",
+        job_name="daily-window",
+        cron="0 9,10,11,12,13 * * *",
+        callback_url="http://swe.local/api/internal/cron/callback",
+    )
+
+    _, payload = adapter.requests[0]
+    assert payload["jobCron"] == "0 0 9,10,11,12,13 * * ?"
+
+
+@pytest.mark.asyncio
 async def test_callback_resolves_runtime_scope_from_tenant_and_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

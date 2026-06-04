@@ -12,6 +12,7 @@ Example:
 import base64
 import logging
 import os
+import time
 from typing import List, Sequence, Tuple, Type, Any, Union, Optional
 from urllib.parse import urlparse
 
@@ -909,57 +910,72 @@ def create_model_and_formatter(
     Example:
         >>> model, formatter = create_model_and_formatter()
     """
+    started_at = time.perf_counter()
+
     # Resolve tenant and tenant-local agent identity.
     tenant_id = _get_tenant_id()
     resolved_agent_id = _get_agent_id(agent_id, tenant_id)
 
-    # Try to get model from tenant-aware ProviderManager
-    # This is the primary and only supported path for active model resolution
-    model_slot = None
-    retry_config, rate_limit_config = _get_model_runtime_configs(
-        resolved_agent_id,
-        tenant_id,
-    )
-
-    # Ensure tenant provider storage exists before accessing ProviderManager
-    ProviderManager.ensure_tenant_provider_storage(tenant_id)
-    manager = ProviderManager.get_instance(tenant_id)
-
-    # Get model slot from active model configuration
-    model_slot = _get_model_slot(manager)
-    if not model_slot or not model_slot.provider_id or not model_slot.model:
-        raise ValueError(
-            "No tenant model configuration found. "
-            "Please configure a model for this tenant using the admin panel "
-            "or ensure provider configuration is properly set. "
-            "Multi-tenant isolation requires explicit model config.",
+    try:
+        # Try to get model from tenant-aware ProviderManager
+        # This is the primary and only supported path for active model resolution
+        model_slot = None
+        retry_config, rate_limit_config = _get_model_runtime_configs(
+            resolved_agent_id,
+            tenant_id,
         )
 
-    # Get provider and create model instance
-    provider = manager.get_provider(model_slot.provider_id)
-    if provider is None:
-        raise ValueError(f"Provider '{model_slot.provider_id}' not found.")
+        # Ensure tenant provider storage exists before accessing ProviderManager
+        ProviderManager.ensure_tenant_provider_storage(tenant_id)
+        manager = ProviderManager.get_instance(tenant_id)
 
-    model = provider.get_chat_model_instance(model_slot.model)
-    provider_id = model_slot.provider_id
+        # Get model slot from active model configuration
+        model_slot = _get_model_slot(manager)
+        if (
+            not model_slot
+            or not model_slot.provider_id
+            or not model_slot.model
+        ):
+            raise ValueError(
+                "No tenant model configuration found. "
+                "Please configure a model for this tenant using the admin panel "
+                "or ensure provider configuration is properly set. "
+                "Multi-tenant isolation requires explicit model config.",
+            )
 
-    # Create the formatter based on the real model class
-    formatter = _create_formatter_instance(model.__class__)
+        # Get provider and create model instance
+        provider = manager.get_provider(model_slot.provider_id)
+        if provider is None:
+            raise ValueError(f"Provider '{model_slot.provider_id}' not found.")
 
-    # Wrap with tracing and token recording
-    wrapped_model = _wrap_model_with_tracing(provider_id, model)
+        model = provider.get_chat_model_instance(model_slot.model)
+        provider_id = model_slot.provider_id
 
-    # Wrap with retry logic for transient LLM API errors
-    wrapped_model = RetryChatModel(
-        wrapped_model,
-        retry_config=retry_config,
-        rate_limit_config=rate_limit_config,
-        tenant_id=tenant_id,
-        agent_id=resolved_agent_id,
-        on_retry=None,  # 模型层重试回调，后续可通过上下文变量传递事件
-    )
+        # Create the formatter based on the real model class
+        formatter = _create_formatter_instance(model.__class__)
 
-    return wrapped_model, formatter
+        # Wrap with tracing and token recording
+        wrapped_model = _wrap_model_with_tracing(provider_id, model)
+
+        # Wrap with retry logic for transient LLM API errors
+        wrapped_model = RetryChatModel(
+            wrapped_model,
+            retry_config=retry_config,
+            rate_limit_config=rate_limit_config,
+            tenant_id=tenant_id,
+            agent_id=resolved_agent_id,
+            on_retry=None,  # 模型层重试回调，后续可通过上下文变量传递事件
+        )
+
+        return wrapped_model, formatter
+    finally:
+        logger.debug(
+            "create_model_and_formatter_duration_ms=%d tenant_id=%s "
+            "agent_id=%s",
+            int((time.perf_counter() - started_at) * 1000),
+            tenant_id,
+            resolved_agent_id,
+        )
 
 
 def _create_formatter_instance(

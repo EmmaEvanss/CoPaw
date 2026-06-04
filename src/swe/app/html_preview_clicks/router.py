@@ -4,6 +4,7 @@
 import logging
 from datetime import datetime
 from typing import Optional
+from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -88,6 +89,15 @@ def _get_request_user_id(request: Request) -> Optional[str]:
     )
 
 
+def _get_request_user_name(request: Request) -> Optional[str]:
+    """从请求上下文解析当前用户名称。"""
+    value = _first_text(
+        getattr(request.state, "user_name", None),
+        request.headers.get("X-User-Name"),
+    )
+    return unquote(value) if value else None
+
+
 def _get_request_bbk_id(request: Request) -> Optional[str]:
     """从请求上下文解析当前分行/机构标识。"""
     return _first_text(
@@ -118,6 +128,10 @@ async def create_html_preview_click_event(
             "user_id": _first_text(
                 _get_request_user_id(request),
                 event.user_id,
+            ),
+            "user_name": _first_text(
+                _get_request_user_name(request),
+                event.user_name,
             ),
             "bbk_id": _first_text(_get_request_bbk_id(request), event.bbk_id),
             "clicked_at": event.clicked_at or datetime.now(),

@@ -153,6 +153,7 @@ describe("BusinessOverview trend chart", () => {
           customer_name: "祝话",
           insight_count: 2,
           phone_count: 1,
+          plan_count: 1,
           last_clicked_at: "2026-05-19T10:35:00",
         },
       ],
@@ -168,7 +169,8 @@ describe("BusinessOverview trend chart", () => {
           clicked_customer_count: 1,
           insight_count: 2,
           phone_count: 1,
-          total_click_count: 3,
+          plan_count: 1,
+          total_click_count: 4,
           last_clicked_at: "2026-05-19T10:35:00",
         },
       ],
@@ -182,7 +184,30 @@ describe("BusinessOverview trend chart", () => {
           list_name: "到期客户名单[auto-preview].html",
           insight_count: 2,
           phone_count: 1,
-          total_click_count: 3,
+          plan_count: 1,
+          total_click_count: 4,
+          last_clicked_user_id: "manager-1",
+          last_clicked_user_name: "张经理",
+          manager_clicks: [
+            {
+              user_id: "manager-1",
+              user_name: "张经理",
+              insight_count: 2,
+              phone_count: 1,
+              plan_count: 0,
+              total_click_count: 3,
+              last_clicked_at: "2026-05-19T10:35:00",
+            },
+            {
+              user_id: "manager-2",
+              user_name: "李经理",
+              insight_count: 0,
+              phone_count: 0,
+              plan_count: 1,
+              total_click_count: 1,
+              last_clicked_at: "2026-05-19T09:35:00",
+            },
+          ],
           last_clicked_at: "2026-05-19T10:35:00",
         },
       ],
@@ -252,15 +277,20 @@ describe("BusinessOverview trend chart", () => {
   it("renders customer insight and phone click statistics inside business overview", async () => {
     renderBusinessOverview();
 
-    expect(await screen.findByText("客户洞察/电访点击统计")).toBeInTheDocument();
+    expect(await screen.findByText("客户经营点击分析")).toBeInTheDocument();
     expect(await screen.findByText("点击总数")).toBeInTheDocument();
     expect(await screen.findByText("名单总客户数")).toBeInTheDocument();
     expect(await screen.findByText("被点击客户数")).toBeInTheDocument();
     expect(await screen.findByText("到期客户名单[auto-preview].html")).toBeInTheDocument();
     expect(await screen.findByText("祝话")).toBeInTheDocument();
     expect(await screen.findByText("CUST-001")).toBeInTheDocument();
+    expect(await screen.findByText("张经理")).toBeInTheDocument();
     expect((await screen.findAllByText("洞察")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("电访")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("查看方案")).length).toBeGreaterThan(0);
+    fireEvent.click(await screen.findByText("详情"));
+    expect(await screen.findByText("祝话 客户经理点击详情")).toBeInTheDocument();
+    expect(await screen.findByText("李经理")).toBeInTheDocument();
     expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
     expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalled();
     expect(htmlPreviewEventsApiMock.getCustomerClicks).toHaveBeenCalled();

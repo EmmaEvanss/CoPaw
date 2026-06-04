@@ -18,7 +18,7 @@ import { useAppMessage } from "../hooks/useAppMessage";
 import {
   SparkChatTabFill,
   SparkWifiLine,
-  SparkUserGroupLine,
+  // SparkUserGroupLine,
   SparkDateLine,
   SparkVoiceChat01Line,
   SparkLocalFileLine,
@@ -32,7 +32,7 @@ import {
   SparkMenuExpandLine,
   SparkMenuFoldLine,
   SparkBarChartLine,
-  SparkMessageLine,
+  // SparkMessageLine,
   SparkSearchLine,
   SparkFileTxtLine,
   SparkRefreshLine,
@@ -263,18 +263,18 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
       path: "/analytics/messages",
       label: t("nav.analyticsMessages", "Messages"),
     },
-    {
-      key: "analytics-users",
-      icon: <SparkUserGroupLine size={18} />,
-      path: "/analytics/users",
-      label: t("nav.analyticsUsers", "Users"),
-    },
-    {
-      key: "analytics-sessions",
-      icon: <SparkMessageLine size={18} />,
-      path: "/analytics/sessions",
-      label: t("nav.analyticsSessions", "Sessions"),
-    },
+    // {
+    //   key: "analytics-users",
+    //   icon: <SparkUserGroupLine size={18} />,
+    //   path: "/analytics/users",
+    //   label: t("nav.analyticsUsers", "Users"),
+    // },
+    // {
+    //   key: "analytics-sessions",
+    //   icon: <SparkMessageLine size={18} />,
+    //   path: "/analytics/sessions",
+    //   label: t("nav.analyticsSessions", "Sessions"),
+    // },
     {
       key: "analytics-traces",
       icon: <SparkFileTxtLine size={18} />,
@@ -420,16 +420,16 @@ export default function Sidebar({ selectedKey }: SidebarProps) {
           label: collapsed ? null : t("nav.analyticsMessages", "Messages"),
           icon: <SparkSearchLine size={16} />,
         },
-        {
-          key: "analytics-users",
-          label: collapsed ? null : t("nav.analyticsUsers", "Users"),
-          icon: <SparkUserGroupLine size={16} />,
-        },
-        {
-          key: "analytics-sessions",
-          label: collapsed ? null : t("nav.analyticsSessions", "Sessions"),
-          icon: <SparkMessageLine size={16} />,
-        },
+        // {
+        //   key: "analytics-users",
+        //   label: collapsed ? null : t("nav.analyticsUsers", "Users"),
+        //   icon: <SparkUserGroupLine size={16} />,
+        // },
+        // {
+        //   key: "analytics-sessions",
+        //   label: collapsed ? null : t("nav.analyticsSessions", "Sessions"),
+        //   icon: <SparkMessageLine size={16} />,
+        // },
         {
           key: "analytics-traces",
           label: collapsed ? null : t("nav.analyticsTraces", "Traces"),

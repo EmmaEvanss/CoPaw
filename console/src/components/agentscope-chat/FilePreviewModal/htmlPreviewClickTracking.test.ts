@@ -84,6 +84,42 @@ describe("htmlPreviewClickTracking", () => {
     expect(phonePayload?.button_type).toBe("phone");
   });
 
+  it("tracks view plan links without treating generic link buttons as insight", () => {
+    const doc = createDocument(`
+      <table>
+        <thead>
+          <tr>
+            <th>客户姓名</th>
+            <th>经营方案</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr data-customer-id="CUST-001" data-customer-name="祝话">
+            <td><strong>祝话</strong></td>
+            <td><a class="link-btn" href="https://example.com/plan">查看方案</a></td>
+          </tr>
+          <tr>
+            <td>程广泛</td>
+            <td>暂不生成方案</td>
+          </tr>
+        </tbody>
+      </table>
+    `);
+    const link = doc.querySelector("a") as HTMLElement;
+
+    const payload = buildHtmlPreviewClickPayload(link, {
+      fileUrl: "https://example.com/a.html",
+      fileName: "a.html",
+    });
+
+    expect(payload?.button_id).toBe("plan");
+    expect(payload?.button_name).toBe("查看方案");
+    expect(payload?.button_text).toBe("查看方案");
+    expect(payload?.button_type).toBe("plan");
+    expect(payload?.customer_id).toBe("CUST-001");
+    expect(payload?.customer_name).toBe("祝话");
+  });
+
   it("prefers structured customer fields from the clicked table row", () => {
     const doc = createDocument(`
       <table>
@@ -274,5 +310,123 @@ describe("htmlPreviewClickTracking", () => {
 
     cleanup();
     document.body.removeChild(iframe);
+  });
+
+  it("opens nested preview for marked links after recording the click", () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument!;
+    doc.body.innerHTML = `
+      <a
+        href="https://example.com/static/%E6%96%B9%E6%A1%88.html"
+        data-preview-modal="true"
+        data-track-id="view_plan"
+        data-track-name="查看方案"
+      >
+        查看方案
+      </a>
+    `;
+    const reporter = vi.fn();
+    const onOpenNestedPreview = vi.fn();
+
+    const cleanup = attachHtmlPreviewClickTracker({
+      iframe,
+      metadata: {
+        fileUrl: "https://example.com/list.html",
+        fileName: "list.html",
+      },
+      reporter,
+      onOpenNestedPreview,
+    });
+
+    const link = doc.querySelector("a") as HTMLElement;
+    const event = new doc.defaultView!.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    });
+    link.dispatchEvent(event);
+
+    expect(reporter).toHaveBeenCalledTimes(1);
+    expect(reporter.mock.calls[0][0]).toMatchObject({
+      button_id: "view_plan",
+      button_name: "查看方案",
+      button_type: "plan",
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(onOpenNestedPreview).toHaveBeenCalledWith({
+      fileUrl: "https://example.com/static/%E6%96%B9%E6%A1%88.html",
+      fileName: "方案.html",
+      listKey: "https://example.com/list.html",
+      listName: "list.html",
+      customerInfo: null,
+    });
+
+    cleanup();
+    document.body.removeChild(iframe);
+  });
+
+  it("does not intercept ordinary links", () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument!;
+    doc.body.innerHTML = '<a href="https://example.com/plain.html">普通链接</a>';
+    const reporter = vi.fn();
+    const onOpenNestedPreview = vi.fn();
+
+    const cleanup = attachHtmlPreviewClickTracker({
+      iframe,
+      metadata: {
+        fileUrl: "https://example.com/list.html",
+        fileName: "list.html",
+      },
+      reporter,
+      onOpenNestedPreview,
+    });
+
+    const link = doc.querySelector("a") as HTMLElement;
+    const event = new doc.defaultView!.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    });
+    link.dispatchEvent(event);
+
+    expect(reporter).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(false);
+    expect(onOpenNestedPreview).not.toHaveBeenCalled();
+
+    cleanup();
+    document.body.removeChild(iframe);
+  });
+
+  it("keeps nested preview clicks under the parent list and falls back to parent customer info", () => {
+    const doc = createDocument(
+      '<a data-track-id="insight" data-track-name="洞察">客户洞察</a>',
+    );
+    const link = doc.querySelector("a") as HTMLElement;
+
+    const payload = buildHtmlPreviewClickPayload(link, {
+      fileUrl: "https://example.com/plan.html",
+      fileName: "plan.html",
+      listKey: "https://example.com/list.html",
+      listName: "list.html",
+      defaultCustomerInfo: {
+        customer_id: "CUST-001",
+        name: "张三",
+      },
+    });
+
+    expect(payload).toMatchObject({
+      file_url: "https://example.com/plan.html",
+      file_name: "plan.html",
+      list_key: "https://example.com/list.html",
+      list_name: "list.html",
+      button_type: "insight",
+      customer_id: "CUST-001",
+      customer_name: "张三",
+      customer_info: {
+        customer_id: "CUST-001",
+        name: "张三",
+      },
+    });
   });
 });

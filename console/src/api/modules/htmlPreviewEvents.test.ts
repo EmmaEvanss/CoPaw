@@ -174,7 +174,8 @@ describe("htmlPreviewEventsApi", () => {
     await htmlPreviewEventsApi.getLists({
       startTime: "2026-05-30T00:00:00.000Z",
       bbkIds: "branch-1",
-      limit: 20,
+      page: 2,
+      pageSize: 20,
     });
     await htmlPreviewEventsApi.getCustomerClicks({
       startTime: "2026-05-30T00:00:00.000Z",
@@ -186,7 +187,7 @@ describe("htmlPreviewEventsApi", () => {
 
     expect(mocks.request).toHaveBeenNthCalledWith(
       1,
-      "/html-preview/lists?start_time=2026-05-30T00%3A00%3A00.000Z&bbk_ids=branch-1&limit=20",
+      "/html-preview/lists?start_time=2026-05-30T00%3A00%3A00.000Z&bbk_ids=branch-1&page=2&page_size=20",
     );
     expect(mocks.request).toHaveBeenNthCalledWith(
       2,

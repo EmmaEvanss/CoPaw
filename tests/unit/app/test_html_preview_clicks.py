@@ -345,18 +345,7 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
                 "file_name": "a.html",
                 "cron_task_id": "task-1",
                 "cron_task_name": "存款到期提醒",
-                "customer_id": "CUST-001",
-                "customer_name": "祝话",
-            },
-            {
-                "list_key": "list-1",
-                "list_name": "存款到期名单",
-                "file_url": "https://example.com/a.html",
-                "file_name": "a.html",
-                "cron_task_id": "task-1",
-                "cron_task_name": "存款到期提醒",
-                "customer_id": "CUST-002",
-                "customer_name": "程广泛",
+                "customer_count": 2,
             },
         ],
         [
@@ -367,53 +356,42 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
                 "file_name": "a.html",
                 "cron_task_id": "task-1",
                 "cron_task_name": "存款到期提醒",
-                "button_type": "insight",
-                "user_id": "manager-1",
-                "customer_id": "CUST-001",
-                "customer_name": "祝话",
-                "customer_info": None,
-                "clicked_at": clicked_at,
+                "clicked_customer_count": 1,
+                "insight_count": 1,
+                "phone_count": 1,
+                "plan_count": 1,
+                "total_click_count": 3,
+                "last_clicked_at": clicked_at,
             },
+        ],
+        [
             {
                 "list_key": "list-1",
-                "list_name": "存款到期名单",
-                "file_url": "https://example.com/a.html",
-                "file_name": "a.html",
-                "cron_task_id": "task-1",
-                "cron_task_name": "存款到期提醒",
-                "button_type": "phone",
-                "user_id": "manager-1",
-                "customer_id": "CUST-001",
-                "customer_name": "祝话",
-                "customer_info": None,
-                "clicked_at": clicked_at,
-            },
-            {
-                "list_key": "list-1",
-                "list_name": "存款到期名单",
-                "file_url": "https://example.com/a.html",
-                "file_name": "a.html",
-                "cron_task_id": "task-1",
-                "cron_task_name": "存款到期提醒",
-                "button_type": "plan",
-                "user_id": "manager-2",
-                "customer_id": "CUST-001",
-                "customer_name": "祝话",
-                "customer_info": None,
-                "clicked_at": clicked_at,
+                "customer_count": 2,
             },
         ],
     ]
     store = HtmlPreviewClickStore(mock_db)
 
-    items = await store.list_lists(
+    result = await store.list_lists(
         source_id="copaw",
         start_time=datetime(2026, 5, 30, 0, 0, 0),
         end_time=datetime(2026, 5, 30, 23, 59, 59),
         bbk_ids=["branch-1"],
-        limit=20,
+        page_size=20,
     )
 
+    items = result.items
+    assert result.total == 1
+    assert result.page == 1
+    assert result.page_size == 20
+    assert result.summary.list_key == "all"
+    assert result.summary.customer_count == 2
+    assert result.summary.clicked_customer_count == 1
+    assert result.summary.insight_count == 1
+    assert result.summary.phone_count == 1
+    assert result.summary.plan_count == 1
+    assert result.summary.total_click_count == 3
     assert items[0].list_key == "list-1"
     assert items[0].customer_count == 2
     assert items[0].clicked_customer_count == 1
@@ -421,6 +399,125 @@ async def test_list_lists_combines_snapshot_and_clicks(mock_db):
     assert items[0].phone_count == 1
     assert items[0].plan_count == 1
     assert items[0].total_click_count == 3
+    snapshot_query = mock_db.fetch_all.call_args_list[0].args[0]
+    event_query = mock_db.fetch_all.call_args_list[1].args[0]
+    assert "GROUP BY" in snapshot_query
+    assert "COUNT(DISTINCT" in snapshot_query
+    assert f"LIMIT {10000}" not in snapshot_query
+    assert "GROUP BY" in event_query
+    assert "COUNT(" in event_query
+    assert "DISTINCT CASE" in event_query
+    assert "MAX(\n                    CASE" in event_query
+    assert "JSON_EXTRACT" in event_query
+    assert f"LIMIT {10000}" not in event_query
+    union_query = mock_db.fetch_all.call_args_list[2].args[0]
+    assert "UNION" in union_query
+    assert "COUNT(DISTINCT merged.customer_key)" in union_query
+    assert "swe_html_preview_list_snapshots" in union_query
+    assert "swe_html_preview_click_events" in union_query
+
+
+@pytest.mark.asyncio
+async def test_list_lists_counts_snapshot_and_clicked_customer_union(mock_db):
+    """名单客户数应兼容点击客户不在快照中的旧数据。"""
+    clicked_at = datetime(2026, 5, 30, 11, 0, 0)
+    mock_db.fetch_all.side_effect = [
+        [
+            {
+                "list_key": "list-1",
+                "list_name": "存款到期名单",
+                "file_url": "https://example.com/a.html",
+                "file_name": "a.html",
+                "customer_count": 2,
+            },
+        ],
+        [
+            {
+                "list_key": "list-1",
+                "list_name": "存款到期名单",
+                "file_url": "https://example.com/a.html",
+                "file_name": "a.html",
+                "clicked_customer_count": 2,
+                "insight_count": 2,
+                "phone_count": 0,
+                "plan_count": 0,
+                "total_click_count": 2,
+                "last_clicked_at": clicked_at,
+            },
+        ],
+        [
+            {
+                "list_key": "list-1",
+                "customer_count": 3,
+            },
+        ],
+    ]
+    store = HtmlPreviewClickStore(mock_db)
+
+    result = await store.list_lists(
+        source_id="copaw",
+        start_time=datetime(2026, 5, 30, 0, 0, 0),
+        end_time=datetime(2026, 5, 30, 23, 59, 59),
+        bbk_ids=["branch-1"],
+        page_size=20,
+    )
+
+    assert result.items[0].customer_count == 3
+    assert result.summary.customer_count == 3
+    assert result.items[0].clicked_customer_count == 2
+
+
+@pytest.mark.asyncio
+async def test_list_lists_counts_only_valid_click_customers(mock_db):
+    """其他按钮点击不应计入名单被点击客户数或最近点击时间。"""
+    valid_clicked_at = datetime(2026, 5, 30, 11, 0, 0)
+    mock_db.fetch_all.side_effect = [
+        [
+            {
+                "list_key": "list-1",
+                "list_name": "存款到期名单",
+                "file_url": "https://example.com/a.html",
+                "file_name": "a.html",
+                "customer_count": 2,
+            },
+        ],
+        [
+            {
+                "list_key": "list-1",
+                "list_name": "存款到期名单",
+                "file_url": "https://example.com/a.html",
+                "file_name": "a.html",
+                "clicked_customer_count": 1,
+                "insight_count": 1,
+                "phone_count": 0,
+                "plan_count": 0,
+                "total_click_count": 1,
+                "last_clicked_at": valid_clicked_at,
+            },
+        ],
+        [
+            {
+                "list_key": "list-1",
+                "customer_count": 2,
+            },
+        ],
+    ]
+    store = HtmlPreviewClickStore(mock_db)
+
+    result = await store.list_lists(
+        source_id="copaw",
+        start_time=datetime(2026, 5, 30, 0, 0, 0),
+        end_time=datetime(2026, 5, 30, 23, 59, 59),
+        bbk_ids=["branch-1"],
+        page_size=20,
+    )
+
+    assert result.items[0].clicked_customer_count == 1
+    assert result.items[0].last_clicked_at == valid_clicked_at
+    event_query = mock_db.fetch_all.call_args_list[1].args[0]
+    assert "DISTINCT CASE" in event_query
+    assert "WHEN" in event_query
+    assert "THEN clicked_at" in event_query
 
 
 def test_create_route_enriches_source_and_user(monkeypatch):
@@ -592,18 +689,35 @@ def test_lists_route_returns_list_items(monkeypatch):
         async def list_lists(self, **kwargs):
             assert kwargs["source_id"] == "copaw"
             assert kwargs["bbk_ids"] == ["branch-1"]
-            return [
-                HtmlPreviewListSummaryItem(
-                    list_key="list-1",
-                    list_name="存款到期名单",
-                    customer_count=16,
-                    clicked_customer_count=3,
-                    insight_count=4,
-                    phone_count=2,
-                    plan_count=1,
-                    total_click_count=7,
+            assert kwargs["page"] == 2
+            assert kwargs["page_size"] == 20
+            return {
+                "total": 38,
+                "page": 2,
+                "page_size": 20,
+                "summary": HtmlPreviewListSummaryItem(
+                    list_key="all",
+                    list_name="全部名单",
+                    customer_count=160,
+                    clicked_customer_count=30,
+                    insight_count=40,
+                    phone_count=20,
+                    plan_count=10,
+                    total_click_count=70,
                 ),
-            ]
+                "items": [
+                    HtmlPreviewListSummaryItem(
+                        list_key="list-1",
+                        list_name="存款到期名单",
+                        customer_count=16,
+                        clicked_customer_count=3,
+                        insight_count=4,
+                        phone_count=2,
+                        plan_count=1,
+                        total_click_count=7,
+                    ),
+                ],
+            }
 
     app = FastAPI()
 
@@ -618,15 +732,108 @@ def test_lists_route_returns_list_items(monkeypatch):
     client = TestClient(app)
     response = client.get(
         "/html-preview/lists",
-        params={"bbk_ids": "branch-1", "limit": 20},
+        params={"bbk_ids": "branch-1", "page": 2, "page_size": 20},
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["success"] is True
+    assert payload["total"] == 38
+    assert payload["page"] == 2
+    assert payload["page_size"] == 20
+    assert payload["summary"]["list_key"] == "all"
+    assert payload["summary"]["customer_count"] == 160
     assert payload["items"][0]["list_key"] == "list-1"
     assert payload["items"][0]["customer_count"] == 16
     assert payload["items"][0]["plan_count"] == 1
+
+
+def test_lists_route_keeps_limit_compatibility(monkeypatch):
+    """旧 limit 参数应继续作为第一页分页大小兼容。"""
+
+    class _FakeService:
+        async def list_lists(self, **kwargs):
+            assert kwargs["page"] == 1
+            assert kwargs["page_size"] == 50
+            return {
+                "total": 1,
+                "page": 1,
+                "page_size": 50,
+                "summary": HtmlPreviewListSummaryItem(
+                    list_key="all",
+                    list_name="全部名单",
+                    total_click_count=7,
+                ),
+                "items": [
+                    HtmlPreviewListSummaryItem(
+                        list_key="list-1",
+                        list_name="存款到期名单",
+                        customer_count=16,
+                        clicked_customer_count=3,
+                        insight_count=4,
+                        phone_count=2,
+                        plan_count=1,
+                        total_click_count=7,
+                    ),
+                ],
+            }
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_state(request: Request, call_next):
+        request.state.source_id = "copaw"
+        return await call_next(request)
+
+    app.include_router(html_preview_click_router)
+    monkeypatch.setattr(html_preview_router_module, "_service", _FakeService())
+
+    client = TestClient(app)
+    response = client.get(
+        "/html-preview/lists",
+        params={"limit": 50},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["page_size"] == 50
+    assert payload["items"][0]["list_key"] == "list-1"
+
+
+def test_lists_route_defaults_to_legacy_page_size(monkeypatch):
+    """无分页参数时应保持旧接口默认返回 100 条。"""
+
+    class _FakeService:
+        async def list_lists(self, **kwargs):
+            assert kwargs["page"] == 1
+            assert kwargs["page_size"] == 100
+            return {
+                "total": 0,
+                "page": 1,
+                "page_size": 100,
+                "summary": HtmlPreviewListSummaryItem(
+                    list_key="all",
+                    list_name="全部名单",
+                ),
+                "items": [],
+            }
+
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def _inject_state(request: Request, call_next):
+        request.state.source_id = "copaw"
+        return await call_next(request)
+
+    app.include_router(html_preview_click_router)
+    monkeypatch.setattr(html_preview_router_module, "_service", _FakeService())
+
+    client = TestClient(app)
+    response = client.get("/html-preview/lists")
+
+    assert response.status_code == 200
+    assert response.json()["page_size"] == 100
 
 
 def test_customer_clicks_route_returns_customer_items(monkeypatch):

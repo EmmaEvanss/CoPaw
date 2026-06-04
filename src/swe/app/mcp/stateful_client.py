@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import AsyncExitStack
+from contextlib import suppress
 from datetime import timedelta
 from typing import Any, Literal
 
@@ -37,6 +38,18 @@ from ...constant import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _cancel_lifecycle_task(
+    lifecycle_task: asyncio.Task | None,
+) -> None:
+    """主动取消生命周期任务，避免超时清理被底层 I/O 反向卡住。"""
+    if lifecycle_task is None:
+        return
+
+    lifecycle_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await lifecycle_task
 
 
 async def _call_with_timeout(
@@ -326,10 +339,14 @@ class StdIOStatefulClient(StatefulClientBase):
             logger.error(
                 f"Timeout waiting for MCP client '{self.name}' to connect",
             )
-            # Clean up failed task
             self._stop_event.set()
             if self._lifecycle_task:
-                await self._lifecycle_task
+                await _cancel_lifecycle_task(self._lifecycle_task)
+                self._lifecycle_task = None
+            self.session = None
+            self.is_connected = False
+            self._cached_tools = None
+            self._ready_event.clear()
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:
@@ -699,7 +716,12 @@ class HttpStatefulClient(StatefulClientBase):
             )
             self._stop_event.set()
             if self._lifecycle_task:
-                await self._lifecycle_task
+                await _cancel_lifecycle_task(self._lifecycle_task)
+                self._lifecycle_task = None
+            self.session = None
+            self.is_connected = False
+            self._cached_tools = None
+            self._ready_event.clear()
             raise
 
     async def close(self, ignore_errors: bool = True) -> None:

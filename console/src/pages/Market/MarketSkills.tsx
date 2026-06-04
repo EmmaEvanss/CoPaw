@@ -620,7 +620,7 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
         open={uploadModalOpen}
         sourceId={sourceId}
         onClose={() => setUploadModalOpen(false)}
-        onSuccess={refreshSkills}
+        onSuccess={refreshSkillsAndDetail}
       />
 
       {/* 统一分发弹窗 */}

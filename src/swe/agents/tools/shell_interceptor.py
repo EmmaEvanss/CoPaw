@@ -79,6 +79,15 @@ def _has_param(tokens: List[str], param_name: str) -> bool:
     return False
 
 
+def _is_swe_cron_group_help(tokens: List[str]) -> bool:
+    return (
+        len(tokens) == 3
+        and tokens[0] == "swe"
+        and tokens[1] == "cron"
+        and tokens[2] in {"-h", "--help"}
+    )
+
+
 def intercept_command(command: str) -> Tuple[str, bool]:
     """Intercept and modify command with tenant isolation params.
 
@@ -108,6 +117,8 @@ def intercept_command(command: str) -> Tuple[str, bool]:
         return command, False
 
     if not tokens:
+        return command, False
+    if _is_swe_cron_group_help(tokens):
         return command, False
 
     # 匹配拦截规则（按优先级顺序）

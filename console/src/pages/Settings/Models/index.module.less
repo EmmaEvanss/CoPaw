@@ -199,15 +199,56 @@
 /* Card Title Row */
 .cardTitleRow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.providerTitleText {
+  flex: 1;
+  min-width: 0;
+}
+
+.providerNameLine,
+.providerIdLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.providerNameLine {
+  margin-bottom: 2px;
+}
+
+.providerFieldLabel {
+  width: 72px;
+  flex-shrink: 0;
+  color: rgba(0, 0, 0, 0.38);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .cardName {
   font-size: 16px;
   font-weight: 600;
   color: #1a1a1a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.providerIdText {
+  color: rgba(0, 0, 0, 0.58);
+  font-family: "SF Mono", "Menlo", monospace;
+  font-size: 14px;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Tags */

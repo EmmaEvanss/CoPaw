@@ -21,6 +21,9 @@ router = APIRouter(prefix="/cron", tags=["cron"])
 BROADCAST_MODEL_SLOT_WARNING = (
     "model_slot not copied: provider/model unavailable in target tenant"
 )
+BROADCAST_CRON_FALLBACK_WARNING = (
+    "cron offset not applied: unsupported cron, using original schedule"
+)
 BROADCAST_ORIGINAL_MODEL_SLOT_META_KEY = "broadcast_original_model_slot"
 BROADCAST_MODEL_SLOT_FALLBACK_REASON_META_KEY = (
     "broadcast_model_slot_fallback_reason"
@@ -167,6 +170,10 @@ def _resolve_broadcast_model_slot(
             "model_not_found",
         )
     return source_job.model_slot, "", ""
+
+
+def _join_broadcast_warnings(*warnings: str) -> str:
+    return "; ".join(item for item in warnings if item)
 
 
 async def _ensure_task_binding_for_read(
@@ -402,18 +409,16 @@ async def broadcast_job(
             timezone_name,
             offset_minutes=offset,
         )
+        cron_warning = ""
+        applied_offset = offset
         if shifted.error:
-            results.append(
-                CronBroadcastTenantResult(
-                    tenant_id=tenant_id,
-                    success=False,
-                    timezone=shifted.timezone,
-                    offset_minutes=offset,
-                    notification_timezone=timezone_name,
-                    error=shifted.error,
-                ),
-            )
-            continue
+            cron_warning = BROADCAST_CRON_FALLBACK_WARNING
+            applied_offset = 0
+            cron = source_job.schedule.cron
+            shifted_timezone = timezone_name
+        else:
+            cron = shifted.cron
+            shifted_timezone = shifted.timezone
         try:
             if tenant_workspace_pool is not None:
                 await tenant_workspace_pool.ensure_bootstrap(
@@ -442,9 +447,9 @@ async def broadcast_job(
                 job_id=target_job_id,
                 target_tenant_id=tenant_id,
                 source_id=source_id,
-                cron=shifted.cron,
-                timezone_name=shifted.timezone,
-                offset_minutes=offset,
+                cron=cron,
+                timezone_name=shifted_timezone,
+                offset_minutes=applied_offset,
                 model_slot=model_slot,
                 model_slot_fallback_reason=model_slot_fallback_reason,
             )
@@ -457,9 +462,12 @@ async def broadcast_job(
                     job_id=target_job_id,
                     cron=(saved or target_job).schedule.cron,
                     timezone=(saved or target_job).schedule.timezone,
-                    offset_minutes=offset,
+                    offset_minutes=applied_offset,
                     notification_timezone=timezone_name,
-                    warning=warning,
+                    warning=_join_broadcast_warnings(
+                        warning,
+                        cron_warning,
+                    ),
                 ),
             )
         except Exception as exc:  # pylint: disable=broad-except
@@ -467,11 +475,12 @@ async def broadcast_job(
                 CronBroadcastTenantResult(
                     tenant_id=tenant_id,
                     success=False,
-                    cron=shifted.cron,
-                    timezone=shifted.timezone,
-                    offset_minutes=offset,
+                    cron=cron,
+                    timezone=shifted_timezone,
+                    offset_minutes=applied_offset,
                     notification_timezone=timezone_name,
                     error=repr(exc),
+                    warning=cron_warning,
                 ),
             )
     return CronBroadcastResponse(results=results)

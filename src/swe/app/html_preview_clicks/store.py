@@ -13,6 +13,7 @@ from .models import (
     HtmlPreviewCustomerClickSummaryItem,
     HtmlPreviewListSnapshotCreate,
     HtmlPreviewListSummaryItem,
+    HtmlPreviewListSummaryResponse,
 )
 
 CUSTOMER_SUMMARY_SCAN_LIMIT = 10000
@@ -60,7 +61,10 @@ class HtmlPreviewClickStore:
 
     @staticmethod
     def _encode_json(value: Optional[dict[str, str]]) -> Optional[str]:
-        """把扩展信息序列化为 JSON，避免数据库驱动差异影响写入。"""
+        """把扩展信息序列化为 JSON。
+
+        避免数据库驱动差异影响写入。
+        """
         if not value:
             return None
         cleaned = {
@@ -548,28 +552,49 @@ class HtmlPreviewClickStore:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         bbk_ids: Optional[list[str]] = None,
-        limit: int = 100,
-    ) -> list[HtmlPreviewListSummaryItem]:
+        page: int = 1,
+        page_size: int = 20,
+    ) -> HtmlPreviewListSummaryResponse:
         """查询名单维度统计。"""
         if not self._use_db:
-            return []
+            return self._empty_list_page(page=page, page_size=page_size)
 
-        snapshot_rows = await self._fetch_snapshot_rows(
+        snapshot_rows = await self._fetch_snapshot_list_summary_rows(
             source_id=source_id,
             bbk_ids=bbk_ids,
-            list_key=None,
         )
-        event_rows = await self._fetch_event_rows(
+        event_rows = await self._fetch_event_list_summary_rows(
             source_id=source_id,
             start_time=start_time,
             end_time=end_time,
             bbk_ids=bbk_ids,
-            cron_task_id=None,
-            file_url=None,
-            list_key=None,
         )
-        grouped = self._build_list_summary(snapshot_rows, event_rows)
-        return grouped[: max(1, min(limit, 200))]
+        customer_rows = await self._fetch_list_customer_union_rows(
+            source_id=source_id,
+            start_time=start_time,
+            end_time=end_time,
+            bbk_ids=bbk_ids,
+        )
+        grouped = self._build_list_summary_from_aggregates(
+            snapshot_rows,
+            event_rows,
+            customer_rows,
+        )
+        safe_page = max(1, page)
+        safe_page_size = max(1, min(page_size, 100))
+        start = (safe_page - 1) * safe_page_size
+        end = start + safe_page_size
+        return HtmlPreviewListSummaryResponse(
+            success=True,
+            total=len(grouped),
+            clicked_list_count=sum(
+                1 for item in grouped if item.total_click_count > 0
+            ),
+            page=safe_page,
+            page_size=safe_page_size,
+            summary=self._build_list_summary_total(grouped),
+            items=grouped[start:end],
+        )
 
     async def list_customer_clicks(
         self,
@@ -658,6 +683,76 @@ class HtmlPreviewClickStore:
         """
         return await self.db.fetch_all(query, tuple(params))
 
+    async def _fetch_event_list_summary_rows(
+        self,
+        *,
+        source_id: Optional[str],
+        start_time: Optional[datetime],
+        end_time: Optional[datetime],
+        bbk_ids: Optional[list[str]],
+    ) -> list[dict[str, Any]]:
+        """按名单聚合点击事件，避免截断明细行后再统计。"""
+        where_sql, params = self._build_event_where_clause(
+            source_id=source_id,
+            start_time=start_time,
+            end_time=end_time,
+            bbk_ids=bbk_ids,
+            cron_task_id=None,
+            file_url=None,
+            list_key=None,
+        )
+        list_key_expr = self._sql_list_key_expr()
+        customer_key_expr = self._sql_event_customer_key_expr()
+        button_type_expr = self._sql_button_type_expr()
+        valid_click_condition = (
+            f"{button_type_expr} IN ('insight', 'phone', 'plan')"
+        )
+        query = f"""
+            SELECT
+                {list_key_expr} AS list_key,
+                COALESCE(
+                    NULLIF(MAX(list_name), ''),
+                    NULLIF(MAX(file_name), ''),
+                    NULLIF(MAX(file_url), ''),
+                    '未知名单'
+                ) AS list_name,
+                MAX(file_url) AS file_url,
+                MAX(file_name) AS file_name,
+                MAX(cron_task_id) AS cron_task_id,
+                MAX(cron_task_name) AS cron_task_name,
+                COUNT(
+                    DISTINCT CASE
+                        WHEN {valid_click_condition}
+                        THEN {customer_key_expr}
+                        ELSE NULL
+                    END
+                ) AS clicked_customer_count,
+                SUM(CASE WHEN {button_type_expr} = 'insight' THEN 1 ELSE 0 END)
+                    AS insight_count,
+                SUM(CASE WHEN {button_type_expr} = 'phone' THEN 1 ELSE 0 END)
+                    AS phone_count,
+                SUM(CASE WHEN {button_type_expr} = 'plan' THEN 1 ELSE 0 END)
+                    AS plan_count,
+                SUM(
+                    CASE
+                        WHEN {button_type_expr} IN ('insight', 'phone', 'plan')
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS total_click_count,
+                MAX(
+                    CASE
+                        WHEN {valid_click_condition}
+                        THEN clicked_at
+                        ELSE NULL
+                    END
+                ) AS last_clicked_at
+            FROM swe_html_preview_click_events
+            {where_sql}
+            GROUP BY {list_key_expr}
+        """
+        return await self.db.fetch_all(query, tuple(params))
+
     async def _fetch_snapshot_rows(
         self,
         *,
@@ -691,6 +786,235 @@ class HtmlPreviewClickStore:
             LIMIT {CUSTOMER_SUMMARY_SCAN_LIMIT}
         """
         return await self.db.fetch_all(query, tuple(params))
+
+    async def _fetch_snapshot_list_summary_rows(
+        self,
+        *,
+        source_id: Optional[str],
+        bbk_ids: Optional[list[str]],
+    ) -> list[dict[str, Any]]:
+        """按名单聚合客户快照，避免扫描客户明细后再分页。"""
+        where_sql, params = self._build_snapshot_where_clause(
+            source_id=source_id,
+            bbk_ids=bbk_ids,
+            list_key=None,
+        )
+        list_key_expr = self._sql_list_key_expr()
+        customer_key_expr = self._sql_snapshot_customer_key_expr()
+        query = f"""
+            SELECT
+                {list_key_expr} AS list_key,
+                COALESCE(
+                    NULLIF(MAX(list_name), ''),
+                    NULLIF(MAX(file_name), ''),
+                    NULLIF(MAX(file_url), ''),
+                    '未知名单'
+                ) AS list_name,
+                MAX(file_url) AS file_url,
+                MAX(file_name) AS file_name,
+                MAX(cron_task_id) AS cron_task_id,
+                MAX(cron_task_name) AS cron_task_name,
+                COUNT(DISTINCT {customer_key_expr}) AS customer_count
+            FROM swe_html_preview_list_snapshots
+            {where_sql}
+            GROUP BY {list_key_expr}
+        """
+        return await self.db.fetch_all(query, tuple(params))
+
+    async def _fetch_list_customer_union_rows(
+        self,
+        *,
+        source_id: Optional[str],
+        start_time: Optional[datetime],
+        end_time: Optional[datetime],
+        bbk_ids: Optional[list[str]],
+    ) -> list[dict[str, Any]]:
+        """按名单统计快照客户与有效点击客户的并集数量。"""
+        snapshot_where_sql, snapshot_params = (
+            self._build_snapshot_where_clause(
+                source_id=source_id,
+                bbk_ids=bbk_ids,
+                list_key=None,
+            )
+        )
+        event_where_sql, event_params = self._build_event_where_clause(
+            source_id=source_id,
+            start_time=start_time,
+            end_time=end_time,
+            bbk_ids=bbk_ids,
+            cron_task_id=None,
+            file_url=None,
+            list_key=None,
+        )
+        list_key_expr = self._sql_list_key_expr()
+        snapshot_customer_key_expr = self._sql_snapshot_customer_key_expr()
+        event_customer_key_expr = self._sql_event_customer_key_expr()
+        button_type_expr = self._sql_button_type_expr()
+        event_where_with_valid_clicks = self._append_sql_condition(
+            event_where_sql,
+            f"{button_type_expr} IN ('insight', 'phone', 'plan')",
+        )
+        query = f"""
+            SELECT
+                merged.list_key,
+                COUNT(DISTINCT merged.customer_key) AS customer_count
+            FROM (
+                SELECT
+                    {list_key_expr} AS list_key,
+                    {snapshot_customer_key_expr} AS customer_key
+                FROM swe_html_preview_list_snapshots
+                {snapshot_where_sql}
+                UNION
+                SELECT
+                    {list_key_expr} AS list_key,
+                    {event_customer_key_expr} AS customer_key
+                FROM swe_html_preview_click_events
+                {event_where_with_valid_clicks}
+            ) AS merged
+            WHERE merged.list_key IS NOT NULL
+                AND merged.customer_key IS NOT NULL
+            GROUP BY merged.list_key
+        """
+        return await self.db.fetch_all(
+            query,
+            tuple(snapshot_params + event_params),
+        )
+
+    @staticmethod
+    def _append_sql_condition(where_sql: str, condition: str) -> str:
+        """在已有 WHERE 片段后追加一个 AND 条件。"""
+        if where_sql.strip():
+            return f"{where_sql} AND {condition}"
+        return f"WHERE {condition}"
+
+    @staticmethod
+    def _sql_list_key_expr() -> str:
+        """名单 SQL 去重键，保留旧数据 file_url 兜底。"""
+        return "COALESCE(NULLIF(list_key, ''), file_url)"
+
+    @staticmethod
+    def _sql_snapshot_customer_key_expr() -> str:
+        """名单快照客户 SQL 去重键，保留姓名兜底。"""
+        return """
+            COALESCE(
+                NULLIF(customer_id, ''),
+                CONCAT('name:', COALESCE(NULLIF(customer_name, ''), '未知客户'))
+            )
+        """
+
+    @staticmethod
+    def _sql_event_customer_key_expr() -> str:
+        """点击事件客户 SQL 去重键，兼容结构字段和 JSON 字段。"""
+        return """
+            COALESCE(
+                NULLIF(customer_id, ''),
+                NULLIF(
+                    JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$.customer_id')),
+                    ''
+                ),
+                CASE
+                    WHEN COALESCE(
+                        NULLIF(customer_name, ''),
+                        NULLIF(
+                            JSON_UNQUOTE(JSON_EXTRACT(customer_info, '$.name')),
+                            ''
+                        ),
+                        NULLIF(
+                            JSON_UNQUOTE(
+                                JSON_EXTRACT(customer_info, '$.customer_name')
+                            ),
+                            ''
+                        ),
+                        NULLIF(
+                            JSON_UNQUOTE(
+                                JSON_EXTRACT(customer_info, '$."客户姓名"')
+                            ),
+                            ''
+                        ),
+                        NULLIF(
+                            JSON_UNQUOTE(
+                                JSON_EXTRACT(customer_info, '$."客户名称"')
+                            ),
+                            ''
+                        ),
+                        NULLIF(
+                            JSON_UNQUOTE(
+                                JSON_EXTRACT(customer_info, '$."姓名"')
+                            ),
+                            ''
+                        )
+                    ) IS NOT NULL THEN CONCAT(
+                        'name:',
+                        COALESCE(
+                            NULLIF(customer_name, ''),
+                            NULLIF(
+                                JSON_UNQUOTE(
+                                    JSON_EXTRACT(customer_info, '$.name')
+                                ),
+                                ''
+                            ),
+                            NULLIF(
+                                JSON_UNQUOTE(
+                                    JSON_EXTRACT(
+                                        customer_info,
+                                        '$.customer_name'
+                                    )
+                                ),
+                                ''
+                            ),
+                            NULLIF(
+                                JSON_UNQUOTE(
+                                    JSON_EXTRACT(
+                                        customer_info,
+                                        '$."客户姓名"'
+                                    )
+                                ),
+                                ''
+                            ),
+                            NULLIF(
+                                JSON_UNQUOTE(
+                                    JSON_EXTRACT(
+                                        customer_info,
+                                        '$."客户名称"'
+                                    )
+                                ),
+                                ''
+                            ),
+                            NULLIF(
+                                JSON_UNQUOTE(
+                                    JSON_EXTRACT(customer_info, '$."姓名"')
+                                ),
+                                ''
+                            )
+                        )
+                    )
+                    ELSE NULL
+                END
+            )
+        """
+
+    @staticmethod
+    def _sql_button_type_expr() -> str:
+        """点击类型 SQL 归类，兼容旧数据缺失 button_type 的情况。"""
+        return """
+            CASE
+                WHEN button_type IN ('insight', 'phone', 'plan', 'other')
+                    THEN button_type
+                WHEN LOWER(COALESCE(button_id, '')) LIKE '%plan%'
+                    OR COALESCE(button_name, '') LIKE '%查看方案%'
+                    OR COALESCE(button_text, '') LIKE '%查看方案%'
+                    THEN 'plan'
+                WHEN LOWER(COALESCE(button_id, '')) LIKE '%phone%'
+                    OR COALESCE(button_name, '') LIKE '%电访%'
+                    OR COALESCE(button_text, '') LIKE '%电访%'
+                    THEN 'phone'
+                WHEN LOWER(COALESCE(button_id, '')) LIKE '%insight%'
+                    OR COALESCE(button_name, '') LIKE '%洞察%'
+                    OR COALESCE(button_text, '') LIKE '%洞察%'
+                    THEN 'insight'
+                ELSE 'other'
+            END
+        """
 
     @classmethod
     def _build_list_summary(
@@ -787,6 +1111,175 @@ class HtmlPreviewClickStore:
                 item.last_clicked_at or datetime.min,
             ),
             reverse=True,
+        )
+
+    @classmethod
+    def _build_list_summary_from_aggregates(
+        cls,
+        snapshot_rows: list[dict[str, Any]],
+        event_rows: list[dict[str, Any]],
+        customer_rows: list[dict[str, Any]],
+    ) -> list[HtmlPreviewListSummaryItem]:
+        """组合名单级聚合行，生成名单维度统计。"""
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in snapshot_rows:
+            list_key = cls._list_key(
+                row.get("file_url") or "",
+                row.get("list_key"),
+            )
+            grouped[list_key] = {
+                "list_key": list_key,
+                "list_name": cls._list_name(
+                    row.get("file_name"),
+                    row.get("list_name"),
+                    row.get("file_url"),
+                ),
+                "file_url": row.get("file_url"),
+                "file_name": row.get("file_name"),
+                "cron_task_id": row.get("cron_task_id"),
+                "cron_task_name": row.get("cron_task_name"),
+                "customer_count": int(row.get("customer_count") or 0),
+                "clicked_customer_count": 0,
+                "insight_count": 0,
+                "phone_count": 0,
+                "plan_count": 0,
+                "total_click_count": 0,
+                "last_clicked_at": None,
+            }
+
+        for row in event_rows:
+            list_key = cls._list_key(
+                row.get("file_url") or "",
+                row.get("list_key"),
+            )
+            item = grouped.setdefault(
+                list_key,
+                {
+                    "list_key": list_key,
+                    "list_name": cls._list_name(
+                        row.get("file_name"),
+                        row.get("list_name"),
+                        row.get("file_url"),
+                    ),
+                    "file_url": row.get("file_url"),
+                    "file_name": row.get("file_name"),
+                    "cron_task_id": row.get("cron_task_id"),
+                    "cron_task_name": row.get("cron_task_name"),
+                    "customer_count": 0,
+                    "clicked_customer_count": 0,
+                    "insight_count": 0,
+                    "phone_count": 0,
+                    "plan_count": 0,
+                    "total_click_count": 0,
+                    "last_clicked_at": None,
+                },
+            )
+            clicked_customer_count = int(
+                row.get("clicked_customer_count") or 0,
+            )
+            item["customer_count"] = max(
+                int(item.get("customer_count") or 0),
+                clicked_customer_count,
+            )
+            item["clicked_customer_count"] = clicked_customer_count
+            item["insight_count"] = int(row.get("insight_count") or 0)
+            item["phone_count"] = int(row.get("phone_count") or 0)
+            item["plan_count"] = int(row.get("plan_count") or 0)
+            item["total_click_count"] = int(row.get("total_click_count") or 0)
+            item["last_clicked_at"] = row.get("last_clicked_at")
+            for field in (
+                "file_url",
+                "file_name",
+                "cron_task_id",
+                "cron_task_name",
+            ):
+                if row.get(field) and not item.get(field):
+                    item[field] = row.get(field)
+
+        for row in customer_rows:
+            list_key = cls._list_key(
+                "",
+                row.get("list_key"),
+            )
+            if list_key not in grouped:
+                continue
+            grouped[list_key]["customer_count"] = int(
+                row.get("customer_count") or 0,
+            )
+
+        items = [
+            HtmlPreviewListSummaryItem(
+                list_key=row["list_key"],
+                list_name=row["list_name"],
+                file_url=row.get("file_url"),
+                file_name=row.get("file_name"),
+                cron_task_id=row.get("cron_task_id"),
+                cron_task_name=row.get("cron_task_name"),
+                customer_count=row["customer_count"],
+                clicked_customer_count=row["clicked_customer_count"],
+                insight_count=row["insight_count"],
+                phone_count=row["phone_count"],
+                plan_count=row["plan_count"],
+                total_click_count=row["total_click_count"],
+                last_clicked_at=row.get("last_clicked_at"),
+            )
+            for row in grouped.values()
+        ]
+        return sorted(
+            items,
+            key=lambda item: (
+                item.total_click_count,
+                item.last_clicked_at or datetime.min,
+            ),
+            reverse=True,
+        )
+
+    @staticmethod
+    def _empty_list_page(
+        *,
+        page: int,
+        page_size: int,
+    ) -> HtmlPreviewListSummaryResponse:
+        """构造空名单分页结果。"""
+        safe_page = max(1, page)
+        safe_page_size = max(1, min(page_size, 100))
+        return HtmlPreviewListSummaryResponse(
+            success=True,
+            total=0,
+            clicked_list_count=0,
+            page=safe_page,
+            page_size=safe_page_size,
+            summary=HtmlPreviewListSummaryItem(
+                list_key="all",
+                list_name="全部名单",
+            ),
+            items=[],
+        )
+
+    @staticmethod
+    def _build_list_summary_total(
+        items: list[HtmlPreviewListSummaryItem],
+    ) -> HtmlPreviewListSummaryItem:
+        """汇总当前筛选条件下的全量名单指标。"""
+        return HtmlPreviewListSummaryItem(
+            list_key="all",
+            list_name="全部名单",
+            customer_count=sum(item.customer_count for item in items),
+            clicked_customer_count=sum(
+                item.clicked_customer_count for item in items
+            ),
+            insight_count=sum(item.insight_count for item in items),
+            phone_count=sum(item.phone_count for item in items),
+            plan_count=sum(item.plan_count for item in items),
+            total_click_count=sum(item.total_click_count for item in items),
+            last_clicked_at=max(
+                (
+                    item.last_clicked_at
+                    for item in items
+                    if item.last_clicked_at
+                ),
+                default=None,
+            ),
         )
 
     @classmethod

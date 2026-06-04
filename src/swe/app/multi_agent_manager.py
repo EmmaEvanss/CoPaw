@@ -7,6 +7,7 @@ including lazy loading, lifecycle management, and hot reloading.
 
 import asyncio
 import logging
+import time
 from typing import Dict, Set, Optional
 
 from .workspace import Workspace
@@ -78,11 +79,17 @@ class MultiAgentManager:
         Raises:
             ValueError: If agent ID not found in configuration
         """
+        started_at = time.perf_counter()
         cache_key = self._cache_key(agent_id, tenant_id)
         async with self._lock:
             # Return existing agent if already loaded
             if cache_key in self.agents:
-                logger.debug(f"Returning cached agent: {cache_key}")
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.debug(
+                    "workspace_cache_hit cache_key=%s duration_ms=%d",
+                    cache_key,
+                    duration_ms,
+                )
                 return self.agents[cache_key]
 
             # Load configuration to get agent reference
@@ -110,6 +117,12 @@ class MultiAgentManager:
                 instance.set_manager(self)  # Set manager reference
                 self.agents[cache_key] = instance
                 logger.info(f"Workspace created and started: {cache_key}")
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.debug(
+                    "workspace_cache_miss cache_key=%s duration_ms=%d",
+                    cache_key,
+                    duration_ms,
+                )
                 return instance
             except Exception as e:
                 logger.error(f"Failed to start workspace {cache_key}: {e}")

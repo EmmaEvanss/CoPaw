@@ -173,4 +173,28 @@ describe("ChatTaskList actions", () => {
       container.querySelector(".chat-task-list-item-action-trigger"),
     ).toBeInTheDocument();
   });
+
+  it("adds upcoming run times to the next-run hover title", () => {
+    const task = taskJob({
+      state: {
+        next_run_at: "2026-06-04T01:00:00Z",
+        next_run_times: [
+          "2026-06-04T01:00:00Z",
+          "2026-06-05T01:00:00Z",
+          "2026-06-06T01:00:00Z",
+        ],
+      },
+    });
+    const { container } = render(<ChatTaskList tasks={[task]} />);
+
+    const nextRun = container.querySelector(".chat-task-list-item-next-run");
+
+    expect(nextRun).toHaveAttribute(
+      "title",
+      expect.stringContaining("之后三次运行时间"),
+    );
+    expect(nextRun?.getAttribute("title")).toContain("06-04");
+    expect(nextRun?.getAttribute("title")).toContain("06-05");
+    expect(nextRun?.getAttribute("title")).toContain("06-06");
+  });
 });

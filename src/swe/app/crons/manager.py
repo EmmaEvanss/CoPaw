@@ -31,7 +31,7 @@ from ..source_system_config.runtime import (
     set_current_source_system_config,
 )
 from .auth_state import prefetch_auth_token
-from .cron_utils import compute_next_run_at
+from .cron_utils import compute_next_run_at, compute_next_run_times
 from .executor import CronExecutor
 from .models import CronJobSpec, CronJobState, CronTaskView, JobsFile
 from .repo.base import BaseJobRepository
@@ -2521,12 +2521,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
         if not job.schedule or not job.schedule.cron:
             return
         try:
-            next_run = compute_next_run_at(
+            next_runs = compute_next_run_times(
                 job.schedule.cron,
                 job.schedule.timezone or self._timezone or "UTC",
+                count=3,
             )
             st = self._states.get(job.id, CronJobState())
-            st.next_run_at = next_run
+            st.next_run_times = next_runs
+            st.next_run_at = next_runs[0] if next_runs else None
             self._states[job.id] = st
         except Exception:
             logger.debug(

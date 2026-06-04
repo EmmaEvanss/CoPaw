@@ -4,6 +4,7 @@ import Style from "./style";
 import { DESIGN_TOKENS } from "@/config/designTokens";
 import {
   getTaskNextRunText,
+  getTaskNextRunTooltipText,
   getTaskSidebarMeta,
   TASK_COMPLETED_STATUS_TEXT,
 } from "../../taskJobs";
@@ -102,6 +103,7 @@ export default function ChatTaskList(props: ChatTaskListProps) {
               tasks.map((task) => {
                 const sidebarMeta = getTaskSidebarMeta(task);
                 const nextRunText = getTaskNextRunText(task);
+                const nextRunTooltipText = getTaskNextRunTooltipText(task);
 
                 return (
                   <div
@@ -185,7 +187,10 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                       </div>
                     )}
                     {nextRunText && (
-                      <div className="chat-task-list-item-next-run">
+                      <div
+                        className="chat-task-list-item-next-run"
+                        title={nextRunTooltipText}
+                      >
                         {nextRunText}
                       </div>
                     )}

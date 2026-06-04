@@ -520,6 +520,25 @@ async def test_list_lists_counts_only_valid_click_customers(mock_db):
     assert "THEN clicked_at" in event_query
 
 
+@pytest.mark.asyncio
+async def test_list_lists_queries_are_aiomysql_percent_safe(mock_db):
+    """名单汇总 SQL 字面量百分号不应破坏 aiomysql 参数替换。"""
+    mock_db.fetch_all.side_effect = [[], [], []]
+    store = HtmlPreviewClickStore(mock_db)
+
+    await store.list_lists(
+        source_id="copaw",
+        start_time=datetime(2026, 5, 30, 0, 0, 0),
+        end_time=datetime(2026, 5, 30, 23, 59, 59),
+        bbk_ids=["branch-1"],
+        page_size=20,
+    )
+
+    for call in mock_db.fetch_all.call_args_list:
+        query, params = call.args
+        query % tuple("escaped" for _ in params)
+
+
 def test_create_route_enriches_source_and_user(monkeypatch):
     """路由应从请求上下文补齐来源和用户标识。"""
 

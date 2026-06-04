@@ -66,11 +66,18 @@ def test_save_cron_auth_state_uses_tenant_secret_dir_even_with_workspace_dir(
 
 def test_cleanup_cron_auth_except_source_keeps_rmassist_only(tmp_path):
     keep_scope = encode_scope_id("tenant-a", "RMASSIST")
+    force_delete_scope = encode_scope_id("tenant-force", "RMASSIST")
     delete_scope = encode_scope_id("tenant-b", "PORTAL")
     legacy_keep = "default_RMASSIST"
     raw_tenant = "tenant-c"
 
-    for tenant_id in (keep_scope, delete_scope, legacy_keep, raw_tenant):
+    for tenant_id in (
+        keep_scope,
+        force_delete_scope,
+        delete_scope,
+        legacy_keep,
+        raw_tenant,
+    ):
         secret_dir = tmp_path / tenant_id / ".secret"
         secret_dir.mkdir(parents=True)
         (secret_dir / auth_state.CRON_AUTH_FILE_NAME).write_text(
@@ -80,14 +87,21 @@ def test_cleanup_cron_auth_except_source_keeps_rmassist_only(tmp_path):
     (tmp_path / "tenant-without-auth").mkdir()
 
     result = auth_state.cleanup_cron_auth_except_source(
+        force_delete_tenant_ids=["tenant-force"],
         working_dir=tmp_path,
     )
 
-    assert set(result.deleted_tenant_ids) == {delete_scope, raw_tenant}
+    assert set(result.deleted_tenant_ids) == {
+        delete_scope,
+        force_delete_scope,
+        raw_tenant,
+    }
     assert set(result.deleted_dirs) == {
         str(tmp_path / delete_scope),
+        str(tmp_path / force_delete_scope),
         str(tmp_path / raw_tenant),
     }
+    assert result.forced_deleted_tenant_ids == [force_delete_scope]
     assert set(result.kept_tenant_ids) == {legacy_keep, keep_scope}
     assert set(result.missing_tenant_ids) == {"tenant-without-auth"}
     assert (
@@ -102,6 +116,12 @@ def test_cleanup_cron_auth_except_source_keeps_rmassist_only(tmp_path):
         / ".secret"
         / auth_state.CRON_AUTH_FILE_NAME
     ).is_file()
+    assert not (
+        tmp_path
+        / force_delete_scope
+        / ".secret"
+        / auth_state.CRON_AUTH_FILE_NAME
+    ).exists()
     assert not (
         tmp_path
         / delete_scope
@@ -132,6 +152,7 @@ def test_cleanup_cron_auth_except_source_dry_run_does_not_delete(tmp_path):
     assert result.dry_run is True
     assert result.deleted_tenant_ids == [delete_scope]
     assert result.deleted_dirs == [str(tmp_path / delete_scope)]
+    assert result.forced_deleted_tenant_ids == []
     assert auth_path.is_file()
 
 
@@ -412,6 +433,7 @@ async def test_cleanup_cron_auth_endpoint_returns_summary(monkeypatch):
         return auth_state.CronAuthCleanupResult(
             deleted_tenant_ids=["tenant-a"],
             deleted_dirs=["C:/workspace/tenant-a"],
+            forced_deleted_tenant_ids=["tenant-a"],
             kept_tenant_ids=["tenant-b"],
             missing_tenant_ids=["tenant-c"],
             dry_run=True,
@@ -424,12 +446,21 @@ async def test_cleanup_cron_auth_endpoint_returns_summary(monkeypatch):
     )
 
     response = await auth_router.cleanup_cron_auth(
-        auth_router.CronAuthCleanupRequest(dry_run=True),
+        auth_router.CronAuthCleanupRequest(
+            dry_run=True,
+            force_delete_tenant_ids=["tenant-a"],
+        ),
     )
 
-    assert observed == {"keep_source_id": "RMASSIST", "dry_run": True}
+    assert observed == {
+        "keep_source_id": "RMASSIST",
+        "force_delete_tenant_ids": ["tenant-a"],
+        "dry_run": True,
+    }
     assert response["deleted_count"] == 1
     assert response["kept_count"] == 1
     assert response["missing_count"] == 1
     assert response["deleted_tenant_ids"] == ["tenant-a"]
     assert response["deleted_dirs"] == ["C:/workspace/tenant-a"]
+    assert response["forced_deleted_tenant_ids"] == ["tenant-a"]
+    assert response["force_delete_tenant_ids"] == ["tenant-a"]

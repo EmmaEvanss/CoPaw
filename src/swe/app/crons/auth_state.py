@@ -66,6 +66,7 @@ class CronAuthSnapshot:
 class CronAuthCleanupResult:
     deleted_tenant_ids: list[str]
     deleted_dirs: list[str]
+    forced_deleted_tenant_ids: list[str]
     kept_tenant_ids: list[str]
     missing_tenant_ids: list[str]
     dry_run: bool = False
@@ -147,22 +148,43 @@ def get_cron_auth_file_path(
     return get_tenant_secrets_dir(tenant_id) / CRON_AUTH_FILE_NAME
 
 
-def _source_id_from_tenant_dir_name(tenant_dir_name: str) -> str | None:
+def _scope_from_tenant_dir_name(
+    tenant_dir_name: str,
+) -> tuple[str | None, str | None]:
     try:
-        _tenant_id, source_id = decode_scope_id(tenant_dir_name)
-        return source_id
+        tenant_id, source_id = decode_scope_id(tenant_dir_name)
+        return tenant_id, source_id
     except ValueError:
         pass
 
     legacy_prefix = "default_"
     if tenant_dir_name.startswith(legacy_prefix):
-        return tenant_dir_name[len(legacy_prefix) :] or None
-    return None
+        return None, tenant_dir_name[len(legacy_prefix) :] or None
+    return None, None
+
+
+def _source_id_from_tenant_dir_name(tenant_dir_name: str) -> str | None:
+    _tenant_id, source_id = _scope_from_tenant_dir_name(tenant_dir_name)
+    return source_id
+
+
+def _matches_force_delete_tenant(
+    tenant_dir_name: str,
+    force_delete_tenant_ids: set[str],
+) -> bool:
+    if not force_delete_tenant_ids:
+        return False
+    if tenant_dir_name in force_delete_tenant_ids:
+        return True
+
+    tenant_id, _source_id = _scope_from_tenant_dir_name(tenant_dir_name)
+    return tenant_id in force_delete_tenant_ids if tenant_id else False
 
 
 def cleanup_cron_auth_except_source(
     *,
     keep_source_id: str = "RMASSIST",
+    force_delete_tenant_ids: list[str] | set[str] | None = None,
     working_dir: str | Path | None = None,
     dry_run: bool = False,
 ) -> CronAuthCleanupResult:
@@ -170,12 +192,18 @@ def cleanup_cron_auth_except_source(
     keep_source_id = keep_source_id.strip()
     if not keep_source_id:
         raise ValueError("keep_source_id is required")
+    force_delete_tenants = {
+        tenant_id.strip()
+        for tenant_id in (force_delete_tenant_ids or [])
+        if tenant_id.strip()
+    }
 
     base_dir = Path(working_dir) if working_dir is not None else WORKING_DIR
     if not base_dir.exists():
         return CronAuthCleanupResult(
             deleted_tenant_ids=[],
             deleted_dirs=[],
+            forced_deleted_tenant_ids=[],
             kept_tenant_ids=[],
             missing_tenant_ids=[],
             dry_run=dry_run,
@@ -183,6 +211,7 @@ def cleanup_cron_auth_except_source(
 
     deleted_tenant_ids: list[str] = []
     deleted_dirs: list[str] = []
+    forced_deleted_tenant_ids: list[str] = []
     kept_tenant_ids: list[str] = []
     missing_tenant_ids: list[str] = []
 
@@ -195,7 +224,14 @@ def cleanup_cron_auth_except_source(
             missing_tenant_ids.append(tenant_dir.name)
             continue
 
-        if _source_id_from_tenant_dir_name(tenant_dir.name) == keep_source_id:
+        force_delete = _matches_force_delete_tenant(
+            tenant_dir.name,
+            force_delete_tenants,
+        )
+        if (
+            _source_id_from_tenant_dir_name(tenant_dir.name) == keep_source_id
+            and not force_delete
+        ):
             kept_tenant_ids.append(tenant_dir.name)
             continue
 
@@ -203,10 +239,13 @@ def cleanup_cron_auth_except_source(
             auth_path.unlink()
         deleted_tenant_ids.append(tenant_dir.name)
         deleted_dirs.append(str(tenant_dir))
+        if force_delete:
+            forced_deleted_tenant_ids.append(tenant_dir.name)
 
     return CronAuthCleanupResult(
         deleted_tenant_ids=deleted_tenant_ids,
         deleted_dirs=deleted_dirs,
+        forced_deleted_tenant_ids=forced_deleted_tenant_ids,
         kept_tenant_ids=kept_tenant_ids,
         missing_tenant_ids=missing_tenant_ids,
         dry_run=dry_run,

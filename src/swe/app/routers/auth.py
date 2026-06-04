@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..agent_context import get_agent_for_request
 from ..crons.auth_state import (
@@ -134,6 +134,7 @@ class CronAuthConfigureRequest(BaseModel):
 
 class CronAuthCleanupRequest(BaseModel):
     keep_source_id: str = "RMASSIST"
+    force_delete_tenant_ids: list[str] = Field(default_factory=list)
     dry_run: bool = False
 
 
@@ -179,6 +180,7 @@ async def cleanup_cron_auth(req: CronAuthCleanupRequest):
     try:
         result = cleanup_cron_auth_except_source(
             keep_source_id=keep_source_id,
+            force_delete_tenant_ids=req.force_delete_tenant_ids,
             dry_run=req.dry_run,
         )
     except ValueError as exc:
@@ -192,6 +194,8 @@ async def cleanup_cron_auth(req: CronAuthCleanupRequest):
         "missing_count": len(result.missing_tenant_ids),
         "deleted_tenant_ids": result.deleted_tenant_ids,
         "deleted_dirs": result.deleted_dirs,
+        "forced_deleted_tenant_ids": result.forced_deleted_tenant_ids,
+        "force_delete_tenant_ids": req.force_delete_tenant_ids,
         "kept_tenant_ids": result.kept_tenant_ids,
         "missing_tenant_ids": result.missing_tenant_ids,
     }

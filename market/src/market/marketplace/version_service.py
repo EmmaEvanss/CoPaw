@@ -62,6 +62,7 @@ class SkillVersionService:
         description: str = "",
         creator: str = "",
         current_market_version: Optional[str] = None,
+        created_at: Optional[str] = None,
     ) -> SkillVersion:
         """创建新版本快照.
 
@@ -78,6 +79,7 @@ class SkillVersionService:
             description: 版本描述
             creator: 创建者名称
             current_market_version: 市场索引中的当前版本号（可选）
+            created_at: 创建时间 ISO8601 格式（可选，用于历史技能初始化）
 
         Returns:
             创建的版本信息
@@ -120,7 +122,7 @@ class SkillVersionService:
         self._copy_skill_to_version(skill_dir, version_dir)
 
         # 创建版本信息
-        now = datetime.now(timezone.utc).isoformat()
+        now = created_at or datetime.now(timezone.utc).isoformat()
         is_initial = len(manifest.versions) == 0
         new_version = SkillVersion(
             version_id=version_id,
@@ -259,7 +261,9 @@ class SkillVersionService:
 
         # 检查目标版本目录存在
         target_dir = self._get_version_dir(
-            source_id, item_id, target_version_id
+            source_id,
+            item_id,
+            target_version_id,
         )
         if not target_dir.exists():
             return VersionSwitchResult(
@@ -313,7 +317,9 @@ class SkillVersionService:
         """
         base_dir = self._get_version_dir(source_id, item_id, base_version_id)
         target_dir = self._get_version_dir(
-            source_id, item_id, target_version_id
+            source_id,
+            item_id,
+            target_version_id,
         )
 
         if not base_dir.exists():
@@ -421,6 +427,55 @@ class SkillVersionService:
                 changed_files=changed_files_count,
             ),
             files=files_diff,
+        )
+
+    def initialize_version(
+        self,
+        source_id: str,
+        item_id: str,
+        skill_dir: Path,
+        creator: str = "",
+        description: str = "初始化版本",
+        current_market_version: Optional[str] = None,
+        created_at: Optional[str] = None,
+    ) -> SkillVersion:
+        """为历史技能初始化第一个版本.
+
+        仅对没有版本历史的技能生效，将当前状态创建为初始版本快照。
+
+        Args:
+            source_id: 来源 ID
+            item_id: 条目 ID
+            skill_dir: 当前技能文件目录
+            creator: 创建者名称（复用技能原始数据）
+            description: 版本描述
+            current_market_version: 市场索引中的当前版本号（可选）
+            created_at: 创建时间 ISO8601 格式（复用技能原始数据，可选）
+
+        Returns:
+            创建的初始版本信息
+
+        Raises:
+            ValueError: 如果技能已有版本历史
+        """
+        # 检查是否已有版本历史
+        manifest = self._load_versions_manifest(source_id, item_id)
+        if manifest.versions:
+            raise ValueError(
+                f"Skill {item_id} already has version history, "
+                f"cannot initialize. Current versions: {len(manifest.versions)}",
+            )
+
+        # 使用 create_version_snapshot 创建第一个版本
+        # 该方法会自动设置 is_initial=True 和 is_current=True
+        return self.create_version_snapshot(
+            source_id=source_id,
+            item_id=item_id,
+            skill_dir=skill_dir,
+            description=description,
+            creator=creator,
+            current_market_version=current_market_version,
+            created_at=created_at,
         )
 
     def delete_version(

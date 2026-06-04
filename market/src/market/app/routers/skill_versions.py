@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
+from pydantic import BaseModel
 
 from ..deps import require_source_id
 from ...marketplace.version_models import (
@@ -23,6 +24,36 @@ from ...marketplace.service import load_index, save_index
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class VersionInitRequest(BaseModel):
+    """版本初始化请求."""
+
+    item_ids: list[str] = (
+        []
+    )  # 可选，指定要初始化的技能 ID 列表，为空则初始化所有
+    description: str = "初始化版本"
+    dry_run: bool = False  # 预览模式，不实际执行初始化
+
+
+class VersionInitResult(BaseModel):
+    """单个技能初始化结果."""
+
+    item_id: str
+    skill_name: str = ""  # 技能名称
+    success: bool
+    version_id: str = ""
+    message: str = ""
+
+
+class BatchVersionInitResult(BaseModel):
+    """批量初始化结果."""
+
+    total: int  # 总处理数
+    initialized: int  # 成功初始化数
+    skipped: int  # 已有版本跳过数
+    failed: int  # 失败数
+    results: list[VersionInitResult] = []
 
 
 def _require_manager(x_manager: Optional[str]) -> None:
@@ -139,7 +170,7 @@ async def switch_version(
     # 更新市场索引中的技能信息
     items = load_index(marketplace.marketplace_root, source_id)
     item = next((i for i in items if i.item_id == item_id), None)
-    if item:
+    if item:  # pylint: disable=too-many-nested-blocks
         # 从切换后的 SKILL.md 提取完整信息并更新索引
         skill_md_path = skill_dir / "SKILL.md"
         if skill_md_path.exists():
@@ -239,4 +270,149 @@ async def delete_version(
         success=True,
         deleted_version=version_id,
         message="Version deleted successfully",
+    )
+
+
+@router.post(
+    "/market/skills/versions/init-batch",
+    response_model=BatchVersionInitResult,
+    status_code=status.HTTP_200_OK,
+)
+async def batch_initialize_versions(
+    request: Request,
+    init_request: VersionInitRequest,
+    x_source_id: Optional[str] = Header(default=None, alias="X-Source-Id"),
+    x_manager: Optional[str] = Header(default=None, alias="X-Manager"),
+):
+    """批量初始化所有无版本历史的技能（管理员）.
+
+    遍历所有技能，对没有版本历史的技能创建初始版本快照。
+    已有版本历史的技能会被跳过。
+    """
+    source_id = require_source_id(x_source_id)
+    _require_manager(x_manager)
+
+    svc = _get_version_service(request)
+    marketplace = request.app.state.marketplace
+
+    # 获取所有技能
+    items = load_index(marketplace.marketplace_root, source_id)
+    if not items:
+        return BatchVersionInitResult(
+            total=0,
+            initialized=0,
+            skipped=0,
+            failed=0,
+            results=[],
+        )
+
+    # 如果指定了 item_ids，只处理指定的技能
+    if init_request.item_ids:
+        target_items = [
+            item for item in items if item.item_id in init_request.item_ids
+        ]
+        # 检查是否有不存在的 item_id
+        found_ids = {item.item_id for item in target_items}
+        missing_ids = set(init_request.item_ids) - found_ids
+        if missing_ids:
+            logger.warning("Some item_ids not found: %s", missing_ids)
+    else:
+        target_items = items
+
+    results: list[VersionInitResult] = []
+    initialized = 0
+    skipped = 0
+    failed = 0
+
+    for item in target_items:
+        item_id = item.item_id
+        skill_name = item.name or item_id  # 技能名称，fallback 到 item_id
+        skill_dir = get_skill_dir(
+            marketplace.marketplace_root,
+            source_id,
+            item_id,
+        )
+
+        # 检查是否已有版本历史
+        manifest = svc._load_versions_manifest(source_id, item_id)
+        if manifest.versions:
+            skipped += 1
+            results.append(
+                VersionInitResult(
+                    item_id=item_id,
+                    skill_name=skill_name,
+                    success=False,
+                    message="已有版本历史，跳过",
+                ),
+            )
+            continue
+
+        # dry_run 模式：只检查不执行
+        if init_request.dry_run:
+            initialized += 1  # 预览模式下统计待初始化数量
+            results.append(
+                VersionInitResult(
+                    item_id=item_id,
+                    skill_name=skill_name,
+                    success=True,
+                    message="待初始化（预览模式）",
+                ),
+            )
+            continue
+
+        # 初始化版本，复用技能原始数据的创建者和创建时间
+        current_market_version = item.version if item else None
+        creator_name = item.creator_name or item.creator_id or ""
+        skill_created_at = item.created_at
+        try:
+            new_version = svc.initialize_version(
+                source_id=source_id,
+                item_id=item_id,
+                skill_dir=skill_dir,
+                creator=creator_name,
+                description=init_request.description,
+                current_market_version=current_market_version,
+                created_at=skill_created_at,
+            )
+            initialized += 1
+            results.append(
+                VersionInitResult(
+                    item_id=item_id,
+                    skill_name=skill_name,
+                    success=True,
+                    version_id=new_version.version_id,
+                    message=f"初始化版本 {new_version.version_id}",
+                ),
+            )
+            logger.info(
+                "Initialized version %s for skill %s",
+                new_version.version_id,
+                item_id,
+            )
+        except Exception as e:
+            failed += 1
+            logger.error("Failed to initialize skill %s: %s", item_id, e)
+            results.append(
+                VersionInitResult(
+                    item_id=item_id,
+                    skill_name=skill_name,
+                    success=False,
+                    message=str(e),
+                ),
+            )
+
+    logger.info(
+        "Batch init completed: total=%d, initialized=%d, skipped=%d, failed=%d",
+        len(target_items),
+        initialized,
+        skipped,
+        failed,
+    )
+
+    return BatchVersionInitResult(
+        total=len(target_items),
+        initialized=initialized,
+        skipped=skipped,
+        failed=failed,
+        results=results,
     )

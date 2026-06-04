@@ -187,13 +187,42 @@ export function MCPDetailDrawer({
                     <Text style={{ fontSize: 12, color: "#5e5d59" }}>
                       连接成功，共 {testResult.tools.length} 个工具：
                     </Text>
-                    <div style={{ display: "grid", gap: 4, fontSize: 12, color: "#87867f" }}>
-                      {testResult.tools.slice(0, 10).map((tool) => (
-                        <div key={tool.name}>- {tool.name}</div>
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: 6,
+                        fontSize: 12,
+                        maxHeight: 200,
+                        overflow: "auto",
+                        padding: "4px 0",
+                      }}
+                    >
+                      {testResult.tools.map((tool) => (
+                        <div
+                          key={tool.name}
+                          style={{
+                            padding: "6px 8px",
+                            borderRadius: 6,
+                            backgroundColor: "#f5f5f5",
+                          }}
+                        >
+                          <div style={{ fontWeight: 500, color: "#434a57" }}>
+                            {tool.name}
+                          </div>
+                          {tool.description ? (
+                            <div
+                              style={{
+                                marginTop: 2,
+                                color: "#87867f",
+                                fontSize: 11,
+                                lineHeight: 1.4,
+                              }}
+                            >
+                              {tool.description}
+                            </div>
+                          ) : null}
+                        </div>
                       ))}
-                      {testResult.tools.length > 10 ? (
-                        <div>... 等 {testResult.tools.length - 10} 个</div>
-                      ) : null}
                     </div>
                   </div>
                 ) : (

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ..agent_context import get_agent_for_request
 from ..crons.auth_state import (
+    cleanup_cron_auth_except_source,
     ensure_user_info_from_access_token,
     extract_access_token_from_cookie,
     get_auth_snapshot,
@@ -131,6 +132,11 @@ class CronAuthConfigureRequest(BaseModel):
     cookie: str
 
 
+class CronAuthCleanupRequest(BaseModel):
+    keep_source_id: str = "RMASSIST"
+    dry_run: bool = False
+
+
 @router.post("/cron-auth")
 async def configure_cron_auth(
     req: CronAuthConfigureRequest,
@@ -163,6 +169,31 @@ async def configure_cron_auth(
         "user_info_expires_at": snapshot.user_info_expires_at,
         "auth_token_expires_at": snapshot.auth_token_expires_at,
         "has_auth_token": snapshot.has_auth_token,
+    }
+
+
+@router.post("/cron-auth/cleanup")
+async def cleanup_cron_auth(req: CronAuthCleanupRequest):
+    """手动清理非指定来源租户的 cron 授权状态文件。"""
+    keep_source_id = req.keep_source_id.strip()
+    try:
+        result = cleanup_cron_auth_except_source(
+            keep_source_id=keep_source_id,
+            dry_run=req.dry_run,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "dry_run": result.dry_run,
+        "keep_source_id": keep_source_id,
+        "deleted_count": len(result.deleted_tenant_ids),
+        "kept_count": len(result.kept_tenant_ids),
+        "missing_count": len(result.missing_tenant_ids),
+        "deleted_tenant_ids": result.deleted_tenant_ids,
+        "deleted_dirs": result.deleted_dirs,
+        "kept_tenant_ids": result.kept_tenant_ids,
+        "missing_tenant_ids": result.missing_tenant_ids,
     }
 
 

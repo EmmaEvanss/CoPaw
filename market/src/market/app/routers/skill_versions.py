@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
@@ -54,6 +55,78 @@ class BatchVersionInitResult(BaseModel):
     skipped: int  # 已有版本跳过数
     failed: int  # 失败数
     results: list[VersionInitResult] = []
+
+
+def _parse_skill_md_frontmatter(
+    skill_md_content: str,
+    default_name: str,
+    default_desc: str,
+) -> tuple[str, str]:
+    """解析 SKILL.md frontmatter 提取 name 和 description.
+
+    Args:
+        skill_md_content: SKILL.md 文件内容
+        default_name: 默认名称（解析失败时使用）
+        default_desc: 默认描述（解析失败时使用）
+
+    Returns:
+        (name, description) 元组
+    """
+    name = default_name
+    desc = default_desc
+
+    if not skill_md_content.startswith("---"):
+        return name, desc
+
+    try:
+        end_idx = skill_md_content.index("---", 3)
+        fm_text = skill_md_content[3:end_idx].strip()
+        for line in fm_text.split("\n"):
+            if ":" not in line:
+                continue
+            key, val = line.split(":", 1)
+            key = key.strip().lower()
+            val = val.strip()
+            if key == "name" and val:
+                name = val
+            elif key == "description" and val:
+                desc = val
+    except ValueError:
+        pass
+
+    return name, desc
+
+
+def _update_skill_index(
+    marketplace: object,
+    source_id: str,
+    item_id: str,
+    skill_dir: Path,
+    version_id: str,
+) -> None:
+    """切换版本后更新市场索引中的技能信息."""
+    items = load_index(marketplace.marketplace_root, source_id)
+    item = next((i for i in items if i.item_id == item_id), None)
+
+    if not item:
+        return
+
+    skill_md_path = skill_dir / "SKILL.md"
+    if not skill_md_path.exists():
+        return
+
+    skill_md_content = skill_md_path.read_text(encoding="utf-8")
+    new_name, new_desc = _parse_skill_md_frontmatter(
+        skill_md_content,
+        item.name,
+        item.description,
+    )
+
+    item.name = new_name
+    item.description = new_desc
+    item.version = version_id
+    item.updated_at = datetime.now(timezone.utc).isoformat()
+    save_index(marketplace.marketplace_root, source_id, items)
 
 
 def _require_manager(x_manager: Optional[str]) -> None:
@@ -168,39 +241,7 @@ async def switch_version(
         )
 
     # 更新市场索引中的技能信息
-    items = load_index(marketplace.marketplace_root, source_id)
-    item = next((i for i in items if i.item_id == item_id), None)
-    if item:  # pylint: disable=too-many-nested-blocks
-        # 从切换后的 SKILL.md 提取完整信息并更新索引
-        skill_md_path = skill_dir / "SKILL.md"
-        if skill_md_path.exists():
-            skill_md_content = skill_md_path.read_text(encoding="utf-8")
-            # 解析 frontmatter 提取 name 和 description
-            new_name = item.name
-            new_desc = item.description
-            if skill_md_content.startswith("---"):
-                try:
-                    end_idx = skill_md_content.index("---", 3)
-                    fm_text = skill_md_content[3:end_idx].strip()
-                    for line in fm_text.split("\n"):
-                        if ":" in line:
-                            key, val = line.split(":", 1)
-                            key = key.strip().lower()
-                            val = val.strip()
-                            if key == "name" and val:
-                                new_name = val
-                            elif key == "description" and val:
-                                new_desc = val
-                except ValueError:
-                    pass
-            # 更新名称和描述
-            item.name = new_name
-            item.description = new_desc
-            # 更新版本号为目标版本号
-            item.version = version_id
-            # 使用切换时间作为更新时间
-            item.updated_at = datetime.now(timezone.utc).isoformat()
-            save_index(marketplace.marketplace_root, source_id, items)
+    _update_skill_index(marketplace, source_id, item_id, skill_dir, version_id)
 
     return result
 
@@ -295,9 +336,10 @@ async def batch_initialize_versions(
     svc = _get_version_service(request)
     marketplace = request.app.state.marketplace
 
-    # 获取所有技能
+    # 获取所有技能（过滤掉 MCP 等非技能类型）
     items = load_index(marketplace.marketplace_root, source_id)
-    if not items:
+    skill_items = [item for item in items if item.item_type == "skill"]
+    if not skill_items:
         return BatchVersionInitResult(
             total=0,
             initialized=0,
@@ -309,7 +351,9 @@ async def batch_initialize_versions(
     # 如果指定了 item_ids，只处理指定的技能
     if init_request.item_ids:
         target_items = [
-            item for item in items if item.item_id in init_request.item_ids
+            item
+            for item in skill_items
+            if item.item_id in init_request.item_ids
         ]
         # 检查是否有不存在的 item_id
         found_ids = {item.item_id for item in target_items}
@@ -317,7 +361,7 @@ async def batch_initialize_versions(
         if missing_ids:
             logger.warning("Some item_ids not found: %s", missing_ids)
     else:
-        target_items = items
+        target_items = skill_items
 
     results: list[VersionInitResult] = []
     initialized = 0

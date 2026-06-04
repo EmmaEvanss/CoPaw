@@ -7,7 +7,7 @@ import { TasksIconSmall, HistoryIconSmall } from "../CollapsedToolbar/icons";
 import Style from "./style";
 import {
   getTaskNextRunText,
-  getTaskNextRunTooltipText,
+  getTaskNextRunTooltipTimes,
   getTaskSidebarMeta,
   TASK_COMPLETED_STATUS_TEXT,
 } from "../../../taskJobs";
@@ -18,6 +18,7 @@ import {
   type HistorySession,
 } from "../historySessions";
 import TaskActionMenu from "../../TaskActionMenu";
+import TaskNextRunTooltip from "../../TaskNextRunTooltip";
 
 export interface ExpandablePanelProps {
   visible: boolean;
@@ -135,7 +136,7 @@ function TasksContent({
           tasks.map((task) => {
             const sidebarMeta = getTaskSidebarMeta(task);
             const nextRunText = getTaskNextRunText(task);
-            const nextRunTooltipText = getTaskNextRunTooltipText(task);
+            const nextRunTooltipTimes = getTaskNextRunTooltipTimes(task);
 
             return (
               <div
@@ -216,12 +217,11 @@ function TasksContent({
                   </div>
                 )}
                 {nextRunText && (
-                  <div
-                    className="expandable-panel-task-next-run"
-                    title={nextRunTooltipText}
-                  >
-                    {nextRunText}
-                  </div>
+                  <TaskNextRunTooltip runTimes={nextRunTooltipTimes}>
+                    <div className="expandable-panel-task-next-run">
+                      {nextRunText}
+                    </div>
+                  </TaskNextRunTooltip>
                 )}
               </div>
             );

@@ -174,7 +174,7 @@ describe("ChatTaskList actions", () => {
     ).toBeInTheDocument();
   });
 
-  it("adds upcoming run times to the next-run hover title", () => {
+  it("shows upcoming run times in a styled hover tooltip", async () => {
     const task = taskJob({
       state: {
         next_run_at: "2026-06-04T01:00:00Z",
@@ -189,12 +189,18 @@ describe("ChatTaskList actions", () => {
 
     const nextRun = container.querySelector(".chat-task-list-item-next-run");
 
-    expect(nextRun).toHaveAttribute(
-      "title",
-      expect.stringContaining("之后三次运行时间"),
-    );
-    expect(nextRun?.getAttribute("title")).toContain("06-04");
-    expect(nextRun?.getAttribute("title")).toContain("06-05");
-    expect(nextRun?.getAttribute("title")).toContain("06-06");
+    expect(nextRun).not.toHaveAttribute("title");
+    fireEvent.mouseEnter(nextRun as Element);
+
+    await waitFor(() => {
+      expect(screen.getByText("之后三次运行时间")).toBeInTheDocument();
+    });
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent("1");
+    expect(tooltip).toHaveTextContent("2");
+    expect(tooltip).toHaveTextContent("3");
+    expect(tooltip).toHaveTextContent("06-04");
+    expect(tooltip).toHaveTextContent("06-05");
+    expect(tooltip).toHaveTextContent("06-06");
   });
 });

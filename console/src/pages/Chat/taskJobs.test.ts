@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CronJobSpecOutput } from "../../api/types";
 import {
   getTaskNextRunTooltipText,
+  getTaskNextRunTooltipTimes,
   getTaskSidebarMeta,
 } from "./taskJobs";
 
@@ -101,23 +102,23 @@ describe("getTaskSidebarMeta", () => {
 
 describe("getTaskNextRunTooltipText", () => {
   it("shows the next three run times from state", () => {
-    const tooltip = getTaskNextRunTooltipText(
-      taskJob({
-        state: {
-          next_run_at: "2026-06-04T01:00:00Z",
-          next_run_times: [
-            "2026-06-04T01:00:00Z",
-            "2026-06-05T01:00:00Z",
-            "2026-06-06T01:00:00Z",
-            "2026-06-07T01:00:00Z",
-          ],
-        },
-      }),
-    );
+    const job = taskJob({
+      state: {
+        next_run_at: "2026-06-04T01:00:00Z",
+        next_run_times: [
+          "2026-06-04T01:00:00Z",
+          "2026-06-05T01:00:00Z",
+          "2026-06-06T01:00:00Z",
+          "2026-06-07T01:00:00Z",
+        ],
+      },
+    });
+    const tooltip = getTaskNextRunTooltipText(job);
 
     expect(tooltip?.split("\n")).toHaveLength(4);
     expect(tooltip).toContain("之后三次运行时间");
     expect(tooltip).not.toContain("06-07");
+    expect(getTaskNextRunTooltipTimes(job)).toHaveLength(3);
   });
 
   it("falls back to next_run_at when next_run_times is absent", () => {

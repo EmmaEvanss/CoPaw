@@ -4,12 +4,13 @@ import Style from "./style";
 import { DESIGN_TOKENS } from "@/config/designTokens";
 import {
   getTaskNextRunText,
-  getTaskNextRunTooltipText,
+  getTaskNextRunTooltipTimes,
   getTaskSidebarMeta,
   TASK_COMPLETED_STATUS_TEXT,
 } from "../../taskJobs";
 import { formatListTime } from "../../listTimeFormat";
 import TaskActionMenu from "../TaskActionMenu";
+import TaskNextRunTooltip from "../TaskNextRunTooltip";
 
 function TaskIcon() {
   return (
@@ -103,7 +104,7 @@ export default function ChatTaskList(props: ChatTaskListProps) {
               tasks.map((task) => {
                 const sidebarMeta = getTaskSidebarMeta(task);
                 const nextRunText = getTaskNextRunText(task);
-                const nextRunTooltipText = getTaskNextRunTooltipText(task);
+                const nextRunTooltipTimes = getTaskNextRunTooltipTimes(task);
 
                 return (
                   <div
@@ -142,9 +143,9 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                         {task.name || task.id}
                       </span>
                       {(sidebarMeta.canPause ||
-                          sidebarMeta.canRun ||
-                          sidebarMeta.canResume ||
-                          sidebarMeta.canDelete) && (
+                        sidebarMeta.canRun ||
+                        sidebarMeta.canResume ||
+                        sidebarMeta.canDelete) && (
                         <div className="chat-task-list-item-trailing">
                           <div className="chat-task-list-item-actions">
                             <TaskActionMenu
@@ -187,12 +188,11 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                       </div>
                     )}
                     {nextRunText && (
-                      <div
-                        className="chat-task-list-item-next-run"
-                        title={nextRunTooltipText}
-                      >
-                        {nextRunText}
-                      </div>
+                      <TaskNextRunTooltip runTimes={nextRunTooltipTimes}>
+                        <div className="chat-task-list-item-next-run">
+                          {nextRunText}
+                        </div>
+                      </TaskNextRunTooltip>
                     )}
                   </div>
                 );

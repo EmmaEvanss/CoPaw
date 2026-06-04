@@ -1167,7 +1167,8 @@ class TracingQueryService:
 
         offset = (page - 1) * page_size
 
-        # 构建 cron_reads 子查询 - 只保留时间范围和 source_id 过滤
+        # 构建 cron 子查询 - 同时统计执行数和已读数
+        # 口径2（定时执行）和口径3（结果查看）都从 swe_cron_executions 表统计
         # 其他过滤条件通过外层 WHERE 的 user_id JOIN 自然过滤
         cron_subquery_where = ["j.status != %s", "j.deleted_at IS NULL"]
         cron_params: list[Any] = ["deleted"]
@@ -1180,10 +1181,10 @@ class TracingQueryService:
 
         if source_id == "all":
             exclude_placeholders2 = ", ".join(
-                ["%s"] * len(EXCLUDED_SOURCE_IDS)
+                ["%s"] * len(EXCLUDED_SOURCE_IDS),
             )
             cron_subquery_where.append(
-                f"j.source_id NOT IN ({exclude_placeholders2})"
+                f"j.source_id NOT IN ({exclude_placeholders2})",
             )
             cron_params.extend(EXCLUDED_SOURCE_IDS)
         else:
@@ -1200,7 +1201,7 @@ class TracingQueryService:
                        SUM(t.total_tokens) as total_tokens,
                        MAX(t.start_time) as last_active,
                        COUNT(CASE WHEN t.session_id NOT LIKE 'cron-task:%%' THEN 1 END) as manual_calls,
-                       COUNT(CASE WHEN t.session_id LIKE 'cron-task:%%' THEN 1 END) as cron_executions,
+                       COALESCE(MAX(ce.cron_executions), 0) as cron_executions,
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.trace_id IN (SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id)
                         AND s.event_type = 'skill_invocation') as total_skills,
@@ -1210,16 +1211,17 @@ class TracingQueryService:
                        (SELECT bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
                         ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
-                       COALESCE(MAX(cr.cron_reads), 0) as cron_reads
+                       COALESCE(MAX(ce.cron_reads), 0) as cron_reads
                 FROM swe_tracing_traces t
                 LEFT JOIN (
                     SELECT j.tenant_id as user_id,
+                           COUNT(*) as cron_executions,
                            SUM(CASE WHEN e.is_read = TRUE THEN 1 ELSE 0 END) as cron_reads
                     FROM swe_cron_executions e
                     INNER JOIN swe_cron_jobs j ON e.job_id = j.id
                     WHERE {cron_subquery_sql}
                     GROUP BY j.tenant_id
-                ) cr ON cr.user_id = t.user_id
+                ) ce ON ce.user_id = t.user_id
                 WHERE {where_sql}
                 GROUP BY t.user_id
                 ORDER BY {order_by}
@@ -1234,7 +1236,7 @@ class TracingQueryService:
                        SUM(t.total_tokens) as total_tokens,
                        MAX(t.start_time) as last_active,
                        COUNT(CASE WHEN t.session_id NOT LIKE 'cron-task:%%' THEN 1 END) as manual_calls,
-                       COUNT(CASE WHEN t.session_id LIKE 'cron-task:%%' THEN 1 END) as cron_executions,
+                       COALESCE(MAX(ce.cron_executions), 0) as cron_executions,
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.source_id = %s
                         AND s.trace_id IN (SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id AND source_id = %s)
@@ -1245,16 +1247,17 @@ class TracingQueryService:
                        (SELECT bbk_id FROM swe_tracing_traces t3
                         WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
                         ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
-                       COALESCE(MAX(cr.cron_reads), 0) as cron_reads
+                       COALESCE(MAX(ce.cron_reads), 0) as cron_reads
                 FROM swe_tracing_traces t
                 LEFT JOIN (
                     SELECT j.tenant_id as user_id,
+                           COUNT(*) as cron_executions,
                            SUM(CASE WHEN e.is_read = TRUE THEN 1 ELSE 0 END) as cron_reads
                     FROM swe_cron_executions e
                     INNER JOIN swe_cron_jobs j ON e.job_id = j.id
                     WHERE {cron_subquery_sql}
                     GROUP BY j.tenant_id
-                ) cr ON cr.user_id = t.user_id
+                ) ce ON ce.user_id = t.user_id
                 WHERE {where_sql}
                 GROUP BY t.user_id
                 ORDER BY {order_by}

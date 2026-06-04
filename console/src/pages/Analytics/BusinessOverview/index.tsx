@@ -1464,7 +1464,9 @@ export default function BusinessOverviewPage() {
             <span>结果查看</span>
           </div>
           <div className={styles.rankList} onScroll={handleActiveScroll}>
-            {activeUsers.length === 0 ? (
+            {activeLoading && activeUsers.length === 0 ? (
+              <div className={styles.listFootnote}>加载中...</div>
+            ) : activeUsers.length === 0 ? (
               <div className={styles.emptyState}>暂无用户数据</div>
             ) : (
               activeUsers.map((item, index) => {
@@ -1520,7 +1522,7 @@ export default function BusinessOverviewPage() {
                 );
               })
             )}
-            {activeLoading && (
+            {activeLoading && activeUsers.length > 0 && (
               <div className={styles.listFootnote}>加载中...</div>
             )}
           </div>
@@ -1638,7 +1640,9 @@ export default function BusinessOverviewPage() {
             <h3 className={styles.panelTitle}>技能使用排行榜</h3>
           </div>
           <div className={styles.rankList} onScroll={handleSkillsScroll}>
-            {skills.length === 0 ? (
+            {skillsLoading && skills.length === 0 ? (
+              <div className={styles.listFootnote}>加载中...</div>
+            ) : skills.length === 0 ? (
               <div className={styles.emptyState}>暂无技能数据</div>
             ) : (
               skills.map((skill, index) => {
@@ -1693,7 +1697,7 @@ export default function BusinessOverviewPage() {
                 );
               })
             )}
-            {skillsLoading && (
+            {skillsLoading && skills.length > 0 && (
               <div className={styles.listFootnote}>加载中...</div>
             )}
           </div>

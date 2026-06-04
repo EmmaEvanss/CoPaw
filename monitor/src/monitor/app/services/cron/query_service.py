@@ -6,7 +6,7 @@ for the frontend overview page.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -798,7 +798,7 @@ class QueryService:
                 bbk_id=row.get("bbk_id") or "",
                 enabled=bool(row.get("enabled")),
                 execution_status=row.get("execution_status") or "pending",
-                execution_time=convert_utc_to_beijing(row.get("execution_time")),
+                execution_time=row.get("execution_time"),
             )
             for row in rows
         ]

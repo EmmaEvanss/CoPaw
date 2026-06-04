@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from agentscope_runtime.engine.schemas.agent_schemas import RunStatus
@@ -94,6 +95,19 @@ def _build_agent_job() -> CronJobSpec:
             meta={},
         ),
         runtime=JobRuntimeSpec(timeout_seconds=60),
+    )
+
+
+def _build_broadcast_agent_job() -> CronJobSpec:
+    job = _build_agent_job()
+    return job.model_copy(
+        update={
+            "meta": {
+                "broadcast_offset_minutes": 20,
+                "broadcast_notification_policy": "original_schedule",
+                "broadcast_original_timezone": "Asia/Shanghai",
+            },
+        },
     )
 
 
@@ -313,3 +327,72 @@ def test_failed_execution_still_syncs_model_meta(monkeypatch):
         },
         "fallback_reason": "provider_not_found",
     }
+
+
+def test_manual_broadcast_execution_does_not_delay_notification():
+    """手动执行分发任务时，不应沿用原计划的通知延迟。"""
+
+    async def _run():
+        job = _build_broadcast_agent_job()
+        monitor = _MonitorSyncClient()
+        manager = CronManager(
+            repo=_Repo(job),
+            runner=_Runner(),
+            channel_manager=_ChannelManager(),
+        )
+        manager._monitor_sync_client = (
+            monitor  # pylint: disable=protected-access
+        )
+        actual_time = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+
+        await manager._sync_execution_to_monitor(  # pylint: disable=protected-access
+            job=job,
+            exec_status="success",
+            actual_time=actual_time,
+            end_time=actual_time,
+            duration_ms=100,
+            error_message="",
+            output_preview="done",
+            is_manual=True,
+        )
+
+        return monitor.records[-1]
+
+    record = asyncio.run(_run())
+
+    assert record["notification_due_at"] is None
+
+
+def test_automatic_broadcast_execution_keeps_original_schedule_delay():
+    """自动执行分发任务时，仍按分发 offset 延迟通知。"""
+
+    async def _run():
+        job = _build_broadcast_agent_job()
+        monitor = _MonitorSyncClient()
+        manager = CronManager(
+            repo=_Repo(job),
+            runner=_Runner(),
+            channel_manager=_ChannelManager(),
+        )
+        manager._monitor_sync_client = (
+            monitor  # pylint: disable=protected-access
+        )
+        actual_time = datetime(2026, 6, 4, 10, 0, tzinfo=timezone.utc)
+
+        await manager._sync_execution_to_monitor(  # pylint: disable=protected-access
+            job=job,
+            exec_status="success",
+            actual_time=actual_time,
+            end_time=actual_time,
+            duration_ms=100,
+            error_message="",
+            output_preview="done",
+            is_manual=False,
+        )
+
+        return monitor.records[-1], actual_time
+
+    record, actual_time = asyncio.run(_run())
+
+    assert record["notification_due_at"] == actual_time + timedelta(minutes=20)
+    assert record["notification_timezone"] == "Asia/Shanghai"

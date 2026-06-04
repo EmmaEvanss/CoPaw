@@ -1780,7 +1780,7 @@ class CronManager:  # pylint: disable=too-many-public-methods
                 )
             except (TypeError, ValueError):
                 offset = 0
-            if (job.meta or {}).get(
+            if not is_manual and (job.meta or {}).get(
                 "broadcast_notification_policy",
             ) == "original_schedule":
                 notification_due_at = actual_time + timedelta(minutes=offset)

@@ -1248,50 +1248,83 @@ class TracingQueryService:
         offset: int,
     ) -> tuple[str, list[Any]]:
         """构建用户查询 SQL."""
-        # 根据 source_id 是否为 "all" 决定是否添加 source_id 过滤到子查询
-        source_filter = ""
-        source_params: list[Any] = []
-        if source_id != "all":
-            source_filter = "s.source_id = %s AND"
-            source_params = [source_id, source_id, source_id, source_id]
+        if source_id == "all":
+            query = f"""
+                SELECT t.user_id,
+                       COUNT(DISTINCT t.session_id) as total_sessions,
+                       COUNT(*) as total_conversations,
+                       SUM(t.total_tokens) as total_tokens,
+                       MAX(t.start_time) as last_active,
+                       COUNT(CASE WHEN t.session_id NOT LIKE 'cron-task:%%' THEN 1 END) as manual_calls,
+                       COALESCE(MAX(ce.cron_executions), 0) as cron_executions,
+                       (SELECT COUNT(*) FROM swe_tracing_spans s
+                        WHERE s.trace_id IN (SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id)
+                        AND s.event_type = 'skill_invocation') as total_skills,
+                       (SELECT user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       COALESCE(MAX(ce.cron_reads), 0) as cron_reads
+                FROM swe_tracing_traces t
+                LEFT JOIN (
+                    SELECT j.tenant_id as user_id,
+                           COUNT(*) as cron_executions,
+                           SUM(CASE WHEN e.is_read = TRUE THEN 1 ELSE 0 END) as cron_reads
+                    FROM swe_cron_executions e
+                    INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                    WHERE {cron_subquery_sql}
+                    GROUP BY j.tenant_id
+                ) ce ON ce.user_id = t.user_id
+                WHERE {where_sql}
+                GROUP BY t.user_id
+                ORDER BY {order_by}
+                LIMIT %s OFFSET %s
+            """
+            final_params = cron_params + params + [page_size, offset]
+        else:
+            query = f"""
+                SELECT t.user_id,
+                       COUNT(DISTINCT t.session_id) as total_sessions,
+                       COUNT(*) as total_conversations,
+                       SUM(t.total_tokens) as total_tokens,
+                       MAX(t.start_time) as last_active,
+                       COUNT(CASE WHEN t.session_id NOT LIKE 'cron-task:%%' THEN 1 END) as manual_calls,
+                       COALESCE(MAX(ce.cron_executions), 0) as cron_executions,
+                       (SELECT COUNT(*) FROM swe_tracing_spans s
+                        WHERE s.source_id = %s
+                        AND s.trace_id IN (SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id AND source_id = %s)
+                        AND s.event_type = 'skill_invocation') as total_skills,
+                       (SELECT user_name FROM swe_tracing_traces t2
+                        WHERE t2.user_id = t.user_id AND t2.source_id = %s AND t2.user_name IS NOT NULL
+                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
+                       (SELECT bbk_id FROM swe_tracing_traces t3
+                        WHERE t3.user_id = t.user_id AND t3.source_id = %s AND t3.bbk_id IS NOT NULL
+                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       COALESCE(MAX(ce.cron_reads), 0) as cron_reads
+                FROM swe_tracing_traces t
+                LEFT JOIN (
+                    SELECT j.tenant_id as user_id,
+                           COUNT(*) as cron_executions,
+                           SUM(CASE WHEN e.is_read = TRUE THEN 1 ELSE 0 END) as cron_reads
+                    FROM swe_cron_executions e
+                    INNER JOIN swe_cron_jobs j ON e.job_id = j.id
+                    WHERE {cron_subquery_sql}
+                    GROUP BY j.tenant_id
+                ) ce ON ce.user_id = t.user_id
+                WHERE {where_sql}
+                GROUP BY t.user_id
+                ORDER BY {order_by}
+                LIMIT %s OFFSET %s
+            """
+            final_params = (
+                [source_id, source_id, source_id, source_id]
+                + cron_params
+                + params
+                + [page_size, offset]
+            )
 
-        query = f"""
-            SELECT t.user_id,
-                   COUNT(DISTINCT t.session_id) as total_sessions,
-                   COUNT(*) as total_conversations,
-                   SUM(t.total_tokens) as total_tokens,
-                   MAX(t.start_time) as last_active,
-                   COUNT(CASE WHEN t.session_id NOT LIKE 'cron-task:%%' THEN 1 END) as manual_calls,
-                   COALESCE(MAX(ce.cron_executions), 0) as cron_executions,
-                   (SELECT COUNT(*) FROM swe_tracing_spans s
-                    WHERE {source_filter} s.trace_id IN (SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id)
-                    AND s.event_type = 'skill_invocation') as total_skills,
-                   (SELECT user_name FROM swe_tracing_traces t2
-                    WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL
-                    ORDER BY t2.start_time DESC LIMIT 1) as user_name,
-                   (SELECT bbk_id FROM swe_tracing_traces t3
-                    WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL
-                    ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
-                   COALESCE(MAX(ce.cron_reads), 0) as cron_reads
-            FROM swe_tracing_traces t
-            LEFT JOIN (
-                SELECT j.tenant_id as user_id,
-                       COUNT(*) as cron_executions,
-                       SUM(CASE WHEN e.is_read = TRUE THEN 1 ELSE 0 END) as cron_reads
-                FROM swe_cron_executions e
-                INNER JOIN swe_cron_jobs j ON e.job_id = j.id
-                WHERE {cron_subquery_sql}
-                GROUP BY j.tenant_id
-            ) ce ON ce.user_id = t.user_id
-            WHERE {where_sql}
-            GROUP BY t.user_id
-            ORDER BY {order_by}
-            LIMIT %s OFFSET %s
-        """
-
-        final_params = (
-            source_params + cron_params + params + [page_size, offset]
-        )
         return query, final_params
 
     def _build_user_list_item(self, row: dict) -> UserListItem:

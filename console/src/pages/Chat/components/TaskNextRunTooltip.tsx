@@ -4,49 +4,47 @@ import { createGlobalStyle } from "antd-style";
 
 const Style = createGlobalStyle`
 .chat-task-next-run-tooltip .ant-tooltip-inner {
-  min-width: 156px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: rgba(29, 33, 46, 0.96);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  min-width: 168px;
+  padding: 8px 9px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  box-shadow: 0 6px 18px rgba(17, 20, 45, 0.14);
 }
 
 .chat-task-next-run-tooltip-title {
-  margin-bottom: 6px;
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 12px;
-  line-height: 16px;
+  margin-bottom: 5px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  line-height: 15px;
   font-weight: 500;
 }
 
 .chat-task-next-run-tooltip-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .chat-task-next-run-tooltip-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 34px 1fr;
   align-items: center;
-  gap: 7px;
-  color: #ffffff;
+  column-gap: 8px;
   font-size: 12px;
   line-height: 16px;
   white-space: nowrap;
 }
 
 .chat-task-next-run-tooltip-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  background: rgba(91, 138, 255, 0.20);
-  color: #c9d7ff;
-  font-size: 10px;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 11px;
   line-height: 16px;
-  font-weight: 600;
+  font-weight: 400;
+}
+
+.chat-task-next-run-tooltip-time {
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 500;
 }
 `;
 
@@ -61,9 +59,9 @@ function TooltipContent({ runTimes }: { runTimes: string[] }) {
             key={`${runTime}-${index}`}
           >
             <span className="chat-task-next-run-tooltip-index">
-              {index + 1}
+              第{index + 1}次
             </span>
-            <span>{runTime}</span>
+            <span className="chat-task-next-run-tooltip-time">{runTime}</span>
           </div>
         ))}
       </div>
@@ -86,8 +84,10 @@ export default function TaskNextRunTooltip({
     <>
       <Style />
       <Tooltip
+        align={{ offset: [0, -10] }}
         classNames={{ root: "chat-task-next-run-tooltip" }}
-        placement="topLeft"
+        mouseEnterDelay={0.15}
+        placement="bottomLeft"
         title={<TooltipContent runTimes={runTimes} />}
       >
         {children}

@@ -169,6 +169,16 @@ class HtmlPreviewListSummaryResponse(BaseModel):
     """HTML 名单维度统计查询响应。"""
 
     success: bool = True
+    total: int = 0
+    clicked_list_count: int = 0
+    page: int = 1
+    page_size: int = 20
+    summary: HtmlPreviewListSummaryItem = Field(
+        default_factory=lambda: HtmlPreviewListSummaryItem(
+            list_key="all",
+            list_name="全部名单",
+        ),
+    )
     items: list[HtmlPreviewListSummaryItem] = Field(default_factory=list)
 
 

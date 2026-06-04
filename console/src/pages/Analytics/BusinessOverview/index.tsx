@@ -294,6 +294,8 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
   const totalTasks = safeNumber(taskStatusSummary?.total_tasks);
   const successCount = safeNumber(taskStatusSummary?.success);
   const readCount = safeNumber(taskStatusSummary?.read_count);
+  const clickCount = safeNumber(taskStatusSummary?.click_count);
+  const clickByButtonType = taskStatusSummary?.click_by_button_type || {};
 
   if (totalTasks === 0) {
     return (
@@ -306,34 +308,55 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
 
   const successRate = ((successCount / totalTasks) * 100).toFixed(1);
   const readRate = successCount > 0 ? ((readCount / successCount) * 100).toFixed(1) : "0.0";
+  const clickRate = readCount > 0 ? ((clickCount / readCount) * 100).toFixed(1) : "0.0";
 
   // 值为 0 时保证有最小值显示
   const minBar = Math.max(totalTasks * 0.12, 1);
   const ensureVisible = (v: number) => (v <= minBar ? minBar : v);
 
-  const funnelColors = ["#4f46e5", "#16a34a", "#0891b2"];
+  const funnelColors = ["#4f46e5", "#16a34a", "#0891b2", "#f59e0b"];
 
   const chartData = [
     { name: "总任务数", value: ensureVisible(totalTasks), rawValue: totalTasks },
     { name: "执行成功数", value: ensureVisible(successCount), rawValue: successCount },
     { name: "已读数", value: ensureVisible(readCount), rawValue: readCount },
+    { name: "点击数", value: ensureVisible(clickCount), rawValue: clickCount, clickByButtonType },
   ];
+
+  // 生成点击数的详细 tooltip（表格展示）
+  const generateClickTooltip = (clickByType: Record<string, number>) => {
+    const entries = Object.entries(clickByType);
+    if (entries.length === 0) {
+      return `<div style="font-weight:600;">点击数: 0</div>`;
+    }
+    const rows = entries.map(
+      ([type, count]) =>
+        `<tr><td style="padding:2px 8px;text-align:left;color:#475569;">${type}</td><td style="padding:2px 8px;text-align:right;font-weight:600;">${formatNumber(count)}</td></tr>`,
+    );
+    return `<div style="font-weight:600;margin-bottom:6px;">点击数: ${formatNumber(clickCount)}</div><table style="border-collapse:collapse;font-size:12px;"><tbody>${rows.join("")}</tbody></table>`;
+  };
 
   const option = {
     tooltip: {
       trigger: "item",
-      formatter: (params: { name: string; data: { rawValue: number } }) =>
-        `${params.name}: ${formatNumber(params.data.rawValue)}`,
+      formatter: (params: { name: string; data: { rawValue: number; clickByButtonType?: Record<string, number> } }) => {
+        if (params.name === "点击数" && params.data.clickByButtonType) {
+          return generateClickTooltip(params.data.clickByButtonType);
+        }
+        return `${params.name}: ${formatNumber(params.data.rawValue)}`;
+      },
+      extraCssText: "max-width: 200px; white-space: normal;",
     },
     legend: {
       data: chartData.map((item) => item.name),
-      top: 0,
+      orient: "horizontal",
+      bottom: 0,
       itemWidth: 10,
       itemHeight: 10,
-      itemGap: 16,
+      itemGap: 12,
       textStyle: {
         color: "#475569",
-        fontSize: 12,
+        fontSize: 11,
         fontWeight: 500,
       },
     },
@@ -350,8 +373,8 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
         type: "funnel",
         left: "5%",
         right: "40%",
-        top: "15%",
-        bottom: "10%",
+        top: "5%",
+        bottom: "25%",
         min: 0,
         max: totalTasks,
         minSize: "35%",
@@ -362,9 +385,9 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
           show: true,
           position: "inside",
           formatter: (params: { name: string; data: { rawValue: number } }) =>
-            `${params.name}  ${formatNumber(params.data.rawValue)}`,
+            `${params.name}${formatNumber(params.data.rawValue)}`,
           color: "#fff",
-          fontSize: 12,
+          fontSize: 10,
           fontWeight: 600,
         },
         itemStyle: {
@@ -374,6 +397,7 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
           name: item.name,
           value: item.value,
           rawValue: item.rawValue,
+          clickByButtonType: item.clickByButtonType,
           itemStyle: { color: funnelColors[index] },
         })),
       },
@@ -384,7 +408,7 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
       {
         type: "group",
         left: "68%",
-        top: "28%",
+        top: "18%",
         children: [
           {
             type: "circle",
@@ -393,12 +417,12 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
           },
           {
             type: "line",
-            shape: { x1: 3, y1: 0, x2: 3, y2: 30 },
+            shape: { x1: 3, y1: 0, x2: 3, y2: 20 },
             style: { stroke: "#94a3b8", lineWidth: 1, lineDash: [3, 2] },
           },
           {
             type: "circle",
-            shape: { cx: 3, cy: 30, r: 3 },
+            shape: { cx: 3, cy: 20, r: 3 },
             style: { fill: "#94a3b8" },
           },
           {
@@ -406,9 +430,9 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
             style: {
               text: `→ ${successRate}%`,
               x: 12,
-              y: 15,
+              y: 10,
               fill: "#64748b",
-              fontSize: 11,
+              fontSize: 10,
               fontWeight: 500,
             },
           },
@@ -418,7 +442,7 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
       {
         type: "group",
         left: "68%",
-        top: "56%",
+        top: "38%",
         children: [
           {
             type: "circle",
@@ -427,12 +451,12 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
           },
           {
             type: "line",
-            shape: { x1: 3, y1: 0, x2: 3, y2: 30 },
+            shape: { x1: 3, y1: 0, x2: 3, y2: 20 },
             style: { stroke: "#94a3b8", lineWidth: 1, lineDash: [3, 2] },
           },
           {
             type: "circle",
-            shape: { cx: 3, cy: 30, r: 3 },
+            shape: { cx: 3, cy: 20, r: 3 },
             style: { fill: "#94a3b8" },
           },
           {
@@ -440,9 +464,43 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
             style: {
               text: `→ ${readRate}%`,
               x: 12,
-              y: 15,
+              y: 10,
               fill: "#64748b",
-              fontSize: 11,
+              fontSize: 10,
+              fontWeight: 500,
+            },
+          },
+        ],
+      },
+      // 第三层到第四层的转化率
+      {
+        type: "group",
+        left: "68%",
+        top: "58%",
+        children: [
+          {
+            type: "circle",
+            shape: { cx: 3, cy: 0, r: 3 },
+            style: { fill: "#94a3b8" },
+          },
+          {
+            type: "line",
+            shape: { x1: 3, y1: 0, x2: 3, y2: 20 },
+            style: { stroke: "#94a3b8", lineWidth: 1, lineDash: [3, 2] },
+          },
+          {
+            type: "circle",
+            shape: { cx: 3, cy: 20, r: 3 },
+            style: { fill: "#94a3b8" },
+          },
+          {
+            type: "text",
+            style: {
+              text: `→ ${clickRate}%`,
+              x: 12,
+              y: 10,
+              fill: "#64748b",
+              fontSize: 10,
               fontWeight: 500,
             },
           },
@@ -453,7 +511,7 @@ function TaskFunnel({ taskStatusSummary }: { taskStatusSummary: TaskStatusSummar
 
   return (
     <div className={styles.funnelWrap}>
-      <ReactECharts option={option} style={{ height: 160 }} />
+      <ReactECharts option={option} style={{ height: 200 }} />
     </div>
   );
 }
@@ -681,6 +739,8 @@ export default function BusinessOverviewPage() {
   const activeLoadingRef = useRef(false);
   // 用户过滤类型：filtered(过滤IT人员) / all(全部用户)
   const [activeFilterType, setActiveFilterType] = useState<"filtered" | "all">("all");
+  // 使用深度卡片默认隐藏
+  const [hideDepthCard] = useState(true);
   const [skills, setSkills] = useState<SkillUsage[]>([]);
   const [skillsPage, setSkillsPage] = useState(1);
   const [skillsHasMore, setSkillsHasMore] = useState(true);
@@ -739,6 +799,10 @@ export default function BusinessOverviewPage() {
         lastActive: item.last_active
           ? dayjs(String(item.last_active)).format("YYYY-MM-DD HH:mm")
           : "-",
+        // 三种口径统计字段
+        manualCalls: safeNumber(item.manual_calls),
+        cronExecutions: safeNumber(item.cron_executions),
+        cronReads: safeNumber(item.cron_reads),
       })),
     [],
   );
@@ -802,11 +866,12 @@ export default function BusinessOverviewPage() {
       setActiveLoading(true);
 
       try {
+        // 默认按主动使用次数排序，后端返回三个口径数据
         const result = await tracingApi.getUsers(page, 10, {
           start_date: startDateText,
           end_date: endDateText,
           bbk_ids: effectiveBbkIds?.join(","),
-          sort_by: "conversations",
+          sort_by: "manual_calls",
           filter_user_type: activeFilterType,
         });
         const mappedUsers = transformUserData(
@@ -1382,7 +1447,7 @@ export default function BusinessOverviewPage() {
       </section>
 
       <section
-        className={styles.analysisGrid}
+        className={hideDepthCard ? styles.analysisGrid : styles.analysisGridWithDepth}
         data-testid="overview-analysis-grid"
       >
         <article className={styles.panelLarge}>
@@ -1575,7 +1640,9 @@ export default function BusinessOverviewPage() {
           <div className={styles.rankHeader}>
             <span>排名</span>
             <span>用户</span>
-            <span>使用次数</span>
+            <span>主动使用</span>
+            <span>定时执行</span>
+            <span>结果查看</span>
           </div>
           <div className={styles.rankList} onScroll={handleActiveScroll}>
             {activeUsers.length === 0 ? (
@@ -1622,7 +1689,13 @@ export default function BusinessOverviewPage() {
                       </span>
                     </Tooltip>
                     <span className={styles.rankCalls}>
-                      {formatNumber(item.calls)}
+                      {formatNumber(item.manualCalls)}
+                    </span>
+                    <span className={styles.rankCalls}>
+                      {formatNumber(item.cronExecutions)}
+                    </span>
+                    <span className={styles.rankCalls}>
+                      {formatNumber(item.cronReads)}
                     </span>
                   </button>
                 );
@@ -1634,43 +1707,45 @@ export default function BusinessOverviewPage() {
           </div>
         </article>
 
-        <article className={styles.panelMedium}>
-          <div className={styles.panelHeader}>
-            <h3 className={styles.panelTitle}>使用深度</h3>
-          </div>
-          <div className={styles.depthGrid}>
-            {depthCards.map((card) => (
-              <div key={card.key} className={styles.depthCard}>
-                <div className={styles.depthIconWrap}>
-                  {card.key === "avg-rounds" && <MessageCircleMore size={15} />}
-                  {card.key === "multi-round" && <Users size={15} />}
-                  {card.key === "avg-duration" && <Clock3 size={15} />}
-                  {card.key === "avg-sessions" && <ArrowUpRight size={15} />}
+        {!hideDepthCard && (
+          <article className={styles.panelMedium}>
+            <div className={styles.panelHeader}>
+              <h3 className={styles.panelTitle}>使用深度</h3>
+            </div>
+            <div className={styles.depthGrid}>
+              {depthCards.map((card) => (
+                <div key={card.key} className={styles.depthCard}>
+                  <div className={styles.depthIconWrap}>
+                    {card.key === "avg-rounds" && <MessageCircleMore size={15} />}
+                    {card.key === "multi-round" && <Users size={15} />}
+                    {card.key === "avg-duration" && <Clock3 size={15} />}
+                    {card.key === "avg-sessions" && <ArrowUpRight size={15} />}
+                  </div>
+                  <div className={styles.depthValue}>{card.valueText}</div>
+                  <Tooltip title={card.title} placement="top">
+                    <div className={styles.depthTitle}>{card.title}</div>
+                  </Tooltip>
+                  <div
+                    className={
+                      card.changeDirection === "up"
+                        ? styles.metricChangeUp
+                        : card.changeDirection === "down"
+                        ? styles.metricChangeDown
+                        : styles.metricChangeFlat
+                    }
+                  >
+                    环比
+                    {card.changeDirection === "up" && <TrendingUp size={12} />}
+                    {card.changeDirection === "down" && (
+                      <TrendingDown size={12} />
+                    )}
+                    {card.changeText}
+                  </div>
                 </div>
-                <div className={styles.depthValue}>{card.valueText}</div>
-                <Tooltip title={card.title} placement="top">
-                  <div className={styles.depthTitle}>{card.title}</div>
-                </Tooltip>
-                <div
-                  className={
-                    card.changeDirection === "up"
-                      ? styles.metricChangeUp
-                      : card.changeDirection === "down"
-                      ? styles.metricChangeDown
-                      : styles.metricChangeFlat
-                  }
-                >
-                  环比
-                  {card.changeDirection === "up" && <TrendingUp size={12} />}
-                  {card.changeDirection === "down" && (
-                    <TrendingDown size={12} />
-                  )}
-                  {card.changeText}
-                </div>
-              </div>
-            ))}
-          </div>
-        </article>
+              ))}
+            </div>
+          </article>
+        )}
       </section>
 
       <section

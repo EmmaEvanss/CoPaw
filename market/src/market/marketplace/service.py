@@ -59,6 +59,7 @@ from .schemas import (
     RecallResultItem,
     SkillUserStat,
 )
+from .version_service import SkillVersionService
 
 logger = logging.getLogger(__name__)
 
@@ -747,20 +748,23 @@ class MarketplaceService:
                 if skill_dir.exists():
                     shutil.rmtree(skill_dir)
                 shutil.copytree(src_skill_dir, skill_dir)
+                # 删除复制过来的 skill.json（不再需要）
+                skill_json_path = skill_dir / "skill.json"
+                if skill_json_path.exists():
+                    try:
+                        skill_json_path.unlink()
+                    except OSError:
+                        pass
                 logger.info(
                     "Copied entire skill directory from %s to %s",
                     src_skill_dir,
                     skill_dir,
                 )
             else:
-                # 源目录不存在，回退到单文件写入
+                # 源目录不存在，只写入 SKILL.md
                 logger.warning(
-                    "Source skill directory %s not found, falling back to single files",
+                    "Source skill directory %s not found, falling back to SKILL.md only",
                     src_skill_dir,
-                )
-                (skill_dir / "skill.json").write_text(
-                    json.dumps(req.skill_json, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
                 )
                 if req.skill_md:
                     (skill_dir / "SKILL.md").write_text(
@@ -768,11 +772,7 @@ class MarketplaceService:
                         encoding="utf-8",
                     )
         else:
-            # 未提供 skill_name，使用单文件写入
-            (skill_dir / "skill.json").write_text(
-                json.dumps(req.skill_json, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            # 未提供 skill_name，只写入 SKILL.md
             if req.skill_md:
                 (skill_dir / "SKILL.md").write_text(
                     req.skill_md,
@@ -780,6 +780,20 @@ class MarketplaceService:
                 )
 
         save_index(self.marketplace_root, source_id, items)
+
+        # 创建版本快照
+        version_svc = SkillVersionService(self.marketplace_root)
+        try:
+            version_svc.create_version_snapshot(
+                source_id=source_id,
+                item_id=item.item_id,
+                skill_dir=skill_dir,
+                description=f"上架版本 {item.version}",
+                creator=req.creator_name,
+                current_market_version=item.version,
+            )
+        except Exception as e:
+            logger.warning("Failed to create version snapshot: %s", e)
 
         if self.db.is_connected:
             try:
@@ -845,6 +859,66 @@ class MarketplaceService:
                 )
             except Exception as e:
                 logger.warning("Failed to log unpublish operation: %s", e)
+
+        return True
+
+    async def delete_market_skill(
+        self,
+        source_id: str,
+        item_id: str,
+        operator_id: str,
+        operator_name: str,
+    ) -> bool:
+        """彻底删除市场技能（包括主目录和版本历史）。返回 True 表示成功。"""
+        import shutil
+
+        items = load_index(self.marketplace_root, source_id)
+        item = next(
+            (
+                i
+                for i in items
+                if i.item_id == item_id and i.item_type == "skill"
+            ),
+            None,
+        )
+        if item is None:
+            return False
+
+        # 删除技能主目录
+        skill_dir = self.marketplace_root / source_id / "skills" / item_id
+        if skill_dir.exists():
+            shutil.rmtree(skill_dir)
+
+        # 删除版本历史目录
+        versions_dir = (
+            self.marketplace_root / source_id / "skill_versions" / item_id
+        )
+        if versions_dir.exists():
+            shutil.rmtree(versions_dir)
+
+        # 从索引中移除该技能
+        items = [i for i in items if i.item_id != item_id]
+        save_index(self.marketplace_root, source_id, items)
+
+        if self.db.is_connected:
+            try:
+                await self.db.execute(
+                    _LOG_MARKET_OP_SQL,
+                    (
+                        source_id,
+                        operator_id,
+                        operator_name,
+                        "delete",
+                        "skill",
+                        item_id,
+                        item.name,
+                        None,
+                        None,
+                        None,
+                    ),
+                )
+            except Exception as e:
+                logger.warning("Failed to log delete operation: %s", e)
 
         return True
 

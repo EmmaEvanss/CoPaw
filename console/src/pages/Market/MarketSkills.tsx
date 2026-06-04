@@ -55,6 +55,7 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
     setDetailDrawerOpen,
     refreshCategories,
     refreshSkills,
+    refreshSkillsAndDetail,
     openSkillDetail,
   } = useMarket(sourceId);
 
@@ -87,11 +88,30 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
     refreshSkills();
   }, [refreshCategories, refreshSkills]);
 
-  // Handle unpublish skill
-  const handleUnpublish = async (skill: MarketSkill) => {
+  // Handle unpublish skill (下架)
+  const handleUnpublishSkill = async (skill: MarketSkill | MarketSkillDetail | null) => {
+    if (!skill || !sourceId) return;
     try {
       await marketApi.unpublishSkill(sourceId, skill.item_id);
+      message.success("下架成功");
+      if (selectedSkill?.item_id === skill.item_id) {
+        setDetailDrawerOpen(false);
+      }
+      refreshSkills();
+    } catch (err) {
+      message.error("下架失败");
+    }
+  };
+
+  // Handle delete skill permanently (彻底删除)
+  const handleDeleteSkill = async (skill: MarketSkill | MarketSkillDetail | null) => {
+    if (!skill || !sourceId) return;
+    try {
+      await marketApi.deleteSkill(sourceId, skill.item_id);
       message.success("删除成功");
+      if (selectedSkill?.item_id === skill.item_id) {
+        setDetailDrawerOpen(false);
+      }
       refreshSkills();
     } catch (err) {
       message.error("删除失败");
@@ -131,37 +151,6 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
       console.error("获取 MCP 详情失败:", err);
     }
   }, []);
-
-  // 删除技能
-  const handleDeleteSkill = useCallback(async (target?: MarketSkill | MarketSkillDetail | null) => {
-    const item = target || selectedSkill;
-    if (!item || !sourceId) return;
-    try {
-      await marketApi.unpublishSkill(sourceId, item.item_id);
-      message.success("删除成功");
-      if (selectedSkill?.item_id === item.item_id) {
-        setSelectedSkill(null);
-        setSkillDetailMode("list");
-      }
-      refreshSkills();
-    } catch (err) {
-      console.error("删除技能失败:", err);
-      message.error("删除失败");
-    }
-  }, [selectedSkill, refreshSkills, sourceId]);
-
-  const confirmDeleteSkill = useCallback((target: MarketSkill | MarketSkillDetail) => {
-    Modal.confirm({
-      title: "确认删除此技能？",
-      content: "删除操作会直接删除市场条目，但不会影响已经分发出去的用户。",
-      okText: "删除",
-      okButtonProps: { danger: true },
-      cancelText: "取消",
-      onOk: async () => {
-        await handleDeleteSkill(target);
-      },
-    });
-  }, [handleDeleteSkill]);
 
   // 删除 MCP
   const handleDeleteMCP = useCallback(async (target?: MarketMCPItem | MarketMCPDetail | null) => {
@@ -450,13 +439,18 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                     ? () => openSkillRecallModal(selectedSkill)
                     : undefined
                 }
+                onUnpublish={
+                  isManager
+                    ? () => handleUnpublishSkill(selectedSkill)
+                    : undefined
+                }
                 onDelete={
                   isManager
-                    ? () => confirmDeleteSkill(selectedSkill)
+                    ? () => handleDeleteSkill(selectedSkill)
                     : undefined
                 }
                 sourceId={sourceId}
-                onRefresh={refreshSkills}
+                onRefresh={refreshSkillsAndDetail}
                 categoryName={selectedSkillCategoryName}
               />
             </div>
@@ -560,7 +554,8 @@ export function MarketSkills({ sourceId, isManager }: MarketSkillsProps) {
                           categoryName={catName}
                           onClick={() => openSkillDetail(skill.item_id)}
                           onDistribute={isManager ? () => openSkillDistributeModal(skill) : undefined}
-                          onUnpublish={isManager ? () => handleUnpublish(skill) : undefined}
+                          onUnpublish={isManager ? () => handleUnpublishSkill(skill) : undefined}
+                          onDelete={isManager ? () => handleDeleteSkill(skill) : undefined}
                           isManager={isManager}
                         />
                       );

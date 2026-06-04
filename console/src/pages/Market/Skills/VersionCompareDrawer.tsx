@@ -596,8 +596,8 @@ export function VersionCompareDrawer(props: VersionCompareDrawerProps) {
   };
 
   // 自定义展开/折叠图标
-  const switcherIcon = ({ expanded }: { expanded: boolean }) => (
-    expanded
+  const switcherIcon = (props: { expanded?: boolean }) => (
+    props.expanded
       ? <DownOutlined style={{ fontSize: 10, color: "#6e7781" }} />
       : <RightOutlined style={{ fontSize: 10, color: "#6e7781" }} />
   );
@@ -723,7 +723,7 @@ export function VersionCompareDrawer(props: VersionCompareDrawerProps) {
                   showIcon
                   blockNode
                   expandedKeys={expandedKeys}
-                  onExpand={setExpandedKeys}
+                  onExpand={(keys) => setExpandedKeys(keys as string[])}
                   selectedKeys={selectedFilePath ? [selectedFilePath] : []}
                   onSelect={handleTreeSelect}
                   treeData={treeData}

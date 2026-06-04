@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import AsyncExitStack
-from contextlib import suppress
 from datetime import timedelta
 from typing import Any, Literal
 
@@ -48,8 +47,12 @@ async def _cancel_lifecycle_task(
         return
 
     lifecycle_task.cancel()
-    with suppress(asyncio.CancelledError):
+    try:
         await lifecycle_task
+    except asyncio.CancelledError:
+        current_task = asyncio.current_task()
+        if current_task is not None and current_task.cancelling():
+            raise
 
 
 async def _call_with_timeout(

@@ -12,6 +12,7 @@ import pytest
 from swe.app.mcp.stateful_client import (
     HttpStatefulClient,
     StdIOStatefulClient,
+    _cancel_lifecycle_task,
 )
 
 
@@ -82,3 +83,28 @@ async def test_stdio_connect_timeout_cleans_up_hanging_lifecycle(
     assert client._lifecycle_task is None or client._lifecycle_task.done()
     assert client.session is None
     assert client.is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_lifecycle_task_preserves_caller_cancellation() -> None:
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def slow_teardown_task() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+    lifecycle_task = asyncio.create_task(slow_teardown_task())
+    cleanup_task = asyncio.create_task(
+        _cancel_lifecycle_task(lifecycle_task),
+    )
+
+    await cleanup_started.wait()
+    cleanup_task.cancel()
+    release_cleanup.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup_task

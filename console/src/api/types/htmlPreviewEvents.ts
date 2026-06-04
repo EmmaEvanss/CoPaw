@@ -130,6 +130,11 @@ export interface HtmlPreviewListSummaryItem {
 
 export interface HtmlPreviewListSummaryResponse {
   success: boolean;
+  total?: number;
+  clicked_list_count?: number;
+  page?: number;
+  page_size?: number;
+  summary?: HtmlPreviewListSummaryItem;
   items: HtmlPreviewListSummaryItem[];
 }
 

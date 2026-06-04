@@ -387,6 +387,8 @@ class TenantWorkspacePool:
         Raises:
             RuntimeError: If bootstrap fails.
         """
+        started_at = time.perf_counter()
+
         # Resolve bootstrap tenant ID
         bootstrap_tenant_id = self._resolve_bootstrap_tenant_id(
             tenant_id,
@@ -401,6 +403,12 @@ class TenantWorkspacePool:
             source_id,
             scope_id,
         ):
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.debug(
+                "bootstrap_fast_path_hit tenant_id=%s duration_ms=%d",
+                bootstrap_tenant_id,
+                duration_ms,
+            )
             return
 
         # Slow path: bootstrap with per-tenant lock
@@ -415,6 +423,12 @@ class TenantWorkspacePool:
                 source_id,
                 scope_id,
             ):
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                logger.debug(
+                    "bootstrap_fast_path_hit tenant_id=%s duration_ms=%d",
+                    bootstrap_tenant_id,
+                    duration_ms,
+                )
                 return
 
             # Perform bootstrap
@@ -425,6 +439,12 @@ class TenantWorkspacePool:
                 scope_id,
                 tenant_name,
                 bbk_id,
+            )
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.debug(
+                "bootstrap_fast_path_miss tenant_id=%s duration_ms=%d",
+                bootstrap_tenant_id,
+                duration_ms,
             )
 
     async def _record_init_source_mapping(

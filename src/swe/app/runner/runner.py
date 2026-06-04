@@ -617,7 +617,12 @@ async def _build_and_connect_mcp_clients(
     Returns:
         List of connected MCP client instances (all created for this request)
     """
+    started_at = time.perf_counter()
     if mcp_config is None or not mcp_config.clients:
+        logger.debug(
+            "mcp_client_connect_duration_ms=%d client_count=0",
+            int((time.perf_counter() - started_at) * 1000),
+        )
         return []
 
     clients = []
@@ -640,6 +645,11 @@ async def _build_and_connect_mcp_clients(
                 exc_info=True,
             )
 
+    logger.debug(
+        "mcp_client_connect_duration_ms=%d client_count=%d",
+        int((time.perf_counter() - started_at) * 1000),
+        len(clients),
+    )
     return clients
 
 
@@ -1760,6 +1770,7 @@ class AgentRunner(Runner):
                     blocked_session_id=session_id,
                 )
 
+            agent_build_started_at = time.perf_counter()
             agent = self._create_agent_for_query(
                 agent_config=agent_config,
                 env_context=env_context,
@@ -1776,6 +1787,14 @@ class AgentRunner(Runner):
             )
             await agent.register_mcp_clients()
             agent.set_console_output_enabled(enabled=False)
+            logger.debug(
+                "swe_agent_build_duration_ms=%d agent_id=%s tenant_id=%s "
+                "mcp_client_count=%d",
+                int((time.perf_counter() - agent_build_started_at) * 1000),
+                self.agent_id,
+                self.tenant_id,
+                len(mcp_clients),
+            )
 
             runtime = _QueryRuntime(
                 agent=agent,

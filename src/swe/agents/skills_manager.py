@@ -237,16 +237,19 @@ def _get_skill_mtime(skill_dir: Path) -> float:
 def get_skill_freshness_token(skill_dir: Path) -> float:
     """Return a lightweight recursive freshness token for one skill tree.
 
-    The token is the latest ``mtime`` among the skill directory and all
-    non-ignored descendants. It is a cheap heuristic for next-turn
-    freshness checks, not a strict content identity.
+    The token is the latest ``mtime`` among non-ignored files under the
+    skill tree. Directory mtimes are intentionally excluded so ignored
+    OS/cache artifacts do not cause false positives by touching parent
+    directories. This is a cheap heuristic for next-turn freshness checks,
+    not a strict content identity.
     """
-    try:
-        latest_mtime = skill_dir.stat().st_mtime
-    except OSError:
+    if not skill_dir.exists():
         return 0.0
 
+    latest_mtime = 0.0
     for path in skill_dir.rglob("*"):
+        if not path.is_file():
+            continue
         rel = path.relative_to(skill_dir)
         if _is_ignored_skill_path(rel):
             continue

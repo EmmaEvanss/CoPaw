@@ -933,6 +933,12 @@ def _build_skill_freshness_notice_msg(text: str) -> Msg:
     )
 
 
+@dataclass(frozen=True)
+class _SkillFreshnessRefreshResult:
+    notice_text: str | None = None
+    snapshot_to_persist: dict[str, dict[str, Any]] | None = None
+
+
 def _resolve_max_before_stop_turns(agent_config: Any) -> int:
     """解析 BeforeStop 自动续跑上限，未配置时使用保守默认值。"""
     running_config = getattr(agent_config, "running", None)
@@ -1768,13 +1774,13 @@ class AgentRunner(Runner):
         self,
         *,
         runtime: _QueryRuntime,
-    ) -> str | None:
+    ) -> _SkillFreshnessRefreshResult:
         if (
             runtime.skip_history
             or self.session is None
             or not runtime.session_id
         ):
-            return None
+            return _SkillFreshnessRefreshResult()
 
         session_supports_snapshot = all(
             hasattr(self.session, attr)
@@ -1791,7 +1797,7 @@ class AgentRunner(Runner):
             not session_supports_snapshot
             or not agent_supports_effective_skills
         ):
-            return None
+            return _SkillFreshnessRefreshResult()
 
         stored_snapshot = _normalize_session_skill_snapshot(
             await self.session.get_session_skill_snapshot(
@@ -1801,7 +1807,7 @@ class AgentRunner(Runner):
             ),
         )
         if not stored_snapshot:
-            return None
+            return _SkillFreshnessRefreshResult()
 
         workspace_skills_dir = get_workspace_skills_dir(
             Path(self.workspace_dir or WORKING_DIR),
@@ -1874,16 +1880,16 @@ class AgentRunner(Runner):
                     ),
                 )
 
-        if next_snapshot != stored_snapshot:
-            await self.session.save_session_skill_snapshot(
-                session_id=runtime.session_id,
-                user_id=runtime.user_id,
-                snapshot=next_snapshot,
-            )
-
-        if not changes:
-            return None
-        return _skill_freshness_notice_text(changes)
+        snapshot_to_persist = (
+            next_snapshot if next_snapshot != stored_snapshot else None
+        )
+        notice_text = (
+            _skill_freshness_notice_text(changes) if changes else None
+        )
+        return _SkillFreshnessRefreshResult(
+            notice_text=notice_text,
+            snapshot_to_persist=snapshot_to_persist,
+        )
 
     async def _start_declared_session_skill(
         self,
@@ -2981,7 +2987,7 @@ class AgentRunner(Runner):
         retry_state.agent = runtime.agent
         retry_state.session_state_loaded = attempt_state.session_state_loaded
 
-        skill_freshness_notice = await self._refresh_session_skill_freshness(
+        skill_freshness_refresh = await self._refresh_session_skill_freshness(
             runtime=runtime,
         )
 
@@ -2994,10 +3000,18 @@ class AgentRunner(Runner):
             msgs=attempt_input.msgs,
             query=attempt_input.query,
         )
-        if skill_freshness_notice:
+        if skill_freshness_refresh.notice_text:
             plan.turn_msgs.insert(
                 0,
-                _build_skill_freshness_notice_msg(skill_freshness_notice),
+                _build_skill_freshness_notice_msg(
+                    skill_freshness_refresh.notice_text,
+                ),
+            )
+        if skill_freshness_refresh.snapshot_to_persist is not None:
+            await self.session.save_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                snapshot=skill_freshness_refresh.snapshot_to_persist,
             )
 
         async for msg, last in self._stream_completion_lifecycle(

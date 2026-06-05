@@ -29,6 +29,12 @@ def _agent_config():
                 enabled=False,
                 mode=SuggestionMode.DISABLED,
             ),
+            query_retry=SimpleNamespace(
+                enabled=False,
+                max_retries=0,
+                backoff_base=0.0,
+                backoff_cap=0.0,
+            ),
         ),
     )
 
@@ -709,3 +715,120 @@ async def test_freshness_notice_is_not_persisted_in_session_memory(
     assert not any(
         text.startswith("[Skill freshness notice]") for text in persisted_texts
     )
+
+
+@pytest.mark.asyncio
+async def test_retryable_plan_failure_defers_snapshot_persistence_until_success(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    skill_dir = _write_skill_dir(tmp_path, "xlsx")
+    await runner.session.save_session_skill_snapshot(
+        session_id="session-1",
+        user_id="user-1",
+        snapshot={
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.get_skill_freshness_token",
+        lambda _path: 11.0,
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: SimpleNamespace(
+            id="test-agent",
+            hooks=SimpleNamespace(enabled=False, events={}),
+            mcp=None,
+            running=SimpleNamespace(
+                suggestions=SimpleNamespace(
+                    enabled=False,
+                    mode=SuggestionMode.DISABLED,
+                ),
+                query_retry=SimpleNamespace(
+                    enabled=True,
+                    max_retries=1,
+                    backoff_base=0.0,
+                    backoff_cap=0.0,
+                ),
+            ),
+        ),
+    )
+
+    observed_snapshots: list[dict[str, dict]] = []
+    original_build_turn_plan = runner._build_turn_plan
+
+    async def flaky_build_turn_plan(*args, **kwargs):
+        observed_snapshots.append(
+            await runner.session.get_session_skill_snapshot(
+                session_id="session-1",
+                user_id="user-1",
+                allow_not_exist=True,
+            ),
+        )
+        if len(observed_snapshots) == 1:
+            raise RuntimeError("request timed out")
+        return await original_build_turn_plan(
+            runtime=kwargs["runtime"],
+            request=kwargs["request"],
+            msgs=kwargs["msgs"],
+            query=kwargs["query"],
+        )
+
+    monkeypatch.setattr(runner, "_build_turn_plan", flaky_build_turn_plan)
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="continue")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    assert observed_snapshots == [
+        {
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+        {
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    ]
+    assert _FakeAgent.last_instance is not None
+    notice_messages = [
+        msg
+        for msg in _FakeAgent.last_instance.turn_msgs
+        if msg.role == "system"
+    ]
+    assert len(notice_messages) == 1
+    assert (
+        "detected skill-directory change"
+        in notice_messages[0].get_text_content()
+    )
+
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert state["session_skill_snapshot"] == {
+        "xlsx": {
+            "skill_name": "xlsx",
+            "resolved_skill_dir": str(skill_dir),
+            "freshness_token": 11.0,
+        },
+    }

@@ -883,7 +883,7 @@ def _build_session_skill_snapshot_entry(
     *,
     skill_name: str,
     resolved_skill_dir: Path,
-    freshness_token: float,
+    freshness_token: Any,
 ) -> dict[str, Any]:
     return {
         "skill_name": skill_name,
@@ -897,7 +897,7 @@ def _upsert_session_skill_snapshot_entry(
     *,
     skill_name: str,
     resolved_skill_dir: Path,
-    freshness_token: float,
+    freshness_token: Any,
 ) -> None:
     snapshot[skill_name] = _build_session_skill_snapshot_entry(
         skill_name=skill_name,
@@ -2912,6 +2912,7 @@ class AgentRunner(Runner):
         plan: _TurnPlan,
         outcome: _QueryTurnOutcome,
         trace_id: str | None,
+        skill_snapshot_to_persist: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """执行 agent 输出后的持久化、suggestion 与 trace 收尾。"""
         await self._generate_backend_suggestions_if_needed(
@@ -2927,6 +2928,12 @@ class AgentRunner(Runner):
             trace_id,
             TraceStatus.COMPLETED,
         )
+        if skill_snapshot_to_persist is not None:
+            await self.session.save_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                snapshot=skill_snapshot_to_persist,
+            )
 
     async def _finish_blocked_query_attempt(
         self,
@@ -3007,12 +3014,6 @@ class AgentRunner(Runner):
                     skill_freshness_refresh.notice_text,
                 ),
             )
-        if skill_freshness_refresh.snapshot_to_persist is not None:
-            await self.session.save_session_skill_snapshot(
-                session_id=runtime.session_id,
-                user_id=runtime.user_id,
-                snapshot=skill_freshness_refresh.snapshot_to_persist,
-            )
 
         async for msg, last in self._stream_completion_lifecycle(
             request=attempt_input.request,
@@ -3036,6 +3037,9 @@ class AgentRunner(Runner):
             plan=plan,
             outcome=outcome,
             trace_id=attempt_input.trace_id,
+            skill_snapshot_to_persist=(
+                skill_freshness_refresh.snapshot_to_persist
+            ),
         )
         retry_state.task_completed = outcome.task_completed
         attempt_state.succeeded = True

@@ -234,31 +234,38 @@ def _get_skill_mtime(skill_dir: Path) -> float:
         return 0.0
 
 
-def get_skill_freshness_token(skill_dir: Path) -> float:
+def get_skill_freshness_token(skill_dir: Path) -> str:
     """Return a lightweight recursive freshness token for one skill tree.
 
-    The token is the latest ``mtime`` among non-ignored files under the
-    skill tree. Directory mtimes are intentionally excluded so ignored
+    The token is a stable digest over non-ignored file paths and cheap stat
+    metadata. Directory mtimes are intentionally excluded so ignored
     OS/cache artifacts do not cause false positives by touching parent
-    directories. This is a cheap heuristic for next-turn freshness checks,
-    not a strict content identity.
+    directories, while deletions and renames still change the token.
     """
     if not skill_dir.exists():
-        return 0.0
+        return "v2:missing"
 
-    latest_mtime = 0.0
-    for path in skill_dir.rglob("*"):
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(b"skill-freshness-v2\0")
+
+    for path in sorted(skill_dir.rglob("*")):
         if not path.is_file():
             continue
         rel = path.relative_to(skill_dir)
         if _is_ignored_skill_path(rel):
             continue
         try:
-            latest_mtime = max(latest_mtime, path.stat().st_mtime)
+            stat = path.stat()
         except OSError:
             continue
+        digest.update(rel.as_posix().encode("utf-8", "surrogateescape"))
+        digest.update(b"\0")
+        digest.update(str(stat.st_mtime_ns).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(stat.st_size).encode("ascii"))
+        digest.update(b"\0")
 
-    return latest_mtime
+    return f"v2:{digest.hexdigest()}"
 
 
 def _directory_tree(directory: Path) -> dict[str, Any]:

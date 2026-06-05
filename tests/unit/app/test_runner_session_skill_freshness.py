@@ -832,3 +832,125 @@ async def test_retryable_plan_failure_defers_snapshot_persistence_until_success(
             "freshness_token": 11.0,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_retryable_completion_failure_defers_snapshot_persistence_until_success(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    skill_dir = _write_skill_dir(tmp_path, "xlsx")
+    await runner.session.save_session_skill_snapshot(
+        session_id="session-1",
+        user_id="user-1",
+        snapshot={
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.get_skill_freshness_token",
+        lambda _path: 11.0,
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: SimpleNamespace(
+            id="test-agent",
+            hooks=SimpleNamespace(enabled=False, events={}),
+            mcp=None,
+            running=SimpleNamespace(
+                suggestions=SimpleNamespace(
+                    enabled=False,
+                    mode=SuggestionMode.DISABLED,
+                ),
+                query_retry=SimpleNamespace(
+                    enabled=True,
+                    max_retries=1,
+                    backoff_base=0.0,
+                    backoff_cap=0.0,
+                ),
+            ),
+        ),
+    )
+
+    observed_snapshots: list[dict[str, dict]] = []
+    original_stream_completion_lifecycle = runner._stream_completion_lifecycle
+
+    async def flaky_stream_completion_lifecycle(*args, **kwargs):
+        observed_snapshots.append(
+            await runner.session.get_session_skill_snapshot(
+                session_id="session-1",
+                user_id="user-1",
+                allow_not_exist=True,
+            ),
+        )
+        if len(observed_snapshots) == 1:
+            raise RuntimeError("request timed out")
+        async for item in original_stream_completion_lifecycle(
+            request=kwargs["request"],
+            runtime=kwargs["runtime"],
+            plan=kwargs["plan"],
+            outcome=kwargs["outcome"],
+        ):
+            yield item
+
+    monkeypatch.setattr(
+        runner,
+        "_stream_completion_lifecycle",
+        flaky_stream_completion_lifecycle,
+    )
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="continue")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    assert observed_snapshots == [
+        {
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+        {
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    ]
+    assert _FakeAgent.last_instance is not None
+    notice_messages = [
+        msg
+        for msg in _FakeAgent.last_instance.turn_msgs
+        if msg.role == "system"
+    ]
+    assert len(notice_messages) == 1
+    assert (
+        "detected skill-directory change"
+        in notice_messages[0].get_text_content()
+    )
+
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert state["session_skill_snapshot"] == {
+        "xlsx": {
+            "skill_name": "xlsx",
+            "resolved_skill_dir": str(skill_dir),
+            "freshness_token": 11.0,
+        },
+    }

@@ -93,6 +93,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 TASK_RUNS_STATE_KEY = "task_runs"
 _INTERNAL_FOLLOW_UP_METADATA_KEY = "swe_internal_follow_up"
+_SKILL_FRESHNESS_NOTICE_METADATA_KEY = "swe_skill_freshness_notice"
 _BEFORE_STOP_FOLLOW_UP_REASON_TEMPLATE = (
     "BeforeStop completion gate blocked stopping: {reason}\n"
     "Continue working until the gate can allow completion."
@@ -923,6 +924,9 @@ def _build_skill_freshness_notice_msg(text: str) -> Msg:
         name="system",
         role="system",
         content=text,
+        metadata={
+            _SKILL_FRESHNESS_NOTICE_METADATA_KEY: True,
+        },
     )
 
 
@@ -978,7 +982,7 @@ def _resolve_max_automatic_follow_up_turns(
 def _strip_internal_follow_up_messages_from_state(
     agent_state: dict[str, Any],
 ) -> int:
-    """Remove hidden continuation prompts before persisting session state."""
+    """Remove ephemeral system prompts before persisting session state."""
     memory_state = agent_state.get("memory")
     if not isinstance(memory_state, dict):
         return 0
@@ -996,8 +1000,9 @@ def _strip_internal_follow_up_messages_from_state(
             if isinstance(msg_payload, dict)
             else None
         )
-        if isinstance(metadata, dict) and metadata.get(
-            _INTERNAL_FOLLOW_UP_METADATA_KEY,
+        if isinstance(metadata, dict) and (
+            metadata.get(_INTERNAL_FOLLOW_UP_METADATA_KEY)
+            or metadata.get(_SKILL_FRESHNESS_NOTICE_METADATA_KEY)
         ):
             removed += 1
             continue

@@ -477,3 +477,57 @@ async def test_applied_snapshot_prevents_repeat_notice_on_later_turn(
         for msg in _FakeAgent.last_instance.turn_msgs
         if msg.role == "system"
     ] == []
+
+
+@pytest.mark.asyncio
+async def test_freshness_notice_is_not_persisted_in_session_memory(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    skill_dir = _write_skill_dir(tmp_path, "xlsx")
+    await runner.session.save_session_skill_snapshot(
+        session_id="session-1",
+        user_id="user-1",
+        snapshot={
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.get_skill_freshness_token",
+        lambda _path: 11.0,
+    )
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="continue")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    assert _FakeAgent.last_instance is not None
+    assert _FakeAgent.last_instance.turn_msgs[0].role == "system"
+
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    persisted_texts = [
+        entry[0]["content"]
+        for entry in state["agent"]["memory"]["content"]
+        if isinstance(entry, list)
+        and entry
+        and isinstance(entry[0], dict)
+        and isinstance(entry[0].get("content"), str)
+    ]
+    assert not any(
+        text.startswith("[Skill freshness notice]") for text in persisted_texts
+    )

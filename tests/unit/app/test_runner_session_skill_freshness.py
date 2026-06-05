@@ -9,6 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 from agentscope.message import Msg
 
+from swe.agents.hook_runtime.models import (
+    HookConfig,
+    HookSessionOverlay,
+    LoadedSkillHookSource,
+)
 from swe.app.runner.runner import AgentRunner
 from swe.app.runner.session import SafeJSONSession
 from swe.config.config import SuggestionMode
@@ -384,6 +389,57 @@ async def test_missing_skill_snapshot_entry_is_removed_without_notice(
 
 
 @pytest.mark.asyncio
+async def test_missing_stored_skill_dir_still_reports_directory_switch(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    new_dir = _write_skill_dir(tmp_path, "xlsx")
+    old_dir = tmp_path / "legacy-skills" / "xlsx"
+    await runner.session.save_session_skill_snapshot(
+        session_id="session-1",
+        user_id="user-1",
+        snapshot={
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(old_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.get_skill_freshness_token",
+        lambda _path: 44.0,
+    )
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="continue")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    assert _FakeAgent.last_instance is not None
+    notice_text = _FakeAgent.last_instance.turn_msgs[0].get_text_content()
+    assert f"{old_dir} -> {new_dir}" in notice_text
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert state["session_skill_snapshot"] == {
+        "xlsx": {
+            "skill_name": "xlsx",
+            "resolved_skill_dir": str(new_dir),
+            "freshness_token": 44.0,
+        },
+    }
+
+
+@pytest.mark.asyncio
 async def test_unchanged_snapshot_emits_no_notice(
     monkeypatch,
     tmp_path: Path,
@@ -423,6 +479,70 @@ async def test_unchanged_snapshot_emits_no_notice(
         for msg in _FakeAgent.last_instance.turn_msgs
         if msg.role == "system"
     ] == []
+
+
+@pytest.mark.asyncio
+async def test_regular_session_save_clears_stale_hook_overlay(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    persisted_overlay = HookSessionOverlay(
+        loaded_skill_sources=[
+            LoadedSkillHookSource(
+                source_id="skill:xlsx",
+                skill_name="xlsx",
+                skill_root=str(tmp_path / "skills" / "xlsx"),
+                source_path=str(
+                    tmp_path / "skills" / "xlsx" / "hooks" / "hooks.json",
+                ),
+                hook_config=HookConfig(enabled=True),
+            ),
+        ],
+        once_executed={"skill:xlsx:once": True},
+    )
+    await runner.session.save_merged_state(
+        session_id="session-1",
+        user_id="user-1",
+        state={
+            "agent": {"memory": {"content": []}},
+            "hook_overlay": persisted_overlay.model_dump(
+                mode="json",
+                by_alias=True,
+            ),
+            "session_skill_snapshot": {
+                "xlsx": {
+                    "skill_name": "xlsx",
+                    "resolved_skill_dir": str(
+                        tmp_path / "skills" / "xlsx",
+                    ),
+                    "freshness_token": 11.0,
+                },
+            },
+        },
+    )
+
+    agent = _FakeAgent()
+    await runner._save_regular_session_state(
+        agent,
+        session_id="session-1",
+        user_id="user-1",
+        hook_overlay=None,
+    )
+
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert "hook_overlay" not in state
+    assert state["session_skill_snapshot"] == {
+        "xlsx": {
+            "skill_name": "xlsx",
+            "resolved_skill_dir": str(tmp_path / "skills" / "xlsx"),
+            "freshness_token": 11.0,
+        },
+    }
 
 
 @pytest.mark.asyncio

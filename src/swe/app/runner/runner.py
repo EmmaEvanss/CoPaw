@@ -37,7 +37,10 @@ from .command_dispatch import (
 )
 from .query_error_dump import write_query_error_dump
 from .retry_classifier import is_query_retryable
-from .session import SafeJSONSession
+from .session import (
+    SafeJSONSession,
+    SESSION_SKILL_SNAPSHOT_STATE_KEY,
+)
 from .stream_boundary import normalize_reasoning_boundary_stream
 from .task_progress import attach_task_progress
 from .utils import build_env_context
@@ -1813,29 +1816,13 @@ class AgentRunner(Runner):
 
         for skill_name, entry in stored_snapshot.items():
             stored_dir = Path(str(entry.get("resolved_skill_dir", "")))
-            if not stored_dir.exists():
-                _remove_session_skill_snapshot_entry(
-                    next_snapshot,
-                    skill_name=skill_name,
-                )
-                continue
-
             current_dir = effective_skill_dirs.get(skill_name)
-            if current_dir is None or not current_dir.exists():
-                _remove_session_skill_snapshot_entry(
-                    next_snapshot,
-                    skill_name=skill_name,
-                )
-                changes.append(
-                    (
-                        f"{skill_name}: no longer effective for this turn. "
-                        "Stop relying on earlier assumptions from this skill."
-                    ),
-                )
-                continue
-
-            current_token = get_skill_freshness_token(current_dir)
-            if current_dir != stored_dir:
+            if (
+                current_dir is not None
+                and current_dir.exists()
+                and current_dir != stored_dir
+            ):
+                current_token = get_skill_freshness_token(current_dir)
                 _upsert_session_skill_snapshot_entry(
                     next_snapshot,
                     skill_name=skill_name,
@@ -1851,6 +1838,27 @@ class AgentRunner(Runner):
                 )
                 continue
 
+            if not stored_dir.exists():
+                _remove_session_skill_snapshot_entry(
+                    next_snapshot,
+                    skill_name=skill_name,
+                )
+                continue
+
+            if current_dir is None or not current_dir.exists():
+                _remove_session_skill_snapshot_entry(
+                    next_snapshot,
+                    skill_name=skill_name,
+                )
+                changes.append(
+                    (
+                        f"{skill_name}: no longer effective for this turn. "
+                        "Stop relying on earlier assumptions from this skill."
+                    ),
+                )
+                continue
+
+            current_token = get_skill_freshness_token(current_dir)
             if current_token != entry.get("freshness_token"):
                 _upsert_session_skill_snapshot_entry(
                     next_snapshot,
@@ -3336,9 +3344,16 @@ class AgentRunner(Runner):
             user_id=user_id,
             allow_not_exist=True,
         )
-        state_modules = (
-            dict(existing_state) if isinstance(existing_state, dict) else {}
-        )
+        state_modules: dict[str, Any] = {}
+        if (
+            isinstance(existing_state, dict)
+            and SESSION_SKILL_SNAPSHOT_STATE_KEY in existing_state
+        ):
+            state_modules[SESSION_SKILL_SNAPSHOT_STATE_KEY] = (
+                _normalize_session_skill_snapshot(
+                    existing_state.get(SESSION_SKILL_SNAPSHOT_STATE_KEY),
+                )
+            )
         state_modules["agent"] = agent.state_dict()
         if hook_overlay is not None:
             state_modules["hook_overlay"] = hook_overlay.model_dump(

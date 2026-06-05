@@ -222,9 +222,15 @@ async def test_declared_skill_start_persists_snapshot_in_same_turn(
         lambda path: 55.0 if Path(path) == skill_dir else 0.0,
     )
 
-    msgs = [Msg(name="user", role="user", content="use xlsx")]
-    await anext(runner.query_handler(msgs, request=_request()))
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="use xlsx")],
+            request=_request(),
+        )
+    ]
 
+    assert outputs[-1][0].get_text_content() == "agent reply"
     state = await runner.session.get_session_state_dict(
         "session-1",
         user_id="user-1",
@@ -233,6 +239,65 @@ async def test_declared_skill_start_persists_snapshot_in_same_turn(
         "skill_name": "xlsx",
         "resolved_skill_dir": str(skill_dir),
         "freshness_token": 55.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_declared_skill_resume_emits_freshness_notice_before_persisting_snapshot(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    skill_dir = _write_skill_dir(tmp_path, "xlsx")
+    await runner.session.save_session_skill_snapshot(
+        session_id="session-1",
+        user_id="user-1",
+        snapshot={
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.get_skill_freshness_token",
+        lambda _path: 11.0,
+    )
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="use xlsx")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    assert _FakeAgent.last_instance is not None
+    notice_messages = [
+        msg
+        for msg in _FakeAgent.last_instance.turn_msgs
+        if msg.role == "system"
+    ]
+    assert len(notice_messages) == 1
+    assert (
+        "detected skill-directory change"
+        in notice_messages[0].get_text_content()
+    )
+
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert state["session_skill_snapshot"] == {
+        "xlsx": {
+            "skill_name": "xlsx",
+            "resolved_skill_dir": str(skill_dir),
+            "freshness_token": 11.0,
+        },
     }
 
 

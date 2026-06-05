@@ -158,6 +158,7 @@ class _QueryRuntime:
     user_id: str
     channel: str
     skip_history: bool
+    pending_confirmed_skills: set[str]
 
 
 @dataclass
@@ -936,7 +937,8 @@ def _build_skill_freshness_notice_msg(text: str) -> Msg:
 @dataclass(frozen=True)
 class _SkillFreshnessRefreshResult:
     notice_text: str | None = None
-    snapshot_to_persist: dict[str, dict[str, Any]] | None = None
+    stored_snapshot: dict[str, dict[str, Any]] | None = None
+    refreshed_snapshot: dict[str, dict[str, Any]] | None = None
 
 
 def _resolve_max_before_stop_turns(agent_config: Any) -> int:
@@ -1710,7 +1712,9 @@ class AgentRunner(Runner):
             )
             runtime.agent._request_context["hook_overlay"] = dumped
 
-        async def _persist_confirmed_skill(skill_name: str) -> None:
+        async def _queue_confirmed_skill_snapshot_update(
+            skill_name: str,
+        ) -> None:
             if (
                 self.session is None
                 or not runtime.session_id
@@ -1728,24 +1732,7 @@ class AgentRunner(Runner):
             if not skill_dir.exists():
                 return
 
-            snapshot = _normalize_session_skill_snapshot(
-                await self.session.get_session_skill_snapshot(
-                    session_id=runtime.session_id,
-                    user_id=runtime.user_id,
-                    allow_not_exist=True,
-                ),
-            )
-            _upsert_session_skill_snapshot_entry(
-                snapshot,
-                skill_name=skill_name,
-                resolved_skill_dir=skill_dir,
-                freshness_token=get_skill_freshness_token(skill_dir),
-            )
-            await self.session.save_session_skill_snapshot(
-                session_id=runtime.session_id,
-                user_id=runtime.user_id,
-                snapshot=snapshot,
-            )
+            runtime.pending_confirmed_skills.add(skill_name)
 
         source_id_for_hooks = _request_source_id(request)
         runtime.session_skill_detector = _create_session_skill_detector(
@@ -1762,7 +1749,7 @@ class AgentRunner(Runner):
             ),
             get_hook_state=_get_session_hook_state,
             set_hook_state=_set_session_hook_state,
-            confirmed_skill_callback=_persist_confirmed_skill,
+            confirmed_skill_callback=(_queue_confirmed_skill_snapshot_update),
         )
         if not hasattr(runtime.agent, "_request_context"):
             runtime.agent._request_context = {}
@@ -1807,7 +1794,10 @@ class AgentRunner(Runner):
             ),
         )
         if not stored_snapshot:
-            return _SkillFreshnessRefreshResult()
+            return _SkillFreshnessRefreshResult(
+                stored_snapshot={},
+                refreshed_snapshot={},
+            )
 
         workspace_skills_dir = get_workspace_skills_dir(
             Path(self.workspace_dir or WORKING_DIR),
@@ -1880,16 +1870,51 @@ class AgentRunner(Runner):
                     ),
                 )
 
-        snapshot_to_persist = (
-            next_snapshot if next_snapshot != stored_snapshot else None
-        )
         notice_text = (
             _skill_freshness_notice_text(changes) if changes else None
         )
         return _SkillFreshnessRefreshResult(
             notice_text=notice_text,
-            snapshot_to_persist=snapshot_to_persist,
+            stored_snapshot=stored_snapshot,
+            refreshed_snapshot=next_snapshot,
         )
+
+    async def _build_skill_snapshot_to_persist(
+        self,
+        *,
+        runtime: _QueryRuntime,
+        refresh_result: _SkillFreshnessRefreshResult,
+    ) -> dict[str, dict[str, Any]] | None:
+        if (
+            runtime.skip_history
+            or self.session is None
+            or not runtime.session_id
+            or refresh_result.stored_snapshot is None
+            or refresh_result.refreshed_snapshot is None
+        ):
+            return None
+
+        next_snapshot = _normalize_session_skill_snapshot(
+            refresh_result.refreshed_snapshot,
+        )
+        if runtime.pending_confirmed_skills:
+            workspace_skills_dir = get_workspace_skills_dir(
+                Path(self.workspace_dir or WORKING_DIR),
+            )
+            for skill_name in runtime.pending_confirmed_skills:
+                skill_dir = workspace_skills_dir / skill_name
+                if not skill_dir.exists():
+                    continue
+                _upsert_session_skill_snapshot_entry(
+                    next_snapshot,
+                    skill_name=skill_name,
+                    resolved_skill_dir=skill_dir,
+                    freshness_token=get_skill_freshness_token(skill_dir),
+                )
+
+        if next_snapshot != refresh_result.stored_snapshot:
+            return next_snapshot
+        return None
 
     async def _start_declared_session_skill(
         self,
@@ -2055,6 +2080,7 @@ class AgentRunner(Runner):
                 user_id=user_id,
                 channel=channel,
                 skip_history=skip_history,
+                pending_confirmed_skills=set(),
             )
             self._attach_session_skill_detector(
                 runtime=runtime,
@@ -3032,14 +3058,18 @@ class AgentRunner(Runner):
             attempt_state.should_return = True
             return
 
+        skill_snapshot_to_persist = (
+            await self._build_skill_snapshot_to_persist(
+                runtime=runtime,
+                refresh_result=skill_freshness_refresh,
+            )
+        )
         await self._complete_successful_query_attempt(
             runtime=runtime,
             plan=plan,
             outcome=outcome,
             trace_id=attempt_input.trace_id,
-            skill_snapshot_to_persist=(
-                skill_freshness_refresh.snapshot_to_persist
-            ),
+            skill_snapshot_to_persist=skill_snapshot_to_persist,
         )
         retry_state.task_completed = outcome.task_completed
         attempt_state.succeeded = True

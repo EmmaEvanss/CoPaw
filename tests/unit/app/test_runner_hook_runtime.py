@@ -1232,6 +1232,7 @@ async def test_emit_before_stop_hook_respects_active_guard(
         user_id="user-1",
         channel="console",
         skip_history=False,
+        pending_confirmed_skills=set(),
     )
     plan = _TurnPlan(
         original_user_message="hello",

@@ -158,7 +158,7 @@ class _QueryRuntime:
     user_id: str
     channel: str
     skip_history: bool
-    pending_confirmed_skills: set[str]
+    pending_confirmed_skill_snapshots: dict[str, dict[str, Any]]
 
 
 @dataclass
@@ -1732,7 +1732,13 @@ class AgentRunner(Runner):
             if not skill_dir.exists():
                 return
 
-            runtime.pending_confirmed_skills.add(skill_name)
+            runtime.pending_confirmed_skill_snapshots[skill_name] = (
+                _build_session_skill_snapshot_entry(
+                    skill_name=skill_name,
+                    resolved_skill_dir=skill_dir,
+                    freshness_token=get_skill_freshness_token(skill_dir),
+                )
+            )
 
         source_id_for_hooks = _request_source_id(request)
         runtime.session_skill_detector = _create_session_skill_detector(
@@ -1897,20 +1903,12 @@ class AgentRunner(Runner):
         next_snapshot = _normalize_session_skill_snapshot(
             refresh_result.refreshed_snapshot,
         )
-        if runtime.pending_confirmed_skills:
-            workspace_skills_dir = get_workspace_skills_dir(
-                Path(self.workspace_dir or WORKING_DIR),
+        if runtime.pending_confirmed_skill_snapshots:
+            next_snapshot.update(
+                _normalize_session_skill_snapshot(
+                    runtime.pending_confirmed_skill_snapshots,
+                ),
             )
-            for skill_name in runtime.pending_confirmed_skills:
-                skill_dir = workspace_skills_dir / skill_name
-                if not skill_dir.exists():
-                    continue
-                _upsert_session_skill_snapshot_entry(
-                    next_snapshot,
-                    skill_name=skill_name,
-                    resolved_skill_dir=skill_dir,
-                    freshness_token=get_skill_freshness_token(skill_dir),
-                )
 
         if next_snapshot != refresh_result.stored_snapshot:
             return next_snapshot
@@ -2080,7 +2078,7 @@ class AgentRunner(Runner):
                 user_id=user_id,
                 channel=channel,
                 skip_history=skip_history,
-                pending_confirmed_skills=set(),
+                pending_confirmed_skill_snapshots={},
             )
             self._attach_session_skill_detector(
                 runtime=runtime,
@@ -2967,18 +2965,24 @@ class AgentRunner(Runner):
         runtime: _QueryRuntime,
         outcome: _QueryTurnOutcome,
         trace_id: str | None,
+        skill_snapshot_to_persist: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """BeforeStop 耗尽预算时仍需写入最终输出并结束 trace。"""
-        if not outcome.completion_marked_incomplete:
-            return
-        await self._index_model_output_if_needed(
-            trace_id=trace_id,
-            agent=runtime.agent,
-        )
-        await self._end_trace_if_needed(
-            trace_id,
-            TraceStatus.COMPLETED,
-        )
+        if outcome.completion_marked_incomplete:
+            await self._index_model_output_if_needed(
+                trace_id=trace_id,
+                agent=runtime.agent,
+            )
+            await self._end_trace_if_needed(
+                trace_id,
+                TraceStatus.COMPLETED,
+            )
+        if skill_snapshot_to_persist is not None:
+            await self.session.save_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                snapshot=skill_snapshot_to_persist,
+            )
 
     async def _stream_single_query_attempt(
         self,
@@ -3049,21 +3053,23 @@ class AgentRunner(Runner):
         ):
             yield msg, last
 
-        if outcome.completion_blocked:
-            await self._finish_blocked_query_attempt(
-                runtime=runtime,
-                outcome=outcome,
-                trace_id=attempt_input.trace_id,
-            )
-            attempt_state.should_return = True
-            return
-
         skill_snapshot_to_persist = (
             await self._build_skill_snapshot_to_persist(
                 runtime=runtime,
                 refresh_result=skill_freshness_refresh,
             )
         )
+
+        if outcome.completion_blocked:
+            await self._finish_blocked_query_attempt(
+                runtime=runtime,
+                outcome=outcome,
+                trace_id=attempt_input.trace_id,
+                skill_snapshot_to_persist=skill_snapshot_to_persist,
+            )
+            attempt_state.should_return = True
+            return
+
         await self._complete_successful_query_attempt(
             runtime=runtime,
             plan=plan,

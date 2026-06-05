@@ -14,6 +14,7 @@ from swe.agents.hook_runtime.models import (
     HookSessionOverlay,
     LoadedSkillHookSource,
 )
+from swe.agents.skills_manager import get_skill_freshness_token
 from swe.app.runner.runner import AgentRunner
 from swe.app.runner.session import SafeJSONSession
 from swe.config.config import SuggestionMode
@@ -231,6 +232,117 @@ async def test_declared_skill_start_persists_snapshot_in_same_turn(
     ]
 
     assert outputs[-1][0].get_text_content() == "agent reply"
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert state["session_skill_snapshot"]["xlsx"] == {
+        "skill_name": "xlsx",
+        "resolved_skill_dir": str(skill_dir),
+        "freshness_token": 55.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_declared_skill_start_persists_confirmation_time_token(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    skill_dir = _write_skill_dir(tmp_path, "xlsx")
+    initial_token = get_skill_freshness_token(skill_dir)
+    original_stream_completion_lifecycle = runner._stream_completion_lifecycle
+
+    async def mutate_skill_dir_during_completion(*args, **kwargs):
+        del args
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text(
+            (
+                "---\n"
+                "name: xlsx\n"
+                "description: updated xlsx\n"
+                "---\n"
+                "updated during turn\n"
+            ),
+            encoding="utf-8",
+        )
+        assert get_skill_freshness_token(skill_dir) != initial_token
+        async for item in original_stream_completion_lifecycle(
+            request=kwargs["request"],
+            runtime=kwargs["runtime"],
+            plan=kwargs["plan"],
+            outcome=kwargs["outcome"],
+        ):
+            yield item
+
+    monkeypatch.setattr(
+        runner,
+        "_stream_completion_lifecycle",
+        mutate_skill_dir_during_completion,
+    )
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="use xlsx")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert state["session_skill_snapshot"]["xlsx"] == {
+        "skill_name": "xlsx",
+        "resolved_skill_dir": str(skill_dir),
+        "freshness_token": initial_token,
+    }
+
+
+@pytest.mark.asyncio
+async def test_blocked_turn_persists_confirmed_skill_snapshot(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    skill_dir = _write_skill_dir(tmp_path, "xlsx")
+    monkeypatch.setattr(
+        "swe.app.runner.runner.get_skill_freshness_token",
+        lambda path: 55.0 if Path(path) == skill_dir else 0.0,
+    )
+
+    async def blocked_stream_completion_lifecycle(*args, **kwargs):
+        outcome = kwargs["outcome"]
+        outcome.task_completed = False
+        outcome.completion_blocked = True
+        outcome.completion_block_reason = "stop blocked"
+        yield Msg(
+            name="Friday",
+            role="assistant",
+            content="stop blocked",
+        ), True
+
+    monkeypatch.setattr(
+        runner,
+        "_stream_completion_lifecycle",
+        blocked_stream_completion_lifecycle,
+    )
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="use xlsx")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "stop blocked"
     state = await runner.session.get_session_state_dict(
         "session-1",
         user_id="user-1",

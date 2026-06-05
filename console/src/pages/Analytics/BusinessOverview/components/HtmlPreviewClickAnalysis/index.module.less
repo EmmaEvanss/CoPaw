@@ -65,7 +65,7 @@
 .htmlPreviewStats {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
 
@@ -181,6 +181,25 @@
   background: #f59e0b;
 }
 
+.thinScrollbar() {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: #cbd5e1;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
 .htmlPreviewTopList {
   grid-column: span 4;
   display: flex;
@@ -193,6 +212,7 @@
   background: #ffffff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
+  .thinScrollbar();
 }
 
 .htmlPreviewEventList {
@@ -207,6 +227,49 @@
   background: #ffffff;
   border: 1px solid #edf2f8;
   border-radius: 12px;
+}
+
+.htmlPreviewEventListFull {
+  grid-column: 1 / -1;
+}
+
+.htmlPreviewBlockTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.htmlPreviewCollapseButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.htmlPreviewCollapseButton:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.htmlPreviewCollapseButton svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.2;
 }
 
 .htmlPreviewTopTitle {
@@ -281,6 +344,16 @@
   white-space: nowrap;
 }
 
+.htmlPreviewPagination {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 0 0;
+  border-top: 1px solid #edf2f8;
+  background: #ffffff;
+}
+
 .htmlPreviewCustomerTable {
   display: flex;
   flex-direction: column;
@@ -289,12 +362,16 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  .thinScrollbar();
 }
 
 .htmlPreviewCustomerHeader,
 .htmlPreviewCustomerRow {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 48px 48px 76px 56px minmax(104px, 120px) 86px;
+  grid-template-columns: minmax(160px, 1fr) 48px 48px 76px 56px minmax(
+      104px,
+      120px
+    ) 86px;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -358,6 +435,11 @@
   cursor: pointer;
   font-size: 12px;
   font-weight: 700;
+}
+
+.htmlPreviewManagerCell button:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 
 .htmlPreviewSelectedList {

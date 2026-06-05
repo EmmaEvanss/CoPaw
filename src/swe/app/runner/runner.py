@@ -3344,7 +3344,9 @@ class AgentRunner(Runner):
             user_id=user_id,
             allow_not_exist=True,
         )
-        state_modules: dict[str, Any] = {}
+        state_modules: dict[str, Any] = (
+            dict(existing_state) if isinstance(existing_state, dict) else {}
+        )
         if (
             isinstance(existing_state, dict)
             and SESSION_SKILL_SNAPSHOT_STATE_KEY in existing_state
@@ -3360,6 +3362,8 @@ class AgentRunner(Runner):
                 mode="json",
                 by_alias=True,
             )
+        else:
+            state_modules.pop("hook_overlay", None)
         stripped_count = _strip_internal_follow_up_messages_from_state(
             state_modules["agent"],
         )

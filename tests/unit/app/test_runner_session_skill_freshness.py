@@ -546,6 +546,64 @@ async def test_regular_session_save_clears_stale_hook_overlay(
 
 
 @pytest.mark.asyncio
+async def test_regular_session_save_preserves_task_session_metadata(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    await runner.session.save_merged_state(
+        session_id="session-1",
+        user_id="user-1",
+        state={
+            "agent": {"memory": {"content": []}},
+            "task_runs": [
+                {
+                    "run_id": "run-1",
+                    "memory_start": 0,
+                    "memory_end": 2,
+                },
+            ],
+            "task_messages": [
+                {
+                    "id": "msg-1",
+                    "role": "assistant",
+                    "content": "persisted task update",
+                },
+            ],
+            "custom_top_level_state": {"keep": True},
+        },
+    )
+
+    agent = _FakeAgent()
+    await runner._save_regular_session_state(
+        agent,
+        session_id="session-1",
+        user_id="user-1",
+        hook_overlay=None,
+    )
+
+    state = await runner.session.get_session_state_dict(
+        "session-1",
+        user_id="user-1",
+    )
+    assert state["task_runs"] == [
+        {
+            "run_id": "run-1",
+            "memory_start": 0,
+            "memory_end": 2,
+        },
+    ]
+    assert state["task_messages"] == [
+        {
+            "id": "msg-1",
+            "role": "assistant",
+            "content": "persisted task update",
+        },
+    ]
+    assert state["custom_top_level_state"] == {"keep": True}
+
+
+@pytest.mark.asyncio
 async def test_applied_snapshot_prevents_repeat_notice_on_later_turn(
     monkeypatch,
     tmp_path: Path,

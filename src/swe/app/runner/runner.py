@@ -44,7 +44,10 @@ from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
 from ...agents.skill_invocation_detector import SkillInvocationDetector
-from ...agents.skills_manager import get_workspace_skills_dir
+from ...agents.skills_manager import (
+    get_skill_freshness_token,
+    get_workspace_skills_dir,
+)
 from ...agents.hook_runtime import HookRuntime
 from ...agents.hook_runtime.models import (
     HookConfig,
@@ -96,6 +99,11 @@ _BEFORE_STOP_FOLLOW_UP_REASON_TEMPLATE = (
 )
 _BEFORE_STOP_INCOMPLETE_MESSAGE_TEMPLATE = (
     "任务未完成：BeforeStop 完成门禁已达到自动续跑上限。最新阻断原因：{reason}"
+)
+_SKILL_FRESHNESS_NOTICE_HEADER = (
+    "[Skill freshness notice]\n"
+    "The following previously associated skills changed for this turn. "
+    "Treat current skill content as superseding earlier assumptions:\n"
 )
 
 _APPROVE_EXACT = frozenset(
@@ -434,6 +442,7 @@ def _create_session_skill_detector(
     get_hook_state: Callable[[], HookSessionState],
     set_hook_state: Callable[[HookSessionState], None],
     approved_http_urls: Collection[str] | None = None,
+    confirmed_skill_callback: Callable[[str], Any] | None = None,
 ) -> SkillInvocationDetector:
     workspace = Path(workspace_dir)
     approvals = (
@@ -468,6 +477,7 @@ def _create_session_skill_detector(
         source_id=source_id,
         workspace_dir=workspace_dir,
         skill_hook_loader=_load_skill_hooks,
+        confirmed_skill_callback=confirmed_skill_callback,
     )
     detector.set_enabled_skills(enabled_skills)
     return detector
@@ -849,6 +859,70 @@ def _build_before_stop_incomplete_msg(reason: str) -> Msg:
         content=_BEFORE_STOP_INCOMPLETE_MESSAGE_TEMPLATE.format(
             reason=(reason or "BeforeStop blocked completion").strip(),
         ),
+    )
+
+
+def _normalize_session_skill_snapshot(
+    snapshot: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(snapshot, dict):
+        return {}
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for skill_name, entry in snapshot.items():
+        if isinstance(skill_name, str) and isinstance(entry, dict):
+            normalized[skill_name] = dict(entry)
+    return normalized
+
+
+def _build_session_skill_snapshot_entry(
+    *,
+    skill_name: str,
+    resolved_skill_dir: Path,
+    freshness_token: float,
+) -> dict[str, Any]:
+    return {
+        "skill_name": skill_name,
+        "resolved_skill_dir": str(resolved_skill_dir),
+        "freshness_token": freshness_token,
+    }
+
+
+def _upsert_session_skill_snapshot_entry(
+    snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+    resolved_skill_dir: Path,
+    freshness_token: float,
+) -> None:
+    snapshot[skill_name] = _build_session_skill_snapshot_entry(
+        skill_name=skill_name,
+        resolved_skill_dir=resolved_skill_dir,
+        freshness_token=freshness_token,
+    )
+
+
+def _remove_session_skill_snapshot_entry(
+    snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+) -> None:
+    snapshot.pop(skill_name, None)
+
+
+def _skill_freshness_notice_text(
+    changes: list[str],
+) -> str:
+    return _SKILL_FRESHNESS_NOTICE_HEADER + "\n".join(
+        f"- {item}" for item in changes
+    )
+
+
+def _build_skill_freshness_notice_msg(text: str) -> Msg:
+    return Msg(
+        name="system",
+        role="system",
+        content=text,
     )
 
 
@@ -1622,6 +1696,43 @@ class AgentRunner(Runner):
             )
             runtime.agent._request_context["hook_overlay"] = dumped
 
+        async def _persist_confirmed_skill(skill_name: str) -> None:
+            if (
+                self.session is None
+                or not runtime.session_id
+                or not hasattr(self.session, "get_session_skill_snapshot")
+                or not hasattr(self.session, "save_session_skill_snapshot")
+            ):
+                return
+
+            skill_dir = (
+                get_workspace_skills_dir(
+                    Path(self.workspace_dir or WORKING_DIR),
+                )
+                / skill_name
+            )
+            if not skill_dir.exists():
+                return
+
+            snapshot = _normalize_session_skill_snapshot(
+                await self.session.get_session_skill_snapshot(
+                    session_id=runtime.session_id,
+                    user_id=runtime.user_id,
+                    allow_not_exist=True,
+                ),
+            )
+            _upsert_session_skill_snapshot_entry(
+                snapshot,
+                skill_name=skill_name,
+                resolved_skill_dir=skill_dir,
+                freshness_token=get_skill_freshness_token(skill_dir),
+            )
+            await self.session.save_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                snapshot=snapshot,
+            )
+
         source_id_for_hooks = _request_source_id(request)
         runtime.session_skill_detector = _create_session_skill_detector(
             workspace_dir=Path(self.workspace_dir or WORKING_DIR),
@@ -1637,12 +1748,129 @@ class AgentRunner(Runner):
             ),
             get_hook_state=_get_session_hook_state,
             set_hook_state=_set_session_hook_state,
+            confirmed_skill_callback=_persist_confirmed_skill,
         )
         if not hasattr(runtime.agent, "_request_context"):
             runtime.agent._request_context = {}
         runtime.agent._request_context["_skill_invocation_detector"] = (
             runtime.session_skill_detector
         )
+
+    async def _refresh_session_skill_freshness(
+        self,
+        *,
+        runtime: _QueryRuntime,
+    ) -> str | None:
+        if (
+            runtime.skip_history
+            or self.session is None
+            or not runtime.session_id
+        ):
+            return None
+
+        session_supports_snapshot = all(
+            hasattr(self.session, attr)
+            for attr in (
+                "get_session_skill_snapshot",
+                "save_session_skill_snapshot",
+            )
+        )
+        agent_supports_effective_skills = hasattr(
+            runtime.agent,
+            "get_effective_skills",
+        )
+        if (
+            not session_supports_snapshot
+            or not agent_supports_effective_skills
+        ):
+            return None
+
+        stored_snapshot = _normalize_session_skill_snapshot(
+            await self.session.get_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                allow_not_exist=True,
+            ),
+        )
+        if not stored_snapshot:
+            return None
+
+        workspace_skills_dir = get_workspace_skills_dir(
+            Path(self.workspace_dir or WORKING_DIR),
+        )
+        effective_skill_dirs = {
+            skill_name: workspace_skills_dir / skill_name
+            for skill_name in runtime.agent.get_effective_skills()
+        }
+
+        next_snapshot = _normalize_session_skill_snapshot(stored_snapshot)
+        changes: list[str] = []
+
+        for skill_name, entry in stored_snapshot.items():
+            stored_dir = Path(str(entry.get("resolved_skill_dir", "")))
+            if not stored_dir.exists():
+                _remove_session_skill_snapshot_entry(
+                    next_snapshot,
+                    skill_name=skill_name,
+                )
+                continue
+
+            current_dir = effective_skill_dirs.get(skill_name)
+            if current_dir is None or not current_dir.exists():
+                _remove_session_skill_snapshot_entry(
+                    next_snapshot,
+                    skill_name=skill_name,
+                )
+                changes.append(
+                    (
+                        f"{skill_name}: no longer effective for this turn. "
+                        "Stop relying on earlier assumptions from this skill."
+                    ),
+                )
+                continue
+
+            current_token = get_skill_freshness_token(current_dir)
+            if current_dir != stored_dir:
+                _upsert_session_skill_snapshot_entry(
+                    next_snapshot,
+                    skill_name=skill_name,
+                    resolved_skill_dir=current_dir,
+                    freshness_token=current_token,
+                )
+                changes.append(
+                    (
+                        f"{skill_name}: detected skill-directory switch "
+                        f"{stored_dir} -> {current_dir}. Treat current skill "
+                        "content as superseding earlier assumptions."
+                    ),
+                )
+                continue
+
+            if current_token != entry.get("freshness_token"):
+                _upsert_session_skill_snapshot_entry(
+                    next_snapshot,
+                    skill_name=skill_name,
+                    resolved_skill_dir=current_dir,
+                    freshness_token=current_token,
+                )
+                changes.append(
+                    (
+                        f"{skill_name}: detected skill-directory change at "
+                        f"{current_dir}. Treat current skill content as "
+                        "superseding earlier assumptions."
+                    ),
+                )
+
+        if next_snapshot != stored_snapshot:
+            await self.session.save_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                snapshot=next_snapshot,
+            )
+
+        if not changes:
+            return None
+        return _skill_freshness_notice_text(changes)
 
     async def _start_declared_session_skill(
         self,
@@ -2740,6 +2968,10 @@ class AgentRunner(Runner):
         retry_state.agent = runtime.agent
         retry_state.session_state_loaded = attempt_state.session_state_loaded
 
+        skill_freshness_notice = await self._refresh_session_skill_freshness(
+            runtime=runtime,
+        )
+
         # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
         runtime.agent.rebuild_sys_prompt()
 
@@ -2749,6 +2981,11 @@ class AgentRunner(Runner):
             msgs=attempt_input.msgs,
             query=attempt_input.query,
         )
+        if skill_freshness_notice:
+            plan.turn_msgs.insert(
+                0,
+                _build_skill_freshness_notice_msg(skill_freshness_notice),
+            )
 
         async for msg, last in self._stream_completion_lifecycle(
             request=attempt_input.request,
@@ -3089,9 +3326,15 @@ class AgentRunner(Runner):
             )
             return
 
-        state_modules = {
-            "agent": agent.state_dict(),
-        }
+        existing_state = await self.session.get_session_state_dict(
+            session_id=session_id,
+            user_id=user_id,
+            allow_not_exist=True,
+        )
+        state_modules = (
+            dict(existing_state) if isinstance(existing_state, dict) else {}
+        )
+        state_modules["agent"] = agent.state_dict()
         if hook_overlay is not None:
             state_modules["hook_overlay"] = hook_overlay.model_dump(
                 mode="json",

@@ -18,6 +18,7 @@ import aiofiles
 from agentscope.session import SessionBase
 
 logger = logging.getLogger(__name__)
+SESSION_SKILL_SNAPSHOT_STATE_KEY = "session_skill_snapshot"
 
 
 # Characters forbidden in Windows filenames
@@ -257,6 +258,51 @@ class SafeJSONSession(SessionBase):
         raise ValueError(
             f"Failed to get session state for file {session_save_path} "
             "because it does not exist.",
+        )
+
+    async def get_session_skill_snapshot(
+        self,
+        session_id: str,
+        user_id: str = "",
+        allow_not_exist: bool = True,
+    ) -> dict[str, dict]:
+        """Return the persisted session skill snapshot."""
+        state = await self.get_session_state_dict(
+            session_id=session_id,
+            user_id=user_id,
+            allow_not_exist=allow_not_exist,
+        )
+        raw_snapshot = (
+            state.get(SESSION_SKILL_SNAPSHOT_STATE_KEY)
+            if isinstance(state, dict)
+            else None
+        )
+        if not isinstance(raw_snapshot, dict):
+            return {}
+
+        snapshot: dict[str, dict] = {}
+        for skill_name, entry in raw_snapshot.items():
+            if isinstance(skill_name, str) and isinstance(entry, dict):
+                snapshot[skill_name] = dict(entry)
+        return snapshot
+
+    async def save_session_skill_snapshot(
+        self,
+        session_id: str,
+        snapshot: dict[str, dict],
+        user_id: str = "",
+    ) -> None:
+        """Persist the top-level session skill snapshot."""
+        state = await self.get_session_state_dict(
+            session_id=session_id,
+            user_id=user_id,
+            allow_not_exist=True,
+        )
+        state[SESSION_SKILL_SNAPSHOT_STATE_KEY] = snapshot
+        await self.save_merged_state(
+            session_id=session_id,
+            user_id=user_id,
+            state=state,
         )
 
     async def save_merged_state(

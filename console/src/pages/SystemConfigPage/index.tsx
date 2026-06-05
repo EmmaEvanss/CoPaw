@@ -28,10 +28,12 @@ import {
   TOOL_RESULT_COMPACT_NUMBER_FIELDS,
   clearImmediateTruncationConfig,
   enableImmediateTruncationConfig,
+  readCronUnreadAutoPauseConfig,
   readRegisteredSwitchValue,
   readImmediateTruncationConfig,
   readToolResultCompactConfig,
-  validateToolOutputConfigs,
+  validateSourceSystemConfig,
+  writeCronUnreadAutoPauseValue,
   writeRegisteredSwitchValue,
   writeImmediateTruncationValue,
   writeToolResultCompactValue,
@@ -190,6 +192,28 @@ export default function SystemConfigPage() {
     );
   };
 
+  const handleCronUnreadAutoPauseEnabledChange = (checked: boolean) => {
+    if (formDisabled) {
+      return;
+    }
+    setValidationError(null);
+    setDraftConfig((previous) =>
+      writeCronUnreadAutoPauseValue(previous, "enabled", checked),
+    );
+  };
+
+  const handleCronUnreadAutoPauseThresholdChange = (
+    value: number | null,
+  ) => {
+    if (formDisabled || typeof value !== "number") {
+      return;
+    }
+    setValidationError(null);
+    setDraftConfig((previous) =>
+      writeCronUnreadAutoPauseValue(previous, "threshold", value),
+    );
+  };
+
   const handleToolResultNumberChange = (
     key: (typeof TOOL_RESULT_COMPACT_NUMBER_FIELDS)[number]["key"],
     value: number | null,
@@ -257,7 +281,7 @@ export default function SystemConfigPage() {
     if (formDisabled) {
       return;
     }
-    const validationError = validateToolOutputConfigs(draftConfig);
+    const validationError = validateSourceSystemConfig(draftConfig);
     if (validationError) {
       setValidationError(validationError);
       message.error(validationError);
@@ -305,6 +329,8 @@ export default function SystemConfigPage() {
     }
   };
 
+  const cronUnreadAutoPauseConfig =
+    readCronUnreadAutoPauseConfig(draftConfig);
   const toolResultCompactConfig = readToolResultCompactConfig(draftConfig);
   const fileReadTruncationState = readImmediateTruncationConfig(
     draftConfig,
@@ -484,6 +510,57 @@ export default function SystemConfigPage() {
                     />
                   </div>
                 ))}
+              </div>
+            </Card>
+
+            <Card
+              className={styles.switchCard}
+              title={t("sourceSystemConfigPage.cronUnreadAutoPauseTitle", {
+                defaultValue: "定时任务未读自动暂停",
+              })}
+            >
+              <div className={styles.switchList}>
+                <div className={styles.switchRow}>
+                  <div className={styles.switchCopy}>
+                    <span className={styles.switchTitle}>
+                      {t("sourceSystemConfigPage.cronUnreadAutoPauseEnabled", {
+                        defaultValue: "启用未读自动暂停",
+                      })}
+                    </span>
+                    <span className={styles.switchDescription}>
+                      {t(
+                        "sourceSystemConfigPage.cronUnreadAutoPauseDescription",
+                        {
+                          defaultValue:
+                            "开启后，当前渠道的定时任务连续产生未读结果达到阈值时会自动暂停。",
+                        },
+                      )}
+                    </span>
+                  </div>
+                  <Switch
+                    checked={cronUnreadAutoPauseConfig.enabled}
+                    disabled={formDisabled}
+                    onChange={handleCronUnreadAutoPauseEnabledChange}
+                  />
+                </div>
+                <div className={styles.numberGrid}>
+                  <label className={styles.numberField}>
+                    <span className={styles.numberLabel}>
+                      {t("sourceSystemConfigPage.cronUnreadPauseThreshold", {
+                        defaultValue: "未读暂停条数",
+                      })}
+                    </span>
+                    <InputNumber
+                      min={1}
+                      step={1}
+                      value={cronUnreadAutoPauseConfig.threshold}
+                      disabled={
+                        formDisabled || !cronUnreadAutoPauseConfig.enabled
+                      }
+                      onChange={handleCronUnreadAutoPauseThresholdChange}
+                    />
+                  </label>
+                </div>
               </div>
             </Card>
 

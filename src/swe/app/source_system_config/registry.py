@@ -87,6 +87,20 @@ FILE_READ_TRUNCATION_MAX_BYTES_SETTING = SourceSystemConfigSetting(
     ge=1000,
 )
 
+CRON_UNREAD_AUTO_PAUSE_ENABLED_SETTING = SourceSystemConfigSetting(
+    key="cron_unread_auto_pause.enabled",
+    path=("cron_unread_auto_pause", "enabled"),
+    default_value=True,
+    value_type="bool",
+)
+CRON_UNREAD_AUTO_PAUSE_THRESHOLD_SETTING = SourceSystemConfigSetting(
+    key="cron_unread_auto_pause.threshold",
+    path=("cron_unread_auto_pause", "threshold"),
+    default_value=10,
+    value_type="int",
+    ge=1,
+)
+
 CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES: tuple[SourceSystemConfigSwitch, ...] = (
     CHAT_TASK_PROGRESS_ENABLED_SWITCH,
     DATABASE_ACCESS_GUARD_ENABLED_SWITCH,
@@ -104,6 +118,8 @@ CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS: tuple[
     TOOL_RESULT_COMPACT_RETENTION_DAYS_SETTING,
     FILE_READ_TRUNCATION_ENABLED_SETTING,
     FILE_READ_TRUNCATION_MAX_BYTES_SETTING,
+    CRON_UNREAD_AUTO_PAUSE_ENABLED_SETTING,
+    CRON_UNREAD_AUTO_PAUSE_THRESHOLD_SETTING,
 )
 
 _MISSING = object()
@@ -415,6 +431,8 @@ def _validate_explicit_tool_result_compact_ranges(
 
 __all__ = [
     "CHAT_TASK_PROGRESS_ENABLED_SWITCH",
+    "CRON_UNREAD_AUTO_PAUSE_ENABLED_SETTING",
+    "CRON_UNREAD_AUTO_PAUSE_THRESHOLD_SETTING",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SETTINGS",
     "CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES",
     "DATABASE_ACCESS_GUARD_ENABLED_SWITCH",

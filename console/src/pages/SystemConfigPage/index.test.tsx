@@ -52,8 +52,12 @@ describe("SystemConfigPage", () => {
     return screen.getAllByRole("switch")[0];
   }
 
-  function getToolResultCompactSwitch() {
+  function getCronUnreadAutoPauseSwitch() {
     return screen.getAllByRole("switch")[1];
+  }
+
+  function getToolResultCompactSwitch() {
+    return screen.getAllByRole("switch")[2];
   }
 
   afterEach(() => {
@@ -143,6 +147,43 @@ describe("SystemConfigPage", () => {
     });
     expect(loadEffectiveConfig).toHaveBeenCalledWith("portal");
     expect(mocks.messageApi.success).toHaveBeenCalled();
+  });
+
+  it("saves cron unread auto pause settings", async () => {
+    mocks.sourceSystemConfigApi.updateCurrent.mockResolvedValue({
+      source_id: "portal",
+      config: {
+        cron_unread_auto_pause: {
+          enabled: false,
+          threshold: 12,
+        },
+      },
+      version: 1,
+      is_default: false,
+      updated_by: "alice",
+      updated_at: "2026-05-20 22:00:00",
+    });
+
+    render(<SystemConfigPage />);
+
+    expect(await screen.findByText("定时任务未读自动暂停")).toBeTruthy();
+
+    fireEvent.change(screen.getByDisplayValue("10"), {
+      target: { value: "12" },
+    });
+    fireEvent.click(getCronUnreadAutoPauseSwitch());
+    fireEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => {
+      expect(mocks.sourceSystemConfigApi.updateCurrent).toHaveBeenCalledWith({
+        config: {
+          cron_unread_auto_pause: {
+            enabled: false,
+            threshold: 12,
+          },
+        },
+      });
+    });
   });
 
   it("saves tool result compact values while preserving unknown raw keys", async () => {

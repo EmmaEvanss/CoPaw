@@ -27,7 +27,9 @@ from ...config.context import (
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
 from ..source_system_config.runtime import (
     bind_source_system_config,
+    get_current_source_system_config,
     reset_current_source_system_config,
+    resolve_cron_unread_auto_pause_config,
     set_current_source_system_config,
 )
 from .auth_state import prefetch_auth_token
@@ -40,7 +42,6 @@ from .monitor_sync_client import get_monitor_sync_client, MonitorSyncClient
 
 HEARTBEAT_JOB_ID = "_heartbeat"
 DREAM_JOB_ID = "_dream"
-AUTO_PAUSE_UNREAD_THRESHOLD = 3
 AUTO_PAUSE_REASON = "auto_unread_threshold"
 MANUAL_PAUSE_REASON = "manual"
 TASK_MESSAGES_STATE_KEY = "task_messages"
@@ -1514,7 +1515,14 @@ class CronManager:  # pylint: disable=too-many-public-methods
             meta["task_last_scheduled_run_at"] = datetime.now(timezone.utc)
             updated = job.model_copy(update={"meta": meta})
             auto_paused = False
-            if unread_count >= AUTO_PAUSE_UNREAD_THRESHOLD and job.enabled:
+            auto_pause_config = resolve_cron_unread_auto_pause_config(
+                get_current_source_system_config(),
+            )
+            if (
+                auto_pause_config.enabled
+                and unread_count >= auto_pause_config.threshold
+                and job.enabled
+            ):
                 auto_paused = True
                 meta["pause_reason"] = AUTO_PAUSE_REASON
                 meta["auto_paused_at"] = meta["task_last_scheduled_run_at"]

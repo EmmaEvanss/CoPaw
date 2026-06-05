@@ -520,6 +520,79 @@ async def test_list_lists_counts_only_valid_click_customers(mock_db):
     assert "THEN clicked_at" in event_query
 
 
+def test_build_list_summary_from_aggregates_preserves_current_merge_rules():
+    """名单聚合应保持快照优先、事件补全、并集客户数覆盖的现有规则。"""
+    clicked_at = datetime(2026, 5, 30, 11, 0, 0)
+
+    items = HtmlPreviewClickStore._build_list_summary_from_aggregates(
+        snapshot_rows=[
+            {
+                "list_key": "list-1",
+                "list_name": "快照名单",
+                "file_url": "https://example.com/a.html",
+                "file_name": "a.html",
+                "cron_task_id": "snapshot-task",
+                "cron_task_name": "快照任务",
+                "customer_count": 2,
+            },
+        ],
+        event_rows=[
+            {
+                "list_key": "list-1",
+                "list_name": "事件名单",
+                "file_url": "https://example.com/a.html",
+                "file_name": "event-a.html",
+                "cron_task_id": "event-task",
+                "cron_task_name": "事件任务",
+                "clicked_customer_count": 1,
+                "insight_count": 1,
+                "phone_count": 0,
+                "plan_count": 1,
+                "total_click_count": 2,
+                "last_clicked_at": clicked_at,
+            },
+            {
+                "list_key": "list-2",
+                "list_name": "仅事件名单",
+                "file_url": "https://example.com/b.html",
+                "file_name": "b.html",
+                "cron_task_id": "event-task-2",
+                "cron_task_name": "事件任务2",
+                "clicked_customer_count": 3,
+                "insight_count": 2,
+                "phone_count": 1,
+                "plan_count": 0,
+                "total_click_count": 3,
+                "last_clicked_at": datetime(2026, 5, 30, 10, 0, 0),
+            },
+        ],
+        customer_rows=[
+            {
+                "list_key": "list-1",
+                "customer_count": 4,
+            },
+        ],
+    )
+
+    assert [item.list_key for item in items] == ["list-2", "list-1"]
+
+    snapshot_backed_item = items[1]
+    assert snapshot_backed_item.list_name == "快照名单"
+    assert snapshot_backed_item.file_name == "a.html"
+    assert snapshot_backed_item.cron_task_id == "snapshot-task"
+    assert snapshot_backed_item.customer_count == 4
+    assert snapshot_backed_item.clicked_customer_count == 1
+    assert snapshot_backed_item.insight_count == 1
+    assert snapshot_backed_item.plan_count == 1
+    assert snapshot_backed_item.total_click_count == 2
+    assert snapshot_backed_item.last_clicked_at == clicked_at
+
+    event_only_item = items[0]
+    assert event_only_item.list_name == "仅事件名单"
+    assert event_only_item.customer_count == 3
+    assert event_only_item.clicked_customer_count == 3
+
+
 def test_create_route_enriches_source_and_user(monkeypatch):
     """路由应从请求上下文补齐来源和用户标识。"""
 

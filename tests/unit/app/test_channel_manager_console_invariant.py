@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -130,6 +131,47 @@ class _ReloadableFakeChannel:
         self._command_registry = command_registry
 
 
+class _QueueAwareFakeChannel:
+    uses_manager_queue = True
+
+    def __init__(
+        self,
+        channel: str,
+        label: str,
+        events: list[str],
+        *,
+        block_on_consume: bool = False,
+    ):
+        self.channel = channel
+        self.label = label
+        self.events = events
+        self.block_on_consume = block_on_consume
+        self.start = AsyncMock()
+        self.stop = AsyncMock()
+        self.set_enqueue = Mock()
+        self.consume_started = asyncio.Event()
+        self.release_consume = asyncio.Event()
+
+    def _extract_query_from_payload(self, payload):
+        return payload.get("text", "")
+
+    def get_debounce_key(self, payload):
+        return payload["session_id"]
+
+    def _is_native_payload(self, payload):
+        return False
+
+    def merge_requests(self, requests):
+        return requests[0] if requests else None
+
+    async def consume_one(self, payload):
+        del payload
+        self.consume_started.set()
+        if self.block_on_consume:
+            await self.release_consume.wait()
+        self.events.append(self.label)
+
+
 async def test_replace_channel_preserves_workspace_binding():
     old_channel = _ReloadableFakeChannel("console")
     manager = ChannelManager([old_channel])
@@ -142,3 +184,67 @@ async def test_replace_channel_preserves_workspace_binding():
 
     assert new_channel._workspace is workspace
     assert new_channel._command_registry is not None
+
+
+async def test_replace_channel_reuses_existing_session_queue_with_new_channel():
+    events: list[str] = []
+    old_channel = _QueueAwareFakeChannel("console", "old", events)
+    manager = ChannelManager([old_channel])
+    await manager.start_all()
+
+    try:
+        manager._enqueue_one(  # pylint: disable=protected-access
+            "console",
+            {"session_id": "console:user-1", "text": "first"},
+        )
+        await asyncio.sleep(0.05)
+
+        new_channel = _QueueAwareFakeChannel("console", "new", events)
+        await manager.replace_channel(new_channel)
+
+        manager._enqueue_one(  # pylint: disable=protected-access
+            "console",
+            {"session_id": "console:user-1", "text": "second"},
+        )
+        await asyncio.sleep(0.05)
+    finally:
+        await manager.stop_all()
+
+    assert events == ["old", "new"]
+
+
+async def test_remove_channel_cancels_existing_session_consumers():
+    events: list[str] = []
+    channel = _QueueAwareFakeChannel(
+        "console",
+        "old",
+        events,
+        block_on_consume=True,
+    )
+    manager = ChannelManager([channel])
+    await manager.start_all()
+    queue_keys_after_remove = None
+
+    try:
+        manager._enqueue_one(  # pylint: disable=protected-access
+            "console",
+            {"session_id": "console:user-1", "text": "first"},
+        )
+        await asyncio.wait_for(channel.consume_started.wait(), timeout=1.0)
+
+        manager._enqueue_one(  # pylint: disable=protected-access
+            "console",
+            {"session_id": "console:user-1", "text": "second"},
+        )
+        await asyncio.sleep(0.05)
+
+        removed = await manager.remove_channel("console")
+        channel.release_consume.set()
+        await asyncio.sleep(0.05)
+        queue_keys_after_remove = set(manager._queue_manager._queues)
+    finally:
+        await manager.stop_all()
+
+    assert removed is True
+    assert events == []
+    assert queue_keys_after_remove == set()

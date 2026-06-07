@@ -401,6 +401,13 @@ class ChannelManager:
             query: Extracted query text for logging
         """
         try:
+            if await self.get_channel(channel_id) is None:
+                logger.debug(
+                    "Dropping enqueue for removed channel=%s session=%s",
+                    channel_id,
+                    session_id[:30],
+                )
+                return
             await asyncio.wait_for(
                 self._queue_manager.enqueue(
                     channel_id,
@@ -469,14 +476,6 @@ class ChannelManager:
             f"priority={priority_level}",
         )
 
-        # Get channel instance
-        ch = await self.get_channel(channel_id)
-        if not ch:
-            logger.error(
-                f"Consumer: channel not found: channel_id={channel_id}",
-            )
-            return
-
         while True:
             try:
                 # Get first payload
@@ -494,6 +493,17 @@ class ChannelManager:
                         batch.append(next_payload)
                     except asyncio.QueueEmpty:
                         break
+
+                ch = await self.get_channel(channel_id)
+                if not ch:
+                    logger.info(
+                        "Consumer exiting for removed channel=%s session=%s "
+                        "priority=%s",
+                        channel_id,
+                        session_id[:30],
+                        priority_level,
+                    )
+                    return
 
                 # Process batch (with merge logic)
                 try:
@@ -720,6 +730,7 @@ class ChannelManager:
                 self.channels.append(new_channel)
             else:
                 logger.info(f"Stopping old channel: {old_channel.channel}")
+                old_channel.set_enqueue(None)
                 try:
                     await old_channel.stop()
                 except asyncio.CancelledError:
@@ -740,6 +751,10 @@ class ChannelManager:
 
         if removed_channel is None:
             return False
+
+        removed_channel.set_enqueue(None)
+        if self._queue_manager is not None:
+            await self._queue_manager.cancel_channel(channel_name)
 
         logger.info(f"Stopping removed channel: {channel_name}")
         try:

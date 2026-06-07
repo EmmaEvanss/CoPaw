@@ -37,6 +37,17 @@ OnLastDispatch = Optional[Callable[[str, str, str], None]]
 _CHANNEL_QUEUE_MAXSIZE = 1000
 
 
+def _get_required_available_channels(
+    registry: dict[str, type[BaseChannel]] | None = None,
+) -> tuple[str, ...]:
+    """Return env-filtered channel keys plus required built-ins."""
+    available = set(get_available_channels())
+    registry = registry or get_channel_registry()
+    if "console" in registry:
+        available.add("console")
+    return tuple(key for key in registry if key in available)
+
+
 async def _process_batch(ch: BaseChannel, batch: List[Any]) -> None:
     """Merge if needed and process one payload (native or request)."""
     if ch.channel == "dingtalk" and batch and ch._is_native_payload(batch[0]):
@@ -97,12 +108,11 @@ class ChannelManager:
         process endpoint.
         on_last_dispatch: called when a user send+reply was sent.
         """
-        available = get_available_channels()
         registry = get_channel_registry()
         channels: list[BaseChannel] = [
             ch_cls.from_env(process, on_reply_sent=on_last_dispatch)
             for key, ch_cls in registry.items()
-            if key in available
+            if key in _get_required_available_channels(registry)
         ]
         return cls(channels)
 
@@ -123,14 +133,15 @@ class ChannelManager:
             on_last_dispatch: Callback for dispatch events
             workspace_dir: Agent workspace directory for channel state files
         """
-        available = get_available_channels()
         ch = config.channels
         show_tool_details = getattr(config, "show_tool_details", True)
         extra = getattr(ch, "__pydantic_extra__", None) or {}
         from ...config.config import normalize_single_channel_config
 
         channels: list[BaseChannel] = []
-        for key, ch_cls in get_channel_registry().items():
+        registry = get_channel_registry()
+        available = set(_get_required_available_channels(registry))
+        for key, ch_cls in registry.items():
             if key not in available:
                 continue
             ch_cfg = getattr(ch, key, None)

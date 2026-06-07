@@ -660,15 +660,23 @@ async def distribute_channel_config(
         tenant_id=source_agent.tenant_id,
     )
     source_channels = source_config.channels
-    if source_channels is None:
+    source_channel = None
+    if source_channels is not None:
+        source_channel = _extract_source_channel_config(
+            source_channels,
+            channel_name,
+        )
+    if source_channel is None and channel_name == "console":
+        source_channel = normalize_single_channel_config(
+            channel_name,
+            None,
+            materialize_missing=True,
+        )
+    elif source_channels is None:
         raise HTTPException(
             status_code=400,
             detail="Source agent has no channel config",
         )
-    source_channel = _extract_source_channel_config(
-        source_channels,
-        channel_name,
-    )
     if source_channel is None:
         raise HTTPException(
             status_code=400,

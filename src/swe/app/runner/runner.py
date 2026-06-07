@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Collection
 from uuid import uuid4
 
 import httpx
-from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
 from agentscope.message import Msg, TextBlock
 from agentscope.pipeline import stream_printing_messages
 from agentscope_runtime.engine.runner import Runner
@@ -29,6 +28,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
 from ..mcp.http_headers import resolve_mcp_http_headers
+from ..mcp.stateful_client import HttpStatefulClient, StdIOStatefulClient
 from ..mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
 from .command_dispatch import (
     _get_last_user_text,

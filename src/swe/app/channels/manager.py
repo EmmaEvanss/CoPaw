@@ -127,6 +127,7 @@ class ChannelManager:
         ch = config.channels
         show_tool_details = getattr(config, "show_tool_details", True)
         extra = getattr(ch, "__pydantic_extra__", None) or {}
+        from ...config.config import normalize_single_channel_config
 
         channels: list[BaseChannel] = []
         for key, ch_cls in get_channel_registry().items():
@@ -135,6 +136,12 @@ class ChannelManager:
             ch_cfg = getattr(ch, key, None)
             if ch_cfg is None and key in extra:
                 ch_cfg = extra[key]
+
+            ch_cfg = normalize_single_channel_config(
+                key,
+                ch_cfg,
+                materialize_missing=(key == "console"),
+            )
             if ch_cfg is None:
                 continue
             if isinstance(ch_cfg, dict):

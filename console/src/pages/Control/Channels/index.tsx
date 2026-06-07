@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Form } from "@agentscope-ai/design";
 import { useTranslation } from "react-i18next";
 import api from "../../../api";
+import type { ChannelConstraints } from "../../../api/types";
 import {
   ChannelCard,
   ChannelDrawer,
@@ -72,7 +73,11 @@ function ChannelsPage() {
     if (!activeKey) return;
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { isBuiltin: _isBuiltin, ...savedConfig } = channels[activeKey] || {};
+    const {
+      isBuiltin: _isBuiltin,
+      _constraints: _constraints,
+      ...savedConfig
+    } = channels[activeKey] || {};
     const updatedChannel: Record<string, unknown> = {
       ...savedConfig,
       ...values,
@@ -157,6 +162,13 @@ function ChannelsPage() {
         saving={saving}
         initialValues={activeKey ? channels[activeKey] : undefined}
         isBuiltin={activeKey ? isBuiltin(activeKey) : true}
+        constraints={
+          activeKey
+            ? (channels[activeKey]?._constraints as
+                | ChannelConstraints
+                | undefined)
+            : undefined
+        }
         onClose={handleDrawerClose}
         onSubmit={handleSubmit}
       />

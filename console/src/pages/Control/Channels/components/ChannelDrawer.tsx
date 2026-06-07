@@ -18,6 +18,7 @@ import { TenantTargetPicker } from "../../../../components/TenantTargetPicker";
 import styles from "../index.module.less";
 import { useTheme } from "../../../../contexts/ThemeContext";
 import { api } from "../../../../api";
+import type { ChannelConstraints } from "../../../../api/types";
 
 const WECOM_SDK_URL =
   "https://wwcdn.weixin.qq.com/node/wework/js/wecom-aibot-sdk@0.1.0.min.js";
@@ -114,6 +115,7 @@ interface ChannelDrawerProps {
   saving: boolean;
   initialValues: Record<string, unknown> | undefined;
   isBuiltin: boolean;
+  constraints?: ChannelConstraints;
   onClose: () => void;
   onSubmit: (values: Record<string, unknown>) => void;
 }
@@ -126,6 +128,7 @@ export function ChannelDrawer({
   saving,
   initialValues,
   isBuiltin,
+  constraints,
   onClose,
   onSubmit,
 }: ChannelDrawerProps) {
@@ -133,6 +136,16 @@ export function ChannelDrawer({
   const { isDark } = useTheme();
   const currentLang = i18n.language?.startsWith("zh") ? "zh" : "en";
   const label = activeKey ? getChannelLabel(activeKey, t) : activeLabel;
+  const enabledConstraint = constraints?.enabled;
+  const enabledReadOnly = Boolean(enabledConstraint?.readOnly);
+  const translatedEnabledReason = enabledConstraint?.reasonKey
+    ? t(enabledConstraint.reasonKey)
+    : undefined;
+  const enabledHelp =
+    translatedEnabledReason &&
+    translatedEnabledReason !== enabledConstraint?.reasonKey
+      ? translatedEnabledReason
+      : enabledConstraint?.reason;
   const sdkLoadedRef = useRef(false);
   const { message } = useAppMessage();
 
@@ -1114,8 +1127,9 @@ export function ChannelDrawer({
             name="enabled"
             label={t("common.enabled")}
             valuePropName="checked"
+            extra={enabledHelp}
           >
-            <Switch />
+            <Switch disabled={enabledReadOnly} />
           </Form.Item>
 
           {activeKey !== "voice" && (

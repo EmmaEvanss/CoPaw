@@ -278,6 +278,51 @@ async def test_stream_tool_output_marks_failed_status(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_tool_output_marks_structured_json_failure(
+    monkeypatch,
+) -> None:
+    event = Message(
+        id="tool-4b",
+        type=MessageType.FUNCTION_CALL_OUTPUT,
+        role=Role.ASSISTANT,
+        status=RunStatus.InProgress,
+        content=[
+            DataContent(
+                data={
+                    "name": "grep_search",
+                    "output": (
+                        '{"isError": true, "error_type": "permission_denied", '
+                        '"content": [{"type": "text", '
+                        '"text": "permission denied"}]}'
+                    ),
+                },
+                delta=False,
+                index=0,
+            ),
+        ],
+    )
+
+    async def source():
+        yield event
+
+    async def fake_summary(**_kwargs):
+        return "failed summary"
+
+    monkeypatch.setattr(
+        "swe.app.runner.stream_boundary.async_generate_tool_output_summary",
+        fake_summary,
+    )
+
+    events = [
+        item async for item in normalize_reasoning_boundary_stream(source())
+    ]
+
+    assert events[0].content[0].data["tool_status"] == "failed"
+    assert events[0].content[0].data["tool_error"] == "permission denied"
+    assert events[0].content[0].data["output_summary"] == "failed summary"
+
+
+@pytest.mark.asyncio
 async def test_stream_silent_tool_event_is_filtered_before_status_enrichment(
     monkeypatch,
 ) -> None:

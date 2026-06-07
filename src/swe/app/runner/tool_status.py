@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import MutableMapping
+import json
 from typing import Any
 
 TOOL_STATUS_RUNNING = "running"
@@ -66,6 +67,14 @@ def _extract_error_text(
         return (
             _extract_content_error(data.get("content")) or _DEFAULT_TOOL_ERROR
         )
+
+    if isinstance(tool_output, str):
+        stripped_output = tool_output.strip()
+        if stripped_output.startswith(("{", "[")):
+            try:
+                tool_output = json.loads(stripped_output)
+            except json.JSONDecodeError:
+                pass
 
     if isinstance(tool_output, MutableMapping):
         nested_error = _stringify_error(tool_output.get("error"))

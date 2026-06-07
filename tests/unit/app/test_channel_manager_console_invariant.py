@@ -3,8 +3,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from swe.app.channels.console.channel import ConsoleChannel
 from swe.app.channels.manager import ChannelManager
-from swe.config.config import ChannelConfig, Config
+from swe.config.config import ChannelConfig, Config, ConsoleConfig
 
 
 class _FakeConsoleChannel:
@@ -93,3 +94,21 @@ def test_channel_manager_from_config_keeps_console_when_env_filter_excludes_it()
         "zhaohu",
     ]
     assert manager.channels[0].config.enabled is True
+
+
+def test_console_channel_from_env_ignores_disable_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONSOLE_CHANNEL_ENABLED", "0")
+    monkeypatch.setenv("CONSOLE_MEDIA_DIR", str(tmp_path))
+
+    channel = ConsoleChannel.from_env(process=Mock())
+
+    assert channel.enabled is True
+
+
+def test_console_channel_from_config_ignores_disabled_config(tmp_path):
+    channel = ConsoleChannel.from_config(
+        process=Mock(),
+        config=ConsoleConfig(enabled=False, media_dir=str(tmp_path)),
+    )
+
+    assert channel.enabled is True

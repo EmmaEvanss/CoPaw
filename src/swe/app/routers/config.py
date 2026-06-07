@@ -18,6 +18,7 @@ from ...config import (
     ToolGuardConfig,
     ToolGuardRuleConfig,
 )
+from ...config.channel_invariants import include_mandatory_channels
 from ..channels.registry import BUILTIN_CHANNEL_KEYS
 from ...config.config import (
     AgentsLLMRoutingConfig,
@@ -96,6 +97,22 @@ _CHANNEL_CONFIG_CLASS_MAP = {
 }
 
 
+def _ensure_manageable_channel_config(
+    channels: ChannelConfig | None,
+) -> ChannelConfig:
+    """Materialize console-safe channel defaults for management writes."""
+    if channels is not None:
+        return channels
+
+    normalized = normalize_channel_config_set(
+        None,
+        materialize_missing_console=True,
+    )
+    if normalized is None:
+        raise RuntimeError("Channel config normalization returned None")
+    return normalized
+
+
 def _channel_to_management_payload(
     channel_name: str,
     channel_data: Any,
@@ -132,11 +149,11 @@ def _channel_to_management_payload(
     description="Retrieve configuration for all available channels",
 )
 async def list_channels(request: Request) -> dict:
-    """List all channel configs (filtered by available channels)."""
+    """List all channel configs, including mandatory built-ins."""
     from ..agent_context import get_agent_and_config_for_request
 
     _, agent_config = await get_agent_and_config_for_request(request)
-    available = get_available_channels()
+    available = include_mandatory_channels(get_available_channels())
 
     # Return all available channels (use default config if not saved)
     result = {}
@@ -170,8 +187,8 @@ async def list_channels(request: Request) -> dict:
     description="Return all available channel type identifiers",
 )
 async def list_channel_types() -> List[str]:
-    """Return available channel type identifiers (env-filtered)."""
-    return list(get_available_channels())
+    """Return channel type identifiers, including mandatory built-ins."""
+    return list(include_mandatory_channels(get_available_channels()))
 
 
 @router.put(
@@ -215,7 +232,7 @@ async def put_channels(
             getattr(normalized_channels, key, None),
             materialize_missing=(key == "console"),
         )
-        for key in get_available_channels()
+        for key in include_mandatory_channels(get_available_channels())
     }
 
 
@@ -342,7 +359,7 @@ async def get_channel(
     """Get a specific channel config by name."""
     from ..agent_context import get_agent_and_config_for_request
 
-    available = get_available_channels()
+    available = include_mandatory_channels(get_available_channels())
     if channel_name not in available:
         raise HTTPException(
             status_code=404,
@@ -406,7 +423,7 @@ async def put_channel(
     from ..agent_context import get_agent_and_config_for_request
     from ...config.config import save_agent_config
 
-    available = get_available_channels()
+    available = include_mandatory_channels(get_available_channels())
     if channel_name not in available:
         raise HTTPException(
             status_code=404,
@@ -417,7 +434,9 @@ async def put_channel(
 
     # Initialize channels if not exists
     if agent_config.channels is None:
-        agent_config.channels = ChannelConfig()
+        agent_config.channels = _ensure_manageable_channel_config(
+            agent_config.channels,
+        )
 
     single_channel_config = strip_channel_management_meta(
         single_channel_config,
@@ -646,7 +665,7 @@ async def distribute_channel_config(
             results=[],
         )
 
-    available = get_available_channels()
+    available = include_mandatory_channels(get_available_channels())
     if channel_name not in available:
         raise HTTPException(
             status_code=404,
@@ -714,7 +733,9 @@ async def distribute_channel_config(
             original_target_config = target_config.model_copy(deep=True)
 
             if target_config.channels is None:
-                target_config.channels = ChannelConfig()
+                target_config.channels = _ensure_manageable_channel_config(
+                    target_config.channels,
+                )
 
             _apply_distributed_channel_values(
                 target_config.channels,

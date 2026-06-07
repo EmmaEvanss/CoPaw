@@ -13,7 +13,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
-from ..config.config import load_agent_config
+from ..config.channel_invariants import include_mandatory_channels
+from ..config.config import load_agent_config, normalize_single_channel_config
 from ..config.utils import get_available_channels
 
 if TYPE_CHECKING:
@@ -178,6 +179,12 @@ class AgentConfigWatcher:
     ) -> None:
         """Reload a single channel; on failure revert new_channels entry."""
         try:
+            new_ch = normalize_single_channel_config(
+                name,
+                new_ch,
+                materialize_missing=(name == "console"),
+            )
+            setattr(new_channels, name, new_ch)
             old_channel = await self._channel_manager.get_channel(name)
             if old_channel is None:
                 logger.warning(
@@ -216,7 +223,7 @@ class AgentConfigWatcher:
             else {}
         )
 
-        for name in get_available_channels():
+        for name in include_mandatory_channels(get_available_channels()):
             new_ch = getattr(new_channels, name, None) or extra_new.get(name)
             old_ch = (
                 getattr(old_channels, name, None) or extra_old.get(name)

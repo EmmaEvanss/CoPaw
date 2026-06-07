@@ -23,6 +23,7 @@ from .command_registry import CommandRegistry
 from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
+from ...config.channel_invariants import include_mandatory_channels
 from ...constant import CHANNEL_CONSUME_TIMEOUT
 
 if TYPE_CHECKING:
@@ -41,10 +42,8 @@ def _get_required_available_channels(
     registry: dict[str, type[BaseChannel]] | None = None,
 ) -> tuple[str, ...]:
     """Return env-filtered channel keys plus required built-ins."""
-    available = set(get_available_channels())
+    available = set(include_mandatory_channels(get_available_channels()))
     registry = registry or get_channel_registry()
-    if "console" in registry:
-        available.add("console")
     return tuple(key for key in registry if key in available)
 
 

@@ -3,11 +3,13 @@
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
 
 from swe.app.agent_config_watcher import AgentConfigWatcher
+from swe.config.config import ChannelConfig, ConsoleConfig
 from swe.app.workspace.service_factories import create_agent_config_watcher
 
 
@@ -95,3 +97,75 @@ class TestAgentConfigWatcherTenantScope:
             cron_manager=ws._service_manager.services["cron_manager"],
             tenant_id="tenant-a",
         )
+
+
+async def test_apply_channel_changes_reloads_console_when_env_filter_excludes_it(
+    tmp_path,
+):
+    workspace_dir = tmp_path / "tenant-a" / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
+    (workspace_dir / "agent.json").write_text("{}", encoding="utf-8")
+
+    channel_manager = AsyncMock()
+    watcher = AgentConfigWatcher(
+        agent_id="default",
+        workspace_dir=workspace_dir,
+        channel_manager=channel_manager,
+        tenant_id="tenant-a",
+    )
+    watcher._last_channels = ChannelConfig(
+        console=ConsoleConfig(bot_prefix="[OLD]"),
+    )
+    watcher._last_channels_hash = watcher._channels_hash(
+        watcher._last_channels,
+    )
+    reload_calls: list[tuple[str, str, str | None]] = []
+
+    async def _record_reload(name, new_ch, new_channels, old_ch):
+        reload_calls.append((name, new_ch.bot_prefix, old_ch.bot_prefix))
+
+    watcher._reload_one_channel = _record_reload
+    new_channels = ChannelConfig(console=ConsoleConfig(bot_prefix="[NEW]"))
+    agent_config = SimpleNamespace(channels=new_channels)
+
+    with patch(
+        "swe.app.agent_config_watcher.get_available_channels",
+        return_value=("zhaohu",),
+    ):
+        await watcher._apply_channel_changes(agent_config)
+
+    assert reload_calls == [("console", "[NEW]", "[OLD]")]
+
+
+async def test_reload_one_channel_forces_console_enabled(tmp_path):
+    workspace_dir = tmp_path / "tenant-a" / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
+    (workspace_dir / "agent.json").write_text("{}", encoding="utf-8")
+
+    replacement = SimpleNamespace(enabled=None)
+    old_channel = Mock()
+
+    def _clone(config):
+        replacement.enabled = config.enabled
+        return replacement
+
+    old_channel.clone.side_effect = _clone
+    channel_manager = AsyncMock()
+    channel_manager.get_channel.return_value = old_channel
+    watcher = AgentConfigWatcher(
+        agent_id="default",
+        workspace_dir=workspace_dir,
+        channel_manager=channel_manager,
+        tenant_id="tenant-a",
+    )
+    new_channels = ChannelConfig(console=ConsoleConfig(enabled=False))
+
+    await watcher._reload_one_channel(
+        "console",
+        new_channels.console,
+        new_channels,
+        ConsoleConfig(),
+    )
+
+    assert replacement.enabled is True
+    assert new_channels.console.enabled is True

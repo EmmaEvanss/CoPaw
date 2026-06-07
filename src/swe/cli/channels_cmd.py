@@ -25,6 +25,7 @@ from ..config.config import (
     normalize_single_channel_config,
     save_agent_config,
 )
+from ..config.channel_invariants import include_mandatory_channels
 from .utils import prompt_confirm, prompt_select
 from .http import client, print_json, resolve_base_url
 from ..config import get_available_channels
@@ -152,7 +153,7 @@ class CustomChannel(BaseChannel):
 
 def _get_channel_names() -> dict[str, str]:
     """Return channel key -> display name (built-in + plugins)."""
-    available = get_available_channels()
+    available = include_mandatory_channels(get_available_channels())
     registry = get_channel_registry()
     out = {k: v for k, v in _ALL_CHANNEL_NAMES.items() if k in available}
     for key in available:
@@ -295,7 +296,7 @@ def _plugin_configure(
 
 def get_channel_configurators() -> dict:
     """Return channel configurators (built-in + plugin get_configurator)."""
-    available = get_available_channels()
+    available = include_mandatory_channels(get_available_channels())
     registry = get_channel_registry()
     out = {
         k: v for k, v in _ALL_CHANNEL_CONFIGURATORS.items() if k in available
@@ -742,14 +743,13 @@ def configure_cmd(agent_id: str) -> None:
 
         # Create a temporary Config object for the interactive configurator
         temp_config = Config()
-        temp_config.channels = (
-            normalize_channel_config_set(
-                agent_config.channels,
-                materialize_missing_console=True,
-            )
-            if agent_config.channels
-            else temp_config.channels
+        normalized_channels = normalize_channel_config_set(
+            agent_config.channels,
+            materialize_missing_console=True,
         )
+        if normalized_channels is None:
+            raise RuntimeError("Channel config normalization returned None")
+        temp_config.channels = normalized_channels
 
         configure_channels_interactive(temp_config)
 

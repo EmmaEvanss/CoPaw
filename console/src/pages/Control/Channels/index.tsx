@@ -72,12 +72,9 @@ function ChannelsPage() {
   const handleSubmit = async (values: Record<string, unknown>) => {
     if (!activeKey) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const {
-      isBuiltin: _isBuiltin,
-      _constraints: _constraints,
-      ...savedConfig
-    } = channels[activeKey] || {};
+    const savedConfig = { ...(channels[activeKey] || {}) };
+    delete savedConfig.isBuiltin;
+    delete savedConfig._constraints;
     const updatedChannel: Record<string, unknown> = {
       ...savedConfig,
       ...values,

@@ -167,7 +167,7 @@ class ConsoleChannel(BaseChannel):
     ) -> "ConsoleChannel":
         return cls(
             process=process,
-            enabled=os.getenv("CONSOLE_CHANNEL_ENABLED", "1") == "1",
+            enabled=True,
             bot_prefix=os.getenv("CONSOLE_BOT_PREFIX", ""),
             on_reply_sent=on_reply_sent,
             media_dir=os.getenv("CONSOLE_MEDIA_DIR", ""),
@@ -200,7 +200,7 @@ class ConsoleChannel(BaseChannel):
         """
         return cls(
             process=process,
-            enabled=config.enabled,
+            enabled=True,
             bot_prefix=config.bot_prefix or "",
             on_reply_sent=on_reply_sent,
             show_tool_details=show_tool_details,

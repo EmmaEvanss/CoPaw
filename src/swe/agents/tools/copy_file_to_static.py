@@ -8,6 +8,7 @@ import os
 from agentscope.message import TextBlock
 from agentscope.tool import ToolResponse
 
+from ..tool_failure import ToolExecutionError
 from ...app.agent_context import get_current_agent_id
 from ...config.context import (
     get_current_effective_tenant_id,
@@ -16,20 +17,8 @@ from ...config.context import (
 )
 
 
-def _tool_error(msg: str) -> ToolResponse:
-    """Return error response."""
-    return ToolResponse(
-        content=[
-            TextBlock(
-                type="text",
-                text=json.dumps(
-                    {"ok": False, "error": msg},
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-            ),
-        ],
-    )
+def _raise_tool_error(error_type: str, msg: str) -> None:
+    raise ToolExecutionError(error_type=error_type, detail=msg)
 
 
 def _tool_ok(path: str, message: str) -> ToolResponse:
@@ -69,27 +58,36 @@ async def copy_file_to_static(file_path: str) -> ToolResponse:
     """
     # Validate input
     if not file_path or not file_path.strip():
-        return _tool_error("file_path is required")
+        _raise_tool_error("invalid_arguments", "file_path is required")
 
     file_path = file_path.strip()
 
     # Check if source file exists
     if not os.path.exists(file_path):
-        return _tool_error(f"File not found: {file_path}")
+        _raise_tool_error("not_found", f"File not found: {file_path}")
 
     if not os.path.isfile(file_path):
-        return _tool_error(f"Path is not a file: {file_path}")
+        _raise_tool_error(
+            "invalid_arguments",
+            f"Path is not a file: {file_path}",
+        )
 
     # Get working directory and create static folder if needed
     working_dir = get_current_workspace_dir()
     if working_dir is None:
-        return _tool_error("workspace directory is not configured")
+        _raise_tool_error(
+            "unexpected_tool_error",
+            "workspace directory is not configured",
+        )
     static_dir = working_dir / "static"
 
     try:
         static_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        return _tool_error(f"Failed to create static directory: {e!s}")
+        _raise_tool_error(
+            "unexpected_tool_error",
+            f"Failed to create static directory: {e!s}",
+        )
 
     # Build destination path
     file_name = os.path.basename(file_path)
@@ -108,7 +106,10 @@ async def copy_file_to_static(file_path: str) -> ToolResponse:
         # shutil.copy(file_path, dest_path)
         shutil.copy(file_path, dest_path)
     except Exception as e:
-        return _tool_error(f"Failed to copy file: {e!s}")
+        _raise_tool_error(
+            "unexpected_tool_error",
+            f"Failed to copy file: {e!s}",
+        )
 
     # 静态路由按运行时租户目录取文件，source-scoped 请求不能使用逻辑用户 ID。
     static_scope_id = (

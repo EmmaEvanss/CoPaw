@@ -58,6 +58,23 @@ def test_apply_terminal_tool_status_uses_default_failed_error_text() -> None:
     assert result["tool_error"]
 
 
+def test_apply_terminal_tool_status_preserves_preexisting_failed_status() -> (
+    None
+):
+    module = _tool_status_module()
+    data = {
+        "name": "grep_search",
+        "output": "tool output was rewritten downstream",
+        "tool_status": module.TOOL_STATUS_FAILED,
+        "tool_error": "permission denied",
+    }
+
+    result = module.apply_terminal_tool_status(data)
+
+    assert result["tool_status"] == module.TOOL_STATUS_FAILED
+    assert result["tool_error"] == "permission denied"
+
+
 def test_apply_terminal_tool_status_truncates_long_error_text() -> None:
     module = _tool_status_module()
     long_error = "x" * (module.TOOL_ERROR_SUMMARY_LIMIT + 20)
@@ -126,6 +143,37 @@ def test_history_tool_result_rebuilds_failed_status() -> None:
                     "id": "tool-1",
                     "name": "grep_search",
                     "output": {"error": "permission denied"},
+                },
+            ],
+            timestamp="2026-06-01T08:00:00Z",
+        ),
+    )
+
+    data = messages[0].content[0].data
+    assert data["tool_status"] == "failed"
+    assert data["tool_error"] == "permission denied"
+
+
+def test_history_tool_result_rebuilds_structured_failed_status() -> None:
+    messages = agentscope_msg_to_message(
+        Msg(
+            name="Friday",
+            role="assistant",
+            content=[
+                {
+                    "type": "tool_result",
+                    "id": "tool-1",
+                    "name": "grep_search",
+                    "output": {
+                        "isError": True,
+                        "error_type": "permission_denied",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "permission denied",
+                            },
+                        ],
+                    },
                 },
             ],
             timestamp="2026-06-01T08:00:00Z",

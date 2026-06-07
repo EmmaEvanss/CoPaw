@@ -33,6 +33,7 @@ from .hook_runtime.models import (
     HookSessionState,
     MergedHookResult,
 )
+from .tool_failure import build_failed_tool_result_block
 from ..security.tool_guard.models import TOOL_GUARD_DENIED_MARK
 from ..tracing import has_trace_manager, get_trace_manager, get_current_trace
 
@@ -194,10 +195,12 @@ class ToolGuardMixin:
             "system",
             [
                 ToolResultBlock(
-                    type="tool_result",
-                    id=tool_call_id,
-                    name=tool_name,
-                    output=[{"type": "text", "text": timeout_text}],
+                    **build_failed_tool_result_block(
+                        tool_call_id=tool_call_id,
+                        tool_name=tool_name,
+                        error_type="tool_timeout",
+                        detail=timeout_text,
+                    ),
                 ),
             ],
             "system",
@@ -826,10 +829,12 @@ class ToolGuardMixin:
             "system",
             [
                 ToolResultBlock(
-                    type="tool_result",
-                    id=tool_call["id"],
-                    name=tool_name,
-                    output=[{"type": "text", "text": denied_text}],
+                    **build_failed_tool_result_block(
+                        tool_call_id=tool_call["id"],
+                        tool_name=tool_name,
+                        error_type="hook_denied",
+                        detail=denied_text,
+                    ),
                 ),
             ],
             "system",
@@ -1213,12 +1218,12 @@ class ToolGuardMixin:
             "system",
             [
                 ToolResultBlock(
-                    type="tool_result",
-                    id=tool_call["id"],
-                    name=tool_name,
-                    output=[
-                        {"type": "text", "text": denied_text},
-                    ],
+                    **build_failed_tool_result_block(
+                        tool_call_id=tool_call["id"],
+                        tool_name=tool_name,
+                        error_type="tool_guard_denied",
+                        detail=denied_text,
+                    ),
                 ),
             ],
             "system",
@@ -1338,12 +1343,12 @@ class ToolGuardMixin:
             "system",
             [
                 ToolResultBlock(
-                    type="tool_result",
-                    id=tool_call["id"],
-                    name=tool_name,
-                    output=[
-                        {"type": "text", "text": denied_text},
-                    ],
+                    **build_failed_tool_result_block(
+                        tool_call_id=tool_call["id"],
+                        tool_name=tool_name,
+                        error_type="approval_required",
+                        detail=denied_text,
+                    ),
                 ),
             ],
             "system",

@@ -54,6 +54,30 @@ class TestFileBlockSupportFormatter:
         assert formatter_class is not None
         assert "FileBlockSupport" in formatter_class.__name__
 
+    def test_formatter_supports_structured_failed_tool_result(self):
+        """Structured failed tool outputs remain readable to the model."""
+        from agentscope.formatter import OpenAIChatFormatter
+
+        formatter_class = _create_file_block_support_formatter(
+            OpenAIChatFormatter,
+        )
+
+        text, multimodal = formatter_class.convert_tool_result_to_string(
+            {
+                "isError": True,
+                "error_type": "permission_denied",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "permission denied",
+                    },
+                ],
+            },
+        )
+
+        assert text == "permission denied"
+        assert multimodal == []
+
 
 class TestCreateModelAndFormatterTenantIntegration:
     """Tests for tenant-aware model creation."""

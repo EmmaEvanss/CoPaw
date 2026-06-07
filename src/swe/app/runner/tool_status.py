@@ -36,6 +36,13 @@ def apply_terminal_tool_status(
     tool_output = data.get("output") if raw_output is _UNSET else raw_output
     error_text = _extract_error_text(tool_output, data=data)
     if error_text is None:
+        if data.get(TOOL_STATUS_FIELD) == TOOL_STATUS_FAILED:
+            data[TOOL_STATUS_FIELD] = TOOL_STATUS_FAILED
+            data[TOOL_ERROR_FIELD] = (
+                _stringify_error(data.get(TOOL_ERROR_FIELD))
+                or _DEFAULT_TOOL_ERROR
+            )
+            return data
         data[TOOL_STATUS_FIELD] = TOOL_STATUS_SUCCESS
         data[TOOL_ERROR_FIELD] = None
         return data

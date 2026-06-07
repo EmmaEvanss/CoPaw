@@ -280,3 +280,117 @@ async def test_apply_channel_changes_materializes_default_console_when_missing(
     assert watcher._last_channels is not None
     assert watcher._last_channels.console.enabled is True
     assert watcher._last_channels.console.bot_prefix == ""
+
+
+async def test_reload_one_channel_adds_enabled_custom_channel(
+    tmp_path,
+):
+    workspace_dir = tmp_path / "tenant-a" / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
+    (workspace_dir / "agent.json").write_text("{}", encoding="utf-8")
+
+    added_channel = Mock(channel="custom")
+    channel_manager = Mock()
+    channel_manager.get_channel = AsyncMock(return_value=None)
+    channel_manager.instantiate_channel = Mock(return_value=added_channel)
+    channel_manager.replace_channel = AsyncMock()
+    watcher = AgentConfigWatcher(
+        agent_id="default",
+        workspace_dir=workspace_dir,
+        channel_manager=channel_manager,
+        tenant_id="tenant-a",
+    )
+    new_channels = ChannelConfig.model_validate(
+        {
+            "console": {},
+            "custom": {"enabled": True, "bot_prefix": "[NEW]"},
+        },
+    )
+
+    await watcher._reload_one_channel(
+        "custom",
+        getattr(new_channels, "__pydantic_extra__", {})["custom"],
+        new_channels,
+        None,
+    )
+
+    channel_manager.instantiate_channel.assert_called_once()
+    channel_manager.replace_channel.assert_awaited_once_with(added_channel)
+
+
+async def test_apply_channel_changes_adds_enabled_custom_channel(
+    tmp_path,
+):
+    workspace_dir = tmp_path / "tenant-a" / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
+    (workspace_dir / "agent.json").write_text("{}", encoding="utf-8")
+
+    added_channel = Mock(channel="custom")
+    channel_manager = Mock()
+    channel_manager.get_channel = AsyncMock(return_value=None)
+    channel_manager.instantiate_channel = Mock(return_value=added_channel)
+    channel_manager.replace_channel = AsyncMock()
+    watcher = AgentConfigWatcher(
+        agent_id="default",
+        workspace_dir=workspace_dir,
+        channel_manager=channel_manager,
+        tenant_id="tenant-a",
+    )
+    watcher._last_channels = ChannelConfig(console=ConsoleConfig())
+    watcher._last_channels_hash = watcher._channels_hash(
+        watcher._last_channels,
+    )
+    agent_config = SimpleNamespace(
+        channels=ChannelConfig.model_validate(
+            {
+                "console": {},
+                "custom": {"enabled": True, "bot_prefix": "[NEW]"},
+            },
+        ),
+    )
+
+    with patch(
+        "swe.app.agent_config_watcher.get_available_channels",
+        return_value=("zhaohu", "custom"),
+    ):
+        await watcher._apply_channel_changes(agent_config)
+
+    channel_manager.instantiate_channel.assert_called_once()
+    channel_manager.replace_channel.assert_awaited_once_with(added_channel)
+
+
+async def test_apply_channel_changes_removes_deleted_custom_channel(
+    tmp_path,
+):
+    workspace_dir = tmp_path / "tenant-a" / "workspaces" / "default"
+    workspace_dir.mkdir(parents=True)
+    (workspace_dir / "agent.json").write_text("{}", encoding="utf-8")
+
+    channel_manager = AsyncMock()
+    channel_manager.remove_channel = AsyncMock()
+    watcher = AgentConfigWatcher(
+        agent_id="default",
+        workspace_dir=workspace_dir,
+        channel_manager=channel_manager,
+        tenant_id="tenant-a",
+    )
+    watcher._last_channels = ChannelConfig.model_validate(
+        {
+            "console": {"bot_prefix": "[OLD]"},
+            "custom": {"enabled": True, "bot_prefix": "[OLD]"},
+        },
+    )
+    watcher._last_channels_hash = watcher._channels_hash(
+        watcher._last_channels,
+    )
+    agent_config = SimpleNamespace(
+        channels=ChannelConfig(console=ConsoleConfig(bot_prefix="[OLD]")),
+    )
+
+    with patch(
+        "swe.app.agent_config_watcher.get_available_channels",
+        return_value=("zhaohu",),
+    ):
+        await watcher._apply_channel_changes(agent_config)
+
+    channel_manager.remove_channel.assert_awaited_once_with("custom")

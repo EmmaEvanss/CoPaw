@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 from typing import (
     Any,
@@ -24,6 +26,7 @@ from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
 from ...config.channel_invariants import include_mandatory_channels
+from ...config.config import BaseChannelConfig
 from ...constant import CHANNEL_CONSUME_TIMEOUT
 
 if TYPE_CHECKING:
@@ -203,8 +206,6 @@ class ChannelManager:
             }
 
             # Only pass kwargs that the channel's from_config accepts
-            import inspect
-
             sig = inspect.signature(ch_cls.from_config)
             if any(
                 p.kind == inspect.Parameter.VAR_KEYWORD
@@ -237,6 +238,71 @@ class ChannelManager:
             self.enqueue(channel_id, payload)
 
         return cb
+
+    def instantiate_channel(
+        self,
+        channel_name: str,
+        config: Any,
+        *,
+        workspace_dir: Path | None = None,
+    ) -> BaseChannel:
+        """Create one channel instance from config using current runtime."""
+        registry = get_channel_registry()
+        ch_cls = registry.get(channel_name)
+        if ch_cls is None:
+            raise KeyError(f"channel not registered: {channel_name}")
+
+        template = next(
+            (ch for ch in self.channels if hasattr(ch, "_process")),
+            None,
+        )
+        if template is None:
+            raise RuntimeError(
+                f"cannot instantiate channel without runtime template: "
+                f"{channel_name}",
+            )
+
+        ch_cfg = config
+        if isinstance(ch_cfg, dict):
+            defaults = BaseChannelConfig().model_dump()
+            defaults.update(ch_cfg)
+            ch_cfg = SimpleNamespace(**defaults)
+
+        from_config_kwargs = {
+            "process": getattr(template, "_process"),
+            "config": ch_cfg,
+            "on_reply_sent": getattr(template, "_on_reply_sent", None),
+            "show_tool_details": getattr(
+                template,
+                "_show_tool_details",
+                True,
+            ),
+            "filter_tool_messages": getattr(
+                ch_cfg,
+                "filter_tool_messages",
+                False,
+            ),
+            "filter_thinking": getattr(
+                ch_cfg,
+                "filter_thinking",
+                False,
+            ),
+            "workspace_dir": workspace_dir,
+        }
+
+        sig = inspect.signature(ch_cls.from_config)
+        if any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        ):
+            filtered_kwargs = from_config_kwargs
+        else:
+            filtered_kwargs = {
+                key: value
+                for key, value in from_config_kwargs.items()
+                if key in sig.parameters
+            }
+        return ch_cls.from_config(**filtered_kwargs)
 
     def _extract_session_id(
         self,
@@ -620,6 +686,11 @@ class ChannelManager:
         #    (e.g. DingTalk) can register its handler
         if getattr(new_channel, "uses_manager_queue", True):
             new_channel.set_enqueue(self._make_enqueue_cb(new_channel_name))
+        if self._workspace is not None:
+            new_channel.set_workspace(
+                self._workspace,
+                self._command_registry,
+            )
 
         # 2) Start new channel outside lock (may be slow, e.g. DingTalk)
         logger.info(f"Pre-starting new channel: {new_channel_name}")
@@ -657,6 +728,29 @@ class ChannelManager:
                     logger.exception(
                         f"Failed to stop old channel: {old_channel.channel}",
                     )
+
+    async def remove_channel(self, channel_name: str) -> bool:
+        """Remove one channel by name and stop it."""
+        async with self._lock:
+            removed_channel = None
+            for i, ch in enumerate(self.channels):
+                if ch.channel == channel_name:
+                    removed_channel = self.channels.pop(i)
+                    break
+
+        if removed_channel is None:
+            return False
+
+        logger.info(f"Stopping removed channel: {channel_name}")
+        try:
+            await removed_channel.stop()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception(
+                f"Failed to stop removed channel: {channel_name}",
+            )
+        return True
 
     async def send_event(
         self,

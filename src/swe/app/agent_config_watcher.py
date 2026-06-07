@@ -174,6 +174,15 @@ class AgentConfigWatcher:
             return ch.model_dump(mode="json")
         return None
 
+    @staticmethod
+    def _channel_enabled(ch: Any) -> bool:
+        """Return whether a channel config is enabled."""
+        if ch is None:
+            return False
+        if isinstance(ch, dict):
+            return bool(ch.get("enabled", False))
+        return bool(getattr(ch, "enabled", False))
+
     async def _reload_one_channel(
         self,
         name: str,
@@ -191,12 +200,17 @@ class AgentConfigWatcher:
             setattr(new_channels, name, new_ch)
             old_channel = await self._channel_manager.get_channel(name)
             if old_channel is None:
-                logger.warning(
+                logger.info(
                     f"AgentConfigWatcher ({self._agent_id}): "
-                    f"channel '{name}' not found, skip",
+                    f"channel '{name}' not loaded, creating",
                 )
-                return
-            new_channel = old_channel.clone(new_ch)
+                new_channel = self._channel_manager.instantiate_channel(
+                    name,
+                    new_ch,
+                    workspace_dir=self._workspace_dir,
+                )
+            else:
+                new_channel = old_channel.clone(new_ch)
             await self._channel_manager.replace_channel(new_channel)
             logger.info(
                 f"AgentConfigWatcher ({self._agent_id}): "
@@ -230,16 +244,39 @@ class AgentConfigWatcher:
             else {}
         )
 
-        for name in include_mandatory_channels(get_available_channels()):
+        channel_names = include_mandatory_channels(
+            (
+                *get_available_channels(),
+                *extra_new.keys(),
+                *extra_old.keys(),
+            ),
+        )
+
+        for name in channel_names:
             new_ch = getattr(new_channels, name, None) or extra_new.get(name)
             old_ch = (
                 getattr(old_channels, name, None) or extra_old.get(name)
                 if old_channels
                 else None
             )
-            if new_ch is None:
+
+            if new_ch is None and old_ch is None:
                 continue
-            if old_ch is None and not getattr(new_ch, "enabled", False):
+            if new_ch is None:
+                logger.info(
+                    f"AgentConfigWatcher ({self._agent_id}): "
+                    f"channel '{name}' removed, stopping",
+                )
+                try:
+                    await self._channel_manager.remove_channel(name)
+                except Exception:
+                    logger.exception(
+                        f"AgentConfigWatcher ({self._agent_id}): "
+                        f"failed to remove channel '{name}'",
+                    )
+                    setattr(new_channels, name, old_ch)
+                continue
+            if old_ch is None and not self._channel_enabled(new_ch):
                 continue
             new_dump = self._channel_dump(new_ch)
             old_dump = self._channel_dump(old_ch)

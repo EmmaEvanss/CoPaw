@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from swe.app.channels.console.channel import ConsoleChannel
 from swe.app.channels.manager import ChannelManager
@@ -112,3 +112,33 @@ def test_console_channel_from_config_ignores_disabled_config(tmp_path):
     )
 
     assert channel.enabled is True
+
+
+class _ReloadableFakeChannel:
+    uses_manager_queue = True
+
+    def __init__(self, channel: str):
+        self.channel = channel
+        self.start = AsyncMock()
+        self.stop = AsyncMock()
+        self.set_enqueue = Mock()
+        self._workspace = None
+        self._command_registry = None
+
+    def set_workspace(self, workspace, command_registry=None):
+        self._workspace = workspace
+        self._command_registry = command_registry
+
+
+async def test_replace_channel_preserves_workspace_binding():
+    old_channel = _ReloadableFakeChannel("console")
+    manager = ChannelManager([old_channel])
+    workspace = SimpleNamespace(tenant_id="tenant-a")
+    manager.set_workspace(workspace)
+
+    new_channel = _ReloadableFakeChannel("console")
+
+    await manager.replace_channel(new_channel)
+
+    assert new_channel._workspace is workspace
+    assert new_channel._command_registry is not None

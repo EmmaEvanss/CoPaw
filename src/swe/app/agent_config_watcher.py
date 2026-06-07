@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
 from ..config.channel_invariants import include_mandatory_channels
-from ..config.config import load_agent_config, normalize_single_channel_config
+from ..config.config import (
+    load_agent_config,
+    normalize_channel_config_set,
+    normalize_single_channel_config,
+)
 from ..config.utils import get_available_channels
 
 if TYPE_CHECKING:
@@ -127,16 +131,16 @@ class AgentConfigWatcher:
 
         try:
             agent_config = self._load_agent_config()
-            if agent_config.channels:
-                self._last_channels = agent_config.channels.model_copy(
-                    deep=True,
-                )
-                self._last_channels_hash = self._channels_hash(
-                    agent_config.channels,
-                )
-            else:
-                self._last_channels = None
-                self._last_channels_hash = None
+            normalized_channels = normalize_channel_config_set(
+                agent_config.channels,
+                materialize_missing_console=True,
+            )
+            self._last_channels = normalized_channels
+            self._last_channels_hash = (
+                self._channels_hash(normalized_channels)
+                if normalized_channels is not None
+                else None
+            )
 
             self._last_heartbeat_hash = _heartbeat_hash(
                 agent_config.heartbeat,
@@ -207,14 +211,17 @@ class AgentConfigWatcher:
 
     async def _apply_channel_changes(self, agent_config: Any) -> None:
         """Diff channels and reload changed ones; update snapshot."""
-        if not agent_config.channels:
+        new_channels = normalize_channel_config_set(
+            agent_config.channels,
+            materialize_missing_console=True,
+        )
+        if new_channels is None:
             return
 
-        new_hash = self._channels_hash(agent_config.channels)
+        new_hash = self._channels_hash(new_channels)
         if new_hash == self._last_channels_hash:
             return
 
-        new_channels = agent_config.channels
         old_channels = self._last_channels
         extra_new = getattr(new_channels, "__pydantic_extra__", None) or {}
         extra_old = (
@@ -231,6 +238,8 @@ class AgentConfigWatcher:
                 else None
             )
             if new_ch is None:
+                continue
+            if old_ch is None and not getattr(new_ch, "enabled", False):
                 continue
             new_dump = self._channel_dump(new_ch)
             old_dump = self._channel_dump(old_ch)

@@ -159,6 +159,26 @@ class ConsoleChannel(BaseChannel):
         """Media directory"""
         return self._media_dir
 
+    def clone(self, config) -> "ConsoleChannel":
+        """Clone console channel while preserving workspace media context."""
+        return self.__class__.from_config(
+            process=self._process,
+            config=config,
+            on_reply_sent=self._on_reply_sent,
+            show_tool_details=getattr(self, "_show_tool_details", True),
+            filter_tool_messages=getattr(
+                config,
+                "filter_tool_messages",
+                False,
+            ),
+            filter_thinking=getattr(
+                config,
+                "filter_thinking",
+                False,
+            ),
+            workspace_dir=self._workspace_dir,
+        )
+
     @classmethod
     def from_env(
         cls,

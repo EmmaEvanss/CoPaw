@@ -118,6 +118,7 @@ _APPROVE_EXACT = frozenset(
     },
 )
 _MCP_HTTP_TIMEOUT_SECONDS = 240.0
+_MCP_CONNECT_TIMEOUT_SECONDS = _MCP_HTTP_TIMEOUT_SECONDS
 _MCP_HTTP_SSE_READ_TIMEOUT_SECONDS = 60.0 * 5
 
 _DENY_EXACT = frozenset(
@@ -651,7 +652,9 @@ async def _build_and_connect_mcp_clients(
                 passthrough_headers,
             )
             if client is not None:
-                await client.connect()
+                await client.connect(
+                    timeout=_MCP_CONNECT_TIMEOUT_SECONDS,
+                )
                 clients.append(client)
                 logger.info(f"MCP client '{key}' created and connected")
         except Exception as e:

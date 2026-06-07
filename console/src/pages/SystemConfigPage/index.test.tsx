@@ -61,7 +61,13 @@ describe("SystemConfigPage", () => {
   });
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    loadEffectiveConfig.mockReset();
+    loadEffectiveConfig.mockResolvedValue(undefined);
+    mocks.sourceSystemConfigApi.getCurrent.mockReset();
+    mocks.sourceSystemConfigApi.updateCurrent.mockReset();
+    mocks.sourceSystemConfigApi.deleteCurrent.mockReset();
+    mocks.messageApi.success.mockReset();
+    mocks.messageApi.error.mockReset();
     useIframeStore.getState().clearContext();
     useIframeStore.getState().setContext({
       source: "portal",

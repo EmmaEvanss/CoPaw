@@ -3,6 +3,7 @@ import {
   IAgentScopeRuntimeWebUISession,
   IAgentScopeRuntimeWebUISessionAPI,
   IAgentScopeRuntimeWebUIMessage,
+  IAgentScopeRuntimeWebUISessionUpdateOptions,
 } from "@/components/agentscope-chat";
 // ==================== 组件引入方式变更结束 ====================
 import api, {
@@ -56,6 +57,7 @@ const CARD_TASK_RUN = "TaskRunGroupCard";
 const TASK_SESSION_KIND = "task";
 const TASK_RUN_SECTION_STEP = "step";
 const TASK_RUN_SECTION_FINAL = "final";
+const SESSION_TITLE_GENERATED_META_KEY = "session_title_generated";
 
 // ---------------------------------------------------------------------------
 // Window globals
@@ -703,6 +705,42 @@ const mergeGeneratingState = (
   return Boolean(localGenerating);
 };
 
+const hasGeneratedSessionTitle = (session?: ExtendedSession): boolean => {
+  return Boolean(
+    session?.name &&
+      session.meta?.[SESSION_TITLE_GENERATED_META_KEY] === true,
+  );
+};
+
+const mergeSessionMeta = (
+  backendSession: ExtendedSession,
+  localSession?: ExtendedSession,
+): Record<string, unknown> => {
+  const backendMeta = backendSession.meta || {};
+  const localMeta = localSession?.meta || {};
+  const merged = {
+    ...backendMeta,
+    ...localMeta,
+  };
+
+  if (backendMeta[SESSION_TITLE_GENERATED_META_KEY] === true) {
+    merged[SESSION_TITLE_GENERATED_META_KEY] = true;
+  }
+
+  return merged;
+};
+
+const resolveMergedSessionName = (
+  backendSession: ExtendedSession,
+  localSession?: ExtendedSession,
+): string => {
+  if (hasGeneratedSessionTitle(backendSession)) {
+    return backendSession.name;
+  }
+
+  return localSession?.name || backendSession.name || DEFAULT_SESSION_NAME;
+};
+
 /**
  * Resolve and persist the real backend UUID for a local timestamp session.
  * Stores the real UUID as realId while keeping the timestamp as id, so the
@@ -721,10 +759,10 @@ const mergeResolvedSession = (
     id: localSession?.id || tempSessionId || resolvedSession.id,
     realId,
     sessionId: localSession?.sessionId || resolvedSession.sessionId,
-    name: localSession?.name || resolvedSession.name,
+    name: resolveMergedSessionName(resolvedSession, localSession),
     userId: localSession?.userId || resolvedSession.userId,
     channel: localSession?.channel || resolvedSession.channel,
-    meta: localSession?.meta || resolvedSession.meta || {},
+    meta: mergeSessionMeta(resolvedSession, localSession),
     createdAt: localSession?.createdAt || resolvedSession.createdAt,
     messages:
       resolvedSession.messages?.length > 0
@@ -1009,6 +1047,40 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     }) as ExtendedSession | undefined;
   }
 
+  private patchSessionLocally(
+    session: Partial<IAgentScopeRuntimeWebUISession>,
+  ): void {
+    if (!session.id) {
+      return;
+    }
+
+    const index = this.sessionList.findIndex((item) => {
+      const extendedSession = item as ExtendedSession;
+      return (
+        extendedSession.id === session.id ||
+        extendedSession.realId === session.id ||
+        extendedSession.sessionId === session.id
+      );
+    });
+
+    if (index === -1) {
+      this.sessionList = mergePendingSession(
+        this.sessionList,
+        session as ExtendedSession,
+      );
+      return;
+    }
+
+    const current = this.sessionList[index] as ExtendedSession;
+    this.sessionList[index] = {
+      ...current,
+      ...session,
+      id: current.id,
+      realId: current.realId,
+      sessionId: current.sessionId,
+    } as ExtendedSession;
+  }
+
   private getPendingSessions(): ExtendedSession[] {
     return this.sessionList.filter(isPendingLocalSession) as ExtendedSession[];
   }
@@ -1243,10 +1315,13 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
               realId: localResolvedSession.realId,
               sessionId:
                 localResolvedSession.sessionId || backendSession.sessionId,
-              name: localResolvedSession.name || backendSession.name,
+              name: resolveMergedSessionName(
+                backendSession,
+                localResolvedSession,
+              ),
               userId: localResolvedSession.userId || backendSession.userId,
               channel: localResolvedSession.channel || backendSession.channel,
-              meta: localResolvedSession.meta || backendSession.meta || {},
+              meta: mergeSessionMeta(backendSession, localResolvedSession),
               createdAt:
                 localResolvedSession.createdAt || backendSession.createdAt,
               messages:
@@ -1435,7 +1510,10 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     return session;
   }
 
-  async updateSession(session: Partial<IAgentScopeRuntimeWebUISession>) {
+  async updateSession(
+    session: Partial<IAgentScopeRuntimeWebUISession>,
+    options?: IAgentScopeRuntimeWebUISessionUpdateOptions,
+  ) {
     const shouldKeepLocalMessages = Boolean(
       session.id &&
         isLocalTimestamp(session.id) &&
@@ -1443,8 +1521,19 @@ export class SessionApi implements IAgentScopeRuntimeWebUISessionAPI {
     );
     const nextSession = {
       ...session,
-      messages: shouldKeepLocalMessages ? session.messages || [] : [],
+      messages:
+        options?.refreshList === false
+          ? session.messages || []
+          : shouldKeepLocalMessages
+            ? session.messages || []
+            : [],
     };
+
+    if (options?.refreshList === false) {
+      this.patchSessionLocally(nextSession);
+      return [...this.sessionList];
+    }
+
     const index = this.sessionList.findIndex((s) => s.id === nextSession.id);
 
     if (index > -1) {

@@ -173,4 +173,34 @@ describe("ChatTaskList actions", () => {
       container.querySelector(".chat-task-list-item-action-trigger"),
     ).toBeInTheDocument();
   });
+
+  it("shows upcoming run times in a styled hover tooltip", async () => {
+    const task = taskJob({
+      state: {
+        next_run_at: "2026-06-04T01:00:00Z",
+        next_run_times: [
+          "2026-06-04T01:00:00Z",
+          "2026-06-05T01:00:00Z",
+          "2026-06-06T01:00:00Z",
+        ],
+      },
+    });
+    const { container } = render(<ChatTaskList tasks={[task]} />);
+
+    const nextRun = container.querySelector(".chat-task-list-item-next-run");
+
+    expect(nextRun).not.toHaveAttribute("title");
+    fireEvent.mouseEnter(nextRun as Element);
+
+    await waitFor(() => {
+      expect(screen.getByText("之后三次运行时间")).toBeInTheDocument();
+    });
+    const tooltip = screen.getByRole("tooltip");
+    expect(tooltip).toHaveTextContent("1");
+    expect(tooltip).toHaveTextContent("2");
+    expect(tooltip).toHaveTextContent("3");
+    expect(tooltip).toHaveTextContent("06-04");
+    expect(tooltip).toHaveTextContent("06-05");
+    expect(tooltip).toHaveTextContent("06-06");
+  });
 });

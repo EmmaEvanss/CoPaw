@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Image, Modal } from "antd";
 import { useContextSelector } from "use-context-selector";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import useChatAnywhereEventEmitter from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Context/useChatAnywhereEventEmitter";
 import Style from "./style";
 import ChatTaskList from "../ChatTaskList";
 import type { CronJobSpecOutput } from "@/api/types";
@@ -230,6 +231,17 @@ export default function ChatSidebar(props: ChatSidebarProps) {
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
   }, [refreshSessions]);
+
+  // 异步标题生成完成后刷新侧边栏
+  useChatAnywhereEventEmitter(
+    {
+      type: "refreshSessionList",
+      callback: () => {
+        void refreshSessions();
+      },
+    },
+    [refreshSessions],
+  );
 
   // 使用共享 sessions 状态，过滤并转换
   const sessions = useMemo(() => {

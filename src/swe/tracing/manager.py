@@ -462,6 +462,24 @@ class TraceManager:
         # 如果第一条消息为空，使用当前消息作为会话名称
         return session_name
 
+    async def update_session_name(
+        self,
+        trace_id: str,
+        session_name: str,
+    ) -> None:
+        """更新 trace 的 session_name（DB + 内存 TraceContext）。
+
+        Args:
+            trace_id: Trace 标识
+            session_name: 新的会话名称
+        """
+        await self.store.update_session_name(trace_id, session_name)
+        ctx = get_current_trace()
+        if ctx and ctx.trace_id == trace_id:
+            ctx.session_name = session_name
+            if ctx.trace:
+                ctx.trace.session_name = session_name
+
     async def setup_skill_detector(
         self,
         trace_id: str,

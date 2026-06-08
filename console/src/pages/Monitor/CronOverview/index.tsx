@@ -27,7 +27,7 @@ type MetricCard = {
   title: string;
   value: string;
   compare: string;
-  trend: "up" | "down";
+  trend: "up" | "down" | null;
   accent: string;
   icon: LucideIcon;
 };
@@ -39,9 +39,38 @@ type DistributionItem = {
   color?: string;
 };
 
+const failureReasonOptions = [
+  "渠道不存在",
+  "token过期",
+  "密文长度错误",
+  "智能体请求校验失败",
+  "其他",
+] as const;
+
+type FailureReason = (typeof failureReasonOptions)[number];
+
 const formatNumber = (value: number) => value.toLocaleString("en-US");
 const truncateAxisLabel = (value: string, maxLength = 6) =>
   value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+
+const classifyFailureReason = (errorMessage: string): FailureReason => {
+  const message = errorMessage || "";
+  const normalizedMessage = message.toLowerCase();
+
+  if (message.includes("channel not found")) {
+    return "渠道不存在";
+  }
+  if (message.includes("cron auth user_info is expired")) {
+    return "token过期";
+  }
+  if (message.includes("Illegal Argument")) {
+    return "密文长度错误";
+  }
+  if (normalizedMessage.includes("validation error for agentrequest")) {
+    return "智能体请求校验失败";
+  }
+  return "其他";
+};
 
 const hashString = (value: string) => {
   let hash = 0;
@@ -90,19 +119,6 @@ const metricDefinitions = [
   },
 ] as const;
 
-// 分行名称映射
-const branchNameMap: Record<string, string> = {
-  "100": "总行",
-  "110": "北京分行",
-  "120": "广州分行",
-  "121": "上海分行",
-  "128": "成都分行",
-  "755": "深圳分行",
-  "791": "南昌分行",
-};
-
-const formatBranchName = (bbkId: string) => branchNameMap[bbkId] || bbkId;
-
 const formatMetricValue = (key: string, value: number | undefined) => {
   if (value === undefined || value === null) {
     return "-";
@@ -130,8 +146,16 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 function MetricCard({ metric }: { metric: MetricCard }) {
   const Icon = metric.icon;
-  const trendClassName =
-    metric.trend === "up" ? styles.goodTrend : styles.hotTrend;
+  const isCostMetric = metric.key === "avg_cost";
+  const isPositiveTrend = isCostMetric
+    ? metric.trend === "down"
+    : metric.trend === "up";
+  const trendClassName = metric.trend
+    ? isPositiveTrend
+      ? styles.goodTrend
+      : styles.hotTrend
+    : "";
+  const compareLabel = metric.key === "total" ? "增量" : "环比";
 
   return (
     <article
@@ -152,12 +176,9 @@ function MetricCard({ metric }: { metric: MetricCard }) {
           <strong>{metric.value}</strong>
           {metric.compare ? (
             <div className={`${styles.metricCompare} ${trendClassName}`}>
-              <span>环比</span>
-              {metric.trend === "up" ? (
-                <TrendingUp size={14} />
-              ) : (
-                <TrendingDown size={14} />
-              )}
+              <span>{compareLabel}</span>
+              {metric.trend === "up" ? <TrendingUp size={14} /> : null}
+              {metric.trend === "down" ? <TrendingDown size={14} /> : null}
               <em>{metric.compare}</em>
             </div>
           ) : null}
@@ -461,7 +482,7 @@ function BranchTaskCell({
 
   return (
     <div className={styles.branchBarRow}>
-      <span className={styles.branchName}>{formatBranchName(name)}</span>
+      <span className={styles.branchName}>{name}</span>
       <div className={styles.branchBarTrack}>
         <span
           className={styles.branchSingleBar}
@@ -494,7 +515,7 @@ function BranchStackCell<T extends { name: string } & Record<string, string | nu
 
   return (
     <div className={styles.branchBarRow}>
-      <span className={styles.branchName}>{formatBranchName(name)}</span>
+      <span className={styles.branchName}>{name}</span>
       <svg
         className={styles.branchStackTrack}
         viewBox="0 0 100 12"
@@ -630,17 +651,20 @@ function FailedTaskModal({
   loading: boolean;
 }) {
   const [keyword, setKeyword] = useState("");
-  const [filterField, setFilterField] = useState<"tenant_id" | "job_name">(
-    "tenant_id",
-  );
+  const [failureReason, setFailureReason] = useState<FailureReason | undefined>();
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 5;
   const normalizedKeyword = keyword.trim().toLowerCase();
-  const filteredTasks = normalizedKeyword
-    ? tasks.filter((task) =>
-        (task[filterField] || "").toLowerCase().includes(normalizedKeyword),
-      )
-    : tasks;
+  const filteredTasks = tasks.filter((task) => {
+    const matchesKeyword = normalizedKeyword
+      ? (task.tenant_id || "").toLowerCase().includes(normalizedKeyword)
+      : true;
+    const matchesFailureReason = failureReason
+      ? classifyFailureReason(task.error_message) === failureReason
+      : true;
+
+    return matchesKeyword && matchesFailureReason;
+  });
   const totalCount = filteredTasks.length;
   const paginatedTasks = filteredTasks.slice(
     (currentPage - 1) * pageSize,
@@ -652,8 +676,6 @@ function FailedTaskModal({
   const handleFilterChange = () => {
     setCurrentPage(1);
   };
-  const searchPlaceholder =
-    filterField === "tenant_id" ? "输入用户ID筛选" : "输入任务名称筛选";
 
   return (
     <Modal
@@ -675,22 +697,27 @@ function FailedTaskModal({
       destroyOnHidden
     >
       <div className={styles.failedTaskToolbar}>
-        <Select
-          value={filterField}
-          onChange={(val) => { setFilterField(val); handleFilterChange(); }}
-          className={styles.failedTaskFilterSelect}
-          options={[
-            { label: "用户ID", value: "tenant_id" },
-            { label: "任务名称", value: "job_name" },
-          ]}
-        />
         <Input.Search
           value={keyword}
           onChange={(event) => setKeyword(event.target.value)}
           onSearch={(val) => { setKeyword(val); handleFilterChange(); }}
           allowClear
-          placeholder={searchPlaceholder}
+          placeholder="输入用户ID筛选"
           className={styles.failedTaskSearch}
+        />
+        <Select
+          allowClear
+          value={failureReason}
+          onChange={(value) => {
+            setFailureReason(value);
+            handleFilterChange();
+          }}
+          placeholder="失败原因"
+          className={styles.failedReasonSelect}
+          options={failureReasonOptions.map((reason) => ({
+            label: reason,
+            value: reason,
+          }))}
         />
       </div>
       <Spin spinning={loading} tip="加载失败任务...">
@@ -778,8 +805,22 @@ export default function CronJobOverviewPage() {
         ...getDateRangeParams(dateRange),
         status: "error",
       };
-      const response = await monitorApi.getExecutions(1, 100, params);
-      setFailedTasks(response.items);
+      const pageSize = 100;
+      let page = 1;
+      let total = 0;
+      const allTasks: ExecutionItem[] = [];
+
+      do {
+        const response = await monitorApi.getExecutions(page, pageSize, params);
+        if (response.items.length === 0) {
+          break;
+        }
+        allTasks.push(...response.items);
+        total = response.total;
+        page += 1;
+      } while (allTasks.length < total);
+
+      setFailedTasks(allTasks);
     } catch (error) {
       console.error("Failed to fetch failed tasks:", error);
     } finally {
@@ -858,7 +899,7 @@ export default function CronJobOverviewPage() {
     title: definition.title,
     value: formatMetricValue(definition.key, getOverviewMetricValue(definition.key)),
     compare: getOverviewMetricCompare(definition.key),
-    trend: getOverviewMetricTrend(definition.key) as "up" | "down",
+    trend: getOverviewMetricTrend(definition.key),
     accent: definition.accent,
     icon: definition.icon,
   }));

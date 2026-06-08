@@ -156,6 +156,7 @@ function MetricCard({ metric }: { metric: MetricCard }) {
       : styles.hotTrend
     : "";
   const compareLabel = metric.key === "total" ? "增量" : "环比";
+  const showCompareLabel = metric.compare !== "-";
 
   return (
     <article
@@ -176,7 +177,7 @@ function MetricCard({ metric }: { metric: MetricCard }) {
           <strong>{metric.value}</strong>
           {metric.compare ? (
             <div className={`${styles.metricCompare} ${trendClassName}`}>
-              <span>{compareLabel}</span>
+              {showCompareLabel ? <span>{compareLabel}</span> : null}
               {metric.trend === "up" ? <TrendingUp size={14} /> : null}
               {metric.trend === "down" ? <TrendingDown size={14} /> : null}
               <em>{metric.compare}</em>
@@ -242,6 +243,11 @@ function CurvedDonutChart({
   centerLabel: string;
 }) {
   const total = items.reduce((sum, item) => sum + item.value, 0);
+  const nonZeroItems = items.filter((item) => item.value > 0);
+  const singleValueItem = nonZeroItems.length === 1 ? nonZeroItems[0] : null;
+  const singleValueItemIndex = singleValueItem
+    ? items.findIndex((item) => item.name === singleValueItem.name)
+    : -1;
   const gradientPrefix = `donut-${hashString(
     `${centerLabel}-${items.map((item) => item.name).join("-")}`,
   )}`;
@@ -271,25 +277,55 @@ function CurvedDonutChart({
           );
         })}
       </defs>
-      {items.map((item, index) => {
-        const angle = total ? (item.value / total) * Math.PI * 2 : 0;
-        const startAngle = currentAngle;
-        const endAngle = currentAngle + angle;
-        currentAngle = endAngle;
+      {singleValueItem ? (
+        <circle
+          cx="74"
+          cy="74"
+          r="47.5"
+          fill="none"
+          stroke={`url(#${gradientPrefix}-${singleValueItemIndex})`}
+          strokeWidth="17"
+        >
+          <title>
+            {singleValueItem.name}: {formatNumber(singleValueItem.value)}
+            {singleValueItem.percent !== undefined
+              ? ` (${singleValueItem.percent.toFixed(2)}%)`
+              : ""}
+          </title>
+        </circle>
+      ) : (
+        items.map((item, index) => {
+          const angle = total ? (item.value / total) * Math.PI * 2 : 0;
+          const startAngle = currentAngle;
+          const endAngle = currentAngle + angle;
+          currentAngle = endAngle;
 
-        return (
-          <path
-            key={item.name}
-            d={donutSegmentPath(startAngle, endAngle)}
-            fill={`url(#${gradientPrefix}-${index})`}
-          >
-            <title>
-              {item.name}: {formatNumber(item.value)}
-              {item.percent !== undefined ? ` (${item.percent.toFixed(2)}%)` : ""}
-            </title>
-          </path>
-        );
-      })}
+          return (
+            <path
+              key={item.name}
+              d={donutSegmentPath(startAngle, endAngle)}
+              fill={`url(#${gradientPrefix}-${index})`}
+            >
+              <title>
+                {item.name}: {formatNumber(item.value)}
+                {item.percent !== undefined ? ` (${item.percent.toFixed(2)}%)` : ""}
+              </title>
+            </path>
+          );
+        })
+      )}
+      {!total ? (
+        <circle
+          cx="74"
+          cy="74"
+          r="47.5"
+          fill="none"
+          stroke="#e2e8f0"
+          strokeWidth="17"
+        >
+          <title>{centerLabel}: 0</title>
+        </circle>
+      ) : null}
       <text
         x="74"
         y="68"
@@ -676,6 +712,12 @@ function FailedTaskModal({
   const handleFilterChange = () => {
     setCurrentPage(1);
   };
+  const handleClose = () => {
+    setKeyword("");
+    setFailureReason(undefined);
+    setCurrentPage(1);
+    onClose();
+  };
 
   return (
     <Modal
@@ -693,7 +735,7 @@ function FailedTaskModal({
       }
       width={1080}
       footer={null}
-      onCancel={onClose}
+      onCancel={handleClose}
       destroyOnHidden
     >
       <div className={styles.failedTaskToolbar}>

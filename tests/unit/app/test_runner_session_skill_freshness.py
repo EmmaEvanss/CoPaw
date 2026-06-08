@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import ast
+import inspect
 import json
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -182,6 +185,32 @@ def _request() -> SimpleNamespace:
         user_id="user-1",
         channel="console",
         channel_meta={},
+    )
+
+
+def _cyclomatic_complexity(func) -> int:
+    source = textwrap.dedent(inspect.getsource(func))
+    tree = ast.parse(source)
+    decision_nodes = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.Try,
+        ast.ExceptHandler,
+        ast.BoolOp,
+        ast.IfExp,
+        ast.comprehension,
+    )
+    return 1 + sum(isinstance(node, decision_nodes) for node in ast.walk(tree))
+
+
+def test_refresh_session_skill_freshness_complexity_stays_bounded() -> None:
+    assert (
+        _cyclomatic_complexity(
+            AgentRunner._refresh_session_skill_freshness,
+        )
+        <= 10
     )
 
 

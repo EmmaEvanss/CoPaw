@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from ..models.cron import (
     CronJobModel,
     CronJobQueryParams,
+    CronOverviewResponse,
     ExecutionModel,
     ExecutionQueryParams,
     PaginatedResponse,
@@ -56,6 +57,26 @@ async def get_filter_options(
         包含各筛选项列表的字典
     """
     return await service.get_filter_options()
+
+
+@router.get("/overview", response_model=CronOverviewResponse)
+async def get_overview(
+    request: Request,
+    tenant_id: str | None = Query(default=None, description="租户ID筛选"),
+    bbk_id: str | None = Query(default=None, description="分行号筛选"),
+    start_time: datetime | None = Query(default=None, description="开始时间"),
+    end_time: datetime | None = Query(default=None, description="结束时间"),
+    service: QueryService = Depends(get_query_service),
+) -> CronOverviewResponse:
+    """Get aggregated data for the cron overview page."""
+    actual_source_id = _get_source_id_from_header(request)
+    return await service.get_overview(
+        tenant_id=tenant_id,
+        bbk_id=bbk_id,
+        source_id=actual_source_id,
+        start_time=start_time,
+        end_time=end_time,
+    )
 
 
 @router.get("/jobs", response_model=PaginatedResponse[CronJobModel])

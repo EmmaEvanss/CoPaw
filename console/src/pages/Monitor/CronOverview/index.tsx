@@ -94,6 +94,7 @@ export default function CronOverviewPage() {
     users: [],
     bbk_ids: [], // 不使用，分行来自前端常量
     channels: [], // 不使用
+    source_ids: [],
     job_names: [],
     job_ids: [],
   });

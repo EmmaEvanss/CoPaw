@@ -394,6 +394,13 @@ async def lifespan(
 
             init_tenant_init_source_module(db_connection)
             logger.info("TenantInitSource module initialized")
+
+            from .channels.zhaohu.binding_store import (
+                init_zhaohu_binding_module,
+            )
+
+            init_zhaohu_binding_module(db_connection)
+            logger.info("ZhaohuChannelBinding module initialized")
         except Exception as e:
             logger.warning(
                 "Failed to initialize greeting/featured_case modules: %s",
@@ -432,7 +439,10 @@ async def lifespan(
             try:
                 await cron_notification_worker.stop()
             except Exception as e:
-                logger.warning("Error stopping cron notification worker: %s", e)
+                logger.warning(
+                    "Error stopping cron notification worker: %s",
+                    e,
+                )
 
         # Close tracing manager
         try:

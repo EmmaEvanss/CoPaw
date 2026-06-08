@@ -472,6 +472,13 @@ async def put_channel(
         tenant_id=agent.tenant_id,
     )
 
+    # zhaohu 渠道配置更新时持久化绑定信息
+    await _persist_zhaohu_binding(
+        agent.tenant_id,
+        channel_config,
+        source_id=_request_source_id(request),
+    )
+
     return _channel_to_management_payload(
         channel_name,
         channel_config,
@@ -485,6 +492,52 @@ def _request_source_id(request: Request) -> str | None:
 
 def _request_tenant_id(request: Request) -> str | None:
     return getattr(request.state, "tenant_id", None)
+
+
+async def _persist_zhaohu_binding(
+    tenant_id: str,
+    channel_config: Any,
+    source_id: str | None = None,
+) -> None:
+    """当 zhaohu 渠道配置更新时，将绑定信息持久化到数据库供其他模块使用。"""
+    from ..channels.zhaohu.binding_store import get_zhaohu_binding_store
+    from ...config.context import decode_scope_id
+
+    if not isinstance(channel_config, ZhaohuConfig):
+        return
+
+    store = get_zhaohu_binding_store()
+    if store is None:
+        return
+
+    robot_id = getattr(channel_config, "robot_open_id", "") or ""
+    # source_id 优先使用传入值（来自请求头 X-Source-Id），否则 fallback 到渠道配置
+    effective_source_id = (
+        source_id or getattr(channel_config, "channel", None) or "zhaohu"
+    )
+    if not tenant_id or not robot_id:
+        return
+
+    # tenant_id 解码：MDAw.MDAw -> 取前半段 MDAw -> 解码为 000
+    try:
+        decoded_parts = decode_scope_id(tenant_id)
+        effective_tenant_id = decoded_parts[0] if decoded_parts else tenant_id
+    except Exception:
+        effective_tenant_id = tenant_id
+
+    try:
+        await store.upsert_binding(
+            tenant_id=effective_tenant_id,
+            source_id=effective_source_id,
+            robot_id=robot_id,
+        )
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "zhaohu binding persist failed: tenant=%s",
+            effective_tenant_id,
+        )
 
 
 def _get_multi_agent_manager(request: Request):
@@ -770,6 +823,20 @@ async def distribute_channel_config(
                     tenant_id=effective_target_tenant_id,
                 )
                 raise
+
+            # zhaohu 渠道分发时持久化绑定信息
+            if channel_name == "zhaohu":
+                distributed_zhaohu = getattr(
+                    target_config.channels,
+                    "zhaohu",
+                    None,
+                )
+                if distributed_zhaohu is not None:
+                    await _persist_zhaohu_binding(
+                        effective_target_tenant_id,
+                        distributed_zhaohu,
+                        source_id=_request_source_id(request),
+                    )
 
             results.append(
                 ChannelDistributionTenantResult(

@@ -657,6 +657,11 @@ async def _build_and_connect_mcp_clients(
                 )
                 clients.append(client)
                 logger.info(f"MCP client '{key}' created and connected")
+        except asyncio.CancelledError:
+            # MCP 连接阶段的取消（如远端 502 导致），降级跳过而非取消整个查询
+            logger.warning(
+                f"MCP client '{key}' connection cancelled, skipping",
+            )
         except Exception as e:
             logger.warning(
                 f"Failed to create MCP client '{key}': {e}",

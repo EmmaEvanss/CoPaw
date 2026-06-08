@@ -40,6 +40,7 @@ from .skills_manager import (
     get_workspace_skills_dir,
     resolve_effective_skills,
 )
+from .tool_failure import normalize_tool_function_errors
 from .tool_guard_mixin import ToolGuardMixin
 from .tools import (
     edit_file,
@@ -302,6 +303,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 tool_name,
                 async_exec,
             )
+            self._normalize_registered_tool_functions(toolkit, [tool_name])
 
         # Auto-register background task management tools if any *enabled*
         # tool has async_execution set
@@ -334,6 +336,20 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 )
 
         return toolkit
+
+    @staticmethod
+    def _normalize_registered_tool_functions(
+        toolkit: Toolkit,
+        tool_names: list[str],
+    ) -> None:
+        """Wrap registered tools so failures use Swe's structured contract."""
+        for tool_name in tool_names:
+            tool_entry = toolkit.tools.get(tool_name)
+            if tool_entry is None:
+                continue
+            tool_entry.original_func = normalize_tool_function_errors(
+                tool_entry.original_func,
+            )
 
     def _register_skills(self, toolkit: Toolkit) -> None:
         """Load and register skills from workspace directory.
@@ -627,6 +643,7 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
             if hasattr(client, "on_progress_callback"):
                 client.on_progress_callback = self._reset_watchdog
             try:
+                existing_tool_names = set(self.toolkit.tools)
                 await self.toolkit.register_mcp_client(
                     client,
                     namesake_strategy=namesake_strategy,
@@ -634,6 +651,10 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                 # Wire watchdog callback into MCPToolFunction instances
                 # registered by this client.
                 self._wire_mcp_progress_callbacks(client)
+                self._normalize_registered_tool_functions(
+                    self.toolkit,
+                    sorted(set(self.toolkit.tools) - existing_tool_names),
+                )
             except (ClosedResourceError, asyncio.CancelledError) as error:
                 if self._should_propagate_cancelled_error(error):
                     raise
@@ -650,11 +671,18 @@ class SWEAgent(ToolGuardMixin, ReActAgent):
                             self._reset_watchdog
                         )
                     try:
+                        existing_tool_names = set(self.toolkit.tools)
                         await self.toolkit.register_mcp_client(
                             recovered_client,
                             namesake_strategy=namesake_strategy,
                         )
                         self._wire_mcp_progress_callbacks(recovered_client)
+                        self._normalize_registered_tool_functions(
+                            self.toolkit,
+                            sorted(
+                                set(self.toolkit.tools) - existing_tool_names,
+                            ),
+                        )
                         continue
                     except asyncio.CancelledError as recover_error:
                         if self._should_propagate_cancelled_error(

@@ -143,7 +143,16 @@ export function RemoteProviderCard({
 
       {/* Title Row */}
       <div className={styles.cardTitleRow}>
-        <span className={styles.cardName}>{provider.name}</span>
+        <div className={styles.providerTitleText}>
+          <div className={styles.providerNameLine} title={provider.name}>
+            <span className={styles.providerFieldLabel}>供应商名称</span>
+            <span className={styles.cardName}>{provider.name}</span>
+          </div>
+          <div className={styles.providerIdLine} title={provider.id}>
+            <span className={styles.providerFieldLabel}>ID</span>
+            <span className={styles.providerIdText}>{provider.id}</span>
+          </div>
+        </div>
         {providerTag}
       </div>
 

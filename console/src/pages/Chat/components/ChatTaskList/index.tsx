@@ -2,6 +2,7 @@ import React, { useState, useCallback } from "react";
 import type { CronJobSpecOutput } from "@/api/types";
 import Style from "./style";
 import { DESIGN_TOKENS } from "@/config/designTokens";
+import { TasksIconSmall } from "../ChatSidebar/CollapsedToolbar/icons";
 import {
   getTaskNextRunText,
   getTaskNextRunTooltipTimes,
@@ -11,19 +12,6 @@ import {
 import { formatListTime } from "../../listTimeFormat";
 import TaskActionMenu from "../TaskActionMenu";
 import TaskNextRunTooltip from "../TaskNextRunTooltip";
-
-function TaskIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M2.29 4.3L8 1.05L13.71 4.3V11.7L8 14.95L2.29 11.7V4.3Z"
-        stroke={DESIGN_TOKENS.colorTextPrimary}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 function ToggleIcon({ collapsed }: { collapsed: boolean }) {
   return (
@@ -91,7 +79,7 @@ export default function ChatTaskList(props: ChatTaskListProps) {
           tabIndex={0}
         >
           <div className="chat-task-list-title">
-            <TaskIcon />
+            <TasksIconSmall />
             我的任务({tasks.length})
           </div>
           <ToggleIcon collapsed={collapsed} />

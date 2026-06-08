@@ -1229,10 +1229,11 @@ class QueryService:
             for row in rows
         ]
 
-    def _format_branch_name(self, bbk_id: str) -> str:
-        if bbk_id == "unknown":
+    def _format_branch_name(self, bbk_id: Any) -> str:
+        normalized_bbk_id = str(bbk_id or "").strip()
+        if normalized_bbk_id == "unknown":
             return "unknown"
-        return get_bbk_name_by_id(bbk_id) or bbk_id
+        return get_bbk_name_by_id(normalized_bbk_id) or normalized_bbk_id
 
     def _distribution_pairs(self, rows: List[Dict[str, Any]]) -> List[Tuple[str, int]]:
         return [

@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   CURRENT_SOURCE_SYSTEM_CONFIG_SWITCHES,
+  readCronUnreadAutoPauseConfig,
+  validateSourceSystemConfig,
+  writeCronUnreadAutoPauseValue,
   writeRegisteredSwitchValue,
   writeToolResultCompactValue,
 } from "./registry";
@@ -58,5 +61,46 @@ describe("SystemConfigPage registry compatibility", () => {
       },
     });
     expect(source.tool_result_compact.recent_max_bytes).toBe(12000);
+  });
+
+  it("reads default cron unread auto pause settings", () => {
+    expect(readCronUnreadAutoPauseConfig({})).toEqual({
+      enabled: true,
+      threshold: 10,
+    });
+  });
+
+  it("writes cron unread auto pause settings without mutating source", () => {
+    vi.stubGlobal("structuredClone", undefined);
+    const source = {
+      provider_policy: { default_model: "qwen-max" },
+      cron_unread_auto_pause: {
+        enabled: true,
+      },
+    };
+
+    const next = writeCronUnreadAutoPauseValue(source, "threshold", 12);
+
+    expect(next).toEqual({
+      provider_policy: { default_model: "qwen-max" },
+      cron_unread_auto_pause: {
+        enabled: true,
+        threshold: 12,
+      },
+    });
+    expect(source.cron_unread_auto_pause).toEqual({
+      enabled: true,
+    });
+  });
+
+  it("rejects invalid cron unread auto pause threshold", () => {
+    expect(
+      validateSourceSystemConfig({
+        cron_unread_auto_pause: {
+          enabled: true,
+          threshold: 0,
+        },
+      }),
+    ).toContain("1");
   });
 });

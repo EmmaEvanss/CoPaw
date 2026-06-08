@@ -34,6 +34,7 @@ export interface CronJobRequest {
 
 export interface CronJobState {
   next_run_at?: string | null;
+  next_run_times?: string[] | null;
   last_run_at?: string | null;
   last_status?: "success" | "error" | "running" | "skipped" | "cancelled" | null;
   last_error?: string | null;

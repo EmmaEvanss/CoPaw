@@ -12,7 +12,10 @@ import { getFileIcon, getFileType, getContentType } from "./fileUtils";
 import Markdown from "../Markdown";
 import { htmlPreviewEventsApi } from "@/api/modules/htmlPreviewEvents";
 import { useHtmlPreviewTracking } from "../HtmlPreviewTrackingContext";
-import { attachHtmlPreviewClickTracker } from "./htmlPreviewClickTracking";
+import {
+  attachHtmlPreviewClickTracker,
+  type NestedHtmlPreviewRequest,
+} from "./htmlPreviewClickTracking";
 
 export interface FilePreviewModalProps {
   open: boolean;
@@ -20,17 +23,32 @@ export interface FilePreviewModalProps {
   fileUrl: string;
   fileName: string;
   enableClickTracking?: boolean;
+  enableListSnapshotTracking?: boolean;
+  trackingListKey?: string | null;
+  trackingListName?: string | null;
+  defaultCustomerInfo?: Record<string, string> | null;
 }
 
 function FilePreviewModal(props: FilePreviewModalProps) {
-  const { open, onClose, fileUrl, fileName, enableClickTracking = false } =
-    props;
+  const {
+    open,
+    onClose,
+    fileUrl,
+    fileName,
+    enableClickTracking = false,
+    enableListSnapshotTracking = true,
+    trackingListKey,
+    trackingListName,
+    defaultCustomerInfo,
+  } = props;
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(true);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [markdownContent, setMarkdownContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nestedPreview, setNestedPreview] =
+    useState<NestedHtmlPreviewRequest | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const cleanupClickTrackingRef = useRef<(() => void) | null>(null);
   const trackingContext = useHtmlPreviewTracking();
@@ -87,6 +105,7 @@ function FilePreviewModal(props: FilePreviewModalProps) {
     if (!open) {
       cleanupClickTrackingRef.current?.();
       cleanupClickTrackingRef.current = null;
+      setNestedPreview(null);
     }
   }, [open]);
 
@@ -139,9 +158,15 @@ function FilePreviewModal(props: FilePreviewModalProps) {
           cronTaskName: trackingContext.cronTaskName,
           fileUrl,
           fileName,
+          listKey: trackingListKey,
+          listName: trackingListName,
+          defaultCustomerInfo,
         },
         reporter: htmlPreviewEventsApi.recordClick,
-        listSnapshotReporter: htmlPreviewEventsApi.recordListSnapshot,
+        listSnapshotReporter: enableListSnapshotTracking
+          ? htmlPreviewEventsApi.recordListSnapshot
+          : undefined,
+        onOpenNestedPreview: setNestedPreview,
       });
     } catch (error) {
       console.warn("Failed to attach HTML preview click tracker:", error);
@@ -151,6 +176,10 @@ function FilePreviewModal(props: FilePreviewModalProps) {
     fileName,
     fileUrl,
     isHtmlPreview,
+    enableListSnapshotTracking,
+    defaultCustomerInfo,
+    trackingListKey,
+    trackingListName,
     trackingContext,
   ]);
 
@@ -267,38 +296,53 @@ function FilePreviewModal(props: FilePreviewModalProps) {
   }, [fileType, handleCopy, handleDownload, handleFullscreen, copied, fullscreen]);
 
   return (
-    <Modal
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={fullscreen ? "95vw" : 800}
-      centered
-      closeIcon={
-        <IconButton
-          size="small"
-          icon={<SparkFalseLine />}
-          bordered={false}
-        />
-      }
-      title={
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
-          <span style={{ fontSize: "14px", fontWeight: 500, maxWidth: fullscreen ? "60vw" : "400px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {fileName}
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginRight: "32px" }}>
-            {headerActions}
+    <>
+      <Modal
+        open={open}
+        onCancel={onClose}
+        footer={null}
+        width={fullscreen ? "95vw" : 800}
+        centered
+        closeIcon={
+          <IconButton
+            size="small"
+            icon={<SparkFalseLine />}
+            bordered={false}
+          />
+        }
+        title={
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+            <span style={{ fontSize: "14px", fontWeight: 500, maxWidth: fullscreen ? "60vw" : "400px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {fileName}
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginRight: "32px" }}>
+              {headerActions}
+            </div>
           </div>
+        }
+        styles={{
+          content: { padding: "16px 24px" },
+          body: { padding: "16px 0" },
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: fullscreen ? "85vh" : "200px" }}>
+          {renderPreviewContent}
         </div>
-      }
-      styles={{
-        content: { padding: "16px 24px" },
-        body: { padding: "16px 0" },
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: fullscreen ? "85vh" : "200px" }}>
-        {renderPreviewContent}
-      </div>
-    </Modal>
+      </Modal>
+      {nestedPreview && (
+        <FilePreviewModal
+          open
+          onClose={() => setNestedPreview(null)}
+          fileUrl={nestedPreview.fileUrl}
+          fileName={nestedPreview.fileName}
+          enableClickTracking
+          enableListSnapshotTracking={false}
+          trackingListKey={nestedPreview.listKey}
+          trackingListName={nestedPreview.listName}
+          defaultCustomerInfo={nestedPreview.customerInfo}
+        />
+      )}
+    </>
   );
 }
 

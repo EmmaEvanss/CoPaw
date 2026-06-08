@@ -15,6 +15,8 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { TenantTargetPicker } from "@/components/TenantTargetPicker";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import { useIframeStore } from "../../../stores/iframeStore";
+import { DEFAULT_SOURCE_ID } from "../../../constants/identity";
 import {
   buildExecutionModelKey,
   useExecutionModelOptions,
@@ -54,6 +56,7 @@ function CronJobsPage() {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<CronJob>();
   const userTimezoneRef = useRef("UTC");
+  const sourceId = useIframeStore((state) => state.source) || DEFAULT_SOURCE_ID;
   const {
     loading: executionModelLoading,
     options: executionModelOptions,
@@ -144,7 +147,10 @@ function CronJobsPage() {
     const targetTenantIds = Array.from(new Set(selectedBroadcastTenantIds));
     setBroadcasting(true);
     try {
-      const res = await api.broadcastCronJob(broadcastingJob.id, targetTenantIds);
+      const res = await api.broadcastCronJob(
+        broadcastingJob.id,
+        targetTenantIds,
+      );
       const resultMessage = getBroadcastResultMessage(res.results);
       if (resultMessage.tone === "warning") {
         message.warning(resultMessage.text);
@@ -254,14 +260,15 @@ function CronJobsPage() {
           <div style={{ display: "grid", gap: 12 }}>
             <div>
               任务：{broadcastingJob.name}；时区：
-              {broadcastingJob.schedule?.timezone || "UTC"}；将在原执行时间前 4
-              小时内均匀错峰。
+              {broadcastingJob.schedule?.timezone || "UTC"}；优先在原执行时间前
+              4 小时内均匀错峰，无法安全错峰的 cron 会按原表达式分发。
             </div>
             <TenantTargetPicker
               tenantIds={broadcastTenantIds}
               selectedTenantIds={selectedBroadcastTenantIds}
               onChange={setSelectedBroadcastTenantIds}
               hint="选择需要接收该定时任务的租户"
+              sourceId={sourceId}
             />
             {broadcastResults.length > 0 && (
               <div style={{ display: "grid", gap: 6 }}>

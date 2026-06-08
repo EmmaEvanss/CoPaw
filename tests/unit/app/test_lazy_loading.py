@@ -10,6 +10,7 @@ Verifies that:
 
 # pylint: disable=protected-access,unused-argument
 import sys
+import logging
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock
 
@@ -321,6 +322,46 @@ class TestLazyRuntimeStartup:
                 # Workspace should only be created once
             assert mock_ws.call_count == 1
             assert mock_ws_instance.start.call_count == 1
+
+    async def test_multi_agent_manager_logs_cache_hit_and_miss(
+        self,
+    ):
+        """Manager emits timing logs for cache hit and miss."""
+        import swe.app.multi_agent_manager as manager_module
+        from swe.app.multi_agent_manager import MultiAgentManager
+
+        manager = MultiAgentManager()
+
+        with patch("swe.app.multi_agent_manager.Workspace") as mock_ws:
+            mock_ws_instance = AsyncMock()
+            mock_ws_instance.set_manager = Mock()
+            mock_ws.return_value = mock_ws_instance
+
+            with patch.object(
+                manager,
+                "_load_agent_config_for_tenant",
+            ) as mock_load:
+                mock_load.return_value = Mock(
+                    agents=Mock(
+                        profiles={"default": Mock(workspace_dir="/tmp")},
+                    ),
+                )
+
+                with patch.object(
+                    manager_module.logger,
+                    "debug",
+                ) as mock_debug:
+                    await manager.get_agent("default")
+                    await manager.get_agent("default")
+
+        assert any(
+            call.args and "workspace_cache_miss" in call.args[0]
+            for call in mock_debug.call_args_list
+        )
+        assert any(
+            call.args and "workspace_cache_hit" in call.args[0]
+            for call in mock_debug.call_args_list
+        )
 
 
 class TestOnDemandSubsystemInitialization:

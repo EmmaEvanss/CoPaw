@@ -10,6 +10,7 @@ Example:
 """
 
 import base64
+import json
 import logging
 import os
 import time
@@ -607,7 +608,7 @@ def _create_file_block_support_formatter(
 
         @staticmethod
         def convert_tool_result_to_string(
-            output: Union[str, List[dict]],
+            output: Union[str, List[dict], dict],
         ) -> tuple[str, Sequence[Tuple[str, dict]]]:
             """Extend parent class to support file blocks.
 
@@ -621,6 +622,21 @@ def _create_file_block_support_formatter(
             """
             if isinstance(output, str):
                 return output, []
+
+            if isinstance(output, dict):
+                content = output.get("content")
+                if isinstance(content, list):
+                    textual_output = []
+                    for block in content:
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") == "text"
+                            and isinstance(block.get("text"), str)
+                        ):
+                            textual_output.append(block["text"])
+                    if textual_output:
+                        return "\n".join(textual_output), []
+                return json.dumps(output, ensure_ascii=False), []
 
             # Try parent class method first
             try:

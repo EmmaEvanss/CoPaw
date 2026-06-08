@@ -124,7 +124,10 @@ async def test_generic_local_tool_hard_timeout_returns_none_after_delivery(
 
     assert result is None
     assert agent.printed
-    output_text = agent.printed[-1].content[0]["output"][0]["text"]
+    output = agent.printed[-1].content[0]["output"]
+    assert output["isError"] is True
+    assert output["error_type"] == "tool_timeout"
+    output_text = output["content"][0]["text"]
     assert "slow_local_tool" in output_text
     assert "timed out" in output_text
     assert "0.01" in output_text
@@ -187,13 +190,19 @@ async def test_generic_local_tool_hard_timeout_is_printed_and_persisted(
 
     assert result is None
     assert agent.printed
-    printed_text = agent.printed[-1].content[0]["output"][0]["text"]
+    printed_output = agent.printed[-1].content[0]["output"]
+    assert printed_output["isError"] is True
+    assert printed_output["error_type"] == "tool_timeout"
+    printed_text = printed_output["content"][0]["text"]
     assert "slow_local_tool" in printed_text
     assert "timed out" in printed_text
 
     assert len(agent.memory.content) == 1
     persisted_msg, _marks = agent.memory.content[0]
-    persisted_text = persisted_msg.content[0]["output"][0]["text"]
+    persisted_output = persisted_msg.content[0]["output"]
+    assert persisted_output["isError"] is True
+    assert persisted_output["error_type"] == "tool_timeout"
+    persisted_text = persisted_output["content"][0]["text"]
     assert "slow_local_tool" in persisted_text
     assert "timed out" in persisted_text
 

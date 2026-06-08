@@ -120,7 +120,7 @@
 
 .metricGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -586,12 +586,12 @@
   margin-bottom: 16px;
 }
 
-.failedTaskFilterSelect {
-  width: 132px;
-}
-
 .failedTaskSearch {
   width: 320px;
+}
+
+.failedReasonSelect {
+  width: 180px;
 }
 
 .failedTaskTable {
@@ -667,6 +667,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: help;
+}
+
+.failedTaskPagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0 0;
 }
 
 .mockHint {

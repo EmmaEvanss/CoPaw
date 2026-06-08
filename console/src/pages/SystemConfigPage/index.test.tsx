@@ -53,11 +53,11 @@ describe("SystemConfigPage", () => {
   }
 
   function getCronUnreadAutoPauseSwitch() {
-    return screen.getAllByRole("switch")[1];
+    return screen.getAllByRole("switch")[2];
   }
 
   function getToolResultCompactSwitch() {
-    return screen.getAllByRole("switch")[2];
+    return screen.getAllByRole("switch")[3];
   }
 
   afterEach(() => {
@@ -65,7 +65,13 @@ describe("SystemConfigPage", () => {
   });
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    loadEffectiveConfig.mockReset();
+    loadEffectiveConfig.mockResolvedValue(undefined);
+    mocks.sourceSystemConfigApi.getCurrent.mockReset();
+    mocks.sourceSystemConfigApi.updateCurrent.mockReset();
+    mocks.sourceSystemConfigApi.deleteCurrent.mockReset();
+    mocks.messageApi.success.mockReset();
+    mocks.messageApi.error.mockReset();
     useIframeStore.getState().clearContext();
     useIframeStore.getState().setContext({
       source: "portal",

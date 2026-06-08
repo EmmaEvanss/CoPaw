@@ -23,7 +23,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _MAX_JOBDESC_CHARS = 200
 _MAX_GLUEREMARK_CHARS = 60
-_MAX_CRON_CHARS = 20
 _SCHEDULER_DOW_NUMBERS = {
     "mon": "1",
     "tue": "2",
@@ -470,7 +469,7 @@ class RealSchedulerAdapter(SchedulerAdapter):
             "jobDesc": job_desc,
             "jobGroup": self._job_group,
             "glueRemark": glue_remark,
-            "jobCron": _truncate(self._normalize_cron(cron), _MAX_CRON_CHARS),
+            "jobCron": self._normalize_cron(cron),
             "author": self._author,
             "alarmEmail": self._alarm_email,
             "glueType": self._glue_type,

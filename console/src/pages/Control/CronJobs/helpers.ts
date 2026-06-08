@@ -69,10 +69,7 @@ export function buildCronJobSubmitPayload(
   }
 
   const cronExpression = serializeCron(cronParts);
-  const {
-    execution_model_key: executionModelKey,
-    ...rawValues
-  } = values;
+  const { execution_model_key: executionModelKey, ...rawValues } = values;
   let processedValues: Record<string, any> = {
     ...rawValues,
     schedule: {
@@ -114,7 +111,7 @@ export function getBroadcastResultMessage(
   if (warningCount > 0) {
     return {
       tone: "warning",
-      text: `Broadcasted ${successCount} tenants, ${warningCount} using tenant default model`,
+      text: `Broadcasted ${successCount} tenants, ${warningCount} with warnings`,
     };
   }
   return {

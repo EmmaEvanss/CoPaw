@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from agentscope.message import Msg
@@ -22,8 +23,10 @@ from swe.agents.hook_runtime.models import (
 )
 from swe.app.runner.runner import (
     AgentRunner,
+    _build_and_connect_mcp_clients,
     _create_session_skill_detector,
     _hook_config_enabled,
+    _QueryPreflight,
     _QueryRuntime,
     _TurnPlan,
     _QueryTurnOutcome,
@@ -666,6 +669,130 @@ def test_resolve_active_model_label_prefers_scoped_override(monkeypatch):
     )
 
     assert _resolve_active_model_label("tenant-a") == "openai/gpt-5.4"
+
+
+@pytest.mark.asyncio
+async def test_build_and_connect_mcp_clients_logs_duration(
+    monkeypatch,
+) -> None:
+    import swe.app.runner.runner as runner_module
+
+    class FakeClient:
+        async def connect(self, timeout: float = 30.0):
+            del timeout
+            return None
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "swe.app.runner.runner._create_mcp_client_with_headers",
+        AsyncMock(return_value=fake_client),
+    )
+
+    config = SimpleNamespace(
+        clients={
+            "weather": SimpleNamespace(enabled=True),
+        },
+    )
+    with patch.object(runner_module.logger, "debug") as mock_debug:
+        clients = await _build_and_connect_mcp_clients(config)
+
+    assert clients == [fake_client]
+    assert any(
+        call.args
+        and "mcp_client_connect_duration_ms=" in call.args[0]
+        and call.args[2] == 1
+        for call in mock_debug.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_and_connect_mcp_clients_passes_explicit_connect_timeout(
+    monkeypatch,
+) -> None:
+    import swe.app.runner.runner as runner_module
+
+    captured: dict[str, float] = {}
+
+    class FakeClient:
+        async def connect(self, timeout: float = 30.0):
+            captured["timeout"] = timeout
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "swe.app.runner.runner._create_mcp_client_with_headers",
+        AsyncMock(return_value=fake_client),
+    )
+
+    config = SimpleNamespace(
+        clients={
+            "weather": SimpleNamespace(enabled=True),
+        },
+    )
+
+    clients = await _build_and_connect_mcp_clients(config)
+
+    assert clients == [fake_client]
+    assert captured["timeout"] == runner_module._MCP_CONNECT_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_prepare_query_runtime_logs_agent_build_duration(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import swe.app.runner.runner as runner_module
+
+    runner = AgentRunner(agent_id="test-agent", workspace_dir=tmp_path)
+    runner.session = SafeJSONSession(save_dir=str(tmp_path))
+    chat = SimpleNamespace(id="chat-1")
+    setattr(
+        runner,
+        "_chat_manager",
+        SimpleNamespace(
+            get_or_create_chat=AsyncMock(return_value=chat),
+        ),
+    )
+    _patch_normal_agent_path(monkeypatch)
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: _agent_config(),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._load_tenant_hook_config",
+        lambda *args, **kwargs: HookConfig(),
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._resolve_active_model_label",
+        lambda *args, **kwargs: "openai/gpt-test",
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner._emit_runner_hook",
+        AsyncMock(return_value=MergedHookResult()),
+    )
+
+    request = SimpleNamespace(
+        session_id="session-1",
+        user_id="user-1",
+        channel="console",
+        channel_meta={},
+    )
+    msgs = [Msg(name="user", role="user", content="hello")]
+
+    with patch.object(runner_module.logger, "debug") as mock_debug:
+        result = await runner._prepare_query_runtime(
+            request=request,
+            msgs=msgs,
+            query="hello",
+            preflight=_QueryPreflight(),
+        )
+
+    assert result.runtime is not None
+    assert any(
+        call.args
+        and "swe_agent_build_duration_ms=" in call.args[0]
+        and call.args[2] == "test-agent"
+        for call in mock_debug.call_args_list
+    )
 
 
 @pytest.mark.asyncio

@@ -521,6 +521,63 @@ def test_broadcast_persists_model_not_found_reason_for_unsupported_model():
     )
 
 
+def test_broadcast_uses_original_cron_when_offset_shift_is_unsupported():
+    source_job = CronJobSpec.model_validate(
+        {
+            **_job_spec("job-source"),
+            "schedule": ScheduleSpec(
+                cron="30 1 1 * *",
+            ).model_dump(mode="json"),
+            "tenant_id": "tenant-a",
+            "source_id": "source-a",
+            "scope_id": encode_scope_id("tenant-a", "source-a"),
+        },
+    )
+    source_manager = _Manager({"job-source": source_job})
+    target_first = _Manager()
+    target_fallback = _Manager()
+    multi_agent_manager = _MultiAgentManager(
+        {
+            encode_scope_id("tenant-b", "source-a"): _Workspace(
+                target_first,
+            ),
+            encode_scope_id("tenant-c", "source-a"): _Workspace(
+                target_fallback,
+            ),
+        },
+    )
+    client = _build_client(
+        source_manager,
+        multi_agent_manager=multi_agent_manager,
+        tenant_workspace_pool=_TenantWorkspacePool(),
+    )
+    _install_provider_manager(
+        {},
+        providers_by_tenant={
+            encode_scope_id("tenant-b", "source-a"): {},
+            encode_scope_id("tenant-c", "source-a"): {},
+        },
+    )
+
+    response = client.post(
+        "/cron/jobs/job-source/broadcast",
+        json={"target_tenant_ids": ["tenant-b", "tenant-c"]},
+    )
+
+    assert response.status_code == 200
+    assert target_first.created[0].schedule.cron == "30 1 1 * *"
+    assert target_first.created[0].meta["broadcast_offset_minutes"] == 0
+    assert target_fallback.created[0].schedule.cron == "30 1 1 * *"
+    assert target_fallback.created[0].meta["broadcast_offset_minutes"] == 0
+    fallback_result = response.json()["results"][1]
+    assert fallback_result["success"] is True
+    assert fallback_result["cron"] == "30 1 1 * *"
+    assert fallback_result["offset_minutes"] == 0
+    assert fallback_result["warning"] == (
+        "cron offset not applied: unsupported cron, using original schedule"
+    )
+
+
 def test_broadcast_clears_stale_fallback_meta_when_source_model_slot_missing():
     source_job = CronJobSpec.model_validate(
         {

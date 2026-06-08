@@ -117,7 +117,7 @@ describe("CronJobs helpers", () => {
       ]),
     ).toEqual({
       tone: "warning",
-      text: "Broadcasted 1 tenants, 1 using tenant default model",
+      text: "Broadcasted 1 tenants, 1 with warnings",
     });
   });
 

@@ -1,4 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import BusinessOverviewPage, { buildTrendSvgData } from "./index";
@@ -61,6 +68,7 @@ describe("BusinessOverview trend chart", () => {
   });
 
   beforeEach(() => {
+    vi.clearAllMocks();
     tracingApiMock.getOverview.mockResolvedValue({
       total_users: 120,
       total_sessions: 80,
@@ -140,7 +148,7 @@ describe("BusinessOverview trend chart", () => {
           file_url: "https://example.com/a.html",
           customer_info: {
             customer_id: "CUST-001",
-            "客户姓名": "祝话",
+            客户姓名: "祝话",
           },
           clicked_at: "2026-05-19T10:35:00",
         },
@@ -159,6 +167,21 @@ describe("BusinessOverview trend chart", () => {
       ],
     });
     htmlPreviewEventsApiMock.getLists.mockResolvedValue({
+      total: 328,
+      clicked_list_count: 82,
+      page: 1,
+      page_size: 20,
+      summary: {
+        list_key: "all",
+        list_name: "全部名单",
+        customer_count: 160,
+        clicked_customer_count: 40,
+        insight_count: 20,
+        phone_count: 10,
+        plan_count: 30,
+        total_click_count: 60,
+        last_clicked_at: "2026-05-19T10:35:00",
+      },
       items: [
         {
           list_key: "https://example.com/a.html",
@@ -266,10 +289,11 @@ describe("BusinessOverview trend chart", () => {
 
     expect(await screen.findByText("30s")).toBeInTheDocument();
     expect(
-      await screen.findByText((_, element) =>
-        typeof element?.className === "string" &&
-        element.className.includes("metricChangeUp") &&
-        (element.textContent || "").includes("环比+6.0%"),
+      await screen.findByText(
+        (_, element) =>
+          typeof element?.className === "string" &&
+          element.className.includes("metricChangeUp") &&
+          (element.textContent || "").includes("环比+6.0%"),
       ),
     ).toBeInTheDocument();
   });
@@ -280,8 +304,15 @@ describe("BusinessOverview trend chart", () => {
     expect(await screen.findByText("客户经营点击分析")).toBeInTheDocument();
     expect(await screen.findByText("点击总数")).toBeInTheDocument();
     expect(await screen.findByText("名单总客户数")).toBeInTheDocument();
+    expect(await screen.findByText("被点击名单数")).toBeInTheDocument();
+    expect(await screen.findByText("名单点击率")).toBeInTheDocument();
     expect(await screen.findByText("被点击客户数")).toBeInTheDocument();
-    expect(await screen.findByText("到期客户名单[auto-preview].html")).toBeInTheDocument();
+    expect(await screen.findByText("客户点击覆盖率")).toBeInTheDocument();
+    expect(await screen.findByText("328")).toBeInTheDocument();
+    expect((await screen.findAllByText("25.0%")).length).toBeGreaterThan(0);
+    expect(
+      await screen.findByText("到期客户名单[auto-preview].html"),
+    ).toBeInTheDocument();
     expect(await screen.findByText("祝话")).toBeInTheDocument();
     expect(await screen.findByText("CUST-001")).toBeInTheDocument();
     expect(await screen.findByText("张经理")).toBeInTheDocument();
@@ -289,10 +320,92 @@ describe("BusinessOverview trend chart", () => {
     expect((await screen.findAllByText("电访")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("查看方案")).length).toBeGreaterThan(0);
     fireEvent.click(await screen.findByText("详情"));
-    expect(await screen.findByText("祝话 客户经理点击详情")).toBeInTheDocument();
+    expect(
+      await screen.findByText("祝话 客户经理点击详情"),
+    ).toBeInTheDocument();
     expect(await screen.findByText("李经理")).toBeInTheDocument();
     expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalled();
-    expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalled();
+    expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, pageSize: 20 }),
+    );
     expect(htmlPreviewEventsApiMock.getCustomerClicks).toHaveBeenCalled();
+  });
+
+  it("falls back to list items when paged list summary fields are absent", async () => {
+    htmlPreviewEventsApiMock.getLists.mockResolvedValueOnce({
+      items: [
+        {
+          list_key: "https://example.com/a.html",
+          list_name: "到期客户名单[auto-preview].html",
+          file_url: "https://example.com/a.html",
+          file_name: "到期客户名单[auto-preview].html",
+          customer_count: 16,
+          clicked_customer_count: 1,
+          insight_count: 2,
+          phone_count: 1,
+          plan_count: 1,
+          total_click_count: 4,
+          last_clicked_at: "2026-05-19T10:35:00",
+        },
+      ],
+    });
+
+    renderBusinessOverview();
+
+    expect(await screen.findByText("名单总客户数")).toBeInTheDocument();
+    expect(await screen.findByText("6.3%")).toBeInTheDocument();
+    expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, pageSize: 20 }),
+    );
+  });
+
+  it("does not reload paged list data when toggling unclicked customers", async () => {
+    renderBusinessOverview();
+
+    await waitFor(() => {
+      expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalledTimes(1);
+    });
+    const includeUnclickedLabel = (
+      await screen.findByText("显示未点击客户")
+    ).closest("label");
+    expect(includeUnclickedLabel).not.toBeNull();
+
+    fireEvent.click(
+      within(includeUnclickedLabel as HTMLElement).getByRole("switch"),
+    );
+
+    await waitFor(() => {
+      expect(htmlPreviewEventsApiMock.getCustomerClicks).toHaveBeenCalledTimes(
+        2,
+      );
+    });
+    expect(htmlPreviewEventsApiMock.getSummary).toHaveBeenCalledTimes(2);
+    expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets list paging before reloading after date range changes", async () => {
+    renderBusinessOverview();
+
+    await waitFor(() => {
+      expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(await screen.findByTitle("2"));
+
+    await waitFor(() => {
+      expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalledTimes(2);
+    });
+    expect(htmlPreviewEventsApiMock.getLists).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 2, pageSize: 20 }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "近7天" }));
+
+    await waitFor(() => {
+      expect(htmlPreviewEventsApiMock.getLists).toHaveBeenCalledTimes(3);
+    });
+    expect(htmlPreviewEventsApiMock.getLists).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, pageSize: 20 }),
+    );
   });
 });

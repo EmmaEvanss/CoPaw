@@ -155,7 +155,7 @@ function MetricCard({ metric }: { metric: MetricCard }) {
       ? styles.goodTrend
       : styles.hotTrend
     : "";
-  const compareLabel = metric.key === "total" ? "增量" : "环比";
+  const compareLabel = metric.key === "total" ? "数量" : "环比";
   const showCompareLabel = metric.compare !== "-";
 
   return (

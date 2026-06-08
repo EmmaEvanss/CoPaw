@@ -7,7 +7,7 @@ for the frontend overview page.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple, Any, Dict
 from zoneinfo import ZoneInfo
 
 from ...database import get_db_connection
@@ -996,10 +996,10 @@ class QueryService:
     ) -> Tuple[str, Optional[str]]:
         delta = current - prev
         if delta > 0:
-            return f"增加了{delta}个", "up"
+            return f"{delta}", "up"
         if delta < 0:
-            return f"减少了{abs(delta)}个", "down"
-        return "-", None
+            return f"{abs(delta)}", "down"
+        return "", None
 
     def _calc_compare(
         self,

@@ -103,6 +103,8 @@ export interface UnreadCountResponse {
 export interface CronOverviewMetricItem {
   key: string;
   value: number;
+  compare?: string;
+  trend?: "up" | "down";
 }
 
 export interface CronOverviewDistributionItem {

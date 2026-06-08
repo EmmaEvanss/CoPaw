@@ -904,14 +904,14 @@ class QueryService:
             [
                 ("生效中", int(job_summary.get("active_tasks") or 0)),
                 (
-                    "3次未读自动暂停",
+                    "未读自动暂停",
                     int(job_summary.get("auto_paused_tasks") or 0),
                 ),
                 ("手动暂停", int(job_summary.get("paused_tasks") or 0)),
             ],
             {
                 "生效中": "#2361EA",
-                "3次未读自动暂停": "#F97212",
+                "未读自动暂停": "#F97212",
                 "手动暂停": "#783AF1",
             },
         )
@@ -970,7 +970,7 @@ class QueryService:
         )
         return self._build_distribution(
             self._distribution_pairs(rows),
-            {"已读": "#F97212", "未读": "#2361EA"},
+            {"已读": "#2361EA", "未读": "#F97212"},
         )
 
     async def _fetch_failure_reason_distribution(

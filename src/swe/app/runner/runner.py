@@ -97,6 +97,8 @@ logger = logging.getLogger(__name__)
 TASK_RUNS_STATE_KEY = "task_runs"
 _INTERNAL_FOLLOW_UP_METADATA_KEY = "swe_internal_follow_up"
 _SKILL_FRESHNESS_NOTICE_METADATA_KEY = "swe_skill_freshness_notice"
+_SESSION_TITLE_GENERATED_META_KEY = "session_title_generated"
+_TASK_SESSION_KIND = "task"
 _BEFORE_STOP_FOLLOW_UP_REASON_TEMPLATE = (
     "BeforeStop completion gate blocked stopping: {reason}\n"
     "Continue working until the gate can allow completion."
@@ -1112,6 +1114,42 @@ def _chat_name_from_messages(msgs: list[Any]) -> str:
     return "Media Message"
 
 
+def _should_generate_session_title(
+    chat: Any,
+    *,
+    fallback_name: str,
+) -> bool:
+    """判断当前 chat 是否仍可由自动标题覆盖。
+
+    只允许覆盖尚未生成过标题且仍保持默认/历史自动名称的会话，避免后续
+    轮次或人工改名被后台任务再次覆盖。
+    """
+    if chat is None:
+        return False
+
+    meta = getattr(chat, "meta", None) or {}
+    if meta.get("session_kind") == _TASK_SESSION_KIND:
+        return False
+
+    if meta.get(_SESSION_TITLE_GENERATED_META_KEY):
+        return False
+
+    current_name = (getattr(chat, "name", "") or "").strip()
+    auto_names = {"New Chat", "新会话", fallback_name}
+    return current_name in auto_names
+
+
+def _clear_session_title_meta(request: AgentRequest) -> None:
+    """清理通道标题元数据，避免跳过生成后仍向前端推送标题更新。"""
+    channel_meta = getattr(request, "channel_meta", None)
+    if not isinstance(channel_meta, dict):
+        return
+    if "session_title" not in channel_meta:
+        return
+    channel_meta.pop("session_title", None)
+    request.channel_meta = channel_meta
+
+
 def _request_source_id(request: AgentRequest) -> str:
     """从请求属性和 channel_meta 中解析追踪或 hook 的来源标识。"""
     channel_meta = getattr(request, "channel_meta", None) or {}
@@ -1524,10 +1562,160 @@ class AgentRunner(Runner):
             if trace_id:
                 # 通道层负责把事件发给前端，这里写回 request 让 SSE 能透传 trace_id。
                 setattr(request, "trace_id", trace_id)
+
             return trace_id
         except Exception as e:
             logger.warning("Failed to start trace: %s", e)
             return None
+
+    async def _generate_session_title_before_stream(
+        self,
+        *,
+        request: AgentRequest,
+        chat: Any,
+        msgs: list[Any],
+        trace_id: str | None,
+    ) -> None:
+        """在 Agent 主回答前生成标题，确保前端先收到标题刷新事件。"""
+        if not trace_id:
+            return
+
+        chat_meta = getattr(chat, "meta", None) or {}
+        if chat_meta.get("session_kind") == _TASK_SESSION_KIND:
+            _clear_session_title_meta(request)
+            return
+
+        channel_meta = getattr(request, "channel_meta", None) or {}
+        existing_title = channel_meta.get("session_title")
+        if existing_title:
+            await self._persist_session_title(
+                request=request,
+                title=str(existing_title),
+                trace_id=trace_id,
+                chat_id=getattr(chat, "id", None),
+            )
+            return
+
+        user_question = _get_last_user_text(msgs)
+        if not user_question or not user_question.strip():
+            return
+
+        fallback_name = _chat_name_from_messages(msgs)
+        if not _should_generate_session_title(
+            chat,
+            fallback_name=fallback_name,
+        ):
+            return
+
+        await self._generate_and_update_title(
+            request=request,
+            user_question=user_question,
+            trace_id=trace_id,
+            chat_id=getattr(chat, "id", None),
+        )
+
+    async def _persist_session_title(
+        self,
+        *,
+        request: AgentRequest,
+        title: str,
+        trace_id: str,
+        chat_id: str | None = None,
+    ) -> None:
+        """把已确定的标题写回 chat、trace 和 SSE 元数据。"""
+        channel_meta = getattr(request, "channel_meta", None) or {}
+        resolved_chat_id = chat_id or channel_meta.get("chat_id")
+        if resolved_chat_id:
+            channel_meta["chat_id"] = resolved_chat_id
+
+        persisted = False
+        if not resolved_chat_id:
+            logger.warning("跳过会话标题刷新：缺少 chat_id")
+        elif self._chat_manager is None:
+            logger.warning(
+                "跳过会话标题刷新：ChatManager 不可用 chat_id=%s",
+                resolved_chat_id,
+            )
+        else:
+            try:
+                persisted = await self._chat_manager.update_chat_name(
+                    resolved_chat_id,
+                    title,
+                    meta={
+                        _SESSION_TITLE_GENERATED_META_KEY: True,
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "更新 chats.json 标题失败 chat_id=%s",
+                    resolved_chat_id,
+                    exc_info=True,
+                )
+            if not persisted:
+                logger.warning(
+                    "更新 chats.json 标题未命中 chat_id=%s",
+                    resolved_chat_id,
+                )
+
+        if not persisted:
+            channel_meta.pop("session_title", None)
+            request.channel_meta = channel_meta
+            return
+
+        if has_trace_manager():
+            try:
+                trace_mgr = get_trace_manager()
+                await trace_mgr.update_session_name(trace_id, title)
+            except Exception:
+                logger.warning(
+                    "更新 tracing 会话标题失败 trace_id=%s",
+                    trace_id,
+                    exc_info=True,
+                )
+
+        channel_meta["session_title"] = title
+        request.channel_meta = channel_meta
+
+    async def _generate_and_update_title(
+        self,
+        request: AgentRequest,
+        user_question: str | None,
+        trace_id: str,
+        chat_id: str | None = None,
+    ) -> None:
+        """生成会话标题并更新存储。
+
+        调用外部标题 API，成功后更新 chats.json、MySQL 和 channel_meta；
+        失败只记日志，不修改任何数据。
+        """
+        if not user_question or not user_question.strip():
+            return
+
+        try:
+            from ..title_generator import generate_title
+
+            title = await generate_title(user_question)
+            if not title:
+                return
+
+            await self._persist_session_title(
+                request=request,
+                title=title,
+                trace_id=trace_id,
+                chat_id=chat_id,
+            )
+
+            logger.info(
+                "会话标题已更新: trace_id=%s title=%s",
+                trace_id,
+                title,
+            )
+        except Exception:
+            logger.warning(
+                "异步标题生成失败 trace_id=%s",
+                trace_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _attach_trace_id_to_event(event: Any, trace_id: str | None) -> Any:
@@ -2031,6 +2219,12 @@ class AgentRunner(Runner):
                 name=_chat_name_from_messages(msgs),
                 request=request,
                 turn_id=turn_id,
+            )
+            await self._generate_session_title_before_stream(
+                request=request,
+                chat=chat,
+                msgs=msgs,
+                trace_id=getattr(request, "trace_id", None),
             )
             env_context, block_response = await self._emit_session_start_hook(
                 request=request,

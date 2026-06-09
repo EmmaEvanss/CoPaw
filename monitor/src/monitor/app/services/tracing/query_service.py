@@ -1132,15 +1132,14 @@ class TracingQueryService:
         count_row = await self._db.fetch_one(count_query, tuple(params))
         total = count_row["total"] if count_row else 0
 
-        # 构建 cron 子查询（传入 bbk_ids 过滤）
+        # 构建 cron 子查询
         cron_subquery_sql, cron_params = self._build_cron_subquery(
             source_id,
             start_date,
             end_date,
-            bbk_ids,
         )
 
-        # 构建主查询（传入 bbk_ids 过滤子查询）
+        # 构建主查询
         offset = (page - 1) * page_size
         query, final_params = self._build_users_query(
             source_id,
@@ -1151,7 +1150,6 @@ class TracingQueryService:
             cron_params,
             page_size,
             offset,
-            bbk_ids,
         )
 
         rows = await self._db.fetch_all(query, tuple(final_params))
@@ -1217,19 +1215,8 @@ class TracingQueryService:
         source_id: str,
         start_date: Optional[datetime],
         end_date: Optional[datetime],
-        bbk_ids: Optional[str] = None,
     ) -> tuple[str, list[Any]]:
-        """构建 cron 执行统计子查询的 WHERE 条件.
-
-        Args:
-            source_id: 数据源标识
-            start_date: 开始日期筛选
-            end_date: 结束日期筛选
-            bbk_ids: 分行号筛选（逗号分隔）
-
-        Returns:
-            (where_sql, params) 元组
-        """
+        """构建 cron 执行统计子查询的 WHERE 条件."""
         cron_where: list[str] = ["j.status != %s", "j.deleted_at IS NULL"]
         cron_params: list[Any] = ["deleted"]
 
@@ -1249,16 +1236,6 @@ class TracingQueryService:
             cron_where.append("j.source_id = %s")
             cron_params.append(source_id)
 
-        # 分行号过滤
-        if bbk_ids:
-            bbk_filter_sql, bbk_filter_params = build_cron_bbk_in_filter(
-                bbk_ids,
-            )
-            # 添加 j.bbk_id IN 条件
-            bbk_placeholders = ", ".join(["%s"] * len(bbk_filter_params))
-            cron_where.append(f"j.bbk_id IN ({bbk_placeholders})")
-            cron_params.extend(bbk_filter_params)
-
         return " AND ".join(cron_where), cron_params
 
     def _build_users_query(
@@ -1271,35 +1248,9 @@ class TracingQueryService:
         cron_params: list[Any],
         page_size: int,
         offset: int,
-        bbk_ids: Optional[str] = None,
     ) -> tuple[str, list[Any]]:
-        """构建用户查询 SQL.
-
-        Args:
-            source_id: 数据源标识
-            where_sql: 主查询 WHERE 条件 SQL
-            cron_subquery_sql: cron 子查询 WHERE 条件 SQL
-            order_by: 排序条件
-            params: 主查询参数
-            cron_params: cron 子查询参数
-            page_size: 分页大小
-            offset: 分页偏移
-            bbk_ids: 分行号筛选（逗号分隔）
-
-        Returns:
-            (query_sql, final_params) 元组
-        """
-        # 构建子查询的 bbk_id 过滤条件
-        bbk_filter_sql, bbk_filter_params = build_bbk_in_filter(bbk_ids)
-        bbk_in_clause = ""
-        bbk_subquery_params: list[Any] = []
-        if bbk_filter_params:
-            bbk_placeholders = ", ".join(["%s"] * len(bbk_filter_params))
-            bbk_in_clause = f" AND bbk_id IN ({bbk_placeholders})"
-            bbk_subquery_params = bbk_filter_params
-
+        """构建用户查询 SQL."""
         if source_id == "all":
-            # source_id == "all" 分支：子查询不限制 source_id，但需要过滤 bbk_id
             query = f"""
                 SELECT t.user_id,
                        COUNT(DISTINCT t.session_id) as total_sessions,
@@ -1309,8 +1260,7 @@ class TracingQueryService:
                        COUNT(CASE WHEN t.session_id NOT LIKE 'cron-task:%%' THEN 1 END) as manual_calls,
                        COALESCE(MAX(ce.cron_executions), 0) as cron_executions,
                        (SELECT COUNT(*) FROM swe_tracing_spans s
-                        WHERE s.trace_id IN (SELECT trace_id FROM swe_tracing_traces
-                                             WHERE user_id = t.user_id{bbk_in_clause})
+                        WHERE s.trace_id IN (SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id)
                         AND s.event_type = 'skill_invocation') as total_skills,
                        MAX(t.user_name) as user_name,
                        MAX(t.bbk_id) as bbk_id,
@@ -1330,15 +1280,8 @@ class TracingQueryService:
                 ORDER BY {order_by}
                 LIMIT %s OFFSET %s
             """
-            # 参数顺序：total_skills 子查询的 bbk_params + cron_params + params + page_size + offset
-            final_params = (
-                bbk_subquery_params  # total_skills 子查询
-                + cron_params
-                + params
-                + [page_size, offset]
-            )
+            final_params = cron_params + params + [page_size, offset]
         else:
-            # source_id != "all" 分支：子查询限制 source_id 和 bbk_id
             query = f"""
                 SELECT t.user_id,
                        COUNT(DISTINCT t.session_id) as total_sessions,
@@ -1349,8 +1292,7 @@ class TracingQueryService:
                        COALESCE(MAX(ce.cron_executions), 0) as cron_executions,
                        (SELECT COUNT(*) FROM swe_tracing_spans s
                         WHERE s.source_id = %s
-                        AND s.trace_id IN (SELECT trace_id FROM swe_tracing_traces
-                                           WHERE user_id = t.user_id AND source_id = %s{bbk_in_clause})
+                        AND s.trace_id IN (SELECT trace_id FROM swe_tracing_traces WHERE user_id = t.user_id AND source_id = %s)
                         AND s.event_type = 'skill_invocation') as total_skills,
                        MAX(t.user_name) as user_name,
                        MAX(t.bbk_id) as bbk_id,
@@ -1370,10 +1312,8 @@ class TracingQueryService:
                 ORDER BY {order_by}
                 LIMIT %s OFFSET %s
             """
-            # 参数顺序：total_skills 子查询的 source_id (2个) + bbk_params + cron_params + params + page_size + offset
             final_params = (
-                [source_id, source_id]  # total_skills 子查询的 source_id
-                + bbk_subquery_params  # total_skills 内嵌子查询的 bbk_id
+                [source_id, source_id, source_id, source_id]
                 + cron_params
                 + params
                 + [page_size, offset]

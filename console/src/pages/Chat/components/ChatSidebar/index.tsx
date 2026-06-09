@@ -6,6 +6,7 @@ import { useContextSelector } from "use-context-selector";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import useChatAnywhereEventEmitter from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Context/useChatAnywhereEventEmitter";
 import Style from "./style";
+import ChatTaskEntry from "../ChatTaskEntry";
 import ChatTaskList from "../ChatTaskList";
 import type { CronJobSpecOutput } from "@/api/types";
 import { DESIGN_TOKENS } from "@/config/designTokens";
@@ -16,12 +17,8 @@ import { isHistorySessionActive } from "./historySessions";
 import sendIcon from "../../../../assets/icons/new_chat.svg";
 import operateIcon from "../../../../assets/icons/operate.svg";
 import guideImage from "@/assets/others/note.png";
-import { OPS_MODE_KEY } from "@/layouts/Header";
-// import { useChatAnywhereSessionsState } from '@/components/agentscope-chat';
 import { ChatAnywhereSessionsContext } from "@/components/agentscope-chat";
-import { useChatAnywhereMessages } from "@/components/agentscope-chat/AgentScopeRuntimeWebUI/core/Context/ChatAnywhereMessagesContext";
 import { useAgentStore } from "@/stores/agentStore";
-import { useIframeStore } from "@/stores/iframeStore";
 import sessionApi from "../../sessionApi";
 import { getSessionAgentId } from "../../sessionApi/sessionAgent";
 import { resolveRequestedSessionId } from "../../sessionApi/resolvedSessionMapping";
@@ -79,7 +76,11 @@ function ToggleIcon({ collapsed }: { collapsed: boolean }) {
 export interface ChatSidebarProps {
   tasks: CronJobSpecOutput[];
   selectedTaskId?: string;
+  enableTaskTabs?: boolean;
+  taskTabsOpen?: boolean;
   onCreateSession?: () => void;
+  onTaskTabsToggle?: () => void;
+  onTaskTabsClose?: () => void;
   onTaskClick?: (task: CronJobSpecOutput) => void;
   onTaskPause?: (task: CronJobSpecOutput) => void;
   onTaskRun?: (task: CronJobSpecOutput) => void;
@@ -91,7 +92,11 @@ export default function ChatSidebar(props: ChatSidebarProps) {
   const {
     tasks,
     selectedTaskId,
+    enableTaskTabs = false,
+    taskTabsOpen = false,
     onCreateSession,
+    onTaskTabsToggle,
+    onTaskTabsClose,
     onTaskClick,
     onTaskPause,
     onTaskRun,
@@ -119,93 +124,15 @@ export default function ChatSidebar(props: ChatSidebarProps) {
     ChatAnywhereSessionsContext,
     (value) => value.setSessions,
   );
-  const setCurrentSessionId = useContextSelector(
-    ChatAnywhereSessionsContext,
-    (value) => value.setCurrentSessionId,
-  );
   const isSessionsListLoading = useContextSelector(
     ChatAnywhereSessionsContext,
     (value) => value.isSessionsListLoading,
   );
-  const setSessionsListLoading = useContextSelector(
-    ChatAnywhereSessionsContext,
-    (value) => value.setSessionsListLoading,
-  );
-  const { removeAllMessages } = useChatAnywhereMessages();
   const { selectedAgent, setSelectedAgent } = useAgentStore();
-  const userId = useIframeStore((state) => state.userId);
-  const source = useIframeStore((state) => state.source);
-  const identityKey = `${userId ?? ""}|${source ?? ""}`;
-  const previousIdentityKeyRef = useRef(identityKey);
-  const previousOpsModeRef = useRef(
-    sessionStorage.getItem(OPS_MODE_KEY) === "true",
-  );
 
   const currentChatId = location.pathname.match(/^\/chat\/(.+)$/)?.[1] || null;
   const currentChatIdRef = useRef<string | null>(currentChatId);
-  const pathnameRef = useRef(location.pathname);
   currentChatIdRef.current = currentChatId;
-  pathnameRef.current = location.pathname;
-
-  useEffect(() => {
-    if (previousIdentityKeyRef.current === identityKey) {
-      return;
-    }
-
-    const opsModeEnabled = sessionStorage.getItem(OPS_MODE_KEY) === "true";
-    const isOpsModeIdentityChange =
-      opsModeEnabled || previousOpsModeRef.current;
-    previousIdentityKeyRef.current = identityKey;
-    previousOpsModeRef.current = opsModeEnabled;
-    if (!isOpsModeIdentityChange) {
-      return;
-    }
-
-    let cancelled = false;
-    sessionApi.resetForIdentityChange();
-    setSessionsListLoading(true);
-    setSessionLoading(false);
-    setCurrentSessionId(undefined);
-    setSessions([]);
-    removeAllMessages();
-
-    if (pathnameRef.current.startsWith("/chat/")) {
-      navigate("/chat", { replace: true });
-    }
-
-    void sessionApi
-      .getSessionList()
-      .then((sessionList) => {
-        if (cancelled) {
-          return;
-        }
-        setSessions(sessionList);
-        setCurrentSessionId(sessionList[0]?.id);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSessions([]);
-          setCurrentSessionId(undefined);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setSessionsListLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    identityKey,
-    navigate,
-    removeAllMessages,
-    setCurrentSessionId,
-    setSessionLoading,
-    setSessions,
-    setSessionsListLoading,
-  ]);
 
   // 刷新共享 sessions 状态
   const refreshSessions = useCallback(async () => {
@@ -308,9 +235,15 @@ export default function ChatSidebar(props: ChatSidebarProps) {
   }, [onCreateSession]);
 
   const handleToggleCollapse = useCallback(() => {
-    setCollapsed((prev) => !prev);
+    setCollapsed((prev) => {
+      const nextCollapsed = !prev;
+      if (nextCollapsed && enableTaskTabs) {
+        onTaskTabsClose?.();
+      }
+      return nextCollapsed;
+    });
     setActivePanel(null);
-  }, []);
+  }, [enableTaskTabs, onTaskTabsClose]);
 
   const handleNewChat = useCallback(() => {
     setActivePanel(null);
@@ -450,15 +383,23 @@ export default function ChatSidebar(props: ChatSidebarProps) {
               </button>
             </div>
             <div className="chat-sidebar-content-record-list">
-              <ChatTaskList
-                tasks={tasks}
-                selectedTaskId={selectedTaskId}
-                onTaskClick={handleTaskOpen}
-                onTaskPause={onTaskPause}
-                onTaskRun={onTaskRun}
-                onTaskResume={onTaskResume}
-                onTaskDelete={onTaskDelete}
-              />
+              {enableTaskTabs ? (
+                <ChatTaskEntry
+                  tasks={tasks}
+                  open={taskTabsOpen}
+                  onToggle={() => onTaskTabsToggle?.()}
+                />
+              ) : (
+                <ChatTaskList
+                  tasks={tasks}
+                  selectedTaskId={selectedTaskId}
+                  onTaskClick={onTaskClick}
+                  onTaskPause={onTaskPause}
+                  onTaskRun={onTaskRun}
+                  onTaskResume={onTaskResume}
+                  onTaskDelete={onTaskDelete}
+                />
+              )}
               <div className="chat-sidebar-history">
                 <div
                   className="chat-sidebar-history-header"

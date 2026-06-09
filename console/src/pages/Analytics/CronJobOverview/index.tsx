@@ -8,7 +8,6 @@ import {
   ShieldCheck,
   TrendingDown,
   TrendingUp,
-  UserRound,
   Workflow,
   type LucideIcon,
 } from "lucide-react";
@@ -86,18 +85,6 @@ const metricDefinitions = [
     title: "定时任务数",
     accent: "#2563eb",
     icon: Workflow,
-  },
-  {
-    key: "subscribed",
-    title: "订阅任务数",
-    accent: "#7c3aed",
-    icon: CalendarDays,
-  },
-  {
-    key: "created",
-    title: "自主创建任务数",
-    accent: "#0891b2",
-    icon: UserRound,
   },
   {
     key: "runs",

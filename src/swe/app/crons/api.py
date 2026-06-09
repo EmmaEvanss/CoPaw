@@ -24,6 +24,9 @@ BROADCAST_MODEL_SLOT_WARNING = (
 BROADCAST_CRON_FALLBACK_WARNING = (
     "cron offset not applied: unsupported cron, using original schedule"
 )
+BROADCAST_ALREADY_EXISTS_WARNING = (
+    "broadcast skipped: target tenant already has child job"
+)
 BROADCAST_ORIGINAL_MODEL_SLOT_META_KEY = "broadcast_original_model_slot"
 BROADCAST_MODEL_SLOT_FALLBACK_REASON_META_KEY = (
     "broadcast_model_slot_fallback_reason"
@@ -314,6 +317,16 @@ def _build_broadcast_job(
     )
 
 
+async def _find_existing_broadcast_child_job(
+    mgr: CronManager,
+    source_job_id: str,
+) -> CronJobSpec | None:
+    for job in await mgr.list_jobs():
+        if (job.meta or {}).get("broadcast_source_job_id") == source_job_id:
+            return job
+    return None
+
+
 @router.get("/jobs", response_model=list[CronJobListItem])
 async def list_jobs(
     request: Request,
@@ -435,6 +448,31 @@ async def broadcast_job(
             )
             if workspace.cron_manager is None:
                 raise RuntimeError("CronManager not initialized")
+            existing_child_job = await _find_existing_broadcast_child_job(
+                workspace.cron_manager,
+                source_job.id,
+            )
+            if existing_child_job is not None:
+                existing_meta = existing_child_job.meta or {}
+                results.append(
+                    CronBroadcastTenantResult(
+                        tenant_id=tenant_id,
+                        success=True,
+                        job_id=existing_child_job.id,
+                        cron=existing_child_job.schedule.cron,
+                        timezone=existing_child_job.schedule.timezone,
+                        offset_minutes=int(
+                            existing_meta.get(
+                                "broadcast_offset_minutes",
+                                0,
+                            )
+                            or 0,
+                        ),
+                        notification_timezone=timezone_name,
+                        warning=BROADCAST_ALREADY_EXISTS_WARNING,
+                    ),
+                )
+                continue
             target_job_id = str(uuid.uuid4())
             model_slot, warning, model_slot_fallback_reason = (
                 _resolve_broadcast_model_slot(

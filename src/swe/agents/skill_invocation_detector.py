@@ -177,6 +177,9 @@ class SkillInvocationDetector:
         skill_hook_loader: (
             Callable[[str], Awaitable[None] | None] | None
         ) = None,
+        confirmed_skill_callback: (
+            Callable[[str], Awaitable[None] | None] | None
+        ) = None,
     ) -> None:
         """Initialize the detector.
 
@@ -195,6 +198,8 @@ class SkillInvocationDetector:
             bbk_id: Optional BBK identifier
             workspace_dir: Workspace directory for reading skill manifest
             skill_hook_loader: Optional session-scoped hook loader callback
+            confirmed_skill_callback: Optional callback invoked when a skill
+                reaches confirmed association and is activated
         """
         self._registry = registry or get_skill_tool_registry()
         self._context_manager = context_manager or get_skill_context_manager()
@@ -209,6 +214,7 @@ class SkillInvocationDetector:
         self._bbk_id = bbk_id
         self._workspace_dir = workspace_dir
         self._skill_hook_loader = skill_hook_loader
+        self._confirmed_skill_callback = confirmed_skill_callback
 
         # Configuration
         self._idle_threshold = idle_threshold
@@ -778,6 +784,18 @@ class SkillInvocationDetector:
 
         # Update state
         self._update_skill_state(skill_name)
+
+        if self._confirmed_skill_callback is not None:
+            try:
+                result = self._confirmed_skill_callback(skill_name)
+                if isawaitable(result):
+                    await result
+            except Exception as e:
+                logger.warning(
+                    "Failed to persist confirmed skill '%s': %s",
+                    skill_name,
+                    e,
+                )
 
         if self._skill_hook_loader is not None:
             try:

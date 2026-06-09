@@ -979,7 +979,9 @@ async def list_logical_tenant_ids(
         try:
             logical_tenant_id, scope_source_id = decode_scope_id(tenant_id)
         except ValueError:
-            # default_{source_id} 模板目录和普通租户目录都保留
+            # default_{source_id} 模板目录不应暴露给 source-scoped 调用方。
+            if tenant_id.startswith("default_"):
+                continue
             logical_tenant_ids.append(tenant_id)
             continue
         if scope_source_id != source_id:

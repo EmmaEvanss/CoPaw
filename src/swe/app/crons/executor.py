@@ -17,7 +17,11 @@ from .models import CronJobSpec
 from ..tenant_context import bind_tenant_context
 from ..console_push_store import append as push_store_append
 from ...config.llm_workload import LLM_WORKLOAD_CRON, bind_llm_workload
-from ...config.context import canonicalize_scope_id, resolve_scope_id
+from ...config.context import (
+    canonicalize_scope_id,
+    resolve_scope_id,
+    resolve_storage_tenant_id,
+)
 from ...providers.models import ModelSlotConfig
 from ...providers.provider_manager import ProviderManager
 from ...tracing import has_trace_manager, get_trace_manager
@@ -302,7 +306,15 @@ class CronExecutor:
             return None
 
         runtime_tenant_id = scope_id or getattr(job, "tenant_id", None)
-        manager_tenant_id = runtime_tenant_id or "default"
+        manager_tenant_id = (
+            resolve_storage_tenant_id(
+                getattr(job, "tenant_id", None),
+                getattr(job, "source_id", None),
+                scope_id=runtime_tenant_id if runtime_tenant_id else None,
+            )
+            or runtime_tenant_id
+            or "default"
+        )
         ProviderManager.ensure_tenant_provider_storage(manager_tenant_id)
         manager = ProviderManager.get_instance(manager_tenant_id)
         active_model = manager.get_active_model()

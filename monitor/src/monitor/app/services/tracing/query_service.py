@@ -1313,7 +1313,7 @@ class TracingQueryService:
                 LIMIT %s OFFSET %s
             """
             final_params = (
-                [source_id, source_id, source_id, source_id]
+                [source_id, source_id]
                 + cron_params
                 + params
                 + [page_size, offset]

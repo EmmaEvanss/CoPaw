@@ -1579,7 +1579,7 @@ export default function BusinessOverviewPage() {
             <button
               type="button"
               className={styles.detailLink}
-              onClick={() => navigate("/monitor/cron-overview")}
+              onClick={() => navigate("/analytics/cron-job-overview")}
             >
               查看详情
               <ChevronRight size={14} />

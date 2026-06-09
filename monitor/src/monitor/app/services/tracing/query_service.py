@@ -1312,12 +1312,8 @@ class TracingQueryService:
                         WHERE s.trace_id IN (SELECT trace_id FROM swe_tracing_traces
                                              WHERE user_id = t.user_id{bbk_in_clause})
                         AND s.event_type = 'skill_invocation') as total_skills,
-                       (SELECT user_name FROM swe_tracing_traces t2
-                        WHERE t2.user_id = t.user_id AND t2.user_name IS NOT NULL{bbk_in_clause}
-                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
-                       (SELECT bbk_id FROM swe_tracing_traces t3
-                        WHERE t3.user_id = t.user_id AND t3.bbk_id IS NOT NULL{bbk_in_clause}
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       MAX(t.user_name) as user_name,
+                       MAX(t.bbk_id) as bbk_id,
                        COALESCE(MAX(ce.cron_reads), 0) as cron_reads
                 FROM swe_tracing_traces t
                 LEFT JOIN (
@@ -1334,11 +1330,9 @@ class TracingQueryService:
                 ORDER BY {order_by}
                 LIMIT %s OFFSET %s
             """
-            # 参数顺序：子查询 bbk_params (3次) + cron_params + params + page_size + offset
+            # 参数顺序：total_skills 子查询的 bbk_params + cron_params + params + page_size + offset
             final_params = (
                 bbk_subquery_params  # total_skills 子查询
-                + bbk_subquery_params  # user_name 子查询
-                + bbk_subquery_params  # bbk_id 子查询
                 + cron_params
                 + params
                 + [page_size, offset]
@@ -1358,14 +1352,8 @@ class TracingQueryService:
                         AND s.trace_id IN (SELECT trace_id FROM swe_tracing_traces
                                            WHERE user_id = t.user_id AND source_id = %s{bbk_in_clause})
                         AND s.event_type = 'skill_invocation') as total_skills,
-                       (SELECT user_name FROM swe_tracing_traces t2
-                        WHERE t2.user_id = t.user_id AND t2.source_id = %s
-                              AND t2.user_name IS NOT NULL{bbk_in_clause}
-                        ORDER BY t2.start_time DESC LIMIT 1) as user_name,
-                       (SELECT bbk_id FROM swe_tracing_traces t3
-                        WHERE t3.user_id = t.user_id AND t3.source_id = %s
-                              AND t3.bbk_id IS NOT NULL{bbk_in_clause}
-                        ORDER BY t3.start_time DESC LIMIT 1) as bbk_id,
+                       MAX(t.user_name) as user_name,
+                       MAX(t.bbk_id) as bbk_id,
                        COALESCE(MAX(ce.cron_reads), 0) as cron_reads
                 FROM swe_tracing_traces t
                 LEFT JOIN (
@@ -1382,15 +1370,10 @@ class TracingQueryService:
                 ORDER BY {order_by}
                 LIMIT %s OFFSET %s
             """
-            # 参数顺序：
-            # 子查询 source_id (4个) + bbk_params (4次) + cron_params + params + page_size + offset
+            # 参数顺序：total_skills 子查询的 source_id (2个) + bbk_params + cron_params + params + page_size + offset
             final_params = (
                 [source_id, source_id]  # total_skills 子查询的 source_id
                 + bbk_subquery_params  # total_skills 内嵌子查询的 bbk_id
-                + [source_id]  # user_name 子查询的 source_id
-                + bbk_subquery_params  # user_name 子查询的 bbk_id
-                + [source_id]  # bbk_id 子查询的 source_id
-                + bbk_subquery_params  # bbk_id 子查询的 bbk_id
                 + cron_params
                 + params
                 + [page_size, offset]

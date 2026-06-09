@@ -237,7 +237,7 @@ class TestBuildUsersQuerySubqueries:
         ), "cron subquery should filter by j.bbk_id"
 
     def test_user_name_subquery_filters_bbk(self, service):
-        """user_name subquery should filter by bbk_id to prevent cross-bbk data."""
+        """user_name should use MAX aggregation instead of subquery."""
         where_sql, params = service._build_traces_where_clause(
             source_id="test-source",
             filter_user_type="filtered",
@@ -264,23 +264,13 @@ class TestBuildUsersQuerySubqueries:
             bbk_ids="201",
         )
 
-        # 检查 user_name 子查询的 SQL
-        # 格式: SELECT user_name FROM swe_tracing_traces t2 WHERE ...
-        # 应该包含 bbk_id 过滤条件
-        user_name_subquery_pattern = (
-            "SELECT user_name FROM swe_tracing_traces t2"
-        )
-        assert (
-            user_name_subquery_pattern in query
-        ), "user_name subquery should exist in query"
-        # 验证 bbk_id 过滤存在（使用 bbk_id IN 格式）
-        assert "AND bbk_id IN" in query, (
-            "user_name subquery must filter by bbk_id to prevent returning "
-            "user_name from other bbk branches"
+        # 简化后使用 MAX(t.user_name) 而不是子查询
+        assert "MAX(t.user_name)" in query, (
+            "user_name should use MAX aggregation after data is complete"
         )
 
     def test_bbk_id_subquery_filters_bbk(self, service):
-        """bbk_id subquery should filter by bbk_id to prevent cross-bbk data."""
+        """bbk_id should use MAX aggregation instead of subquery."""
         where_sql, params = service._build_traces_where_clause(
             source_id="test-source",
             filter_user_type="filtered",
@@ -307,17 +297,9 @@ class TestBuildUsersQuerySubqueries:
             bbk_ids="201",
         )
 
-        # 检查 bbk_id 子查询的 SQL
-        # 格式: SELECT bbk_id FROM swe_tracing_traces t3 WHERE ...
-        # 应该包含 bbk_id 过滤条件
-        bbk_id_subquery_pattern = "SELECT bbk_id FROM swe_tracing_traces t3"
-        assert (
-            bbk_id_subquery_pattern in query
-        ), "bbk_id subquery should exist in query"
-        # 验证 bbk_id 过滤存在
-        assert "AND bbk_id IN" in query, (
-            "bbk_id subquery must filter by specific bbk_ids to prevent returning "
-            "bbk_id from other branches when user has records in multiple bbks"
+        # 简化后使用 MAX(t.bbk_id) 而不是子查询
+        assert "MAX(t.bbk_id)" in query, (
+            "bbk_id should use MAX aggregation after data is complete"
         )
 
     def test_total_skills_subquery_filters_bbk(self, service):

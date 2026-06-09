@@ -24,8 +24,6 @@ from agentscope_runtime.engine.schemas.agent_schemas import (
 )
 from agentscope_runtime.engine.schemas.exception import AgentException
 from dotenv import load_dotenv
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamable_http_client
 
 from ..mcp.http_headers import resolve_mcp_http_headers
 from ..mcp.stateful_client import HttpStatefulClient, StdIOStatefulClient
@@ -747,34 +745,10 @@ async def _create_mcp_client_with_headers(
         name=client_config.name,
         transport=client_config.transport,
         url=client_config.url,
-        headers=None,  # Headers are in http_client
+        headers=merged_headers or None,
+        timeout=_MCP_HTTP_TIMEOUT_SECONDS,
+        sse_read_timeout=_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS,
     )
-
-    # Create appropriate transport context
-    if client_config.transport == "sse":
-        client_context = sse_client(
-            url=client_config.url,
-            headers=merged_headers,
-            timeout=_MCP_HTTP_TIMEOUT_SECONDS,
-            sse_read_timeout=_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS,
-        )
-        http_client = None
-    else:  # streamable_http
-        http_client = httpx.AsyncClient(
-            headers=merged_headers,
-            timeout=httpx.Timeout(
-                connect=_MCP_HTTP_TIMEOUT_SECONDS,
-                read=_MCP_HTTP_SSE_READ_TIMEOUT_SECONDS,
-                write=_MCP_HTTP_TIMEOUT_SECONDS,
-                pool=_MCP_HTTP_TIMEOUT_SECONDS,
-            ),
-        )
-        client_context = streamable_http_client(
-            url=client_config.url,
-            http_client=http_client,
-        )
-
-    client.client = client_context
 
     setattr(
         client,
@@ -783,7 +757,6 @@ async def _create_mcp_client_with_headers(
             **rebuild_info,
             "headers": merged_headers,
             "_temp_client": True,
-            "_http_client": http_client,
         },
     )
     setattr(client, "_swe_temp_client", True)
@@ -800,11 +773,6 @@ async def _cleanup_mcp_clients(clients: list[Any]) -> None:
     for client in clients:
         try:
             await client.close()
-            # For HTTP clients, also close the httpx client
-            rebuild_info = getattr(client, "_swe_rebuild_info", {})
-            http_client = rebuild_info.get("_http_client")
-            if http_client is not None:
-                await http_client.aclose()
         except Exception as e:
             logger.warning(f"Error closing MCP client: {e}")
 

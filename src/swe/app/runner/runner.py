@@ -540,6 +540,7 @@ def _build_runner_hook_context(
         channel=channel,
         source_id=getattr(request, "source_id", None)
         or channel_meta.get("source_id"),
+        trace_id=getattr(request, "trace_id", None),
         workspace_dir=str(workspace_dir),
         chat_id=channel_meta.get("chat_id"),
         turn_id=channel_meta.get("turn_id"),
@@ -2003,6 +2004,8 @@ class AgentRunner(Runner):
             "turn_id": turn_id,
             "agent_id": self.agent_id,
             "tenant_id": self.tenant_id or "",
+            "source_id": _request_source_id(request),
+            "trace_id": getattr(request, "trace_id", None),
             "transcript_path": (
                 self.session._get_save_path(session_id, user_id)
                 if hasattr(self.session, "_get_save_path")
@@ -3317,12 +3320,11 @@ class AgentRunner(Runner):
             query=attempt_input.query,
         )
         if skill_freshness_refresh.notice_text:
-            plan.turn_msgs.insert(
-                0,
-                _build_skill_freshness_notice_msg(
-                    skill_freshness_refresh.notice_text,
-                ),
+            notice_msg = _build_skill_freshness_notice_msg(
+                skill_freshness_refresh.notice_text,
             )
+            plan.turn_msgs.insert(0, notice_msg)
+            yield notice_msg, False
 
         async for msg, last in self._stream_completion_lifecycle(
             request=attempt_input.request,

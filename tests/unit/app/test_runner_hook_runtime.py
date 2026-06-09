@@ -678,7 +678,8 @@ async def test_build_and_connect_mcp_clients_logs_duration(
     import swe.app.runner.runner as runner_module
 
     class FakeClient:
-        async def connect(self):
+        async def connect(self, timeout: float = 30.0):
+            del timeout
             return None
 
     fake_client = FakeClient()
@@ -702,6 +703,36 @@ async def test_build_and_connect_mcp_clients_logs_duration(
         and call.args[2] == 1
         for call in mock_debug.call_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_build_and_connect_mcp_clients_passes_explicit_connect_timeout(
+    monkeypatch,
+) -> None:
+    import swe.app.runner.runner as runner_module
+
+    captured: dict[str, float] = {}
+
+    class FakeClient:
+        async def connect(self, timeout: float = 30.0):
+            captured["timeout"] = timeout
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "swe.app.runner.runner._create_mcp_client_with_headers",
+        AsyncMock(return_value=fake_client),
+    )
+
+    config = SimpleNamespace(
+        clients={
+            "weather": SimpleNamespace(enabled=True),
+        },
+    )
+
+    clients = await _build_and_connect_mcp_clients(config)
+
+    assert clients == [fake_client]
+    assert captured["timeout"] == runner_module._MCP_CONNECT_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
@@ -1201,6 +1232,7 @@ async def test_emit_before_stop_hook_respects_active_guard(
         user_id="user-1",
         channel="console",
         skip_history=False,
+        pending_confirmed_skill_snapshots={},
     )
     plan = _TurnPlan(
         original_user_message="hello",

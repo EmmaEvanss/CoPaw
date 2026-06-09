@@ -1000,17 +1000,17 @@ class HtmlPreviewClickStore:
             CASE
                 WHEN button_type IN ('insight', 'phone', 'plan', 'other')
                     THEN button_type
-                WHEN LOWER(COALESCE(button_id, '')) LIKE '%plan%'
-                    OR COALESCE(button_name, '') LIKE '%查看方案%'
-                    OR COALESCE(button_text, '') LIKE '%查看方案%'
+                WHEN LOWER(COALESCE(button_id, '')) LIKE '%%plan%%'
+                    OR COALESCE(button_name, '') LIKE '%%查看方案%%'
+                    OR COALESCE(button_text, '') LIKE '%%查看方案%%'
                     THEN 'plan'
-                WHEN LOWER(COALESCE(button_id, '')) LIKE '%phone%'
-                    OR COALESCE(button_name, '') LIKE '%电访%'
-                    OR COALESCE(button_text, '') LIKE '%电访%'
+                WHEN LOWER(COALESCE(button_id, '')) LIKE '%%phone%%'
+                    OR COALESCE(button_name, '') LIKE '%%电访%%'
+                    OR COALESCE(button_text, '') LIKE '%%电访%%'
                     THEN 'phone'
-                WHEN LOWER(COALESCE(button_id, '')) LIKE '%insight%'
-                    OR COALESCE(button_name, '') LIKE '%洞察%'
-                    OR COALESCE(button_text, '') LIKE '%洞察%'
+                WHEN LOWER(COALESCE(button_id, '')) LIKE '%%insight%%'
+                    OR COALESCE(button_name, '') LIKE '%%洞察%%'
+                    OR COALESCE(button_text, '') LIKE '%%洞察%%'
                     THEN 'insight'
                 ELSE 'other'
             END
@@ -1123,29 +1123,11 @@ class HtmlPreviewClickStore:
         """组合名单级聚合行，生成名单维度统计。"""
         grouped: dict[str, dict[str, Any]] = {}
         for row in snapshot_rows:
-            list_key = cls._list_key(
-                row.get("file_url") or "",
-                row.get("list_key"),
+            item = cls._empty_list_summary_aggregate_group(
+                row,
+                customer_count=int(row.get("customer_count") or 0),
             )
-            grouped[list_key] = {
-                "list_key": list_key,
-                "list_name": cls._list_name(
-                    row.get("file_name"),
-                    row.get("list_name"),
-                    row.get("file_url"),
-                ),
-                "file_url": row.get("file_url"),
-                "file_name": row.get("file_name"),
-                "cron_task_id": row.get("cron_task_id"),
-                "cron_task_name": row.get("cron_task_name"),
-                "customer_count": int(row.get("customer_count") or 0),
-                "clicked_customer_count": 0,
-                "insight_count": 0,
-                "phone_count": 0,
-                "plan_count": 0,
-                "total_click_count": 0,
-                "last_clicked_at": None,
-            }
+            grouped[item["list_key"]] = item
 
         for row in event_rows:
             list_key = cls._list_key(
@@ -1154,59 +1136,98 @@ class HtmlPreviewClickStore:
             )
             item = grouped.setdefault(
                 list_key,
-                {
-                    "list_key": list_key,
-                    "list_name": cls._list_name(
-                        row.get("file_name"),
-                        row.get("list_name"),
-                        row.get("file_url"),
-                    ),
-                    "file_url": row.get("file_url"),
-                    "file_name": row.get("file_name"),
-                    "cron_task_id": row.get("cron_task_id"),
-                    "cron_task_name": row.get("cron_task_name"),
-                    "customer_count": 0,
-                    "clicked_customer_count": 0,
-                    "insight_count": 0,
-                    "phone_count": 0,
-                    "plan_count": 0,
-                    "total_click_count": 0,
-                    "last_clicked_at": None,
-                },
+                cls._empty_list_summary_aggregate_group(row),
             )
-            clicked_customer_count = int(
-                row.get("clicked_customer_count") or 0,
-            )
-            item["customer_count"] = max(
-                int(item.get("customer_count") or 0),
-                clicked_customer_count,
-            )
-            item["clicked_customer_count"] = clicked_customer_count
-            item["insight_count"] = int(row.get("insight_count") or 0)
-            item["phone_count"] = int(row.get("phone_count") or 0)
-            item["plan_count"] = int(row.get("plan_count") or 0)
-            item["total_click_count"] = int(row.get("total_click_count") or 0)
-            item["last_clicked_at"] = row.get("last_clicked_at")
-            for field in (
-                "file_url",
-                "file_name",
-                "cron_task_id",
-                "cron_task_name",
-            ):
-                if row.get(field) and not item.get(field):
-                    item[field] = row.get(field)
+            cls._apply_event_aggregate_to_list_summary_group(item, row)
 
         for row in customer_rows:
-            list_key = cls._list_key(
-                "",
-                row.get("list_key"),
-            )
-            if list_key not in grouped:
-                continue
-            grouped[list_key]["customer_count"] = int(
-                row.get("customer_count") or 0,
+            cls._apply_union_customer_count_to_list_summary_grouped(
+                grouped,
+                row,
             )
 
+        return cls._list_summary_items_from_aggregate_groups(
+            grouped.values(),
+        )
+
+    @classmethod
+    def _empty_list_summary_aggregate_group(
+        cls,
+        row: dict[str, Any],
+        *,
+        customer_count: int = 0,
+    ) -> dict[str, Any]:
+        """创建名单聚合空行，并保留当前行可用的展示字段。"""
+        list_key = cls._list_key(
+            row.get("file_url") or "",
+            row.get("list_key"),
+        )
+        return {
+            "list_key": list_key,
+            "list_name": cls._list_name(
+                row.get("file_name"),
+                row.get("list_name"),
+                row.get("file_url"),
+            ),
+            "file_url": row.get("file_url"),
+            "file_name": row.get("file_name"),
+            "cron_task_id": row.get("cron_task_id"),
+            "cron_task_name": row.get("cron_task_name"),
+            "customer_count": customer_count,
+            "clicked_customer_count": 0,
+            "insight_count": 0,
+            "phone_count": 0,
+            "plan_count": 0,
+            "total_click_count": 0,
+            "last_clicked_at": None,
+        }
+
+    @classmethod
+    def _apply_event_aggregate_to_list_summary_group(
+        cls,
+        item: dict[str, Any],
+        row: dict[str, Any],
+    ) -> None:
+        """把名单聚合查询结果合并到当前名单行。"""
+        clicked_customer_count = int(row.get("clicked_customer_count") or 0)
+        item["customer_count"] = max(
+            int(item.get("customer_count") or 0),
+            clicked_customer_count,
+        )
+        item["clicked_customer_count"] = clicked_customer_count
+        item["insight_count"] = int(row.get("insight_count") or 0)
+        item["phone_count"] = int(row.get("phone_count") or 0)
+        item["plan_count"] = int(row.get("plan_count") or 0)
+        item["total_click_count"] = int(row.get("total_click_count") or 0)
+        item["last_clicked_at"] = row.get("last_clicked_at")
+        for field in (
+            "file_url",
+            "file_name",
+            "cron_task_id",
+            "cron_task_name",
+        ):
+            if row.get(field) and not item.get(field):
+                item[field] = row.get(field)
+
+    @classmethod
+    def _apply_union_customer_count_to_list_summary_grouped(
+        cls,
+        grouped: dict[str, dict[str, Any]],
+        row: dict[str, Any],
+    ) -> None:
+        """用客户并集聚合结果覆盖名单客户总数。"""
+        list_key = cls._list_key("", row.get("list_key"))
+        if list_key not in grouped:
+            return
+        grouped[list_key]["customer_count"] = int(
+            row.get("customer_count") or 0,
+        )
+
+    @staticmethod
+    def _list_summary_items_from_aggregate_groups(
+        grouped_rows: Any,
+    ) -> list[HtmlPreviewListSummaryItem]:
+        """把名单聚合中间态转换为按当前规则排序的响应项。"""
         items = [
             HtmlPreviewListSummaryItem(
                 list_key=row["list_key"],
@@ -1223,7 +1244,7 @@ class HtmlPreviewClickStore:
                 total_click_count=row["total_click_count"],
                 last_clicked_at=row.get("last_clicked_at"),
             )
-            for row in grouped.values()
+            for row in grouped_rows
         ]
         return sorted(
             items,

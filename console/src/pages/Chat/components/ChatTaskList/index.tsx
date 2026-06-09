@@ -2,26 +2,16 @@ import React, { useState, useCallback } from "react";
 import type { CronJobSpecOutput } from "@/api/types";
 import Style from "./style";
 import { DESIGN_TOKENS } from "@/config/designTokens";
+import { TasksIconSmall } from "../ChatSidebar/CollapsedToolbar/icons";
 import {
   getTaskNextRunText,
+  getTaskNextRunTooltipTimes,
   getTaskSidebarMeta,
   TASK_COMPLETED_STATUS_TEXT,
 } from "../../taskJobs";
 import { formatListTime } from "../../listTimeFormat";
 import TaskActionMenu from "../TaskActionMenu";
-
-function TaskIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path
-        d="M2.29 4.3L8 1.05L13.71 4.3V11.7L8 14.95L2.29 11.7V4.3Z"
-        stroke={DESIGN_TOKENS.colorTextPrimary}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+import TaskNextRunTooltip from "../TaskNextRunTooltip";
 
 function ToggleIcon({ collapsed }: { collapsed: boolean }) {
   return (
@@ -89,7 +79,7 @@ export default function ChatTaskList(props: ChatTaskListProps) {
           tabIndex={0}
         >
           <div className="chat-task-list-title">
-            <TaskIcon />
+            <TasksIconSmall />
             我的任务({tasks.length})
           </div>
           <ToggleIcon collapsed={collapsed} />
@@ -102,6 +92,7 @@ export default function ChatTaskList(props: ChatTaskListProps) {
               tasks.map((task) => {
                 const sidebarMeta = getTaskSidebarMeta(task);
                 const nextRunText = getTaskNextRunText(task);
+                const nextRunTooltipTimes = getTaskNextRunTooltipTimes(task);
 
                 return (
                   <div
@@ -140,9 +131,9 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                         {task.name || task.id}
                       </span>
                       {(sidebarMeta.canPause ||
-                          sidebarMeta.canRun ||
-                          sidebarMeta.canResume ||
-                          sidebarMeta.canDelete) && (
+                        sidebarMeta.canRun ||
+                        sidebarMeta.canResume ||
+                        sidebarMeta.canDelete) && (
                         <div className="chat-task-list-item-trailing">
                           <div className="chat-task-list-item-actions">
                             <TaskActionMenu
@@ -185,9 +176,11 @@ export default function ChatTaskList(props: ChatTaskListProps) {
                       </div>
                     )}
                     {nextRunText && (
-                      <div className="chat-task-list-item-next-run">
-                        {nextRunText}
-                      </div>
+                      <TaskNextRunTooltip runTimes={nextRunTooltipTimes}>
+                        <div className="chat-task-list-item-next-run">
+                          {nextRunText}
+                        </div>
+                      </TaskNextRunTooltip>
                     )}
                   </div>
                 );

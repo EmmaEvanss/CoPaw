@@ -10,7 +10,10 @@ from .models import (
     SourceSystemConfigRecord,
     SourceSystemConfigUpsert,
 )
-from .registry import is_chat_task_progress_enabled
+from .registry import (
+    is_chat_task_progress_enabled,
+    is_database_access_guard_enabled,
+)
 from .runtime import (
     ImmediateTruncationConfig,
     resolve_file_read_truncation_config,
@@ -30,6 +33,7 @@ __all__ = [
     "SourceSystemConfigUpsert",
     "ImmediateTruncationConfig",
     "is_chat_task_progress_enabled",
+    "is_database_access_guard_enabled",
     "resolve_file_read_truncation_config",
     "resolve_tool_result_compact_config",
     "router",

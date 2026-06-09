@@ -1420,6 +1420,7 @@ class _RetryState:
     session_state_loaded: bool = False
     prev_session_state_loaded: bool = False
     task_completed: bool = False
+    skill_freshness_notice_streamed: bool = False
 
 
 @dataclass
@@ -3324,7 +3325,9 @@ class AgentRunner(Runner):
                 skill_freshness_refresh.notice_text,
             )
             plan.turn_msgs.insert(0, notice_msg)
-            yield notice_msg, False
+            if not retry_state.skill_freshness_notice_streamed:
+                retry_state.skill_freshness_notice_streamed = True
+                yield notice_msg, False
 
         async for msg, last in self._stream_completion_lifecycle(
             request=attempt_input.request,

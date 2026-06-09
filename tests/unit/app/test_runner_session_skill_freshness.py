@@ -1195,3 +1195,91 @@ async def test_retryable_completion_failure_defers_snapshot_persistence_until_su
             "freshness_token": 11.0,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_retryable_completion_failure_streams_freshness_notice_once(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runner = _patch_runner(monkeypatch, tmp_path)
+    _FakeAgent.effective_skills = ["xlsx"]
+    _write_skill_manifest(tmp_path, skills=["xlsx"])
+    skill_dir = _write_skill_dir(tmp_path, "xlsx")
+    await runner.session.save_session_skill_snapshot(
+        session_id="session-1",
+        user_id="user-1",
+        snapshot={
+            "xlsx": {
+                "skill_name": "xlsx",
+                "resolved_skill_dir": str(skill_dir),
+                "freshness_token": 10.0,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.get_skill_freshness_token",
+        lambda _path: 11.0,
+    )
+    monkeypatch.setattr(
+        "swe.app.runner.runner.load_agent_config",
+        lambda *args, **kwargs: SimpleNamespace(
+            id="test-agent",
+            hooks=SimpleNamespace(enabled=False, events={}),
+            mcp=None,
+            running=SimpleNamespace(
+                suggestions=SimpleNamespace(
+                    enabled=False,
+                    mode=SuggestionMode.DISABLED,
+                ),
+                query_retry=SimpleNamespace(
+                    enabled=True,
+                    max_retries=1,
+                    backoff_base=0.0,
+                    backoff_cap=0.0,
+                ),
+            ),
+        ),
+    )
+
+    plan_notice_counts: list[int] = []
+    original_stream_completion_lifecycle = runner._stream_completion_lifecycle
+
+    async def flaky_stream_completion_lifecycle(*args, **kwargs):
+        plan_notice_counts.append(
+            len(
+                [
+                    msg
+                    for msg in kwargs["plan"].turn_msgs
+                    if msg.role == "system"
+                    and "[Skill freshness notice]" in msg.get_text_content()
+                ],
+            ),
+        )
+        if len(plan_notice_counts) == 1:
+            raise RuntimeError("request timed out")
+        async for item in original_stream_completion_lifecycle(
+            request=kwargs["request"],
+            runtime=kwargs["runtime"],
+            plan=kwargs["plan"],
+            outcome=kwargs["outcome"],
+        ):
+            yield item
+
+    monkeypatch.setattr(
+        runner,
+        "_stream_completion_lifecycle",
+        flaky_stream_completion_lifecycle,
+    )
+
+    outputs = [
+        item
+        async for item in runner.query_handler(
+            [Msg(name="user", role="user", content="continue")],
+            request=_request(),
+        )
+    ]
+
+    assert outputs[-1][0].get_text_content() == "agent reply"
+    assert plan_notice_counts == [1, 1]
+    assert len(_streamed_notice_messages(outputs)) == 1

@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Collection
 from uuid import uuid4
 
 import httpx
-from agentscope.mcp import HttpStatefulClient, StdIOStatefulClient
 from agentscope.message import Msg, TextBlock
 from agentscope.pipeline import stream_printing_messages
 from agentscope_runtime.engine.runner import Runner
@@ -29,6 +28,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
 from ..mcp.http_headers import resolve_mcp_http_headers
+from ..mcp.stateful_client import HttpStatefulClient, StdIOStatefulClient
 from ..mcp.stdio_launcher import build_tenant_aware_stdio_launch_config
 from .command_dispatch import (
     _get_last_user_text,
@@ -37,14 +37,20 @@ from .command_dispatch import (
 )
 from .query_error_dump import write_query_error_dump
 from .retry_classifier import is_query_retryable
-from .session import SafeJSONSession
+from .session import (
+    SafeJSONSession,
+    SESSION_SKILL_SNAPSHOT_STATE_KEY,
+)
 from .stream_boundary import normalize_reasoning_boundary_stream
 from .task_progress import attach_task_progress
 from .utils import build_env_context
 from ..channels.schema import DEFAULT_CHANNEL
 from ...agents.react_agent import SWEAgent
 from ...agents.skill_invocation_detector import SkillInvocationDetector
-from ...agents.skills_manager import get_workspace_skills_dir
+from ...agents.skills_manager import (
+    get_skill_freshness_token,
+    get_workspace_skills_dir,
+)
 from ...agents.hook_runtime import HookRuntime
 from ...agents.hook_runtime.models import (
     HookConfig,
@@ -90,12 +96,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 TASK_RUNS_STATE_KEY = "task_runs"
 _INTERNAL_FOLLOW_UP_METADATA_KEY = "swe_internal_follow_up"
+_SKILL_FRESHNESS_NOTICE_METADATA_KEY = "swe_skill_freshness_notice"
+_SESSION_TITLE_GENERATED_META_KEY = "session_title_generated"
+_TASK_SESSION_KIND = "task"
 _BEFORE_STOP_FOLLOW_UP_REASON_TEMPLATE = (
     "BeforeStop completion gate blocked stopping: {reason}\n"
     "Continue working until the gate can allow completion."
 )
 _BEFORE_STOP_INCOMPLETE_MESSAGE_TEMPLATE = (
     "任务未完成：BeforeStop 完成门禁已达到自动续跑上限。最新阻断原因：{reason}"
+)
+_SKILL_FRESHNESS_NOTICE_HEADER = (
+    "[Skill freshness notice]\n"
+    "The following previously associated skills changed for this turn. "
+    "Treat current skill content as superseding earlier assumptions:\n"
 )
 
 _APPROVE_EXACT = frozenset(
@@ -106,6 +120,7 @@ _APPROVE_EXACT = frozenset(
     },
 )
 _MCP_HTTP_TIMEOUT_SECONDS = 240.0
+_MCP_CONNECT_TIMEOUT_SECONDS = _MCP_HTTP_TIMEOUT_SECONDS
 _MCP_HTTP_SSE_READ_TIMEOUT_SECONDS = 60.0 * 5
 
 _DENY_EXACT = frozenset(
@@ -146,6 +161,7 @@ class _QueryRuntime:
     user_id: str
     channel: str
     skip_history: bool
+    pending_confirmed_skill_snapshots: dict[str, dict[str, Any]]
 
 
 @dataclass
@@ -434,6 +450,7 @@ def _create_session_skill_detector(
     get_hook_state: Callable[[], HookSessionState],
     set_hook_state: Callable[[HookSessionState], None],
     approved_http_urls: Collection[str] | None = None,
+    confirmed_skill_callback: Callable[[str], Any] | None = None,
 ) -> SkillInvocationDetector:
     workspace = Path(workspace_dir)
     approvals = (
@@ -468,6 +485,7 @@ def _create_session_skill_detector(
         source_id=source_id,
         workspace_dir=workspace_dir,
         skill_hook_loader=_load_skill_hooks,
+        confirmed_skill_callback=confirmed_skill_callback,
     )
     detector.set_enabled_skills(enabled_skills)
     return detector
@@ -636,7 +654,9 @@ async def _build_and_connect_mcp_clients(
                 passthrough_headers,
             )
             if client is not None:
-                await client.connect()
+                await client.connect(
+                    timeout=_MCP_CONNECT_TIMEOUT_SECONDS,
+                )
                 clients.append(client)
                 logger.info(f"MCP client '{key}' created and connected")
         except asyncio.CancelledError:
@@ -857,6 +877,231 @@ def _build_before_stop_incomplete_msg(reason: str) -> Msg:
     )
 
 
+def _normalize_session_skill_snapshot(
+    snapshot: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(snapshot, dict):
+        return {}
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for skill_name, entry in snapshot.items():
+        if isinstance(skill_name, str) and isinstance(entry, dict):
+            normalized[skill_name] = dict(entry)
+    return normalized
+
+
+def _build_session_skill_snapshot_entry(
+    *,
+    skill_name: str,
+    resolved_skill_dir: Path,
+    freshness_token: Any,
+) -> dict[str, Any]:
+    return {
+        "skill_name": skill_name,
+        "resolved_skill_dir": str(resolved_skill_dir),
+        "freshness_token": freshness_token,
+    }
+
+
+def _upsert_session_skill_snapshot_entry(
+    snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+    resolved_skill_dir: Path,
+    freshness_token: Any,
+) -> None:
+    snapshot[skill_name] = _build_session_skill_snapshot_entry(
+        skill_name=skill_name,
+        resolved_skill_dir=resolved_skill_dir,
+        freshness_token=freshness_token,
+    )
+
+
+def _remove_session_skill_snapshot_entry(
+    snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+) -> None:
+    snapshot.pop(skill_name, None)
+
+
+def _skill_freshness_notice_text(
+    changes: list[str],
+) -> str:
+    return _SKILL_FRESHNESS_NOTICE_HEADER + "\n".join(
+        f"- {item}" for item in changes
+    )
+
+
+def _build_skill_freshness_notice_msg(text: str) -> Msg:
+    return Msg(
+        name="system",
+        role="system",
+        content=text,
+        metadata={
+            _SKILL_FRESHNESS_NOTICE_METADATA_KEY: True,
+        },
+    )
+
+
+@dataclass(frozen=True)
+class _SkillFreshnessRefreshResult:
+    notice_text: str | None = None
+    stored_snapshot: dict[str, dict[str, Any]] | None = None
+    refreshed_snapshot: dict[str, dict[str, Any]] | None = None
+
+
+def _supports_session_skill_freshness_refresh(
+    *,
+    session: Any,
+    runtime: "_QueryRuntime",
+) -> bool:
+    if runtime.skip_history or session is None or not runtime.session_id:
+        return False
+    if not hasattr(runtime.agent, "get_effective_skills"):
+        return False
+    return all(
+        hasattr(session, attr)
+        for attr in (
+            "get_session_skill_snapshot",
+            "save_session_skill_snapshot",
+        )
+    )
+
+
+def _refresh_switched_session_skill_snapshot_entry(
+    next_snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+    stored_dir: Path,
+    current_dir: Path | None,
+) -> str | None:
+    if (
+        current_dir is None
+        or not current_dir.exists()
+        or current_dir == stored_dir
+    ):
+        return None
+
+    current_token = get_skill_freshness_token(current_dir)
+    _upsert_session_skill_snapshot_entry(
+        next_snapshot,
+        skill_name=skill_name,
+        resolved_skill_dir=current_dir,
+        freshness_token=current_token,
+    )
+    return (
+        f"{skill_name}: detected skill-directory switch "
+        f"{stored_dir} -> {current_dir}. Treat current skill "
+        "content as superseding earlier assumptions."
+    )
+
+
+def _refresh_withdrawn_session_skill_snapshot_entry(
+    next_snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+    current_dir: Path | None,
+) -> str | None:
+    if current_dir is not None and current_dir.exists():
+        return None
+
+    _remove_session_skill_snapshot_entry(
+        next_snapshot,
+        skill_name=skill_name,
+    )
+    return (
+        f"{skill_name}: no longer effective for this turn. "
+        "Stop relying on earlier assumptions from this skill."
+    )
+
+
+def _refresh_changed_session_skill_snapshot_entry(
+    next_snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+    entry: dict[str, Any],
+    current_dir: Path,
+) -> str | None:
+    current_token = get_skill_freshness_token(current_dir)
+    if current_token == entry.get("freshness_token"):
+        return None
+
+    _upsert_session_skill_snapshot_entry(
+        next_snapshot,
+        skill_name=skill_name,
+        resolved_skill_dir=current_dir,
+        freshness_token=current_token,
+    )
+    return (
+        f"{skill_name}: detected skill-directory change at "
+        f"{current_dir}. Treat current skill content as "
+        "superseding earlier assumptions."
+    )
+
+
+def _refresh_session_skill_snapshot_entry(
+    next_snapshot: dict[str, dict[str, Any]],
+    *,
+    skill_name: str,
+    entry: dict[str, Any],
+    effective_skill_dirs: dict[str, Path],
+) -> str | None:
+    stored_dir = Path(str(entry.get("resolved_skill_dir", "")))
+    current_dir = effective_skill_dirs.get(skill_name)
+
+    switch_notice = _refresh_switched_session_skill_snapshot_entry(
+        next_snapshot,
+        skill_name=skill_name,
+        stored_dir=stored_dir,
+        current_dir=current_dir,
+    )
+    if switch_notice is not None:
+        return switch_notice
+
+    if not stored_dir.exists():
+        _remove_session_skill_snapshot_entry(
+            next_snapshot,
+            skill_name=skill_name,
+        )
+        return None
+
+    withdrawal_notice = _refresh_withdrawn_session_skill_snapshot_entry(
+        next_snapshot,
+        skill_name=skill_name,
+        current_dir=current_dir,
+    )
+    if withdrawal_notice is not None:
+        return withdrawal_notice
+
+    assert current_dir is not None
+    return _refresh_changed_session_skill_snapshot_entry(
+        next_snapshot,
+        skill_name=skill_name,
+        entry=entry,
+        current_dir=current_dir,
+    )
+
+
+def _refresh_session_skill_snapshot_entries(
+    next_snapshot: dict[str, dict[str, Any]],
+    *,
+    stored_snapshot: dict[str, dict[str, Any]],
+    effective_skill_dirs: dict[str, Path],
+) -> list[str]:
+    changes: list[str] = []
+    for skill_name, entry in stored_snapshot.items():
+        notice = _refresh_session_skill_snapshot_entry(
+            next_snapshot,
+            skill_name=skill_name,
+            entry=entry,
+            effective_skill_dirs=effective_skill_dirs,
+        )
+        if notice is not None:
+            changes.append(notice)
+    return changes
+
+
 def _resolve_max_before_stop_turns(agent_config: Any) -> int:
     """解析 BeforeStop 自动续跑上限，未配置时使用保守默认值。"""
     running_config = getattr(agent_config, "running", None)
@@ -909,7 +1154,7 @@ def _resolve_max_automatic_follow_up_turns(
 def _strip_internal_follow_up_messages_from_state(
     agent_state: dict[str, Any],
 ) -> int:
-    """Remove hidden continuation prompts before persisting session state."""
+    """Remove ephemeral system prompts before persisting session state."""
     memory_state = agent_state.get("memory")
     if not isinstance(memory_state, dict):
         return 0
@@ -927,8 +1172,9 @@ def _strip_internal_follow_up_messages_from_state(
             if isinstance(msg_payload, dict)
             else None
         )
-        if isinstance(metadata, dict) and metadata.get(
-            _INTERNAL_FOLLOW_UP_METADATA_KEY,
+        if isinstance(metadata, dict) and (
+            metadata.get(_INTERNAL_FOLLOW_UP_METADATA_KEY)
+            or metadata.get(_SKILL_FRESHNESS_NOTICE_METADATA_KEY)
         ):
             removed += 1
             continue
@@ -1017,6 +1263,42 @@ def _chat_name_from_messages(msgs: list[Any]) -> str:
     if content:
         return content[:10]
     return "Media Message"
+
+
+def _should_generate_session_title(
+    chat: Any,
+    *,
+    fallback_name: str,
+) -> bool:
+    """判断当前 chat 是否仍可由自动标题覆盖。
+
+    只允许覆盖尚未生成过标题且仍保持默认/历史自动名称的会话，避免后续
+    轮次或人工改名被后台任务再次覆盖。
+    """
+    if chat is None:
+        return False
+
+    meta = getattr(chat, "meta", None) or {}
+    if meta.get("session_kind") == _TASK_SESSION_KIND:
+        return False
+
+    if meta.get(_SESSION_TITLE_GENERATED_META_KEY):
+        return False
+
+    current_name = (getattr(chat, "name", "") or "").strip()
+    auto_names = {"New Chat", "新会话", fallback_name}
+    return current_name in auto_names
+
+
+def _clear_session_title_meta(request: AgentRequest) -> None:
+    """清理通道标题元数据，避免跳过生成后仍向前端推送标题更新。"""
+    channel_meta = getattr(request, "channel_meta", None)
+    if not isinstance(channel_meta, dict):
+        return
+    if "session_title" not in channel_meta:
+        return
+    channel_meta.pop("session_title", None)
+    request.channel_meta = channel_meta
 
 
 def _request_source_id(request: AgentRequest) -> str:
@@ -1431,10 +1713,160 @@ class AgentRunner(Runner):
             if trace_id:
                 # 通道层负责把事件发给前端，这里写回 request 让 SSE 能透传 trace_id。
                 setattr(request, "trace_id", trace_id)
+
             return trace_id
         except Exception as e:
             logger.warning("Failed to start trace: %s", e)
             return None
+
+    async def _generate_session_title_before_stream(
+        self,
+        *,
+        request: AgentRequest,
+        chat: Any,
+        msgs: list[Any],
+        trace_id: str | None,
+    ) -> None:
+        """在 Agent 主回答前生成标题，确保前端先收到标题刷新事件。"""
+        if not trace_id:
+            return
+
+        chat_meta = getattr(chat, "meta", None) or {}
+        if chat_meta.get("session_kind") == _TASK_SESSION_KIND:
+            _clear_session_title_meta(request)
+            return
+
+        channel_meta = getattr(request, "channel_meta", None) or {}
+        existing_title = channel_meta.get("session_title")
+        if existing_title:
+            await self._persist_session_title(
+                request=request,
+                title=str(existing_title),
+                trace_id=trace_id,
+                chat_id=getattr(chat, "id", None),
+            )
+            return
+
+        user_question = _get_last_user_text(msgs)
+        if not user_question or not user_question.strip():
+            return
+
+        fallback_name = _chat_name_from_messages(msgs)
+        if not _should_generate_session_title(
+            chat,
+            fallback_name=fallback_name,
+        ):
+            return
+
+        await self._generate_and_update_title(
+            request=request,
+            user_question=user_question,
+            trace_id=trace_id,
+            chat_id=getattr(chat, "id", None),
+        )
+
+    async def _persist_session_title(
+        self,
+        *,
+        request: AgentRequest,
+        title: str,
+        trace_id: str,
+        chat_id: str | None = None,
+    ) -> None:
+        """把已确定的标题写回 chat、trace 和 SSE 元数据。"""
+        channel_meta = getattr(request, "channel_meta", None) or {}
+        resolved_chat_id = chat_id or channel_meta.get("chat_id")
+        if resolved_chat_id:
+            channel_meta["chat_id"] = resolved_chat_id
+
+        persisted = False
+        if not resolved_chat_id:
+            logger.warning("跳过会话标题刷新：缺少 chat_id")
+        elif self._chat_manager is None:
+            logger.warning(
+                "跳过会话标题刷新：ChatManager 不可用 chat_id=%s",
+                resolved_chat_id,
+            )
+        else:
+            try:
+                persisted = await self._chat_manager.update_chat_name(
+                    resolved_chat_id,
+                    title,
+                    meta={
+                        _SESSION_TITLE_GENERATED_META_KEY: True,
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "更新 chats.json 标题失败 chat_id=%s",
+                    resolved_chat_id,
+                    exc_info=True,
+                )
+            if not persisted:
+                logger.warning(
+                    "更新 chats.json 标题未命中 chat_id=%s",
+                    resolved_chat_id,
+                )
+
+        if not persisted:
+            channel_meta.pop("session_title", None)
+            request.channel_meta = channel_meta
+            return
+
+        if has_trace_manager():
+            try:
+                trace_mgr = get_trace_manager()
+                await trace_mgr.update_session_name(trace_id, title)
+            except Exception:
+                logger.warning(
+                    "更新 tracing 会话标题失败 trace_id=%s",
+                    trace_id,
+                    exc_info=True,
+                )
+
+        channel_meta["session_title"] = title
+        request.channel_meta = channel_meta
+
+    async def _generate_and_update_title(
+        self,
+        request: AgentRequest,
+        user_question: str | None,
+        trace_id: str,
+        chat_id: str | None = None,
+    ) -> None:
+        """生成会话标题并更新存储。
+
+        调用外部标题 API，成功后更新 chats.json、MySQL 和 channel_meta；
+        失败只记日志，不修改任何数据。
+        """
+        if not user_question or not user_question.strip():
+            return
+
+        try:
+            from ..title_generator import generate_title
+
+            title = await generate_title(user_question)
+            if not title:
+                return
+
+            await self._persist_session_title(
+                request=request,
+                title=title,
+                trace_id=trace_id,
+                chat_id=chat_id,
+            )
+
+            logger.info(
+                "会话标题已更新: trace_id=%s title=%s",
+                trace_id,
+                title,
+            )
+        except Exception:
+            logger.warning(
+                "异步标题生成失败 trace_id=%s",
+                trace_id,
+                exc_info=True,
+            )
 
     @staticmethod
     def _attach_trace_id_to_event(event: Any, trace_id: str | None) -> Any:
@@ -1627,6 +2059,34 @@ class AgentRunner(Runner):
             )
             runtime.agent._request_context["hook_overlay"] = dumped
 
+        async def _queue_confirmed_skill_snapshot_update(
+            skill_name: str,
+        ) -> None:
+            if (
+                self.session is None
+                or not runtime.session_id
+                or not hasattr(self.session, "get_session_skill_snapshot")
+                or not hasattr(self.session, "save_session_skill_snapshot")
+            ):
+                return
+
+            skill_dir = (
+                get_workspace_skills_dir(
+                    Path(self.workspace_dir or WORKING_DIR),
+                )
+                / skill_name
+            )
+            if not skill_dir.exists():
+                return
+
+            runtime.pending_confirmed_skill_snapshots[skill_name] = (
+                _build_session_skill_snapshot_entry(
+                    skill_name=skill_name,
+                    resolved_skill_dir=skill_dir,
+                    freshness_token=get_skill_freshness_token(skill_dir),
+                )
+            )
+
         source_id_for_hooks = _request_source_id(request)
         runtime.session_skill_detector = _create_session_skill_detector(
             workspace_dir=Path(self.workspace_dir or WORKING_DIR),
@@ -1642,12 +2102,90 @@ class AgentRunner(Runner):
             ),
             get_hook_state=_get_session_hook_state,
             set_hook_state=_set_session_hook_state,
+            confirmed_skill_callback=(_queue_confirmed_skill_snapshot_update),
         )
         if not hasattr(runtime.agent, "_request_context"):
             runtime.agent._request_context = {}
         runtime.agent._request_context["_skill_invocation_detector"] = (
             runtime.session_skill_detector
         )
+
+    async def _refresh_session_skill_freshness(
+        self,
+        *,
+        runtime: _QueryRuntime,
+    ) -> _SkillFreshnessRefreshResult:
+        if not _supports_session_skill_freshness_refresh(
+            session=self.session,
+            runtime=runtime,
+        ):
+            return _SkillFreshnessRefreshResult()
+
+        stored_snapshot = _normalize_session_skill_snapshot(
+            await self.session.get_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                allow_not_exist=True,
+            ),
+        )
+        if not stored_snapshot:
+            return _SkillFreshnessRefreshResult(
+                stored_snapshot={},
+                refreshed_snapshot={},
+            )
+
+        workspace_skills_dir = get_workspace_skills_dir(
+            Path(self.workspace_dir or WORKING_DIR),
+        )
+        effective_skill_dirs = {
+            skill_name: workspace_skills_dir / skill_name
+            for skill_name in runtime.agent.get_effective_skills()
+        }
+
+        next_snapshot = _normalize_session_skill_snapshot(stored_snapshot)
+        changes = _refresh_session_skill_snapshot_entries(
+            next_snapshot,
+            stored_snapshot=stored_snapshot,
+            effective_skill_dirs=effective_skill_dirs,
+        )
+
+        notice_text = (
+            _skill_freshness_notice_text(changes) if changes else None
+        )
+        return _SkillFreshnessRefreshResult(
+            notice_text=notice_text,
+            stored_snapshot=stored_snapshot,
+            refreshed_snapshot=next_snapshot,
+        )
+
+    async def _build_skill_snapshot_to_persist(
+        self,
+        *,
+        runtime: _QueryRuntime,
+        refresh_result: _SkillFreshnessRefreshResult,
+    ) -> dict[str, dict[str, Any]] | None:
+        if (
+            runtime.skip_history
+            or self.session is None
+            or not runtime.session_id
+            or refresh_result.stored_snapshot is None
+            or refresh_result.refreshed_snapshot is None
+        ):
+            return None
+
+        next_snapshot = _normalize_session_skill_snapshot(
+            refresh_result.refreshed_snapshot,
+        )
+        if runtime.pending_confirmed_skill_snapshots:
+            next_snapshot.update(
+                _normalize_session_skill_snapshot(
+                    runtime.pending_confirmed_skill_snapshots,
+                ),
+            )
+
+        if next_snapshot != refresh_result.stored_snapshot:
+            return next_snapshot
+        return None
 
     async def _start_declared_session_skill(
         self,
@@ -1759,6 +2297,12 @@ class AgentRunner(Runner):
                 request=request,
                 turn_id=turn_id,
             )
+            await self._generate_session_title_before_stream(
+                request=request,
+                chat=chat,
+                msgs=msgs,
+                trace_id=getattr(request, "trace_id", None),
+            )
             env_context, block_response = await self._emit_session_start_hook(
                 request=request,
                 tenant_hooks=tenant_hooks,
@@ -1813,6 +2357,7 @@ class AgentRunner(Runner):
                 user_id=user_id,
                 channel=channel,
                 skip_history=skip_history,
+                pending_confirmed_skill_snapshots={},
             )
             self._attach_session_skill_detector(
                 runtime=runtime,
@@ -2670,6 +3215,7 @@ class AgentRunner(Runner):
         plan: _TurnPlan,
         outcome: _QueryTurnOutcome,
         trace_id: str | None,
+        skill_snapshot_to_persist: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """执行 agent 输出后的持久化、suggestion 与 trace 收尾。"""
         await self._generate_backend_suggestions_if_needed(
@@ -2685,6 +3231,12 @@ class AgentRunner(Runner):
             trace_id,
             TraceStatus.COMPLETED,
         )
+        if skill_snapshot_to_persist is not None:
+            await self.session.save_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                snapshot=skill_snapshot_to_persist,
+            )
 
     async def _finish_blocked_query_attempt(
         self,
@@ -2692,18 +3244,24 @@ class AgentRunner(Runner):
         runtime: _QueryRuntime,
         outcome: _QueryTurnOutcome,
         trace_id: str | None,
+        skill_snapshot_to_persist: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """BeforeStop 耗尽预算时仍需写入最终输出并结束 trace。"""
-        if not outcome.completion_marked_incomplete:
-            return
-        await self._index_model_output_if_needed(
-            trace_id=trace_id,
-            agent=runtime.agent,
-        )
-        await self._end_trace_if_needed(
-            trace_id,
-            TraceStatus.COMPLETED,
-        )
+        if outcome.completion_marked_incomplete:
+            await self._index_model_output_if_needed(
+                trace_id=trace_id,
+                agent=runtime.agent,
+            )
+            await self._end_trace_if_needed(
+                trace_id,
+                TraceStatus.COMPLETED,
+            )
+        if skill_snapshot_to_persist is not None:
+            await self.session.save_session_skill_snapshot(
+                session_id=runtime.session_id,
+                user_id=runtime.user_id,
+                snapshot=skill_snapshot_to_persist,
+            )
 
     async def _stream_single_query_attempt(
         self,
@@ -2745,6 +3303,10 @@ class AgentRunner(Runner):
         retry_state.agent = runtime.agent
         retry_state.session_state_loaded = attempt_state.session_state_loaded
 
+        skill_freshness_refresh = await self._refresh_session_skill_freshness(
+            runtime=runtime,
+        )
+
         # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
         runtime.agent.rebuild_sys_prompt()
 
@@ -2754,6 +3316,13 @@ class AgentRunner(Runner):
             msgs=attempt_input.msgs,
             query=attempt_input.query,
         )
+        if skill_freshness_refresh.notice_text:
+            plan.turn_msgs.insert(
+                0,
+                _build_skill_freshness_notice_msg(
+                    skill_freshness_refresh.notice_text,
+                ),
+            )
 
         async for msg, last in self._stream_completion_lifecycle(
             request=attempt_input.request,
@@ -2763,11 +3332,19 @@ class AgentRunner(Runner):
         ):
             yield msg, last
 
+        skill_snapshot_to_persist = (
+            await self._build_skill_snapshot_to_persist(
+                runtime=runtime,
+                refresh_result=skill_freshness_refresh,
+            )
+        )
+
         if outcome.completion_blocked:
             await self._finish_blocked_query_attempt(
                 runtime=runtime,
                 outcome=outcome,
                 trace_id=attempt_input.trace_id,
+                skill_snapshot_to_persist=skill_snapshot_to_persist,
             )
             attempt_state.should_return = True
             return
@@ -2777,6 +3354,7 @@ class AgentRunner(Runner):
             plan=plan,
             outcome=outcome,
             trace_id=attempt_input.trace_id,
+            skill_snapshot_to_persist=skill_snapshot_to_persist,
         )
         retry_state.task_completed = outcome.task_completed
         attempt_state.succeeded = True
@@ -3094,14 +3672,31 @@ class AgentRunner(Runner):
             )
             return
 
-        state_modules = {
-            "agent": agent.state_dict(),
-        }
+        existing_state = await self.session.get_session_state_dict(
+            session_id=session_id,
+            user_id=user_id,
+            allow_not_exist=True,
+        )
+        state_modules: dict[str, Any] = (
+            dict(existing_state) if isinstance(existing_state, dict) else {}
+        )
+        if (
+            isinstance(existing_state, dict)
+            and SESSION_SKILL_SNAPSHOT_STATE_KEY in existing_state
+        ):
+            state_modules[SESSION_SKILL_SNAPSHOT_STATE_KEY] = (
+                _normalize_session_skill_snapshot(
+                    existing_state.get(SESSION_SKILL_SNAPSHOT_STATE_KEY),
+                )
+            )
+        state_modules["agent"] = agent.state_dict()
         if hook_overlay is not None:
             state_modules["hook_overlay"] = hook_overlay.model_dump(
                 mode="json",
                 by_alias=True,
             )
+        else:
+            state_modules.pop("hook_overlay", None)
         stripped_count = _strip_internal_follow_up_messages_from_state(
             state_modules["agent"],
         )

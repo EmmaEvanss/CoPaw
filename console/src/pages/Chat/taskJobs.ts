@@ -91,6 +91,34 @@ export function getTaskNextRunText(job: CronJobSpecOutput): string | null {
   return `下次运行：${formatted}`;
 }
 
+export function getTaskNextRunTooltipText(
+  job: CronJobSpecOutput,
+): string | undefined {
+  const runTimes = getTaskNextRunTooltipTimes(job);
+
+  if (runTimes.length === 0) {
+    return undefined;
+  }
+
+  return ["之后三次运行时间", ...runTimes].join("\n");
+}
+
+export function getTaskNextRunTooltipTimes(job: CronJobSpecOutput): string[] {
+  const runTimes = (job.state?.next_run_times || [])
+    .map(formatListTime)
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (runTimes.length === 0) {
+    const nextRun = formatListTime(job.state?.next_run_at);
+    if (nextRun) {
+      runTimes.push(nextRun);
+    }
+  }
+
+  return runTimes;
+}
+
 export function getTaskOpenTarget(job: CronJobSpecOutput): string | null {
   const normalize = (value: string | null | undefined): string | null => {
     const text = String(value || "").trim();

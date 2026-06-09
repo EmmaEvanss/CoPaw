@@ -934,34 +934,22 @@ def _skill_freshness_notice_text(
     )
 
 
+def _build_skill_freshness_notice_msg(text: str) -> Msg:
+    return Msg(
+        name="system",
+        role="system",
+        content=text,
+        metadata={
+            _SKILL_FRESHNESS_NOTICE_METADATA_KEY: True,
+        },
+    )
+
+
 @dataclass(frozen=True)
 class _SkillFreshnessRefreshResult:
     notice_text: str | None = None
     stored_snapshot: dict[str, dict[str, Any]] | None = None
     refreshed_snapshot: dict[str, dict[str, Any]] | None = None
-
-
-def _append_skill_freshness_notice_to_sys_prompt(
-    agent: Any,
-    notice_text: str | None,
-) -> str | None:
-    if not notice_text:
-        return None
-
-    previous_sys_prompt = getattr(agent, "_sys_prompt", None)
-    if not isinstance(previous_sys_prompt, str):
-        return None
-
-    agent._sys_prompt = f"{previous_sys_prompt}\n\n{notice_text}"
-    return previous_sys_prompt
-
-
-def _restore_agent_sys_prompt(
-    agent: Any,
-    previous_sys_prompt: str | None,
-) -> None:
-    if previous_sys_prompt is not None:
-        agent._sys_prompt = previous_sys_prompt
 
 
 def _supports_session_skill_freshness_refresh(
@@ -3325,31 +3313,26 @@ class AgentRunner(Runner):
         # 会话状态可能保存了旧提示词，执行前强制刷新文件态上下文。
         runtime.agent.rebuild_sys_prompt()
 
-        previous_sys_prompt = _append_skill_freshness_notice_to_sys_prompt(
-            runtime.agent,
-            skill_freshness_refresh.notice_text,
+        plan = await self._build_turn_plan(
+            runtime=runtime,
+            request=attempt_input.request,
+            msgs=attempt_input.msgs,
+            query=attempt_input.query,
         )
-
-        try:
-            plan = await self._build_turn_plan(
-                runtime=runtime,
-                request=attempt_input.request,
-                msgs=attempt_input.msgs,
-                query=attempt_input.query,
+        if skill_freshness_refresh.notice_text:
+            notice_msg = _build_skill_freshness_notice_msg(
+                skill_freshness_refresh.notice_text,
             )
+            plan.turn_msgs.insert(0, notice_msg)
+            yield notice_msg, False
 
-            async for msg, last in self._stream_completion_lifecycle(
-                request=attempt_input.request,
-                runtime=runtime,
-                plan=plan,
-                outcome=outcome,
-            ):
-                yield msg, last
-        finally:
-            _restore_agent_sys_prompt(
-                runtime.agent,
-                previous_sys_prompt,
-            )
+        async for msg, last in self._stream_completion_lifecycle(
+            request=attempt_input.request,
+            runtime=runtime,
+            plan=plan,
+            outcome=outcome,
+        ):
+            yield msg, last
 
         skill_snapshot_to_persist = (
             await self._build_skill_snapshot_to_persist(

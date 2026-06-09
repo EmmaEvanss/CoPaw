@@ -201,6 +201,31 @@ def _model_sys_prompt() -> str:
     return _FakeAgent.last_instance.sys_prompt_at_call
 
 
+def _turn_notice_messages() -> list[Msg]:
+    assert _FakeAgent.last_instance is not None
+    return [
+        msg
+        for msg in _FakeAgent.last_instance.turn_msgs
+        if msg.role == "system"
+        and "[Skill freshness notice]" in msg.get_text_content()
+    ]
+
+
+def _turn_notice_text() -> str:
+    notice_messages = _turn_notice_messages()
+    assert len(notice_messages) == 1
+    return notice_messages[0].get_text_content()
+
+
+def _streamed_notice_messages(outputs) -> list[Msg]:
+    return [
+        msg
+        for msg, _last in outputs
+        if msg.role == "system"
+        and "[Skill freshness notice]" in msg.get_text_content()
+    ]
+
+
 def _cyclomatic_complexity(func) -> int:
     source = textwrap.dedent(inspect.getsource(func))
     tree = ast.parse(source)
@@ -397,7 +422,7 @@ async def test_blocked_turn_persists_confirmed_skill_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_freshness_notice_is_injected_into_sys_prompt_for_model_turn(
+async def test_freshness_notice_is_sent_as_visible_system_turn_message(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -431,19 +456,24 @@ async def test_freshness_notice_is_injected_into_sys_prompt_for_model_turn(
 
     assert outputs[-1][0].get_text_content() == "agent reply"
     assert _FakeAgent.last_instance is not None
-    assert (
-        "[Skill freshness notice]"
-        in _FakeAgent.last_instance.sys_prompt_at_call
-    )
-    assert "detected skill-directory change" in (
-        _FakeAgent.last_instance.sys_prompt_at_call
-    )
-    assert [
+    notice_messages = [
         msg
         for msg in _FakeAgent.last_instance.turn_msgs
         if msg.role == "system"
-    ] == []
-    assert _FakeAgent.last_instance.sys_prompt == "rebuilt sys prompt"
+    ]
+    assert len(notice_messages) == 1
+    notice_text = notice_messages[0].get_text_content()
+    assert "[Skill freshness notice]" in notice_text
+    assert "detected skill-directory change" in notice_text
+    streamed_notice_messages = [
+        msg
+        for msg, _last in outputs
+        if msg.role == "system"
+        and "[Skill freshness notice]" in msg.get_text_content()
+    ]
+    assert len(streamed_notice_messages) == 1
+    assert streamed_notice_messages[0].get_text_content() == notice_text
+    assert "[Skill freshness notice]" not in _model_sys_prompt()
 
 
 @pytest.mark.asyncio
@@ -480,7 +510,7 @@ async def test_declared_skill_resume_emits_freshness_notice_before_persisting_sn
     ]
 
     assert outputs[-1][0].get_text_content() == "agent reply"
-    assert "detected skill-directory change" in _model_sys_prompt()
+    assert "detected skill-directory change" in _turn_notice_text()
 
     state = await runner.session.get_session_state_dict(
         "session-1",
@@ -535,7 +565,7 @@ async def test_turn_start_aggregates_token_change_and_withdrawal_notice(
     ]
 
     assert outputs[-1][0].get_text_content() == "agent reply"
-    notice_text = _model_sys_prompt()
+    notice_text = _turn_notice_text()
     assert "xlsx" in notice_text
     assert "detected skill-directory change" in notice_text
     assert "pdf" in notice_text
@@ -589,7 +619,7 @@ async def test_turn_start_notice_reports_directory_switch_paths(
     ]
 
     assert outputs[-1][0].get_text_content() == "agent reply"
-    assert f"{old_dir} -> {new_dir}" in _model_sys_prompt()
+    assert f"{old_dir} -> {new_dir}" in _turn_notice_text()
 
 
 @pytest.mark.asyncio
@@ -626,7 +656,7 @@ async def test_missing_skill_snapshot_entry_is_removed_without_notice(
     ]
 
     assert outputs[-1][0].get_text_content() == "agent reply"
-    assert "[Skill freshness notice]" not in _model_sys_prompt()
+    assert _turn_notice_messages() == []
     state = await runner.session.get_session_state_dict(
         "session-1",
         user_id="user-1",
@@ -669,7 +699,7 @@ async def test_missing_stored_skill_dir_still_reports_directory_switch(
     ]
 
     assert outputs[-1][0].get_text_content() == "agent reply"
-    assert f"{old_dir} -> {new_dir}" in _model_sys_prompt()
+    assert f"{old_dir} -> {new_dir}" in _turn_notice_text()
     state = await runner.session.get_session_state_dict(
         "session-1",
         user_id="user-1",
@@ -881,7 +911,7 @@ async def test_applied_snapshot_prevents_repeat_notice_on_later_turn(
     ]
 
     assert first_outputs[-1][0].get_text_content() == "agent reply"
-    assert "[Skill freshness notice]" in _model_sys_prompt()
+    assert len(_streamed_notice_messages(first_outputs)) == 1
 
     second_outputs = [
         item
@@ -892,7 +922,7 @@ async def test_applied_snapshot_prevents_repeat_notice_on_later_turn(
     ]
 
     assert second_outputs[-1][0].get_text_content() == "agent reply"
-    assert "[Skill freshness notice]" not in _model_sys_prompt()
+    assert _streamed_notice_messages(second_outputs) == []
 
 
 @pytest.mark.asyncio
@@ -929,7 +959,7 @@ async def test_freshness_notice_is_not_persisted_in_session_memory(
     ]
 
     assert outputs[-1][0].get_text_content() == "agent reply"
-    assert "[Skill freshness notice]" in _model_sys_prompt()
+    assert len(_streamed_notice_messages(outputs)) == 1
 
     state = await runner.session.get_session_state_dict(
         "session-1",
@@ -1040,7 +1070,7 @@ async def test_retryable_plan_failure_defers_snapshot_persistence_until_success(
             },
         },
     ]
-    assert "detected skill-directory change" in _model_sys_prompt()
+    assert "detected skill-directory change" in _turn_notice_text()
 
     state = await runner.session.get_session_state_dict(
         "session-1",
@@ -1152,7 +1182,7 @@ async def test_retryable_completion_failure_defers_snapshot_persistence_until_su
             },
         },
     ]
-    assert "detected skill-directory change" in _model_sys_prompt()
+    assert "detected skill-directory change" in _turn_notice_text()
 
     state = await runner.session.get_session_state_dict(
         "session-1",

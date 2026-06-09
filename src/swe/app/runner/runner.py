@@ -938,7 +938,7 @@ def _build_skill_freshness_notice_msg(text: str) -> Msg:
     return Msg(
         name="system",
         role="system",
-        content=text,
+        content=[TextBlock(type="text", text=text)],
         metadata={
             _SKILL_FRESHNESS_NOTICE_METADATA_KEY: True,
         },
@@ -994,7 +994,8 @@ def _refresh_switched_session_skill_snapshot_entry(
     return (
         f"{skill_name}: detected skill-directory switch "
         f"{stored_dir} -> {current_dir}. Treat current skill "
-        "content as superseding earlier assumptions."
+        "content as superseding earlier assumptions. You MUST "
+        f"re-read {current_dir / 'SKILL.md'} before relying on this skill."
     )
 
 
@@ -1037,7 +1038,8 @@ def _refresh_changed_session_skill_snapshot_entry(
     return (
         f"{skill_name}: detected skill-directory change at "
         f"{current_dir}. Treat current skill content as "
-        "superseding earlier assumptions."
+        "superseding earlier assumptions. You MUST "
+        f"re-read {current_dir / 'SKILL.md'} before relying on this skill."
     )
 
 
@@ -1420,7 +1422,6 @@ class _RetryState:
     session_state_loaded: bool = False
     prev_session_state_loaded: bool = False
     task_completed: bool = False
-    skill_freshness_notice_streamed: bool = False
 
 
 @dataclass
@@ -3325,9 +3326,6 @@ class AgentRunner(Runner):
                 skill_freshness_refresh.notice_text,
             )
             plan.turn_msgs.insert(0, notice_msg)
-            if not retry_state.skill_freshness_notice_streamed:
-                retry_state.skill_freshness_notice_streamed = True
-                yield notice_msg, False
 
         async for msg, last in self._stream_completion_lifecycle(
             request=attempt_input.request,

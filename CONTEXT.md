@@ -181,7 +181,7 @@ The content identity of one skill across its full directory tree, including `SKI
 _Avoid_: SKILL.md version, single-file skill update, prompt-only skill change
 
 **Skill Directory Freshness Token**:
-A lightweight change marker for one skill directory, derived from the latest recursive `mtime` across the tracked skill tree rather than strict content hashing. In this context, next-turn skill freshness checks compare the stored **Skill Directory Freshness Token** to the current one and accept heuristic rather than exact change detection.
+A lightweight change marker for one skill directory, derived from a stable digest of each tracked file's relative path, `mtime_ns`, and size rather than strict content hashing. In this context, next-turn skill freshness checks compare the stored **Skill Directory Freshness Token** to the current one and accept heuristic rather than exact change detection.
 _Avoid_: strict content revision, canonical content identity, cryptographic signature
 
 **Session Associated Skill Set**:
@@ -193,12 +193,12 @@ A session-state record that stores the session's **Session Associated Skill Set*
 _Avoid_: trace-derived skill history, transient detector state, prompt-only cache
 
 **Skill Freshness Refresh**:
-The next-turn refresh step that re-reads current skill content and rebuilds prompt state when a stored **Session Skill Snapshot** no longer matches the latest **Skill Directory Freshness Token**.
+The next-turn refresh step that rebuilds prompt state and requires the model to re-read the current `SKILL.md` when a stored **Session Skill Snapshot** no longer matches the latest **Skill Directory Freshness Token**.
 _Avoid_: mid-turn reload, background hot patch, user-visible skill reset
 
 **Skill Freshness Notice**:
-An internal model-facing notice added on the next turn after a **Skill Freshness Refresh**. A **Skill Freshness Notice** uses cautious wording such as detecting a skill-directory change, tells the model that current skill content supersedes assumptions formed from earlier turns, and can explicitly name a directory switch when that occurred.
-_Avoid_: user toast, public warning, silent refresh only
+An internal model-facing notice added on the next turn after a **Skill Freshness Refresh**. A **Skill Freshness Notice** uses cautious wording such as detecting a skill-directory change, tells the model that current skill content supersedes assumptions formed from earlier turns, and requires the model to re-read the current `SKILL.md` before relying on that skill. It references the skill path instead of inlining the skill body, can explicitly name a directory switch, and is not exposed to the Console stream or persisted into chat history.
+_Avoid_: user-visible message, persistent banner, historical chat message, silent refresh only
 
 **Confirmed Skill Association**:
 The point at which a skill becomes part of the session's durable dependency set because the runtime actually activated it, rather than merely suspecting it. Only a **Confirmed Skill Association** can add a skill to the **Session Associated Skill Set**.
@@ -368,7 +368,7 @@ Resolved as **Skill Directory Revision**, not `SKILL.md`-only monitoring. Any tr
 Resolved as comparing **Skill Directory Freshness Token** values for this feature, not recomputing strict **Skill Directory Revision** values on every turn.
 
 **"Skill Freshness Token Scope"**:
-Resolved as the latest recursive `mtime` across the tracked skill directory tree, not just the root directory and `SKILL.md`.
+Resolved as a stable digest of each tracked file's relative path, `mtime_ns`, and size across the skill directory tree, not just the root directory and `SKILL.md`.
 
 **"Associated Skills To Monitor"**:
 Resolved as the session's **Session Associated Skill Set** only. Skills that the session never associated with are outside the monitoring scope.
@@ -377,7 +377,7 @@ Resolved as the session's **Session Associated Skill Set** only. Skills that the
 Resolved as persisting a **Session Skill Snapshot** in session state, not reconstructing it from tracing or other runtime records.
 
 **"Skill Update Handling"**:
-Resolved as **Skill Freshness Refresh** plus a model-only **Skill Freshness Notice**. The first version does not require a user-visible update message.
+Resolved as **Skill Freshness Refresh** plus a model-only **Skill Freshness Notice**. The notice is visible to the model for one turn, but is not exposed to the Console stream or persisted into chat history.
 
 **"When A Skill Becomes Associated"**:
 Resolved as **Confirmed Skill Association** only. Low-confidence inference without actual activation must not expand the **Session Associated Skill Set**.

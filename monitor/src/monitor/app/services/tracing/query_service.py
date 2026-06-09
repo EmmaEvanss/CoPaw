@@ -2199,7 +2199,6 @@ class TracingQueryService:
             exclude_placeholders = ", ".join(["%s"] * len(EXCLUDED_SOURCE_IDS))
             base_where = f"""
                 start_time >= %s AND start_time <= %s
-                AND event_type = 'skill_invocation'
                 AND skill_name IS NOT NULL
                 AND source_id NOT IN ({exclude_placeholders})
                 AND user_id != 'default'{bbk_filter_sql}
@@ -2213,7 +2212,6 @@ class TracingQueryService:
         else:
             base_where = f"""
                 source_id = %s AND start_time >= %s AND start_time <= %s
-                AND event_type = 'skill_invocation'
                 AND skill_name IS NOT NULL
                 AND user_id != 'default'{bbk_filter_sql}
             """

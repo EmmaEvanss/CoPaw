@@ -1029,6 +1029,46 @@ class CronExecutor:
             f"Agent execution failed: {stream_state.error_message}",
         )
 
+    async def _handle_agent_no_completion(
+        self,
+        job: CronJobSpec,
+        stream_state: AgentStreamState,
+        trace_id: Optional[str],
+    ) -> None:
+        """处理 stream 返回但没有 Completed 事件的情况。
+
+        当模型不可用或其他原因导致 agent 未正常完成时，
+        stream 可能返回空流或只有中间事件但没有 Completed 事件。
+        这种情况应视为执行失败。
+
+        Args:
+            job: 任务定义
+            stream_state: 流状态
+            trace_id: trace ID
+
+        Raises:
+            RuntimeError: 总是抛出
+        """
+        error_msg = (
+            f"Agent execution did not complete: "
+            f"event_count={stream_state.event_count} "
+            f"output_len={stream_state.output_len}"
+        )
+        logger.warning(
+            "cron agent stream returned without completion: job_id=%s "
+            "event_count=%s output_len=%s failed_seen=%s",
+            job.id,
+            stream_state.event_count,
+            stream_state.output_len,
+            stream_state.failed_message_seen,
+        )
+        await self._end_trace_on_exception(
+            trace_id,
+            TraceStatus.ERROR,
+            error_msg,
+        )
+        raise RuntimeError(error_msg)
+
     async def _handle_agent_timeout_error(
         self,
         job: CronJobSpec,
@@ -1168,6 +1208,15 @@ class CronExecutor:
             if stream_state.failed_message_seen:
                 trace_ended = True
                 await self._handle_agent_failed_after_stream(
+                    job,
+                    stream_state,
+                    trace_id,
+                )
+
+            # 检查是否有 Completed 事件，没有则视为执行失败
+            if not stream_state.completed_message_seen:
+                trace_ended = True
+                await self._handle_agent_no_completion(
                     job,
                     stream_state,
                     trace_id,

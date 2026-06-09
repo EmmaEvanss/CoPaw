@@ -49,6 +49,15 @@ class _PendingRunner:
         await asyncio.sleep(30)
 
 
+class _EmptyStreamRunner:
+    """模拟返回空流的 Runner（没有任何事件，包括 Completed 或 Failed）。"""
+
+    async def stream_query(self, _req):
+        # 不 yield 任何事件，直接返回
+        return
+        yield  # pylint: disable=unreachable # 使方法成为 generator
+
+
 class _FailedRunner:
     """模拟模型调用失败的 Runner，返回 Failed 事件而不抛出异常。"""
 
@@ -399,6 +408,50 @@ def test_failed_event_marks_execution_as_error(monkeypatch):
     assert monitor.records[-1]["status"] == "error"
     # 验证：应该看到 failed 事件的日志
     assert any("failed" in message.lower() for message in warning_messages)
+
+
+def test_empty_stream_marks_execution_as_error():
+    """当 runner 返回空流（没有任何 Completed 或 Failed 事件）时，
+    应正确标记为错误而不是成功。
+
+    这是针对模型不可用等场景的测试：
+    - runner 可能返回空流而不是 yield Failed 事件
+    - executor 应检测没有 Completed 事件并正确处理为失败
+    """
+
+    async def _run():
+        job = _build_agent_job()
+        channel_manager = _ChannelManager()
+        monitor = _MonitorSyncClient()
+        manager = CronManager(
+            repo=_Repo(job),
+            runner=_EmptyStreamRunner(),
+            channel_manager=channel_manager,
+        )
+        manager._monitor_sync_client = (
+            monitor  # pylint: disable=protected-access
+        )
+
+        try:
+            await manager._execute_once(  # pylint: disable=protected-access
+                job,
+                is_manual=False,
+            )
+        except RuntimeError:
+            # executor 应在检测到没有 Completed 事件后抛出 RuntimeError
+            pass
+
+        return manager, channel_manager, monitor
+
+    manager, channel_manager, monitor = asyncio.run(_run())
+
+    state = manager.get_state("job-cancel-after-output")
+    # 验证：应该记录为 error，不是 success
+    assert state.last_status == "error"
+    # 验证：Monitor 同步应记录为 error
+    assert monitor.records[-1]["status"] == "error"
+    # 验证：没有发送任何事件
+    assert len(channel_manager.events) == 0
 
 
 def test_manual_broadcast_execution_does_not_delay_notification():

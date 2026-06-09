@@ -48,6 +48,21 @@ class _PendingRunner:
         await asyncio.sleep(30)
 
 
+class _FailedRunner:
+    """模拟模型调用失败的 Runner，返回 Failed 事件而不抛出异常。"""
+
+    async def stream_query(self, _req):
+        # 模拟 runner 在模型失败时的行为：yield Failed 事件，不抛出异常
+        yield SimpleNamespace(
+            object="message",
+            status=RunStatus.Failed,
+            error=SimpleNamespace(
+                code="model_error",
+                message="Model not available",
+            ),
+        )
+
+
 class _ChannelManager:
     def __init__(self) -> None:
         self.events: list[object] = []
@@ -313,3 +328,60 @@ def test_failed_execution_still_syncs_model_meta(monkeypatch):
         },
         "fallback_reason": "provider_not_found",
     }
+
+
+def test_failed_event_marks_execution_as_error(monkeypatch):
+    """当 runner yield Failed 事件时，应正确标记为错误而不是成功。
+
+    这是针对模型调用失败场景的关键测试：
+    - runner 不抛出异常，而是 yield Failed 事件
+    - executor 应检测 Failed 事件并正确处理为失败
+    - 不应将 CancelledError 视为成功
+    """
+    warning_messages: list[str] = []
+
+    def fake_executor_warning(message, *args, **_kwargs) -> None:
+        try:
+            text = str(message) % args if args else str(message)
+        except TypeError:
+            text = str(message)
+        warning_messages.append(text)
+
+    monkeypatch.setattr(
+        "swe.app.crons.executor.logger.warning",
+        fake_executor_warning,
+    )
+
+    async def _run():
+        job = _build_agent_job()
+        channel_manager = _ChannelManager()
+        monitor = _MonitorSyncClient()
+        manager = CronManager(
+            repo=_Repo(job),
+            runner=_FailedRunner(),
+            channel_manager=channel_manager,
+        )
+        manager._monitor_sync_client = (
+            monitor  # pylint: disable=protected-access
+        )
+
+        try:
+            await manager._execute_once(  # pylint: disable=protected-access
+                job,
+                is_manual=False,
+            )
+        except RuntimeError:
+            # executor 应在检测到 Failed 事件后抛出 RuntimeError
+            pass
+
+        return manager, channel_manager, monitor
+
+    manager, channel_manager, monitor = asyncio.run(_run())
+
+    state = manager.get_state("job-cancel-after-output")
+    # 验证：应该记录为 error 或 cancelled，不是 success
+    assert state.last_status in ("error", "cancelled")
+    # 验证：Monitor 同步应记录为 error
+    assert monitor.records[-1]["status"] == "error"
+    # 验证：应该看到 failed 事件的日志
+    assert any("failed" in message.lower() for message in warning_messages)

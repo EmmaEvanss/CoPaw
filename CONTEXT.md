@@ -236,6 +236,34 @@ _Avoid_: silent disable drift, missing-skill ignore case, stale effective skill
 One per-turn **Skill Freshness Notice** that combines all effective associated-skill changes detected for that turn. It lists affected skills item-by-item instead of emitting separate notices per skill.
 _Avoid_: per-skill notice spam, repeated freshness banners, fragmented model notice
 
+**System Runtime Diagnostic**:
+A periodic, Runtime Instance-scoped assessment of the Swe backend service's load, responsiveness, process resources, and storage capacity. It is broader than a liveness probe and does not execute an Agent Heartbeat.
+_Avoid_: self-check, health endpoint, Agent Heartbeat
+
+**Request Execution Load**:
+The current load and responsiveness of the backend request-serving runtime within one Runtime Instance, distinct from tenant or business-runtime usage.
+_Avoid_: Flask worker usage, ordinary HTTP throughput, request latency, tenant usage statistics, Agent Run count, LLM load
+
+**Runtime Instance**:
+One running Swe service container in a multi-instance deployment, independently from the business-facing instances used for user allocation.
+_Avoid_: business instance, tenant, Supervisor process
+
+**Diagnostic Run**:
+One System Runtime Diagnostic collection performed by a Runtime Instance.
+_Avoid_: latest-only snapshot, request-time probe, liveness response
+
+**Diagnostic Flow Record**:
+One append-only record containing the metrics collected by one Runtime Instance during one Diagnostic Run. It supports latest-state queries and historical trend analysis.
+_Avoid_: EAV diagnostic item, JSON payload, LONGTEXT payload, diagnostic run ID
+
+**Runtime Diagnostic Log**:
+A machine-readable event emitted by Swe to report Runtime Instance lifecycle or a Diagnostic Flow Record for asynchronous downstream persistence.
+_Avoid_: direct diagnostic database write, free-form diagnostic message, Kafka implementation in Swe
+
+**Diagnostic Lease**:
+A renewable period during which a Runtime Instance is considered present. Graceful deregistration ends it immediately; expiry makes an abnormally terminated Runtime Instance ineffective.
+_Avoid_: permanent active flag, shutdown-only invalidation
+
 ## Flagged Ambiguities
 
 **"Create SubAgent"**:
@@ -411,6 +439,15 @@ Resolved as exposing absence for **File Read Truncation** as inheriting the hist
 
 **"Tool Output Controls Scope"**:
 Resolved as limited to the Source System Configuration page and runtime resolution for this change. The Agent configuration page keeps the existing historical tool-result compaction controls for now.
+
+**"System Self-Check"**:
+Resolved as **System Runtime Diagnostic**. The existing lightweight health endpoint remains a liveness probe, while the scheduled `HEARTBEAT.md` run remains an Agent Heartbeat.
+
+**"Flask Worker Usage"**:
+Resolved as **Request Execution Load**. Swe does not run Flask or a multi-worker web-server pool; the diagnostic reports the load and responsiveness of the single-worker Uvicorn/FastAPI backend instead of tenant-level workload statistics or Supervisor process state.
+
+**"Diagnostic Instance"**:
+Resolved as a **Runtime Instance**, meaning one running Swe service container. It is distinct from the business-facing instance records used for user allocation.
 
 ## Example Dialogue
 

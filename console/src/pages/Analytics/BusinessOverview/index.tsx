@@ -1162,6 +1162,17 @@ export default function BusinessOverviewPage() {
                 </Tooltip>
               )}
               allowClear
+              showSearch
+              filterOption={(input, option) => {
+                const searchValue = input.toLowerCase();
+                const optionValue = String(option?.value ?? "");
+                const optionLabel = BBK_ID_TO_NAME_MAP[optionValue] || "";
+                // 支持按分行号或分行名搜索
+                return (
+                  optionValue.toLowerCase().includes(searchValue) ||
+                  optionLabel.toLowerCase().includes(searchValue)
+                );
+              }}
             >
               {BBK_ID_MAP.map((item) => (
                 <Option key={item.value} value={item.value}>

@@ -26,6 +26,7 @@ export default createGlobalStyle`
   height: 34px;
   display: flex;
   align-items: center;
+  gap: 6px;
   overflow: hidden;
 
   &::before,
@@ -42,12 +43,12 @@ export default createGlobalStyle`
   }
 
   &::before {
-    left: 0;
+    left: 32px;
     background: linear-gradient(90deg, #F7F9FF 18%, rgba(247, 249, 255, 0));
   }
 
   &::after {
-    right: 0;
+    right: 32px;
     background: linear-gradient(270deg, #F7F9FF 18%, rgba(247, 249, 255, 0));
   }
 
@@ -66,9 +67,10 @@ export default createGlobalStyle`
   gap: 8px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 2px 38px 2px 0;
+  padding: 2px 0;
   scrollbar-width: none;
   scroll-behavior: smooth;
+  margin-right: 8px;
 
   &::-webkit-scrollbar {
     display: none;
@@ -148,9 +150,9 @@ export default createGlobalStyle`
 
   &--selected {
     border-color: rgba(55, 105, 252, 0.42);
-    background: rgba(55, 105, 252, 0.10);
+    background: rgba(55, 105, 252, 0.09);
     color: ${DESIGN_TOKENS.colorTextPrimary};
-    box-shadow: inset 0 -2px 0 rgba(55, 105, 252, 0.72);
+    box-shadow: 0 2px 8px rgba(55, 105, 252, 0.12);
   }
 
   &--selected:hover {
@@ -273,9 +275,9 @@ export default createGlobalStyle`
 }
 
 .chat-task-tabs-scroll {
-  position: absolute;
-  top: 50%;
-  z-index: 2;
+  position: relative;
+  z-index: 3;
+  flex: 0 0 26px;
   width: 26px;
   height: 26px;
   display: inline-flex;
@@ -287,8 +289,7 @@ export default createGlobalStyle`
   background: rgba(255, 255, 255, 0.96);
   color: ${DESIGN_TOKENS.colorPrimary};
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(31, 42, 68, 0.10);
-  transform: translateY(-50%);
+  // box-shadow: 0 6px 16px rgba(31, 42, 68, 0.10);
   transition:
     background-color 0.16s ease,
     border-color 0.16s ease,
@@ -307,11 +308,15 @@ export default createGlobalStyle`
 }
 
 .chat-task-tabs-scroll--left {
-  left: 2px;
+  order: 0;
 }
 
 .chat-task-tabs-scroll--right {
-  right: 2px;
+  order: 2;
+}
+
+.chat-task-tabs-scroll--left + .chat-task-tabs {
+  order: 1;
 }
 
 .dark-mode .chat-task-tab {
@@ -353,7 +358,7 @@ export default createGlobalStyle`
   border-color: rgba(91, 138, 255, 0.52);
   background: rgba(91, 138, 255, 0.20);
   color: #DDE7FF;
-  box-shadow: inset 0 -2px 0 rgba(120, 160, 255, 0.78);
+  box-shadow: 0 2px 10px rgba(91, 138, 255, 0.18);
 }
 
 .dark-mode .chat-task-tab--selected .chat-task-tab-status {

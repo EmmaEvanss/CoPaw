@@ -1025,9 +1025,11 @@ class CronExecutor:
             TraceStatus.ERROR,
             stream_state.error_message,
         )
-        raise RuntimeError(
+        exc = RuntimeError(
             f"Agent execution failed: {stream_state.error_message}",
         )
+        setattr(exc, "cron_trace_id", trace_id)
+        raise exc
 
     async def _handle_agent_no_completion(
         self,
@@ -1067,7 +1069,9 @@ class CronExecutor:
             TraceStatus.ERROR,
             error_msg,
         )
-        raise RuntimeError(error_msg)
+        exc = RuntimeError(error_msg)
+        setattr(exc, "cron_trace_id", trace_id)
+        raise exc
 
     async def _handle_agent_timeout_error(
         self,

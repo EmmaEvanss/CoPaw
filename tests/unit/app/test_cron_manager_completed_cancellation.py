@@ -454,6 +454,66 @@ def test_empty_stream_marks_execution_as_error():
     assert len(channel_manager.events) == 0
 
 
+def test_failed_execution_preserves_trace_id(monkeypatch):
+    """验证执行失败时 trace_id 仍能正确传递到 Monitor。
+
+    这是确保 trace_id 在失败场景下也能被保存的关键测试：
+    - executor 在失败时应将 trace_id 附加到异常
+    - manager 应从异常获取 trace_id
+    - trace_id 应被同步到 Monitor
+    """
+    fake_trace_id = "test-trace-id-for-failure"
+
+    async def fake_start_trace(**_kwargs):
+        return fake_trace_id
+
+    async def fake_end_trace(*_args, **_kwargs):
+        return None
+
+    # Mock trace_manager 使 trace_id 被创建
+    monkeypatch.setattr(
+        "swe.app.crons.executor.has_trace_manager",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "swe.app.crons.executor.get_trace_manager",
+        lambda: SimpleNamespace(
+            enabled=True,
+            start_trace=fake_start_trace,
+            end_trace=fake_end_trace,
+        ),
+    )
+
+    async def _run():
+        job = _build_agent_job()
+        channel_manager = _ChannelManager()
+        monitor = _MonitorSyncClient()
+        manager = CronManager(
+            repo=_Repo(job),
+            runner=_EmptyStreamRunner(),
+            channel_manager=channel_manager,
+        )
+        manager._monitor_sync_client = (
+            monitor  # pylint: disable=protected-access
+        )
+
+        try:
+            await manager._execute_once(  # pylint: disable=protected-access
+                job,
+                is_manual=False,
+            )
+        except RuntimeError:
+            pass
+
+        return monitor
+
+    monitor = asyncio.run(_run())
+
+    # 验证：trace_id 应被正确传递到 Monitor
+    assert monitor.records[-1]["status"] == "error"
+    assert monitor.records[-1]["trace_id"] == fake_trace_id
+
+
 def test_manual_broadcast_execution_does_not_delay_notification():
     """手动执行分发任务时，不应沿用原计划的通知延迟。"""
 

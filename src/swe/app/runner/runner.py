@@ -653,9 +653,7 @@ async def _build_and_connect_mcp_clients(
                 passthrough_headers,
             )
             if client is not None:
-                await client.connect(
-                    timeout=_MCP_CONNECT_TIMEOUT_SECONDS,
-                )
+                await client.connect()
                 clients.append(client)
                 logger.info(f"MCP client '{key}' created and connected")
         except asyncio.CancelledError:

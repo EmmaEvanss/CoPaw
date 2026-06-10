@@ -1096,6 +1096,10 @@ class CronExecutor:
             TraceStatus.ERROR,
             "Timeout",
         )
+        # 附加 trace_id 到异常，以便 manager 获取
+        exc = asyncio.TimeoutError()
+        setattr(exc, "cron_trace_id", trace_id)
+        raise exc
 
     async def _handle_agent_cancelled_error(
         self,
@@ -1125,7 +1129,9 @@ class CronExecutor:
                 TraceStatus.ERROR,
                 stream_state.error_message,
             )
-            raise asyncio.CancelledError()
+            exc = asyncio.CancelledError()
+            setattr(exc, "cron_trace_id", trace_id)
+            raise exc
 
         if self._has_agent_completed_output(stream_state):
             cancelling_count = self._current_task_cancelling_count()
@@ -1145,7 +1151,9 @@ class CronExecutor:
 
         self._log_agent_cancelled_before_completed(job, stream_state)
         await self._end_trace_on_exception(trace_id, TraceStatus.CANCELLED)
-        raise asyncio.CancelledError()
+        exc = asyncio.CancelledError()
+        setattr(exc, "cron_trace_id", trace_id)
+        raise exc
 
     async def _handle_agent_generic_exception(
         self,
@@ -1253,6 +1261,8 @@ class CronExecutor:
         except Exception as e:  # pylint: disable=broad-except
             trace_ended = True
             await self._handle_agent_generic_exception(job, trace_id, e)
+            # 附加 trace_id 到异常，以便 manager 获取
+            setattr(e, "cron_trace_id", trace_id)
             raise
         finally:
             if trace_id and not trace_ended:

@@ -275,6 +275,8 @@ class QueryService:
         if params.status:
             conditions.append("e.status = %s")
             sql_params.append(params.status)
+            if params.status == "error":
+                conditions.append("j.status != 'deleted'")
 
         if params.start_time:
             conditions.append("e.actual_time >= %s")
@@ -864,7 +866,7 @@ class QueryService:
                     AS success_count,
                 SUM(
                     CASE
-                        WHEN e.status IN ('error', 'timeout')
+                        WHEN e.status = 'error'
                         THEN 1 ELSE 0
                     END
                 ) AS failure_count,
@@ -1046,7 +1048,7 @@ class QueryService:
             SELECT
                 CASE
                     WHEN e.status = 'success' THEN '成功'
-                    WHEN e.status IN ('error', 'timeout') THEN '失败'
+                    WHEN e.status = 'error' THEN '失败'
                     WHEN e.status IN ('skipped', 'cancelled') THEN '已取消/跳过'
                     ELSE e.status
                 END AS name,
@@ -1117,6 +1119,7 @@ class QueryService:
             LEFT JOIN swe_cron_jobs j ON e.job_id = j.id
             WHERE {exec_where}
               AND e.status = 'error'
+              AND j.status != 'deleted'
             GROUP BY 1
             ORDER BY value DESC, name ASC
             LIMIT 10
@@ -1176,7 +1179,7 @@ class QueryService:
                     AS success,
                 SUM(
                     CASE
-                        WHEN e.status IN ('error', 'timeout', 'cancelled')
+                        WHEN e.status = 'error'
                         THEN 1 ELSE 0
                     END
                 ) AS failed,
@@ -1529,7 +1532,7 @@ class QueryService:
         conditions = [
             "e.actual_time >= %s",
             "e.actual_time <= %s",
-            "(j.deleted_at IS NULL OR j.id IS NULL)",
+            "j.status != 'deleted'",
         ]
         sql_params: List = [start_time, end_time]
         if tenant_id:

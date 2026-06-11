@@ -828,7 +828,6 @@ class QueryService:
             "j.created_at < %s",
             "(j.deleted_at IS NULL OR j.deleted_at >= %s)",
             "j.status != 'deleted'",
-            self._overview_counted_job_condition(),
         ]
         sql_params: List = [start_time, start_time]
 
@@ -1051,7 +1050,7 @@ class QueryService:
                 CASE
                     WHEN e.status = 'success' THEN '成功'
                     WHEN e.status = 'error' THEN '失败'
-                    WHEN e.status IN ('skipped', 'cancelled') THEN '已取消/跳过'
+                    WHEN e.status = 'cancelled' THEN '已取消/跳过'
                     ELSE e.status
                 END AS name,
                 COUNT(*) AS value
@@ -1150,7 +1149,8 @@ class QueryService:
             SELECT COALESCE(NULLIF(j.bbk_id, ''), 'unknown') AS name,
                    COUNT(*) AS value
             FROM swe_cron_jobs j
-            WHERE {job_where}
+            WHERE {job_where} 
+                AND j.status IN ('active', 'paused')
             GROUP BY j.bbk_id
             ORDER BY value DESC, name ASC
             """,
@@ -1508,11 +1508,7 @@ class QueryService:
         source_id: Optional[str] = None,
     ) -> Tuple[List[str], List]:
         """Build filters for swe_cron_jobs overview queries."""
-        conditions = [
-            "j.deleted_at IS NULL",
-            "j.status != 'deleted'",
-            self._overview_counted_job_condition(),
-        ]
+        conditions = ["j.deleted_at IS NULL", "j.status != 'deleted'"]
         sql_params: List = []
         if tenant_id:
             conditions.append("j.tenant_id = %s")
@@ -1524,16 +1520,6 @@ class QueryService:
             conditions.append("j.source_id = %s")
             sql_params.append(source_id)
         return conditions, sql_params
-
-    def _overview_counted_job_condition(self) -> str:
-        """Return the job states counted by the cron overview task total."""
-        return (
-            "("
-            "(j.enabled = 1 AND j.status = 'active')"
-            " OR (j.status = 'paused' AND j.pause_reason = 'auto_unread_threshold')"
-            " OR (j.status = 'paused' AND j.pause_reason = 'manual')"
-            ")"
-        )
 
     def _build_overview_execution_conditions(
         self,
@@ -1611,32 +1597,31 @@ class QueryService:
         # 数据库存储的是 naive datetime（东八区时间），去掉时区信息
         now = datetime.now(BEIJING_TZ).replace(tzinfo=None)
 
-        # Mark only the latest unread successful execution for this job.
+        # 更新该任务所有成功的未读执行记录
         update_sql = """
             UPDATE swe_cron_executions e
-            SET e.is_read = TRUE, e.read_at = %s
-            WHERE e.id = (
-                SELECT latest.id
-                FROM (
-                    SELECT e2.id
-                    FROM swe_cron_executions e2
-                    JOIN swe_cron_jobs j2 ON e2.job_id = j2.id
-                    WHERE e2.job_id = %s
-                    AND e2.status = 'success'
-                    AND e2.is_read = FALSE
-                    AND (%s = '' OR j2.source_id = %s)
-                    ORDER BY COALESCE(
-                        e2.end_time,
-                        e2.actual_time,
-                        e2.scheduled_time,
-                        e2.created_at
-                    ) DESC, e2.id DESC
-                    LIMIT 1
-                ) latest
-            )
+            SET is_read = TRUE, read_at = %s
+            WHERE e.job_id = %s
+            AND e.status = 'success'
+            AND e.is_read = FALSE
         """
         source_filter = source_id or ""
-        return await db.execute(update_sql, (now, job_id, source_filter, source_filter))
+        logger.info(f"[mark_executions_read] 开始标记已读, job_id={job_id}")
+        logger.debug(f"[mark_executions_read] SQL: {update_sql}")
+
+        result = await db.execute(update_sql, (now, job_id))
+        logger.info(f"[mark_executions_read] UPDATE执行完成, job_id={job_id}")
+        # 获取更新的记录数量
+        count_sql = """
+            SELECT COUNT(*) as count
+            FROM swe_cron_executions e
+            WHERE e.job_id = %s
+            AND e.status = 'success'
+            AND e.is_read = TRUE
+        """
+        result = await db.fetch_one(count_sql, (job_id, source_filter, source_filter))
+        return result.get("count", 0) if result else 0
+
 
     async def get_unread_count(
         self,

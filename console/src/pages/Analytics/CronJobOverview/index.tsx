@@ -302,16 +302,18 @@ function MiniSummaryCard({
   title,
   value,
   unit,
+  tone = "blue",
 }: {
   icon: LucideIcon;
   title: string;
   value: string;
   unit: string;
+  tone?: SummaryMetricTone;
 }) {
   const Icon = icon;
 
   return (
-    <article className={styles.miniSummaryCard}>
+    <article className={`${styles.miniSummaryCard} ${styles[tone]}`}>
       <span className={styles.miniIcon}>
         <Icon size={26} />
       </span>
@@ -595,12 +597,14 @@ export default function CronJobOverviewPage() {
               title="受影响分行数"
               value={overviewData.anomalySummary.affectedBranches}
               unit={overviewData.anomalySummary.affectedBranchesUnit}
+              tone="blue"
             />
             <MiniSummaryCard
               icon={UserRoundCheck}
               title="受影响客户经理数"
               value={overviewData.anomalySummary.affectedManagers}
               unit={overviewData.anomalySummary.affectedManagersUnit}
+              tone="orange"
             />
           </div>
           <FailureReasonPanel data={overviewData.failureReasons} />

@@ -273,6 +273,10 @@ class QueryService:
             conditions.append("e.tenant_id = %s")
             sql_params.append(params.tenant_id)
 
+        if params.bbk_id:
+            conditions.append("j.bbk_id = %s")
+            sql_params.append(params.bbk_id)
+
         # source_id 需要通过 JOIN jobs 表筛选
         if params.source_id:
             conditions.append("j.source_id = %s")
@@ -293,6 +297,13 @@ class QueryService:
             sql_params.append(params.end_time)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
+        logger.warning(
+            "[cron executions debug] built filters: bbk_id=%s source_id=%s where=%s params=%s",
+            params.bbk_id,
+            params.source_id,
+            where_clause,
+            sql_params,
+        )
 
         # Count total - 需要 JOIN jobs 表来支持 source_id 筛选
         count_sql = f"""
@@ -303,11 +314,16 @@ class QueryService:
         """
         count_result = await db.fetch_one(count_sql, tuple(sql_params))
         total = count_result.get("count", 0) if count_result else 0
+        logger.warning(
+            "[cron executions debug] count result: bbk_id=%s total=%s",
+            params.bbk_id,
+            total,
+        )
 
-        # Query with pagination - JOIN with jobs table to get tenant_name
+        # Query with pagination - JOIN with jobs table to get tenant metadata.
         offset = (params.page - 1) * params.page_size
         query_sql = f"""
-            SELECT e.*, j.tenant_name
+            SELECT e.*, j.tenant_name, j.bbk_id AS bbk_id, e.bbk_id AS execution_bbk_id
             FROM swe_cron_executions e
             LEFT JOIN swe_cron_jobs j ON e.job_id = j.id
             WHERE {where_clause}
@@ -317,6 +333,22 @@ class QueryService:
         query_params = tuple(sql_params) + (params.page_size, offset)
 
         rows = await db.fetch_all(query_sql, query_params)
+        logger.warning(
+            "[cron executions debug] rows sample: requested_bbk_id=%s returned=%s sample=%s",
+            params.bbk_id,
+            len(rows),
+            [
+                {
+                    "id": row.get("id"),
+                    "job_id": row.get("job_id"),
+                    "job_bbk_id": row.get("bbk_id"),
+                    "execution_bbk_id": row.get("execution_bbk_id"),
+                    "tenant_id": row.get("tenant_id"),
+                    "status": row.get("status"),
+                }
+                for row in rows[:5]
+            ],
+        )
 
         # 直接读取，不做时区转换（数据库已是东八区时间）
         items = [

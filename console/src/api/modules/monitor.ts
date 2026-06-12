@@ -58,6 +58,7 @@ export interface ExecutionItem {
   job_name: string;
   tenant_id: string;
   tenant_name: string;
+  bbk_id?: string;
   scheduled_time: string | null;
   actual_time: string;
   end_time: string | null;
@@ -470,6 +471,7 @@ export const monitorApi = {
     filters?: {
       job_id?: string;
       tenant_id?: string;
+      bbk_id?: string;
       status?: string;
       start_time?: string;
       end_time?: string;

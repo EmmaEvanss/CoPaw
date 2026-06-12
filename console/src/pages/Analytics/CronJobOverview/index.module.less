@@ -133,7 +133,7 @@
 
 .summaryGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 12px;
 }
@@ -297,6 +297,7 @@
   overflow: auto;
 }
 
+.sectionHeading,
 .panel h2,
 .anomalyLeft h2 {
   margin: 0 0 18px;
@@ -304,6 +305,10 @@
   font-size: 20px;
   line-height: 1.35;
   font-weight: 800;
+}
+
+.sectionHeading {
+  margin-bottom: 18px;
 }
 
 .anomalyLeft h2 span {
@@ -491,6 +496,32 @@
   font-weight: 800;
 }
 
+.reasonPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.reasonPanelHeader h3 {
+  margin: 0;
+}
+
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .reasonContent {
   display: grid;
   grid-template-columns: 178px minmax(0, 1fr);
@@ -588,6 +619,152 @@
 .rankTable th,
 .rankTable td {
   height: 54px;
+}
+
+.failedTaskModal {
+  :global(.ant-modal-content) {
+    overflow: hidden;
+    border-radius: 22px;
+    padding: 0;
+  }
+
+  :global(.ant-modal-close) {
+    top: 18px;
+    right: 18px;
+  }
+
+  :global(.ant-modal-header) {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border-radius: 22px 22px 0 0;
+  }
+
+  :global(.ant-modal-body) {
+    padding: 18px 24px 24px;
+  }
+}
+
+.failedTaskModalTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 0 56px 0 24px;
+  background: #fff1f2;
+  color: #991b1b;
+  font-size: 18px;
+  font-weight: 700;
+  border-bottom: 1px solid #ffe4e6;
+}
+
+.failedTaskWarningIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  color: #dc2626;
+  background: #fee2e2;
+  border-radius: 50%;
+}
+
+.failedTaskToolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-start;
+  margin-bottom: 16px;
+}
+
+.failedTaskSearch {
+  width: 320px;
+}
+
+.failedReasonSelect {
+  width: 180px;
+}
+
+.failedTaskTable {
+  overflow: auto;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
+}
+
+.failedTaskTableHeader,
+.failedTaskTableRow {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 1.1fr)
+    minmax(82px, 0.58fr)
+    minmax(92px, 0.62fr)
+    minmax(150px, 0.95fr)
+    minmax(68px, 0.42fr)
+    minmax(260px, 1.7fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 980px;
+}
+
+.failedTaskTableHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 12px 16px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.failedTaskTableBody {
+  background: #ffffff;
+}
+
+.failedTaskTableRow {
+  padding: 13px 16px;
+  color: #64748b;
+  font-size: 14px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.failedTaskTableRow:last-child {
+  border-bottom: 0;
+}
+
+.failedTaskTableRow:hover {
+  background: #fafcff;
+}
+
+.failedTaskTableRow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failedTaskName {
+  color: #475569;
+  font-weight: 600;
+}
+
+.errorMessageCell {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #dc2626;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.failedTaskPagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0 0;
 }
 
 @media (max-width: 1500px) {

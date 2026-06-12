@@ -219,6 +219,7 @@ async def list_executions(
     request: Request,
     job_id: str | None = Query(default=None, description="任务ID筛选"),
     tenant_id: str | None = Query(default=None, description="租户ID筛选"),
+    bbk_id: str | None = Query(default=None, description="分行号筛选"),
     status: str | None = Query(default=None, description="执行状态筛选"),
     start_time: datetime | None = Query(
         default=None,
@@ -238,6 +239,7 @@ async def list_executions(
         request: FastAPI request object
         job_id: Job ID filter
         tenant_id: Tenant ID filter
+        bbk_id: BBK ID filter
         status: Status filter
         start_time: Start time filter
         end_time: End time filter
@@ -249,9 +251,22 @@ async def list_executions(
         Paginated execution list
     """
     actual_source_id = _get_source_id_from_header(request)
+    logger.warning(
+        "[cron executions debug] request received: source_id=%s job_id=%s tenant_id=%s bbk_id=%s status=%s start_time=%s end_time=%s page=%s page_size=%s",
+        actual_source_id,
+        job_id,
+        tenant_id,
+        bbk_id,
+        status,
+        start_time,
+        end_time,
+        page,
+        page_size,
+    )
     params = ExecutionQueryParams(
         job_id=job_id,
         tenant_id=tenant_id,
+        bbk_id=bbk_id,
         source_id=actual_source_id,
         status=status,
         start_time=start_time,

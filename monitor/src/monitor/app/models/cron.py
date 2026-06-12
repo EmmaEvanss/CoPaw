@@ -163,6 +163,7 @@ class ExecutionModel(BaseModel):
         default=None,
         description="租户姓名 (从任务表JOIN获取，可能为空)",
     )
+    bbk_id: str = Field(default="", description="分行号")
 
     # 执行时间
     scheduled_time: Optional[datetime] = Field(
@@ -405,6 +406,7 @@ class ExecutionQueryParams(BaseModel):
 
     job_id: Optional[str] = Field(default=None, description="任务ID筛选")
     tenant_id: Optional[str] = Field(default=None, description="租户ID筛选")
+    bbk_id: Optional[str] = Field(default=None, description="分行号筛选")
     source_id: Optional[str] = Field(default=None, description="来源标识筛选")
     status: Optional[str] = Field(default=None, description="执行状态筛选")
     start_time: Optional[datetime] = Field(
